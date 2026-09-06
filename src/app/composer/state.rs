@@ -7,6 +7,8 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.chat_navigation.activation.clear();
+        self.chat_navigation.leader_pending = false;
         let current = input_snapshot(self.composer.read(cx));
         let current_target = self.composer_sessions.current_target().to_owned();
         let discard = self.sync_current_draft(&current, &current_target);

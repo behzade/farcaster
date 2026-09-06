@@ -47,15 +47,30 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     let mut rows = vec![(
         "From anywhere",
         "ctrl-g".into(),
-        "Return to chat normal mode",
+        "Activate app keys for 1 second (no focus change)",
     )];
     if cfg!(target_os = "macos") {
         rows.push((
             "From anywhere",
             "cmd-g".into(),
-            "Return to chat normal mode (alias)",
+            "Activate app keys (macOS alias)",
         ));
     }
+    rows.push((
+        "From anywhere",
+        "ctrl-g ctrl-g".into(),
+        "Return to chat normal mode",
+    ));
+    rows.push((
+        "From anywhere",
+        "ctrl-g 2".into(),
+        "Jump to session 2 (0–9 supported)",
+    ));
+    rows.push((
+        "From anywhere",
+        "ctrl-g space e".into(),
+        "Run Space command (e/t/j/k)",
+    ));
     rows.extend(
         COMMANDS
             .iter()

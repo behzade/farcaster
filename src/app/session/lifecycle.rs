@@ -154,6 +154,9 @@ impl FarcasterApp {
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.close_sessions_sheet_after_selection(window, cx);
+        self.chat_navigation.normal_mode = false;
+        self.show_chat_surface(window, cx);
+        self.composer_focus.focus(window, cx);
         self.notify_session_rail(cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);

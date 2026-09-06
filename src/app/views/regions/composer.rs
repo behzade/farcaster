@@ -64,7 +64,9 @@ impl Render for ComposerView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
-        let mode = if app.chat_navigation.focus.is_focused(window) {
+        let mode = if let Some(hint) = app.chat_navigation.activation.hint() {
+            Some(hint)
+        } else if app.chat_navigation.focus.is_focused(window) {
             Some(if app.chat_navigation.leader_pending {
                 "SPACE · e editor · t terminal · j/k sessions · Esc cancel"
             } else {

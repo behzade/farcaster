@@ -1,7 +1,8 @@
 # Modal keyboard implementation plan
 
-Status: first navigation slice implemented. `Ctrl+g` (plus `Cmd+g` on macOS)
-returns to chat normal; `i`/`a`, bare `0`–`9`, `/`, and Space-prefixed workspace
+Status: navigation implemented with revised one-shot activation. `Ctrl+g`
+(plus `Cmd+g` on macOS) activates app keys for one second without moving focus;
+double chord returns to chat normal; `i`/`a`, bare `0`–`9`, `/`, and Space-prefixed workspace
 navigation are active. Composer status shows the current focus mode and pending
 leader hints. Existing direct shortcuts remain during this incremental rollout.
 
@@ -17,7 +18,7 @@ hints share the navigation command definitions; session badges show bare numbers
 in normal mode. Settings distinguish optional direct shortcuts.
 
 Transcript cursor and `v` selection are deferred. Composer Escape retains its
-existing steer/double-Escape-abort behavior; use `Ctrl+g` to leave the composer.
+existing steer/double-Escape-abort behavior; use double `Ctrl+g` to leave the composer.
 
 ## Interaction contract
 
@@ -79,8 +80,12 @@ the existing draft/caret; leaving insert mode preserves its contents.
 
 Escape does not leave the composer. Preserve the existing apply-steer /
 double-Escape-abort behavior in `src/app/composer/submissions.rs`, along with
-existing menu/dialog dismissal. `Ctrl+g` (or macOS `Cmd+g`) is the consistent
-return-to-chat-normal command across composer and embedded surfaces.
+existing menu/dialog dismissal. Double `Ctrl+g` (or macOS `Cmd+g`) is the consistent
+return-to-chat-normal command across composer and embedded surfaces. A single
+chord activates app commands in place for one second: `Ctrl+g 2` selects session
+2; `Ctrl+g Space e` opens the editor. Space renews the timeout; a command, Escape,
+unknown continuation, or ownership/session/surface change clears activation.
+New sessions explicitly enter composer insert mode.
 
 In normal mode Escape cancels a pending leader without a destructive action.
 If visual selection is implemented, Escape should clear it and stay in normal.
@@ -140,9 +145,10 @@ per-session cursor restoration, and existing mouse-selection regressions.
 
 ## 5. Embedded boundary and rollout
 
-Decision: reserve `Ctrl+g` everywhere and add `Cmd+g` on macOS. Both return to
-the chat pane in normal mode, not to an app mode over the embedded surface.
-They are intercepted before embedded/input action dispatch. Drafts, editor
+Decision: reserve `Ctrl+g` everywhere and add `Cmd+g` on macOS. Both activate
+one app command without changing the embedded owner; only a
+double chord returns to the chat pane in normal mode. Activation and all its
+continuations are intercepted before embedded/input action dispatch. Drafts, editor
 state, and terminal processes remain intact. Pending agent requests are not
 answered or cancelled by navigation. Ordinary Escape and Space inside either
 embedded surface remain untouched. Native Ctrl+g / Cmd+g behavior is deliberately

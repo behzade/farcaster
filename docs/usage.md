@@ -4,8 +4,17 @@
 
 ## Keyboard navigation
 
-`Ctrl+G` returns from any surface to **chat normal mode**. macOS also accepts
-`Cmd+G`. These are reserved by Farcaster, including in the terminal and Neovim.
+`Ctrl+G` activates app keybindings for **1 second**, without changing focus or
+leaving insert mode. macOS also accepts `Cmd+G`. These chords are reserved even
+inside Neovim and the terminal. Double `Ctrl+G` returns to **chat normal mode**.
+
+Activation is not the Space leader: `Ctrl+G 2` switches to session 2;
+`Ctrl+G Space e` opens the editor, and `Ctrl+G Space t` opens the terminal.
+All chat-normal commands below are available after activation. Space refreshes
+the one-second timeout. A command ends activation; Escape or an unknown key
+cancels it without forwarding that key to the input/editor/shell. Expiry does
+nothing and subsequent keys type normally. Session/surface/focus changes cancel
+pending activation. New sessions automatically focus the composer in insert mode.
 
 In chat normal:
 
@@ -27,7 +36,7 @@ own input and restore their return target when dismissed; an explicit action
 such as opening the editor can intentionally move focus. Tab navigation remains
 available for controls. Text fields and embedded tools keep their own keys.
 
-Composer Escape retains apply-steer / double-Escape-abort behavior. Use `Ctrl+G`
+Composer Escape retains apply-steer / double-Escape-abort behavior. Use double `Ctrl+G`
 to leave the composer instead. Visual selection is not implemented yet.
 
 Keyboard help lists these commands first and **Direct** shortcuts separately.

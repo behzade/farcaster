@@ -42,7 +42,7 @@ pub(super) fn render_help() -> impl IntoElement {
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
-                        .child("Ctrl+G returns to chat normal. Space begins a leader sequence. Composer and embedded tools keep their own typing keys."),
+                        .child("Ctrl+G activates app keys for 1 second; double Ctrl+G returns to chat normal. Space begins a leader sequence. Composer and embedded tools keep their own typing keys."),
                 ),
         );
     let mut current_section = String::new();

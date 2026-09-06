@@ -145,7 +145,8 @@ impl FarcasterApp {
             .gap(gpui::px(2.0))
             .child(surface_control(
                 "show-chat-surface",
-                "Chat composer (i / a in chat normal; Ctrl+G returns to chat normal)".to_owned(),
+                "Chat composer (i / a in chat normal; double Ctrl+G returns to chat normal)"
+                    .to_owned(),
                 harness_icon,
                 self.surface == AppSurface::Chat,
                 entity.clone(),

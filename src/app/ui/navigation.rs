@@ -1,5 +1,6 @@
-//! App navigation owns keys only at its explicit chat-normal focus target.
+//! Chat-normal navigation plus a one-shot, focus-preserving global activation.
 use gpui::{Context, FocusHandle, KeyDownEvent, Window};
+use std::time::{Duration, Instant};
 
 use crate::app::{AppSurface, FarcasterApp, PickerScope};
 
@@ -8,12 +9,86 @@ pub(crate) struct ChatNavigation {
     // Remember the chat owner across temporary focus and async session resets.
     pub normal_mode: bool,
     pub leader_pending: bool,
+    pub activation: Activation,
+    pub activation_focus: Option<FocusHandle>,
+    pub activation_blur: Option<gpui::Subscription>,
     pub return_shortcut: Option<gpui::Subscription>,
 }
 
 mod shortcuts;
 pub(crate) use shortcuts::{Command, command_key, help_shortcuts};
 use shortcuts::{Scroll, normal_command, transcript_scroll};
+
+const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
+
+#[derive(Default)]
+pub(crate) struct Activation {
+    deadline: Option<Instant>,
+    leader: bool,
+}
+
+#[derive(Debug, PartialEq)]
+enum ActivatedKey {
+    Pass,
+    Pending,
+    Cancel,
+    Return,
+    Command(Command),
+    Scroll(Scroll),
+}
+
+impl Activation {
+    pub(in crate::app) fn hint(&self) -> Option<&'static str> {
+        self.deadline
+            .filter(|deadline| Instant::now() < *deadline)
+            .map(|_| {
+                if self.leader {
+                    "APP · SPACE · e editor · t terminal · j/k sessions · Esc cancel"
+                } else {
+                    "APP · 0–9 sessions · Space commands · Ctrl+G normal · Esc cancel"
+                }
+            })
+    }
+
+    pub(in crate::app) fn clear(&mut self) {
+        self.deadline = None;
+        self.leader = false;
+    }
+
+    fn key(&mut self, key: &str, modifiers: gpui::Modifiers, now: Instant) -> ActivatedKey {
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.clear();
+        }
+        if is_return_chord(key, modifiers, cfg!(target_os = "macos")) {
+            if self.deadline.is_some() {
+                self.clear();
+                return ActivatedKey::Return;
+            }
+            self.deadline = Some(now + ACTIVATION_TIMEOUT);
+            return ActivatedKey::Pending;
+        }
+        if self.deadline.is_none() {
+            return ActivatedKey::Pass;
+        }
+        if !self.leader && key == "space" && !modifiers.modified() {
+            self.leader = true;
+            self.deadline = Some(now + ACTIVATION_TIMEOUT);
+            return ActivatedKey::Pending;
+        }
+        let leader = self.leader;
+        self.clear();
+        if let Some(scroll) = transcript_scroll(key, modifiers, leader) {
+            return ActivatedKey::Scroll(scroll);
+        }
+        if !modifiers.modified()
+            && let Some(command) = normal_command(key, leader)
+        {
+            return ActivatedKey::Command(command);
+        }
+        // Escape and unknown continuations cancel without leaking into a shell/input.
+        ActivatedKey::Cancel
+    }
+}
 
 fn is_return_chord(key: &str, modifiers: gpui::Modifiers, macos: bool) -> bool {
     key == "g"
@@ -40,21 +115,72 @@ impl FarcasterApp {
     ) {
         let entity = cx.entity().downgrade();
         let window_id = window.window_handle().window_id();
-        // Reserve the return chord before embedded views or input keymaps act.
+        // Intercept activation AND its continuations before embedded/input keymaps act.
         self.chat_navigation.return_shortcut =
             Some(cx.intercept_keystrokes(move |event, window, cx| {
-                if window.window_handle().window_id() == window_id
-                    && is_return_chord(
-                        &event.keystroke.key,
-                        event.keystroke.modifiers,
-                        cfg!(target_os = "macos"),
-                    )
-                {
-                    let _ = entity.update(cx, |this, cx| this.return_to_chat_normal(window, cx));
+                if window.window_handle().window_id() != window_id {
+                    return;
+                }
+                let consumed = entity
+                    .update(cx, |this, cx| {
+                        if this.chat_navigation.activation_focus != window.focused(cx) {
+                            this.chat_navigation.activation.clear();
+                        }
+                        let result = this.chat_navigation.activation.key(
+                            &event.keystroke.key,
+                            event.keystroke.modifiers,
+                            Instant::now(),
+                        );
+                        match result {
+                            ActivatedKey::Pass => return false,
+                            ActivatedKey::Pending => {
+                                this.chat_navigation.leader_pending = false;
+                                this.chat_navigation.activation_focus = window.focused(cx);
+                                this.chat_navigation.activation_blur =
+                                    this.chat_navigation.activation_focus.clone().map(|focus| {
+                                        cx.on_blur(&focus, window, |this, _, cx| {
+                                            this.chat_navigation.activation.clear();
+                                            this.notify_composer(cx);
+                                        })
+                                    });
+                                let deadline = this.chat_navigation.activation.deadline;
+                                cx.spawn(async move |weak, cx| {
+                                    cx.background_executor().timer(ACTIVATION_TIMEOUT).await;
+                                    let _ = weak.update(cx, |this, cx| {
+                                        if this.chat_navigation.activation.deadline == deadline {
+                                            this.chat_navigation.activation.clear();
+                                            this.notify_composer(cx);
+                                        }
+                                    });
+                                })
+                                .detach();
+                            }
+                            ActivatedKey::Return => this.return_to_chat_normal(window, cx),
+                            ActivatedKey::Command(command) => {
+                                this.execute_navigation_command(command, false, window, cx);
+                            }
+                            ActivatedKey::Scroll(scroll) => {
+                                this.scroll_transcript(scroll, window, cx)
+                            }
+                            ActivatedKey::Cancel => {}
+                        }
+                        this.notify_composer(cx);
+                        true
+                    })
+                    .unwrap_or(false);
+                if consumed {
                     window.prevent_default();
                     cx.stop_propagation();
                 }
             }));
+        cx.observe_window_activation(window, |this, window, cx| {
+            if !window.is_window_active() {
+                this.chat_navigation.activation.clear();
+                this.chat_navigation.leader_pending = false;
+                this.notify_composer(cx);
+            }
+        })
+        .detach();
         for (focus, normal_mode) in [
             (&self.chat_navigation.focus, true),
             (&self.composer_focus, false),
@@ -79,6 +205,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.chat_navigation.activation.clear();
         self.chat_navigation.normal_mode = true;
         self.chat_navigation.leader_pending = false;
         if self.image_preview.is_some() {
@@ -146,12 +273,7 @@ impl FarcasterApp {
         if let Some(scroll) = transcript_scroll(key, modifiers, self.chat_navigation.leader_pending)
         {
             self.chat_navigation.leader_pending = false;
-            let list = &self.transcript_view.read(cx).list;
-            let distance = match scroll {
-                Scroll::Lines(lines) => super::theme::THEME.type_scale.line_reading * lines,
-                Scroll::Pages(pages) => list.viewport_height() * pages,
-            };
-            list.scroll_by(distance, window, self.transcript_view.entity_id());
+            self.scroll_transcript(scroll, window, cx);
             window.prevent_default();
             cx.stop_propagation();
             self.notify_composer(cx);
@@ -172,24 +294,7 @@ impl FarcasterApp {
         if !pending && key == "space" {
             self.chat_navigation.leader_pending = true;
         } else if let Some(command) = normal_command(key, pending) {
-            match command {
-                Command::Composer => self.show_chat_surface(window, cx),
-                Command::Editor => self.show_editor_surface(window, cx),
-                Command::Terminal => self.show_terminal_surface(window, cx),
-                Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),
-                Command::RelativeSession(direction) => {
-                    self.switch_relative_session(direction, window, cx);
-                    self.return_to_chat_normal(window, cx);
-                }
-                Command::Session(number) => {
-                    if number == 0 {
-                        self.switch_to_first_unsubmitted_draft(window, cx);
-                    } else {
-                        self.switch_to_session_number(number, window, cx);
-                    }
-                    self.return_to_chat_normal(window, cx);
-                }
-            }
+            self.execute_navigation_command(command, true, window, cx);
         }
         // Unknown continuations and Escape cancel; never replay into a new owner.
         // Tab remains available for deliberate accessible focus traversal.
@@ -199,11 +304,129 @@ impl FarcasterApp {
         }
         self.notify_composer(cx);
     }
+
+    fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
+        let list = &self.transcript_view.read(cx).list;
+        let distance = match scroll {
+            Scroll::Lines(lines) => super::theme::THEME.type_scale.line_reading * lines,
+            Scroll::Pages(pages) => list.viewport_height() * pages,
+        };
+        list.scroll_by(distance, window, self.transcript_view.entity_id());
+    }
+
+    fn execute_navigation_command(
+        &mut self,
+        command: Command,
+        normal: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            Command::Composer => self.show_chat_surface(window, cx),
+            Command::Editor => self.show_editor_surface(window, cx),
+            Command::Terminal => self.show_terminal_surface(window, cx),
+            Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),
+            Command::RelativeSession(direction) => {
+                self.switch_relative_session(direction, window, cx);
+                if normal {
+                    self.return_to_chat_normal(window, cx);
+                }
+            }
+            Command::Session(number) => {
+                if number == 0 {
+                    self.switch_to_first_unsubmitted_draft(window, cx);
+                } else {
+                    self.switch_to_session_number(number, window, cx);
+                }
+                if normal {
+                    self.return_to_chat_normal(window, cx);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn activated(state: &mut Activation, key: &str, now: Instant) -> ActivatedKey {
+        let stroke = gpui::Keystroke::parse(key).unwrap();
+        state.key(&stroke.key, stroke.modifiers, now)
+    }
+
+    #[test]
+    fn activation_is_not_a_leader_and_only_double_g_returns() {
+        let now = Instant::now();
+        let mut state = Activation::default();
+        assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
+        assert_eq!(
+            activated(&mut state, "2", now),
+            ActivatedKey::Command(Command::Session(2))
+        );
+        assert_eq!(activated(&mut state, "2", now), ActivatedKey::Pass);
+        assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
+        assert_eq!(activated(&mut state, "e", now), ActivatedKey::Cancel);
+        assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
+        assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Return);
+        assert!(state.deadline.is_none());
+    }
+
+    #[test]
+    fn activation_routes_full_leader_sequences_and_refreshes_timeout() {
+        let now = Instant::now();
+        for (key, command) in [
+            ("e", Command::Editor),
+            ("t", Command::Terminal),
+            ("j", Command::RelativeSession(1)),
+            ("k", Command::RelativeSession(-1)),
+        ] {
+            let mut state = Activation::default();
+            assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
+            assert_eq!(
+                activated(&mut state, "space", now + Duration::from_millis(900)),
+                ActivatedKey::Pending
+            );
+            assert_eq!(
+                activated(&mut state, key, now + Duration::from_millis(1500)),
+                ActivatedKey::Command(command)
+            );
+            assert_eq!(
+                activated(&mut state, key, now + Duration::from_millis(1600)),
+                ActivatedKey::Pass
+            );
+        }
+    }
+
+    #[test]
+    fn timeout_cancellation_and_modified_keys_do_not_leak() {
+        let now = Instant::now();
+        let mut state = Activation::default();
+        activated(&mut state, "ctrl-g", now);
+        assert_eq!(
+            activated(&mut state, "2", now + ACTIVATION_TIMEOUT),
+            ActivatedKey::Pass
+        );
+        activated(&mut state, "ctrl-g", now);
+        assert_eq!(
+            activated(&mut state, "ctrl-g", now + ACTIVATION_TIMEOUT),
+            ActivatedKey::Pending
+        );
+        for key in ["escape", "ctrl-2", "z"] {
+            state.clear();
+            activated(&mut state, "ctrl-g", now);
+            assert_eq!(activated(&mut state, key, now), ActivatedKey::Cancel);
+            assert_eq!(activated(&mut state, "i", now), ActivatedKey::Pass);
+        }
+        activated(&mut state, "ctrl-g", now);
+        assert_eq!(
+            activated(&mut state, "ctrl-f", now),
+            ActivatedKey::Scroll(Scroll::Pages(1.0))
+        );
+        activated(&mut state, "ctrl-g", now);
+        state.clear(); // session/surface change
+        assert_eq!(activated(&mut state, "2", now), ActivatedKey::Pass);
+    }
 
     #[test]
     fn scrolling_respects_leader_and_exact_modifiers() {

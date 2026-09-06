@@ -4,10 +4,20 @@ Resume from WIP commit `06c370a` (`feat(ui): WIP focus ownership and navigation 
 Design and current bindings: [keyboard-plan.md](keyboard-plan.md).
 User-facing behavior: [usage.md](usage.md#keyboard-navigation).
 
+## Revised activation contract
+
+The current user correction supersedes the original single-chord return design.
+`Ctrl+g` (macOS alias `Cmd+g`) activates app keys for one second without moving
+focus. A second chord returns to chat normal. `Ctrl+g 2` selects session 2;
+`Ctrl+g Space e/t/j/k` runs the existing leader command from any input or embedded
+surface. Space renews the timeout; completion, Escape, unknown continuation,
+or session/surface/focus change cancels activation. Expiry leaves the owner
+untouched. New-session creation explicitly enters composer insert mode.
+
 ## User decisions — keep these
 
-- `Ctrl+g` everywhere, plus `Cmd+g` on macOS: return to **chat normal**, even
-  from Neovim/terminal. Preserve drafts and running processes.
+- `Ctrl+g` everywhere, plus `Cmd+g` on macOS: activate app keys without moving
+  focus; double chord returns to **chat normal**. Preserve drafts and processes.
 - `i` and `a` both focus composer, retaining draft/caret.
 - **Bare** `0–9` switches sessions; not Space-number. `0` is the first
   unsubmitted draft. `/` searches sessions.
@@ -15,7 +25,7 @@ User-facing behavior: [usage.md](usage.md#keyboard-navigation).
 - Bare `j/k` scrolls; Ctrl `f/b` pages; Ctrl `d/u` half-pages. These belong only
   to chat normal. No transcript cursor or visual selection yet.
 - Composer Escape **keeps** existing steer/double-Escape-abort behavior.
-  Do not turn it into exit-to-normal; Ctrl+g does that.
+  Do not turn it into exit-to-normal; double Ctrl+g does that.
 - Incidental pointer controls should activate without taking keyboard ownership.
   Menus/dialogs temporarily own input and restore the previous owner. Preserve
   deliberate Tab navigation and intentional focus changes such as opening an editor.
@@ -75,6 +85,15 @@ The latest WIP addresses focus ownership and shortcut presentation:
 
 Do not implement visual selection or change composer Escape as part of this
 cleanup. Keep backend-neutral navigation outside Pi-specific adapters.
+
+## Validation of revised activation
+
+- `cargo test --bin farcaster app::ui::navigation::tests`: 7 passed.
+- `cargo test --bin farcaster app::ui::`: 32 passed.
+- `cargo check --bin farcaster` and `git diff --check`: passed.
+- Changed Rust files formatted directly with rustfmt; `cargo fmt --all` is
+  blocked by the missing vendored `crates/util/Cargo.toml` workspace member.
+- Real Neovim/terminal routing and new-session focus still need manual UI testing.
 
 ## Validation already run
 
