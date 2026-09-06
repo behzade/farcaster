@@ -75,7 +75,7 @@ impl Supervisor {
                     return true;
                 }
                 let next = command_target(&command);
-                if let Some((requested_key, project)) = next {
+                if let Some((requested_key, project, harness)) = next {
                     let _selection_timing = is_view_only_selection(&command).then(|| {
                         crate::app::infrastructure::performance::Timing::new("switch.runtime_route")
                     });
@@ -114,10 +114,11 @@ impl Supervisor {
                             project,
                             self.process_command.clone(),
                             false,
+                            harness,
                             self.supervisor_thread.clone(),
                         )
                     });
-                    if target_command_needs_actor_message(view_only, resident_snapshot.as_deref()) {
+                    if target_command_needs_actor_message(&command, resident_snapshot.as_deref()) {
                         send_configured_command(actor, command, &self.configurations);
                     }
                     if let Some(mut snapshot) = resident_snapshot {

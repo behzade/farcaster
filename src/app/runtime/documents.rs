@@ -43,6 +43,7 @@ pub(super) fn reconcile_live_session_documents(
                 session.project.clone(),
                 process_command.clone(),
                 false,
+                session.harness.clone(),
                 supervisor.clone(),
             )
         });
@@ -50,6 +51,7 @@ pub(super) fn reconcile_live_session_documents(
         actor.send(RuntimeCommand::RefreshSessionDocument {
             path: session.path.clone(),
             project: session.project.clone(),
+            harness: session.harness.clone(),
         });
     }
 

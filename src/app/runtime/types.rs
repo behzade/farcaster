@@ -71,6 +71,7 @@ pub(crate) enum RuntimeCommand {
     RefreshSessionDocument {
         path: PathBuf,
         project: PathBuf,
+        harness: String,
     },
     SetModel(Model),
     SetThinking(String),

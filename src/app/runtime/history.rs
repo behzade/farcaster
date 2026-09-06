@@ -83,7 +83,34 @@ impl RuntimeOwner {
             }
             return;
         }
+        self.bind_history_selection(path.clone(), project.clone());
         self.refresh_history(path, project, HistoryLoadKind::Selection);
+    }
+
+    pub(super) fn bind_external_session_identity(&mut self, path: &std::path::Path) {
+        if let Some((harness, session_id)) = agents::external_session_identity(path) {
+            self.harness = harness.into();
+            self.session_id = Some(session_id);
+        }
+    }
+
+    fn bind_history_selection(&mut self, path: PathBuf, project: PathBuf) {
+        self.bind_external_session_identity(&path);
+        if self.parked_snapshot.is_none()
+            && self.snapshot.selected_session.as_deref() != Some(path.as_path())
+            && (self.process.is_some()
+                || self.active_session.is_some()
+                || !self.snapshot.conversation.items.is_empty())
+        {
+            self.parked_snapshot = Some(self.snapshot.clone());
+        }
+        self.project = project.clone();
+        self.snapshot.project = project;
+        self.snapshot.selected_session = Some(path);
+        self.snapshot.status = "Loading history".into();
+        self.snapshot.conversation = Default::default();
+        self.transcript_changed_from = Some(0);
+        self.publish();
     }
 
     pub(super) fn refresh_session_document(&mut self, path: PathBuf, project: PathBuf) {
@@ -197,12 +224,16 @@ impl RuntimeOwner {
             self.start_pending_document_refresh();
             return;
         }
+        self.bind_external_session_identity(&result.path);
         let refreshing_visible_history = result.kind == HistoryLoadKind::DocumentRefresh
             && self.snapshot.history_preview
             && self.snapshot.selected_session.as_ref() == Some(&result.path);
         let mut history = match result.result {
             Ok(history) => history,
             Err(error) => {
+                self.project = result.project.clone();
+                self.snapshot.project = result.project;
+                self.snapshot.selected_session = Some(result.path);
                 self.snapshot.status = "Could not load history".into();
                 conversation_mut(&mut self.snapshot).push_local_error("History unavailable", error);
                 self.publish();

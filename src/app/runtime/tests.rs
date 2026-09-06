@@ -716,20 +716,42 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
 
 #[test]
 fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
+    let path = PathBuf::from("/sessions/one.jsonl");
+    let select = |harness: &str| RuntimeCommand::SelectSession {
+        path: path.clone(),
+        harness: harness.into(),
+        session_id: "one".into(),
+        project: PathBuf::from("/project"),
+    };
     let history = RuntimeSnapshot {
         connected: false,
         history_preview: true,
+        harness: "pi".into(),
         ..RuntimeSnapshot::default()
     };
-    let disconnected = RuntimeSnapshot::default();
 
-    assert!(!target_command_needs_actor_message(true, Some(&history)));
-    assert!(target_command_needs_actor_message(
-        true,
-        Some(&disconnected)
+    assert!(!target_command_needs_actor_message(
+        &select("pi"),
+        Some(&history)
     ));
-    assert!(target_command_needs_actor_message(true, None));
-    assert!(target_command_needs_actor_message(false, Some(&history)));
+    assert!(target_command_needs_actor_message(
+        &select("cursor-cli"),
+        Some(&history)
+    ));
+    assert!(target_command_needs_actor_message(&select("pi"), None));
+    assert!(target_command_needs_actor_message(
+        &select("pi"),
+        Some(&RuntimeSnapshot::default())
+    ));
+    assert!(target_command_needs_actor_message(
+        &RuntimeCommand::RestartSession {
+            path,
+            harness: "pi".into(),
+            session_id: "one".into(),
+            project: PathBuf::from("/project"),
+        },
+        Some(&history)
+    ));
 }
 
 #[test]
@@ -1996,6 +2018,48 @@ fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn prompt_before_history_loads_resumes_the_selected_session() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let session = PathBuf::from("/sessions/cursor-historical");
+    let project = temp.path().to_path_buf();
+    let (mut owner, events, _discovery) = owner_without_process(project.clone());
+    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+
+    owner.apply_command(RuntimeCommand::SelectSession {
+        path: session.clone(),
+        harness: "cursor-cli".into(),
+        session_id: "cursor-historical".into(),
+        project: project.clone(),
+    });
+
+    assert_eq!(owner.snapshot.selected_session, Some(session.clone()));
+    assert!(
+        events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::Snapshot { snapshot, .. }
+                if snapshot.selected_session.as_deref() == Some(session.as_path())
+                    && snapshot.conversation.items.is_empty()
+        )),
+        "selecting a historical session should bind it before history arrives"
+    );
+
+    owner.send_prompt(
+        format!("session:{}", session.display()),
+        PromptMode::Normal,
+        "continue".into(),
+        Vec::new(),
+        true,
+    );
+
+    assert_eq!(
+        owner.active_session,
+        Some(session),
+        "a prompt sent before history arrives must resume the selected session"
+    );
+    Ok(())
+}
+
+#[test]
 fn selecting_from_an_idle_session_does_not_start_pi() {
     let old_project = PathBuf::from("/old-project");
     let new_project = PathBuf::from("/new-project");
@@ -2421,7 +2485,12 @@ fn external_writes_refresh_only_resident_history_documents() {
 
     assert_eq!(
         changed_external_documents(&latest, &[external.clone(), live]),
-        vec![("external".into(), external, PathBuf::from("/project"))]
+        vec![(
+            "external".into(),
+            external,
+            PathBuf::from("/project"),
+            String::new(),
+        )]
     );
 }
 

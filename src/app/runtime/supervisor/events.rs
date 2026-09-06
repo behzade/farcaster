@@ -236,9 +236,15 @@ impl Supervisor {
                 }
             }
             RuntimeEvent::SessionFilesModified { paths } if key == self.catalog_key => {
-                for (actor_key, path, project) in changed_external_documents(&self.latest, &paths) {
+                for (actor_key, path, project, harness) in
+                    changed_external_documents(&self.latest, &paths)
+                {
                     if let Some(actor) = self.actors.get(&actor_key) {
-                        actor.send(RuntimeCommand::RefreshSessionDocument { path, project });
+                        actor.send(RuntimeCommand::RefreshSessionDocument {
+                            path,
+                            project,
+                            harness,
+                        });
                     }
                 }
                 let refresh = self.activity_tracker.observe_files(

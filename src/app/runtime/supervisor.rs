@@ -168,6 +168,7 @@ impl SessionRuntimeHandle {
         project: PathBuf,
         process_command: AgentLaunchConfig,
         load_catalog: bool,
+        harness: String,
         supervisor: thread::Thread,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
@@ -178,8 +179,17 @@ impl SessionRuntimeHandle {
         };
         let handle = thread::Builder::new()
             .name("farcaster-session".into())
-            .spawn(move || run(project, process_command, command_rx, event_tx, load_catalog))
-            .expect("start Pi session runtime");
+            .spawn(move || {
+                run(
+                    project,
+                    process_command,
+                    command_rx,
+                    event_tx,
+                    load_catalog,
+                    harness,
+                )
+            })
+            .expect("start session runtime");
         Self {
             commands,
             events,
@@ -235,7 +245,7 @@ pub(super) fn rpc_owned_session_paths(
 pub(super) fn changed_external_documents(
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
     paths: &[PathBuf],
-) -> Vec<(String, PathBuf, PathBuf)> {
+) -> Vec<(String, PathBuf, PathBuf, String)> {
     latest
         .iter()
         .filter_map(|(key, snapshot)| {
@@ -249,7 +259,12 @@ pub(super) fn changed_external_documents(
             {
                 None
             } else {
-                Some((key.clone(), path.clone(), snapshot.project.clone()))
+                Some((
+                    key.clone(),
+                    path.clone(),
+                    snapshot.project.clone(),
+                    snapshot.harness.clone(),
+                ))
             }
         })
         .collect()
@@ -434,6 +449,9 @@ impl Supervisor {
         let initial_key = format!("draft:{draft_id}");
         let catalog_key = "catalog".to_owned();
         let initial_project = project.clone();
+        let initial_command =
+            initial_draft_command(draft_id, initial_project.clone(), initial_session.clone());
+        let initial_harness = session_actor_harness(&initial_command);
         let mut actors = HashMap::from([
             (
                 catalog_key.clone(),
@@ -441,6 +459,7 @@ impl Supervisor {
                     project.clone(),
                     process_command.clone(),
                     true,
+                    String::new(),
                     supervisor_thread.clone(),
                 ),
             ),
@@ -450,12 +469,11 @@ impl Supervisor {
                     project,
                     process_command.clone(),
                     false,
+                    initial_harness,
                     supervisor_thread.clone(),
                 ),
             ),
         ]);
-        let initial_command =
-            initial_draft_command(draft_id, initial_project.clone(), initial_session.clone());
         let selected = initial_key.clone();
         let generation = 0_u64;
         let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
@@ -524,6 +542,7 @@ impl Supervisor {
                         prompt.project.clone(),
                         process_command.clone(),
                         false,
+                        prompt.harness.clone(),
                         supervisor_thread.clone(),
                     )
                 });
@@ -631,19 +650,52 @@ pub(super) fn route_session_discovery(
     }
 }
 
-fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf)> {
+fn session_actor_harness(command: &RuntimeCommand) -> String {
+    command_target(command)
+        .map(|(_, _, harness)| harness)
+        .expect("session actors spawn from a harnessed command")
+}
+
+fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, String)> {
     match command {
-        RuntimeCommand::NewSession { id, project, .. }
-        | RuntimeCommand::ResumeDraft { id, project, .. } => {
-            Some((format!("draft:{id}"), project.clone()))
+        RuntimeCommand::NewSession {
+            id,
+            project,
+            harness,
+            ..
         }
-        RuntimeCommand::ForkSession { path, project, .. } => {
-            Some((format!("fork:{}", path.display()), project.clone()))
+        | RuntimeCommand::ResumeDraft {
+            id,
+            project,
+            harness,
+            ..
+        } => Some((format!("draft:{id}"), project.clone(), harness.clone())),
+        RuntimeCommand::ForkSession {
+            path,
+            project,
+            harness,
+            ..
+        } => Some((
+            format!("fork:{}", path.display()),
+            project.clone(),
+            harness.clone(),
+        )),
+        RuntimeCommand::SelectSession {
+            path,
+            project,
+            harness,
+            ..
         }
-        RuntimeCommand::SelectSession { path, project, .. }
-        | RuntimeCommand::RestartSession { path, project, .. } => {
-            Some((format!("session:{}", path.display()), project.clone()))
-        }
+        | RuntimeCommand::RestartSession {
+            path,
+            project,
+            harness,
+            ..
+        } => Some((
+            format!("session:{}", path.display()),
+            project.clone(),
+            harness.clone(),
+        )),
         _ => None,
     }
 }
@@ -653,12 +705,18 @@ pub(super) fn is_view_only_selection(command: &RuntimeCommand) -> bool {
 }
 
 pub(super) fn target_command_needs_actor_message(
-    view_only: bool,
+    command: &RuntimeCommand,
     resident: Option<&RuntimeSnapshot>,
 ) -> bool {
-    !view_only
-        || resident.is_none()
-        || resident.is_some_and(|snapshot| !snapshot.connected && !snapshot.history_preview)
+    let Some(snapshot) = resident else {
+        return true;
+    };
+    match command {
+        RuntimeCommand::SelectSession { harness, .. } => {
+            snapshot.harness != *harness || (!snapshot.connected && !snapshot.history_preview)
+        }
+        _ => true,
+    }
 }
 
 pub(super) fn actor_key_for_command(
@@ -678,4 +736,41 @@ pub(super) fn actor_key_for_command(
                 || snapshot.selected_session.as_deref() == Some(path.as_path())
         })
         .map_or_else(|| requested_key.to_owned(), |(key, _)| key.clone())
+}
+
+#[cfg(test)]
+mod harness_birth_tests {
+    use std::{
+        path::PathBuf,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use super::*;
+
+    #[test]
+    fn session_actor_publishes_the_harness_it_was_born_with() {
+        let actor = SessionRuntimeHandle::spawn(
+            PathBuf::from("/project"),
+            AgentLaunchConfig::default(),
+            false,
+            "cursor-cli".into(),
+            thread::current(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut harness = None;
+        while Instant::now() < deadline {
+            while let Ok(event) = actor.events.try_recv() {
+                if let RuntimeEvent::Snapshot { snapshot, .. } = event {
+                    harness = Some(snapshot.harness.clone());
+                }
+            }
+            if harness.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        actor.send(RuntimeCommand::Shutdown);
+        assert_eq!(harness.as_deref(), Some("cursor-cli"));
+    }
 }

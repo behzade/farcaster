@@ -424,6 +424,7 @@ impl RuntimeOwner {
 
     pub(super) fn publish(&mut self) {
         crate::app::infrastructure::performance::count_snapshot();
+        self.snapshot.harness.clone_from(&self.harness);
         self.snapshot.access_mode = self
             .access_mode_changes
             .requested_mode(self.process_command.access_mode);

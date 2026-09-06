@@ -6,6 +6,7 @@ pub(super) fn run(
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: SessionEventSender,
     load_catalog: bool,
+    harness: String,
 ) {
     let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
@@ -26,13 +27,14 @@ pub(super) fn run(
     };
     let mut owner = RuntimeOwner {
         project: project.clone(),
-        harness: "pi".into(),
+        harness: harness.clone(),
         session_id: None,
         process_command,
         process: None,
         snapshot: RuntimeSnapshot {
             status: "Done".into(),
             project,
+            harness,
             auto_retry: true,
             ..RuntimeSnapshot::default()
         },

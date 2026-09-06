@@ -108,7 +108,15 @@ impl RuntimeOwner {
                 self.session_id = Some(session_id);
                 self.start_process(Some(path));
             }
-            RuntimeCommand::RefreshSessionDocument { path, project } => {
+            RuntimeCommand::RefreshSessionDocument {
+                path,
+                project,
+                harness,
+            } => {
+                if !harness.is_empty() {
+                    self.harness = harness;
+                }
+                self.bind_external_session_identity(&path);
                 self.refresh_session_document(path, project)
             }
             RuntimeCommand::SetModel(model) => self.set_model(model),
