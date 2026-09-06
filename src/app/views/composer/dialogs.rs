@@ -5,7 +5,7 @@ mod text_input;
 use gpui::{
     AnyElement, ElementId, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
     ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, div,
+    WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::text::TextView;
 
@@ -17,13 +17,12 @@ use crate::{
     protocol::ExtensionUiRequest,
 };
 
+#[cfg(not(test))]
+use select::dialog_number_selection;
 #[cfg(test)]
 pub(super) use select::{
-    choice_copy, default_dialog_selection, dialog_copy, dialog_number_selection,
-    numbered_dialog_choice,
+    choice_copy, dialog_copy, dialog_number_selection, numbered_dialog_choice,
 };
-#[cfg(not(test))]
-use select::{default_dialog_selection, dialog_number_selection};
 
 impl FarcasterApp {
     pub(in crate::app::views) fn render_composer_request(
@@ -102,14 +101,18 @@ impl FarcasterApp {
             .track_focus(&self.dialog_focus)
             .key_context(OVERLAY_KEY_CONTEXT)
             .capture_key_down(move |event: &KeyDownEvent, window, cx| {
-                if event.keystroke.modifiers.modified() || !key_focus.is_focused(window) {
+                if event.keystroke.modifiers.modified() || !key_focus.contains_focused(window, cx) {
                     return;
                 }
-                let selection = if event.keystroke.key == "enter" {
-                    default_dialog_selection(&keyboard_dialog)
-                } else {
-                    dialog_number_selection(&keyboard_dialog, &event.keystroke.key)
-                };
+                // Select choices require an explicit number, never implicit approval.
+                if matches!(keyboard_dialog, ExtensionUiRequest::Select { .. })
+                    && matches!(event.keystroke.key.as_str(), "enter" | "space" | " ")
+                {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    return;
+                }
+                let selection = dialog_number_selection(&keyboard_dialog, &event.keystroke.key);
                 if let Some((id, value)) = selection {
                     let id = id.to_owned();
                     let value = value.to_owned();
@@ -139,24 +142,38 @@ impl FarcasterApp {
                     ),
             )
             .child(div().px(THEME.space.md).pb(THEME.space.sm).child(body))
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .px(THEME.space.md)
-                    .pb(THEME.space.sm)
-                    .child(button(
-                        "dialog-cancel",
-                        "Cancel",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ = cancel_button_entity
-                                .update(cx, |this, cx| this.cancel_dialog(window, cx));
-                        },
-                    )),
-            )
+            .when(show_cancel_button(dialog), |body| {
+                body.child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .px(THEME.space.md)
+                        .pb(THEME.space.sm)
+                        .child(button(
+                            "dialog-cancel",
+                            "Cancel",
+                            ButtonTone::Quiet,
+                            true,
+                            move |window, cx| {
+                                let _ = cancel_button_entity
+                                    .update(cx, |this, cx| this.cancel_dialog(window, cx));
+                            },
+                        )),
+                )
+            })
             .into_any_element()
+    }
+}
+
+fn show_cancel_button(dialog: &ExtensionUiRequest) -> bool {
+    match dialog {
+        ExtensionUiRequest::Confirm { .. } => false,
+        ExtensionUiRequest::Select { options, .. } => !options.iter().any(|option| {
+            ["deny", "reject", "cancel", "no"]
+                .iter()
+                .any(|label| option.trim().eq_ignore_ascii_case(label))
+        }),
+        _ => true,
     }
 }
 
@@ -182,4 +199,40 @@ pub(super) fn plain_text_html(text: &str) -> SharedString {
         }
     }
     escaped.into()
+}
+
+#[cfg(test)]
+mod cancel_button_tests {
+    use super::*;
+
+    #[test]
+    fn cancel_is_shown_only_without_a_refusal_choice() {
+        for (label, show_cancel) in [
+            ("Deny", false),
+            ("Reject", false),
+            ("Cancel", false),
+            ("No", false),
+            (" deny ", false),
+            ("Other", true),
+        ] {
+            let request = ExtensionUiRequest::Select {
+                id: "request".into(),
+                title: "Run command?".into(),
+                options: vec!["Accept".into(), label.into()],
+                timeout: None,
+            };
+            assert_eq!(show_cancel_button(&request), show_cancel, "{label}");
+        }
+    }
+
+    #[test]
+    fn confirmation_has_its_own_refusal() {
+        let request = ExtensionUiRequest::Confirm {
+            id: "request".into(),
+            title: "Run command?".into(),
+            message: String::new(),
+            timeout: None,
+        };
+        assert!(!show_cancel_button(&request));
+    }
 }

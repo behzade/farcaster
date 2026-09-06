@@ -43,6 +43,7 @@ impl SelectRequestView {
 
 impl RenderOnce for SelectRequestView {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let has_number_shortcuts = !self.options.is_empty();
         let choices = self
             .options
             .into_iter()
@@ -83,6 +84,14 @@ impl RenderOnce for SelectRequestView {
                     .gap(THEME.space.xs)
                     .children(choices),
             )
+            .when(has_number_shortcuts, |body| {
+                body.child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child("Press a number key to choose."),
+                )
+            })
     }
 }
 
@@ -176,18 +185,7 @@ pub(in crate::app::views::composer) fn choice_copy(
 }
 
 pub(in crate::app::views::composer) fn numbered_dialog_choice(index: usize, value: &str) -> String {
-    format!("{}. {value}", index + 1)
-}
-
-pub(in crate::app::views::composer) fn default_dialog_selection(
-    request: &ExtensionUiRequest,
-) -> Option<(&str, &str)> {
-    match request {
-        ExtensionUiRequest::Select { id, options, .. } => {
-            options.first().map(|option| (id.as_str(), option.as_str()))
-        }
-        _ => None,
-    }
+    format!("[{}] {value}", index + 1)
 }
 
 pub(in crate::app::views::composer) fn dialog_number_selection<'a>(

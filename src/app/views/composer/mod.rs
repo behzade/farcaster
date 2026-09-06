@@ -22,8 +22,7 @@ use crate::{
 
 #[cfg(test)]
 use dialogs::{
-    choice_copy, default_dialog_selection, dialog_copy, dialog_number_selection,
-    numbered_dialog_choice, plain_text_html,
+    choice_copy, dialog_copy, dialog_number_selection, numbered_dialog_choice, plain_text_html,
 };
 #[cfg(test)]
 use queue::{QueuedMessageKind, queued_message_groups, queued_message_preview};
