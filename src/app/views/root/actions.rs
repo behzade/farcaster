@@ -101,8 +101,8 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             this.send(crate::runtime::RuntimeCommand::Abort, cx);
         }
     }))
-    .on_action(cx.listener(|this, _: &ComposerEscape, _, cx| {
-        this.handle_composer_escape(cx);
+    .on_action(cx.listener(|this, _: &ComposerEscape, window, cx| {
+        this.handle_composer_escape(window, cx);
     }))
     .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
         if this.surface == AppSurface::Editor {

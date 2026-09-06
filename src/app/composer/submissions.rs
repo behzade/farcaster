@@ -162,7 +162,16 @@ impl FarcasterApp {
         )
     }
 
-    pub(crate) fn handle_composer_escape(&mut self, cx: &mut gpui::Context<Self>) {
+    pub(crate) fn handle_composer_escape(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.snapshot.conversation.running {
+            self.composer_escape_armed = None;
+            self.return_to_chat_normal(window, cx);
+            return;
+        }
         let (abort, arm) = composer_escape(
             self.snapshot.conversation.running,
             !self.snapshot.conversation.queue.steering.is_empty(),
@@ -446,6 +455,10 @@ mod tests {
         let armed = (one.to_owned(), t0);
 
         assert_eq!(composer_escape(false, true, one, None, t0), (false, None));
+        assert_eq!(
+            composer_escape(false, false, one, Some(&armed), within),
+            (false, None)
+        );
         assert_eq!(
             composer_escape(true, true, one, Some(&armed), t0),
             (true, None)

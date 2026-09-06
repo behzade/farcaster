@@ -60,7 +60,7 @@ pub(in crate::app::views) fn render(
                         .p(THEME.space.md)
                         .child(setting_label(
                             "Chat normal mode",
-                            "Ctrl+G activates app keys for 1 second without moving focus (Cmd+G also works on macOS). Double Ctrl+G returns to chat normal. Use i/a to compose, e/t for editor/terminal, 0–9 for sessions, / to search, gg/G for transcript top/end, and Space j/k for session navigation. Escape keeps its composer behavior.",
+                            "Ctrl+G activates app keys for 1 second without moving focus (Cmd+G also works on macOS). Double Ctrl+G returns to chat normal. Use i/a to compose, e/t for editor/terminal, 0–9 for sessions, / to search, gg/G for transcript top/end, and Space j/k for session navigation. Escape returns to normal when idle; while running, it applies queued steer or double-Escape aborts.",
                         ))
                         .child(modifier_setting(
                             app.settings_application_modifier,

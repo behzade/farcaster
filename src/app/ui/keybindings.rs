@@ -374,7 +374,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
         application_shortcut!("Run", "Abort current run", ".", AbortRun),
         shortcut!(
             "Run",
-            "Apply queued steer, double-Esc aborts",
+            "Normal when idle; apply steer, double-Esc aborts",
             "escape",
             ComposerEscape,
             Some("FarcasterComposer > Input")

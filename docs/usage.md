@@ -44,8 +44,9 @@ own input and restore their return target when dismissed; an explicit action
 such as opening the editor can intentionally move focus. Tab navigation remains
 available for controls. Text fields and embedded tools keep their own keys.
 
-Composer Escape retains apply-steer / double-Escape-abort behavior. Use double `Ctrl+G`
-to leave the composer instead.
+Composer Escape returns to chat normal when idle; while a run is active, it applies
+queued steer / double-Escape aborts. Double `Ctrl+G` leaves the composer even during a run.
+Empty sessions stay in the composer because there is no transcript to navigate.
 
 ### Transcript selection
 
