@@ -107,6 +107,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             provider: launch.provider,
             model: launch.model,
             effort: launch.effort,
+            effort_catalog: HashMap::new(),
             access_mode: self.command.access_mode,
             incoming,
             reasoning_started: false,
@@ -228,6 +229,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             provider: None,
             model: None,
             effort: None,
+            effort_catalog: effort_catalog(&metadata),
             access_mode: command.access_mode,
             incoming,
             reasoning_started: false,
@@ -401,6 +403,45 @@ fn model_variant_efforts(model: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Per-model effort catalogs from main-session metadata. Only models that
+/// advertised their variants are inserted; known-empty catalogs are preserved
+/// because sending any variant to such a model bricks the session.
+fn effort_catalog(
+    metadata: &crate::modules::agents::adapter::main_session::MainSessionMetadata,
+) -> HashMap<(String, String), Vec<String>> {
+    metadata
+        .models
+        .iter()
+        .filter_map(|model| {
+            let provider = model.get("provider")?.as_str()?;
+            let id = model.get("id")?.as_str()?;
+            let efforts = model
+                .get("efforts")?
+                .as_array()?
+                .iter()
+                .filter_map(|effort| effort.as_str())
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            Some(((provider.to_owned(), id.to_owned()), efforts))
+        })
+        .collect()
+}
+
+/// The variant to send for a model, or None when the effort must not be sent.
+/// A stored effort is only forwarded when the target model is known to accept
+/// it; OpenCode persists unknown variants and then fails every prompt with
+/// "Variant unavailable", so an unvalidated effort must never be sent.
+fn variant_for_model(effort: Option<&str>, known: Option<&Vec<String>>) -> Option<String> {
+    let effort = effort?;
+    match known {
+        Some(efforts) => efforts
+            .iter()
+            .any(|candidate| candidate == effort)
+            .then(|| effort.to_owned()),
+        None => Some(effort.to_owned()),
+    }
+}
+
 #[derive(Default)]
 struct ActiveOpenCodeTool {
     name: String,
@@ -427,6 +468,7 @@ struct OpenCodeWorkerSession {
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    effort_catalog: HashMap<(String, String), Vec<String>>,
     access_mode: crate::agents::HarnessAccessMode,
     incoming: mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>,
     reasoning_started: bool,
@@ -1070,15 +1112,17 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
+        let known = self.effort_catalog.get(&(provider.to_owned(), model.to_owned()));
+        let variant = variant_for_model(self.effort.as_deref(), known);
         self.caller_identity.select_model(provider, model);
-        self.server.client().select_model(
-            &self.session_id,
-            provider,
-            model,
-            self.effort.as_deref(),
-        )?;
+        self.server
+            .client()
+            .select_model(&self.session_id, provider, model, variant.as_deref())?;
         self.provider = Some(provider.to_owned());
         self.model = Some(model.to_owned());
+        if variant.is_none() {
+            self.effort = None;
+        }
         Ok(())
     }
 
@@ -1520,6 +1564,54 @@ mod tests {
             })),
             ["low", "high"]
         );
+    }
+
+    #[test]
+    fn an_effort_unknown_to_the_target_model_is_never_sent_as_a_variant() {
+        let efforts = vec!["low".to_owned(), "medium".to_owned()];
+        // A Pi-style display default must not leak into OpenCode model selection.
+        assert_eq!(variant_for_model(Some("off"), Some(&efforts)), None);
+        assert_eq!(variant_for_model(Some("off"), None), Some("off".into()));
+        assert_eq!(variant_for_model(None, Some(&efforts)), None);
+        // A stale effort from a previous model is dropped when the new model
+        // publishes its variants; unknown catalogs keep current behavior.
+        assert_eq!(variant_for_model(Some("high"), Some(&efforts)), None);
+        assert_eq!(variant_for_model(Some("low"), Some(&efforts)), Some("low".into()));
+        assert_eq!(variant_for_model(Some("low"), None), Some("low".into()));
+    }
+
+    #[test]
+    fn effort_catalog_preserves_known_empty_models_and_skips_unknown_ones() {
+        let metadata = crate::modules::agents::adapter::main_session::MainSessionMetadata {
+            models: vec![
+                json!({
+                    "id": "kimi-k2.6",
+                    "provider": "opencode",
+                    "efforts": [],
+                }),
+                json!({
+                    "id": "gpt-5.4",
+                    "provider": "opencode",
+                    "efforts": ["none", "low", "high"],
+                }),
+                json!({
+                    "id": "legacy",
+                    "provider": "opencode",
+                }),
+            ],
+            ..Default::default()
+        };
+
+        let catalog = effort_catalog(&metadata);
+        assert_eq!(
+            catalog.get(&("opencode".to_owned(), "kimi-k2.6".to_owned())),
+            Some(&Vec::<String>::new())
+        );
+        assert_eq!(
+            catalog.get(&("opencode".to_owned(), "gpt-5.4".to_owned())),
+            Some(&vec!["none".to_owned(), "low".to_owned(), "high".to_owned()])
+        );
+        assert!(!catalog.contains_key(&("opencode".to_owned(), "legacy".to_owned())));
     }
 
     #[test]

@@ -50,7 +50,8 @@ impl RuntimeSnapshot {
         let effort = self
             .session
             .as_ref()
-            .map(|session| session.thinking_level.as_str())
+            .and_then(|session| session.thinking_level.as_deref())
+            .filter(|level| !level.is_empty())
             .or(self.prefill_thinking_level.as_deref());
         SessionIdentity {
             provider: model.map(|model| model.provider.as_str()),
@@ -229,8 +230,11 @@ impl HarnessConfigurationStore {
             });
             // A display default such as "off" is not a selectable setting when
             // the backend has no reasoning-effort control.
-            let effort = crate::agents::supports_reasoning_effort(&snapshot.harness)
-                .then(|| session.thinking_level.clone());
+            let effort = session
+                .thinking_level
+                .clone()
+                .filter(|level| !level.is_empty())
+                .filter(|_| crate::agents::supports_reasoning_effort(&snapshot.harness));
             let changed = model
                 .as_ref()
                 .is_some_and(|model| identity.model.as_ref() != Some(model))

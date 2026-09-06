@@ -27,7 +27,8 @@ pub(crate) struct BackgroundJob {
 pub(crate) struct SessionState {
     #[serde(default)]
     pub model: Option<Model>,
-    pub thinking_level: String,
+    #[serde(default)]
+    pub thinking_level: Option<String>,
     pub is_streaming: bool,
     pub is_compacting: bool,
     #[serde(default)]

@@ -45,7 +45,7 @@ pub(super) struct WorkerSessionTransport {
     assistant_message: AssistantMessage,
     observed_text: String,
     model: Option<(String, String)>,
-    effort: String,
+    effort: Option<String>,
     metadata: MainSessionMetadata,
     history: Option<Vec<Value>>,
     selected_mode: Option<String>,
@@ -98,11 +98,13 @@ impl WorkerSessionTransport {
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
             model,
+            // Report only a level that was actually picked or restored; a display
+            // default such as Pi's "off" is not valid for every backend.
             effort: history
                 .as_ref()
                 .and_then(|history| history.thinking_level.clone())
-                .or_else(|| metadata.efforts.first().cloned())
-                .unwrap_or_else(|| "off".into()),
+                .filter(|level| !level.is_empty())
+                .or_else(|| metadata.efforts.first().cloned()),
             metadata,
             history: history.map(|history| history.messages),
             selected_mode,
@@ -174,7 +176,7 @@ impl WorkerSessionTransport {
         });
         json!({
             "model": model,
-            "thinkingLevel": self.effort,
+            "thinkingLevel": self.effort.clone(),
             "isStreaming": self.running,
             "isCompacting": false,
             "sessionFile": self.path.to_string_lossy(),
@@ -576,7 +578,7 @@ impl SessionTransport for WorkerSessionTransport {
             }
             SessionCommand::SelectReasoning { level } => {
                 self.worker.select_effort(&level)?;
-                self.effort = level;
+                self.effort = Some(level);
                 self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::SelectMode { mode } => {
@@ -1026,6 +1028,35 @@ mod tests {
         assert_eq!(response.data["messageCount"], 1);
         assert_eq!(response.data["model"]["id"], "gpt-test");
         assert_eq!(response.data["thinkingLevel"], "high");
+    }
+
+    #[test]
+    fn a_new_transport_without_a_picked_effort_reports_no_level() {
+        let metadata = MainSessionMetadata {
+            models: vec![json!({
+                "id": "gpt-test",
+                "provider": "openai",
+                "reasoning": true,
+            })],
+            ..MainSessionMetadata::default()
+        };
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "opencode2",
+            "thread-1".into(),
+            Box::new(IdleWorker),
+            metadata,
+            None,
+        )
+        .expect("transport");
+
+        transport
+            .send(SessionCommand::LoadState)
+            .expect("load state");
+        let SessionEvent::Response(response) = transport.poll().expect("state response") else {
+            panic!("expected state response");
+        };
+        assert_eq!(response.data["thinkingLevel"], Value::Null);
     }
 
     #[test]

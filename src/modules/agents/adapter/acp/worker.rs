@@ -105,7 +105,11 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 model,
             )?;
         }
-        if let Some(effort) = launch.effort.as_deref() {
+        // A persisted route effort can outlive the agent's advertised options;
+        // skip it instead of failing the whole worker launch.
+        if let Some(effort) = launch.effort.as_deref()
+            && session.config_ids.effort.is_some()
+        {
             session.select_effort(effort)?;
         }
         caller_identity.bind(session.session_id.clone());
