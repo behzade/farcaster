@@ -6,7 +6,7 @@ use gpui::{
 use super::WorkGraphBoardView;
 use crate::{
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback},
-    app::ui::theme::THEME,
+    app::ui::theme::{MONO_FONT_FAMILY, THEME},
     app::views::workgraph::{
         components::{
             detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
@@ -21,65 +21,42 @@ fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> im
     div()
         .flex()
         .flex_col()
-        .gap(THEME.space.md)
+        .gap(THEME.space.sm)
         .child(
             div()
                 .flex()
                 .items_center()
-                .justify_between()
                 .gap(THEME.space.sm)
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.muted)
                 .child(
                     div()
-                        .flex()
-                        .items_center()
-                        .gap(THEME.space.xs)
-                        .when(current, |status| {
-                            status
-                                .child(div().size(px(8.0)).rounded_full().bg(THEME.colors.accent))
-                                .child(
-                                    div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(THEME.colors.accent)
-                                        .child("CURRENT"),
-                                )
-                        }),
+                        .font_family(MONO_FONT_FAMILY)
+                        .child(format!("#{:02}", node.number)),
                 )
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.muted)
-                        .child(format!(
-                            "NODE {}{}",
-                            node.number,
-                            if leaf { " · LEAF" } else { "" }
-                        )),
-                ),
+                .when(current, |meta| {
+                    meta.child(
+                        div()
+                            .px(THEME.space.xs)
+                            .rounded(THEME.radius)
+                            .bg(THEME.colors.session_selection)
+                            .text_color(THEME.colors.accent)
+                            .child("Current"),
+                    )
+                })
+                .when(leaf, |meta| meta.child("End of branch")),
         )
         .child(
             div()
-                .flex()
-                .flex_col()
-                .gap(THEME.space.xs)
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.display)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .line_height(THEME.type_scale.line_composer)
-                        .child(node.title.clone()),
-                )
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(requirement_label(node.completion)),
-                ),
+                .text_size(THEME.type_scale.display)
+                .font_weight(FontWeight::SEMIBOLD)
+                .line_height(THEME.type_scale.line_composer)
+                .child(node.title.clone()),
         )
 }
 
 fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
-    detail_section("ACCEPTANCE").child(
+    detail_section("Acceptance").child(
         detail_copy()
             .text_color(if node.acceptance.is_empty() {
                 THEME.colors.subtle
@@ -95,20 +72,29 @@ fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
 }
 
 fn render_scoped_paths(node: &workgraph::Node) -> impl IntoElement {
-    detail_section("SCOPED PATHS")
-        .when(node.files.is_empty(), |section| {
-            section.child(detail_empty("No paths recorded."))
-        })
-        .children(node.files.iter().map(|path| {
-            div()
-                .text_size(THEME.type_scale.body_small)
-                .text_color(THEME.colors.code)
-                .child(path.clone())
-        }))
+    detail_section("Scoped paths").children(node.files.iter().map(|path| {
+        div()
+            .text_size(THEME.type_scale.body_small)
+            .font_family(MONO_FONT_FAMILY)
+            .text_color(THEME.colors.code)
+            .child(path.clone())
+    }))
 }
 
-fn render_outcome(outcome: Option<&workgraph::WalkStep>, current: bool) -> impl IntoElement {
-    detail_section("OUTCOME")
+fn render_outcome(
+    completion: workgraph::CompletionRequirement,
+    outcome: Option<&workgraph::WalkStep>,
+    current: bool,
+) -> impl IntoElement {
+    detail_section("Outcome")
+        .p(THEME.space.sm)
+        .border_l(px(2.0))
+        .border_color(if current {
+            THEME.colors.accent
+        } else {
+            THEME.colors.border
+        })
+        .bg(THEME.colors.surface)
         .when_some(outcome, |section, step| {
             section
                 .child(detail_copy().child(step.outcome.note.clone()))
@@ -124,44 +110,48 @@ fn render_outcome(outcome: Option<&workgraph::WalkStep>, current: bool) -> impl 
                 )
         })
         .when(outcome.is_none(), |section| {
-            section.child(detail_empty(if current {
-                "Record one concise outcome to advance."
-            } else {
-                "This state has not been reached on the active walk."
-            }))
+            section
+                .child(detail_empty(if current {
+                    "Awaiting an outcome to advance."
+                } else {
+                    "Not reached on this walk."
+                }))
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.muted)
+                        .child(format!("Evidence: {}", requirement_label(completion))),
+                )
         })
 }
 
 fn render_successors(
     successors: Vec<workgraph::Node>,
-    add_successor: Entity<WorkGraphBoardView>,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
+    let add_successor = entity.clone();
     let leaf = successors.is_empty();
-    detail_section("NEXT STATES")
+    detail_section("Next")
         .when(leaf, |section| {
-            section.child(detail_empty("Leaf — completing this node ends the branch"))
+            section.child(detail_empty("Completing this node ends the branch."))
         })
         .children(successors.into_iter().map(|successor| {
             let number = successor.number;
             let entity = entity.clone();
-            div()
-                .id(format!("workgraph-successor-{number}"))
-                .cursor_pointer()
-                .rounded(THEME.radius)
-                .px(THEME.space.xs)
-                .py(THEME.space.xs)
-                .hover(|row| row.bg(THEME.colors.hover))
-                .on_click(move |_, _, cx| {
+            button(
+                format!("workgraph-successor-{number}"),
+                format!("#{}  {} →", number, successor.title),
+                ButtonTone::Quiet,
+                true,
+                move |_, cx| {
                     entity.update(cx, |this, cx| this.select_node(number, cx));
-                })
-                .text_size(THEME.type_scale.body_small)
-                .child(successor.title)
+                },
+            )
         }))
         .child(detail_action(button(
             "workgraph-detail-add-successor",
             "Add successor",
-            ButtonTone::Quiet,
+            ButtonTone::Neutral,
             true,
             move |window, cx| {
                 add_successor.update(cx, |this, cx| this.start_create(window, cx));
@@ -192,9 +182,10 @@ impl WorkGraphBoardView {
             .flex_none()
             .h_full()
             .overflow_y_scroll()
-            .p(THEME.space.md)
+            .px(THEME.space.md)
+            .py(THEME.space.sm)
             .bg(THEME.colors.panel)
-            .when(!external, |detail| {
+            .when(!external && !narrow, |detail| {
                 detail
                     .border_l(THEME.border)
                     .border_color(THEME.colors.border)
@@ -239,32 +230,22 @@ impl WorkGraphBoardView {
                         }
                         _ => None,
                     };
-                    let back = entity.clone();
-                    let add_successor = entity.clone();
                     let leaf = successors.is_empty();
                     div()
                         .flex()
                         .flex_col()
                         .gap(THEME.space.md)
-                        .when(narrow, |detail| {
-                            detail.child(detail_action(button(
-                                "workgraph-detail-back",
-                                "Back to plan",
-                                ButtonTone::Quiet,
-                                true,
-                                move |_, cx| {
-                                    back.update(cx, |this, cx| this.clear_selection(cx));
-                                },
-                            )))
-                        })
+                        .w_full()
+                        .max_w(px(620.0))
+                        .mx_auto()
                         .child(render_node_identity(node, current, leaf))
-                        .child(detail_rule())
                         .child(render_acceptance(node))
-                        .child(render_scoped_paths(node))
+                        .when(!node.files.is_empty(), |detail| {
+                            detail.child(render_scoped_paths(node))
+                        })
+                        .child(render_outcome(node.completion, outcome, current))
                         .child(detail_rule())
-                        .child(render_outcome(outcome, current))
-                        .child(detail_rule())
-                        .child(render_successors(successors, add_successor, entity))
+                        .child(render_successors(successors, entity))
                         .when_some(session_action, |detail, action| {
                             detail.child(detail_action(action))
                         })

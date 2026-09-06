@@ -373,8 +373,9 @@ fn render_board_header(
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let refresh = entity.clone();
+    let back = entity.clone();
     div()
-        .h(px(52.0))
+        .h(px(40.0))
         .flex_none()
         .px(THEME.space.md)
         .flex()
@@ -382,13 +383,23 @@ fn render_board_header(
         .justify_between()
         .border_b(THEME.border)
         .border_color(THEME.colors.border)
-        .child(
+        .child(if show_create {
             div()
                 .min_w_0()
                 .text_size(THEME.type_scale.body)
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(plan_title.to_owned()),
-        )
+                .child(plan_title.to_owned())
+                .into_any_element()
+        } else {
+            button(
+                "workgraph-detail-back",
+                "← Back to plan",
+                ButtonTone::Quiet,
+                true,
+                move |_, cx| back.update(cx, |this, cx| this.clear_selection(cx)),
+            )
+            .into_any_element()
+        })
         .child(
             div()
                 .flex()
