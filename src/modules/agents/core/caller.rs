@@ -419,6 +419,14 @@ impl CallerIdentity {
         &self.token
     }
 
+    /// Public diagnostic identity, available before the native session binds.
+    /// Never expose the caller's authorization token in process metadata.
+    pub(crate) fn worker_identity(&self) -> Option<(String, String)> {
+        let callers = self.registry.callers.lock().ok()?;
+        let caller = callers.get(&self.token)?;
+        Some((caller.worker_id.clone(), caller.worker_name.clone()))
+    }
+
     pub(crate) fn bind(&self, session_locator: impl Into<String>) {
         let session_locator = session_locator.into();
         let mut changed = false;
@@ -554,6 +562,19 @@ mod tests {
             },
             None,
         )
+    }
+
+    #[test]
+    fn process_metadata_identity_is_available_before_session_binding() {
+        let registry = CallerRegistry::default();
+        let caller = identity(&registry, Path::new("/project"), "pi");
+        let (id, name) = caller.worker_identity().expect("launch identity");
+        assert!(id.starts_with("worker-"));
+        assert_ne!(id, caller.token());
+        assert!(!name.is_empty());
+        caller.bind("native-session");
+        let context = context(&registry, &caller);
+        assert_eq!((id, name), (context.worker_id, context.worker_name));
     }
 
     fn context(registry: &CallerRegistry, identity: &CallerIdentity) -> CallerContext {

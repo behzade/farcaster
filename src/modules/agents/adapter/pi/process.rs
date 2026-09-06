@@ -1,5 +1,8 @@
 //! One owned Pi RPC child process with strict framing and correlation.
 
+#[path = "process_metadata.rs"]
+mod metadata;
+
 use std::{
     collections::{HashMap, VecDeque},
     fs::OpenOptions,
@@ -70,6 +73,7 @@ enum ReaderItem {
     Eof,
 }
 
+#[derive(Clone, Copy)]
 enum SessionLaunch<'a> {
     Catalog,
     New,
@@ -230,6 +234,7 @@ impl PiRpcProcess {
             model: None,
             effort: None,
         };
+        let is_worker = worker.is_some();
         let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
         let parent_session = parent
             .as_ref()
@@ -255,6 +260,15 @@ impl PiRpcProcess {
             launch,
             mcp_config.as_ref().map(TransientMcpConfig::path),
         )?;
+        metadata::apply(
+            &mut prepared,
+            project,
+            &launch,
+            is_worker,
+            caller_identity.worker_identity().as_ref(),
+            parent.as_ref().map(|(id, _)| id.as_str()),
+            parent_session.as_deref(),
+        );
         let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
