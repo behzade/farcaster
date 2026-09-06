@@ -25,7 +25,7 @@ pub(crate) use core::{
     WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerJudgment, WorkerLaunch,
     WorkerPool, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerTaskDefinition,
     WorkerTasks, WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt_with_presentation,
-    fail_prompt, has_queued_prompts_for, queued_prompts,
+    fail_prompt, has_queued_prompts_for, is_child_input_id, queued_prompts,
 };
 
 #[cfg(test)]

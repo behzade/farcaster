@@ -122,6 +122,7 @@ pub(super) fn run(
                 SnapshotChange::Immediate => immediate_snapshot_change = true,
             }
         }
+        owner.publish_child_inputs();
         owner.apply_queued_access_mode_change();
         if immediate_snapshot_change
             || stream_publish_due.is_some_and(|deadline| Instant::now() >= deadline)

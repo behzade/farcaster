@@ -73,6 +73,7 @@ const MAX_FAILURE_SUMMARY_CHARS: usize = 240;
 
 mod supervisor;
 mod types;
+mod worker_inputs;
 
 #[cfg(test)]
 use documents::reconcile_live_session_documents;

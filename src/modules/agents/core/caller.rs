@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{super::contract::PeerMessage, names, worker::WorkerActivityState};
 
+mod inputs;
+pub(crate) use inputs::is_child_input_id;
+
 /// Farcaster ancestry is independent of backend-native thread/session ancestry.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkerFamilyLink {
@@ -30,6 +33,7 @@ pub(crate) type WorkerFamilySink =
 pub(crate) struct CallerRegistry {
     callers: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
     family_sink: Arc<Mutex<Option<WorkerFamilySink>>>,
+    inputs: Arc<Mutex<Vec<inputs::PendingInput>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

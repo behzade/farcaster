@@ -117,6 +117,9 @@ impl RuntimeOwner {
             RuntimeCommand::SetAccessMode(mode) => self.set_access_mode(mode),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ExtensionResponse(response) => {
+                if self.respond_to_child_input(&response) {
+                    return;
+                }
                 if let Some(process) = self.process.as_mut()
                     && let Err(error) = process.respond(response)
                 {

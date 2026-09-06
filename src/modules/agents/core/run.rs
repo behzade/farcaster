@@ -38,7 +38,9 @@ fn run(
     parent: Option<WorkerParent>,
     updates: &async_channel::Sender<()>,
 ) {
-    loop {
+    let (responses, response_rx) = mpsc::channel::<crate::agents::WorkerInputResponse>();
+    let mut input_leases = Vec::new();
+    let error = 'run: loop {
         match commands.recv_timeout(POLL_INTERVAL) {
             Ok(RunCommand::Stop) => {
                 let _ = session.abort();
@@ -57,12 +59,33 @@ fn run(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
+        while let Ok(response) = response_rx.try_recv() {
+            let id = response.id.clone();
+            if let Err(error) = session.respond(response) {
+                break 'run error;
+            }
+            input_leases.retain(|(input_id, _)| input_id != &id);
+            update(&snapshot, |current| {
+                if current
+                    .pending_input
+                    .as_ref()
+                    .is_some_and(|input| input.id == id)
+                {
+                    current.pending_input = None;
+                }
+                if input_leases.is_empty() {
+                    current.status = WorkerStatus::Running;
+                }
+            });
+            notify(updates);
+        }
         while let Some(event) = session.poll() {
             match event {
                 WorkerEvent::Started => update(&snapshot, |current| {
                     current.status = WorkerStatus::Running;
                 }),
                 WorkerEvent::Settled { output } => {
+                    input_leases.clear();
                     slot.release();
                     update(&snapshot, |current| {
                         current.status = WorkerStatus::Idle;
@@ -79,6 +102,16 @@ fn run(
                     notify(updates);
                 }
                 WorkerEvent::NeedsInput(input) => {
+                    if let Some(parent) = &parent {
+                        match super::CallerRegistry::shared().request_child_input(
+                            parent,
+                            input.clone(),
+                            responses.clone(),
+                        ) {
+                            Ok(lease) => input_leases.push((input.id.clone(), lease)),
+                            Err(error) => break 'run error,
+                        }
+                    }
                     update(&snapshot, |current| {
                         current.status = WorkerStatus::NeedsInput;
                         current.pending_input = Some(input);
@@ -86,18 +119,16 @@ fn run(
                     notify(updates);
                 }
                 WorkerEvent::Activity(_) => {}
-                WorkerEvent::Failed(error) => {
-                    let error = close_failed(&mut *session, &snapshot, error);
-                    slot.release();
-                    if let Some(parent) = &parent {
-                        parent.report_failure(&error);
-                    }
-                    notify(updates);
-                    return;
-                }
+                WorkerEvent::Failed(error) => break 'run error,
             }
         }
+    };
+    let error = close_failed(&mut *session, &snapshot, error);
+    slot.release();
+    if let Some(parent) = &parent {
+        parent.report_failure(&error);
     }
+    notify(updates);
 }
 
 fn notify(updates: &async_channel::Sender<()>) {

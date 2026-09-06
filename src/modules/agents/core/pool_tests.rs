@@ -15,11 +15,13 @@ struct FakeFactory {
     slots: Mutex<Vec<super::WorkerSlot>>,
     sends: Mutex<Vec<Arc<Mutex<Vec<WorkerSendMode>>>>>,
     events: Mutex<Vec<mpsc::Sender<WorkerEvent>>>,
+    responses: Arc<Mutex<Vec<WorkerInputResponse>>>,
 }
 
 struct FakeSession {
     events: mpsc::Receiver<WorkerEvent>,
     sent: Arc<Mutex<Vec<WorkerSendMode>>>,
+    responses: Arc<Mutex<Vec<WorkerInputResponse>>>,
 }
 
 impl WorkerSessionFactory for FakeFactory {
@@ -43,6 +45,7 @@ impl WorkerSessionFactory for FakeFactory {
         Ok(Box::new(FakeSession {
             events: receiver,
             sent,
+            responses: self.responses.clone(),
         }))
     }
 }
@@ -56,7 +59,11 @@ impl WorkerSession for FakeSession {
         Ok(())
     }
 
-    fn respond(&mut self, _response: WorkerInputResponse) -> Result<(), String> {
+    fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
+        self.responses
+            .lock()
+            .map_err(|_| "responses")?
+            .push(response);
         Ok(())
     }
 
@@ -270,5 +277,60 @@ fn failure_releases_capacity_and_notifies_parent_without_a_child_registration() 
     assert_eq!(report.message, "Worker failed: connection lost");
     assert!(parent.try_recv().is_none());
     assert!(pool.start(request(project.path())).is_ok());
+    Ok(())
+}
+
+#[test]
+fn child_input_reaches_parent_and_answer_returns_to_worker() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, updates) = pool(factory.clone(), project.path(), 1)?;
+    let registry = CallerRegistry::shared();
+    let parent = registry.issue(
+        project.path(),
+        CallerProfile {
+            backend: "parent-backend".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.bind("input-parent");
+    let context = registry.resolve(parent.token())?;
+    let mut child_request = request(project.path());
+    child_request.parent_worker_id = Some(context.worker_id);
+    pool.start(child_request)?;
+    wait_for_update(&updates)?;
+    factory.events.lock().map_err(|_| "events")?[0]
+        .send(WorkerEvent::NeedsInput(crate::agents::WorkerInput {
+            id: "original".into(),
+            prompt: "Which?".into(),
+            options: vec!["A".into(), "B".into()],
+            secret: false,
+        }))
+        .map_err(|_| "send event")?;
+    wait_for_update(&updates)?;
+    let inputs = registry.take_child_inputs(&context.project, "parent-backend", "input-parent");
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].options, ["A", "B"]);
+    assert!(
+        parent.try_recv().is_none(),
+        "questions must go to the user, not the parent model"
+    );
+    registry.respond_to_child_input(WorkerInputResponse {
+        id: inputs[0].id.clone(),
+        value: Some("B".into()),
+        cancel: false,
+    })?;
+    wait_for_update(&updates)?;
+    assert_eq!(
+        *factory.responses.lock().map_err(|_| "responses")?,
+        vec![WorkerInputResponse {
+            id: "original".into(),
+            value: Some("B".into()),
+            cancel: false,
+        }]
+    );
     Ok(())
 }

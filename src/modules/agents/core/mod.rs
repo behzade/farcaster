@@ -16,6 +16,7 @@ pub(crate) use worker_tasks::{
 
 pub(crate) use caller::{
     CallerContext, CallerIdentity, CallerProfile, CallerRegistry, WorkerFamilyLink,
+    is_child_input_id,
 };
 pub(crate) use concurrency::WorkerSlot;
 pub(crate) use pool::WorkerPool;

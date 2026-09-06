@@ -8,11 +8,14 @@ impl Supervisor {
                 if self.handle_session_family_command(&command) {
                     return true;
                 }
-                if matches!(&command, RuntimeCommand::ExtensionResponse(_)) {
+                if let RuntimeCommand::ExtensionResponse(response) = &command {
+                    let id = match response {
+                        ExtensionUiResponse::Value { id, .. }
+                        | ExtensionUiResponse::Confirmed { id, .. }
+                        | ExtensionUiResponse::Cancelled { id, .. } => id,
+                    };
                     if let Some(dialogs) = self.active_dialogs.get_mut(&self.selected) {
-                        if !dialogs.is_empty() {
-                            dialogs.remove(0);
-                        }
+                        dialogs.retain(|request| request.dialog_id() != Some(id.as_str()));
                         if dialogs.is_empty() {
                             self.active_dialogs.remove(&self.selected);
                             self.needs_input.remove(&self.selected);
@@ -29,7 +32,15 @@ impl Supervisor {
                         &mut self.published_statuses,
                         &self.selected,
                         session,
-                        "Working",
+                        if self.needs_input.contains(&self.selected) {
+                            "Needs input"
+                        } else if agents::is_child_input_id(id) {
+                            self.latest
+                                .get(&self.selected)
+                                .map_or("Done", |snapshot| semantic_status(snapshot))
+                        } else {
+                            "Working"
+                        },
                     );
                 }
                 if let RuntimeCommand::SetAppProxy(proxy) = &command {
