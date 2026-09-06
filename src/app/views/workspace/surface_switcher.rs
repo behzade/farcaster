@@ -155,7 +155,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-editor-surface",
                 format!(
-                    "Neovim ({} in chat normal)",
+                    "Neovim ({})",
                     crate::app::ui::navigation::command_key(
                         crate::app::ui::navigation::Command::Editor
                     )
@@ -168,7 +168,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-terminal-surface",
                 format!(
-                    "Terminal ({} in chat normal)",
+                    "Terminal ({})",
                     crate::app::ui::navigation::command_key(
                         crate::app::ui::navigation::Command::Terminal
                     )

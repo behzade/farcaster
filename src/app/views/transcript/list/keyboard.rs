@@ -3,6 +3,8 @@
 use super::*;
 use unicode_segmentation::UnicodeSegmentation as _;
 
+mod motions;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum KeyboardCommand {
     Left,
@@ -11,6 +13,40 @@ pub(crate) enum KeyboardCommand {
     Down,
     WordForward,
     WordBackward,
+    WordEnd,
+    BigWordForward,
+    BigWordBackward,
+    BigWordEnd,
+    PreviousWordEnd(bool),
+    LineStart,
+    FirstNonblank,
+    LineEnd,
+    LastNonblank,
+    ScreenUp,
+    ScreenDown,
+    ScreenStart,
+    ScreenEnd,
+    ScreenFirst,
+    FirstLine(isize),
+    Paragraph(bool),
+    Sentence(bool),
+    MatchBracket,
+    Find {
+        character: char,
+        forward: bool,
+        till: bool,
+    },
+    RepeatFind(bool),
+    Viewport(u8),
+    Align(u8),
+    SearchStart(bool),
+    SearchChar(char),
+    SearchBackspace,
+    SearchAccept,
+    SearchCancel,
+    SearchNext(bool),
+    SearchWord(bool),
+    SwapAnchor,
     Start,
     End,
     Page(f32),
@@ -130,10 +166,17 @@ pub(super) struct Keyboard {
     anchor: Option<Position>,
     linewise: bool,
     preferred_x: Option<Pixels>,
+    preferred_column: Option<usize>,
+    alignment: Option<u8>,
     geometry_dirty: bool,
     recent_motion: bool,
     caret_timeout: Option<gpui::Task<()>>,
     pending: std::collections::VecDeque<KeyboardCommand>,
+    last_find: Option<(char, bool, bool)>,
+    search: String,
+    search_forward: bool,
+    search_whole_word: bool,
+    search_draft: Option<(String, bool)>,
     cache: BTreeMap<usize, TextRow>,
 }
 
@@ -154,6 +197,7 @@ impl Keyboard {
     pub(super) fn cancel_selection(&mut self) -> bool {
         let changed = self.anchor.take().is_some() || !self.pending.is_empty();
         self.pending.clear();
+        self.search_draft = None;
         changed
     }
 
@@ -199,6 +243,7 @@ impl Keyboard {
             self.clear_geometry();
             self.cursor = None;
             self.preferred_x = None;
+            self.preferred_column = None;
             self.recent_motion = false;
             self.caret_timeout = None;
         }
@@ -219,6 +264,7 @@ impl Keyboard {
             self.cursor = None;
             self.anchor = None;
             self.preferred_x = None;
+            self.preferred_column = None;
             self.geometry_dirty = true;
         }
     }
@@ -284,13 +330,34 @@ impl Keyboard {
         count: usize,
         load: &mut impl FnMut(usize) -> TextRow,
     ) -> Position {
+        self.vertical_line(pos, forward, false, count, load)
+    }
+
+    fn vertical_line(
+        &mut self,
+        pos: Position,
+        forward: bool,
+        display: bool,
+        count: usize,
+        load: &mut impl FnMut(usize) -> TextRow,
+    ) -> Position {
         let x = *self
             .preferred_x
             .get_or_insert(self.cache[&pos.row].cells[pos.cell].bounds.left());
         let row = self.row(pos.row, load);
-        let line = row.line_range(pos.cell);
+        let line = row.motion_line(pos.cell, display);
+        let column = pos.cell.saturating_sub(line.start);
         let next = if forward {
-            line.end
+            if !display
+                && row
+                    .cells
+                    .get(line.end)
+                    .is_some_and(|cell| cell.text == "\n")
+            {
+                line.end + 1
+            } else {
+                line.end
+            }
         } else {
             line.start.saturating_sub(1)
         };
@@ -304,9 +371,15 @@ impl Keyboard {
                 .and_then(|row| self.boundary(row, false, count, load))
         };
         let Some(target) = target else { return pos };
+        let column = *self.preferred_column.get_or_insert(column);
         let row = self.row(target.row, load);
+        let line = row.motion_line(target.cell, display);
         Position {
-            cell: row.nearest_column(row.line_range(target.cell), x),
+            cell: if display {
+                row.nearest_column(line, x)
+            } else {
+                (line.start + column).min(line.end - 1)
+            },
             ..target
         }
     }
@@ -318,53 +391,7 @@ impl Keyboard {
         count: usize,
         load: &mut impl FnMut(usize) -> TextRow,
     ) -> Position {
-        let class = |cell: &Cell| {
-            if cell.text.chars().all(char::is_whitespace) {
-                0
-            } else if cell.text.chars().any(|c| c.is_alphanumeric() || c == '_') {
-                1
-            } else {
-                2
-            }
-        };
-        let mut current = pos;
-        if forward {
-            let initial = class(&self.row(current.row, load).cells[current.cell]);
-            while let Some(next) = self.adjacent(current, true, count, load) {
-                let next_class = class(&self.row(next.row, load).cells[next.cell]);
-                if next.row != current.row || next_class != initial {
-                    current = next;
-                    break;
-                }
-                current = next;
-            }
-            while class(&self.row(current.row, load).cells[current.cell]) == 0 {
-                let Some(next) = self.adjacent(current, true, count, load) else {
-                    break;
-                };
-                current = next;
-            }
-        } else {
-            if let Some(previous) = self.adjacent(current, false, count, load) {
-                current = previous;
-            }
-            while class(&self.row(current.row, load).cells[current.cell]) == 0 {
-                let Some(previous) = self.adjacent(current, false, count, load) else {
-                    break;
-                };
-                current = previous;
-            }
-            let initial = class(&self.row(current.row, load).cells[current.cell]);
-            while let Some(previous) = self.adjacent(current, false, count, load) {
-                if previous.row != current.row
-                    || class(&self.row(previous.row, load).cells[previous.cell]) != initial
-                {
-                    break;
-                }
-                current = previous;
-            }
-        }
-        current
+        self.word_motion(pos, forward, false, false, count, load)
     }
 
     /// Resolve queued commands against lazily measured rows. Clipboard and
@@ -374,6 +401,7 @@ impl Keyboard {
         count: usize,
         viewport_height: Pixels,
         mut resume_tail: bool,
+        viewport: [ListOffset; 3],
         load: &mut impl FnMut(usize) -> TextRow,
     ) -> (Option<String>, bool, bool) {
         let mut copied = None;
@@ -382,11 +410,78 @@ impl Keyboard {
             let Some(pos) = self.cursor else { break };
             use KeyboardCommand::*;
             let next = match command {
-                Left | Right => self
-                    .adjacent(pos, command == Right, count, load)
-                    .unwrap_or(pos),
+                Left | Right => {
+                    let line = self.row(pos.row, load).motion_line(pos.cell, false);
+                    Position {
+                        cell: if command == Right {
+                            (pos.cell + 1).min(line.end - 1)
+                        } else {
+                            pos.cell.saturating_sub(1).max(line.start)
+                        },
+                        ..pos
+                    }
+                }
                 Up | Down => self.vertical(pos, command == Down, count, load),
                 WordForward | WordBackward => self.word(pos, command == WordForward, count, load),
+                ScreenUp | ScreenDown => {
+                    self.vertical_line(pos, command == ScreenDown, true, count, load)
+                }
+                Viewport(which) => self
+                    .viewport_position(viewport[which as usize], count, load)
+                    .unwrap_or(pos),
+                Align(which) => {
+                    self.alignment = Some(which);
+                    pos
+                }
+                SwapAnchor => {
+                    if let Some(anchor) = self.anchor.replace(pos) {
+                        anchor
+                    } else {
+                        self.anchor = None;
+                        pos
+                    }
+                }
+                SearchStart(forward) => {
+                    self.search_draft = Some((String::new(), forward));
+                    pos
+                }
+                SearchChar(character) => {
+                    if let Some((text, _)) = &mut self.search_draft {
+                        text.push(character);
+                    }
+                    pos
+                }
+                SearchBackspace => {
+                    if let Some((text, _)) = &mut self.search_draft {
+                        if let Some((index, _)) = text.grapheme_indices(true).last() {
+                            text.truncate(index);
+                        }
+                    }
+                    pos
+                }
+                SearchCancel => {
+                    self.search_draft = None;
+                    pos
+                }
+                SearchAccept => {
+                    if let Some((text, forward)) = self.search_draft.take() {
+                        if !text.is_empty() {
+                            self.search = text;
+                            self.search_whole_word = false;
+                        }
+                        self.search_forward = forward;
+                    }
+                    self.search_motion(pos, self.search_forward, count, load)
+                }
+                SearchNext(reverse) => {
+                    self.search_motion(pos, self.search_forward != reverse, count, load)
+                }
+                SearchWord(forward) => {
+                    self.search = self.word_at(pos, load);
+                    self.search_whole_word = true;
+                    self.search_forward = forward;
+                    self.search_motion(pos, forward, count, load)
+                }
                 Start => self.boundary(0, true, count, load).unwrap_or(pos),
                 End => self.boundary(count - 1, false, count, load).unwrap_or(pos),
                 Page(pages) => {
@@ -395,7 +490,7 @@ impl Keyboard {
                     .max(1.0) as usize;
                     let mut next = pos;
                     for _ in 0..steps {
-                        next = self.vertical(next, pages > 0.0, count, load);
+                        next = self.vertical_line(next, pages > 0.0, true, count, load);
                     }
                     next
                 }
@@ -419,12 +514,14 @@ impl Keyboard {
                     }
                     pos
                 }
+                motion => self.motion(pos, motion, count, load),
             };
             moved |= next != pos;
             self.cursor = Some(next);
             resume_tail = command == End && self.anchor.is_none();
-            if !matches!(command, Up | Down | Page(_)) {
+            if !matches!(command, Up | Down | ScreenUp | ScreenDown | Page(_)) {
                 self.preferred_x = None;
+                self.preferred_column = None;
             }
         }
         (copied, resume_tail, moved)
@@ -449,7 +546,7 @@ impl Keyboard {
             text.cells.len()
         };
         Some(if self.linewise {
-            text.line_range(from).start..text.line_range(to - 1).end
+            text.motion_line(from, false).start..text.motion_line(to - 1, false).end
         } else {
             from..to
         })
@@ -538,7 +635,7 @@ impl TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        let (mut keyboard, count, scroll_top, following) = {
+        let (mut keyboard, count, scroll_top, following, viewport) = {
             let mut state = self.state.0.borrow_mut();
             if !state.keyboard.active || state.heights.is_empty() {
                 return false;
@@ -548,6 +645,14 @@ impl TranscriptList {
                 state.heights.len(),
                 state.logical_scroll_top(),
                 state.following_tail,
+                [0.0, 0.5, 1.0].map(|fraction| {
+                    let y = state.scroll_y + (bounds.size.height - px(1.0)) * fraction;
+                    let item_ix = state.heights.row_at(y).min(state.heights.len() - 1);
+                    ListOffset {
+                        item_ix,
+                        offset_in_item: y - state.heights.prefix(item_ix),
+                    }
+                }),
             )
         };
         let top = scroll_top.item_ix.min(count - 1);
@@ -590,7 +695,7 @@ impl TranscriptList {
                     ..pos
                 });
             }
-            keyboard.apply_pending(count, bounds.size.height, resume_tail, &mut load)
+            keyboard.apply_pending(count, bounds.size.height, resume_tail, viewport, &mut load)
         };
         if let Some(text) = copied {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
@@ -630,6 +735,14 @@ impl TranscriptList {
                 }
                 state.clamp_scroll();
             }
+        }
+        if let Some(alignment) = keyboard.alignment.take()
+            && let Some(pos) = keyboard.cursor
+        {
+            let cell = &keyboard.cache[&pos.row].cells[pos.cell];
+            let offset = (bounds.size.height - cell.bounds.size.height) * (alignment as f32 / 2.0);
+            state.scroll_y = state.heights.prefix(pos.row) + cell.bounds.top() - offset;
+            state.clamp_scroll();
         }
         state.keyboard = keyboard;
         if changed && let Some(view) = state.keyboard_observer {

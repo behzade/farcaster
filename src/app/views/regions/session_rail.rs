@@ -11,7 +11,6 @@ pub(crate) struct SessionRailView {
     rows: RefCell<Vec<String>>,
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
-    shortcuts_visible: bool,
 }
 
 pub(crate) struct InactiveSessionRailView {
@@ -33,20 +32,11 @@ impl SessionRailView {
             rows: RefCell::new(Vec::new()),
             width: THEME.layout.session_rail,
             resize_start: None,
-            shortcuts_visible: false,
         }
     }
 
     pub(crate) fn width(&self) -> Pixels {
         self.width
-    }
-
-    pub(crate) fn set_shortcuts_visible(&mut self, visible: bool) -> bool {
-        if self.shortcuts_visible == visible {
-            return false;
-        }
-        self.shortcuts_visible = visible;
-        true
     }
 
     pub(crate) fn begin_resize(&mut self, pointer_x: Pixels) {
@@ -96,7 +86,6 @@ impl Render for SessionRailView {
                 cx.has_active_drag(),
                 self.list.clone(),
                 &self.rows,
-                self.shortcuts_visible,
             )
             .into_any_element()
     }

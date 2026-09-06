@@ -67,8 +67,8 @@ const COMMANDS: &[(&str, &str, Command)] = &[
 const SCROLLS: &[(&str, &str, Scroll)] = &[
     ("g g", "Transcript top", Scroll::Start),
     ("G", "Transcript end (normal: follow latest)", Scroll::End),
-    ("j", "Cursor down one rendered line", Scroll::Lines(1.0)),
-    ("k", "Cursor up one rendered line", Scroll::Lines(-1.0)),
+    ("j", "Cursor down one logical line", Scroll::Lines(1.0)),
+    ("k", "Cursor up one logical line", Scroll::Lines(-1.0)),
     ("ctrl-f", "Page down", Scroll::Pages(1.0)),
     ("ctrl-b", "Page up", Scroll::Pages(-1.0)),
     ("ctrl-d", "Half-page down", Scroll::Pages(0.5)),
@@ -80,6 +80,77 @@ const CURSOR_COMMANDS: &[(&str, &str, KeyboardCommand)] = &[
     ("l", "Next character", KeyboardCommand::Right),
     ("w", "Next word", KeyboardCommand::WordForward),
     ("b", "Previous word", KeyboardCommand::WordBackward),
+    ("e", "End of word", KeyboardCommand::WordEnd),
+    ("W", "Next WORD", KeyboardCommand::BigWordForward),
+    ("B", "Previous WORD", KeyboardCommand::BigWordBackward),
+    ("E", "End of WORD", KeyboardCommand::BigWordEnd),
+    ("0", "Line start", KeyboardCommand::LineStart),
+    ("^", "First nonblank", KeyboardCommand::FirstNonblank),
+    ("$", "Line end", KeyboardCommand::LineEnd),
+    ("|", "Line start", KeyboardCommand::LineStart),
+    (
+        "+",
+        "Next line first nonblank",
+        KeyboardCommand::FirstLine(1),
+    ),
+    (
+        "-",
+        "Previous line first nonblank",
+        KeyboardCommand::FirstLine(-1),
+    ),
+    (
+        "enter",
+        "Next line first nonblank",
+        KeyboardCommand::FirstLine(1),
+    ),
+    ("_", "First nonblank", KeyboardCommand::FirstNonblank),
+    ("{", "Previous paragraph", KeyboardCommand::Paragraph(false)),
+    ("}", "Next paragraph", KeyboardCommand::Paragraph(true)),
+    ("(", "Previous sentence", KeyboardCommand::Sentence(false)),
+    (")", "Next sentence", KeyboardCommand::Sentence(true)),
+    ("%", "Matching bracket", KeyboardCommand::MatchBracket),
+    ("H", "Viewport top", KeyboardCommand::Viewport(0)),
+    ("M", "Viewport middle", KeyboardCommand::Viewport(1)),
+    ("L", "Viewport bottom", KeyboardCommand::Viewport(2)),
+    (
+        ";",
+        "Repeat character find",
+        KeyboardCommand::RepeatFind(false),
+    ),
+    (
+        ",",
+        "Reverse character find",
+        KeyboardCommand::RepeatFind(true),
+    ),
+    ("n", "Next search match", KeyboardCommand::SearchNext(false)),
+    (
+        "N",
+        "Previous search match",
+        KeyboardCommand::SearchNext(true),
+    ),
+    (
+        "*",
+        "Search word forward",
+        KeyboardCommand::SearchWord(true),
+    ),
+    (
+        "#",
+        "Search word backward",
+        KeyboardCommand::SearchWord(false),
+    ),
+    (
+        "o",
+        "Swap visual selection ends",
+        KeyboardCommand::SwapAnchor,
+    ),
+    ("left", "Previous character", KeyboardCommand::Left),
+    ("right", "Next character", KeyboardCommand::Right),
+    ("up", "Previous line", KeyboardCommand::Up),
+    ("down", "Next line", KeyboardCommand::Down),
+    ("home", "Line start", KeyboardCommand::LineStart),
+    ("end", "Line end", KeyboardCommand::LineEnd),
+    ("pageup", "Page up", KeyboardCommand::Page(-1.0)),
+    ("pagedown", "Page down", KeyboardCommand::Page(1.0)),
     (
         "v",
         "Toggle character selection",
@@ -87,7 +158,7 @@ const CURSOR_COMMANDS: &[(&str, &str, KeyboardCommand)] = &[
     ),
     (
         "V",
-        "Toggle rendered-line selection",
+        "Toggle logical-line selection",
         KeyboardCommand::Visual(true),
     ),
     (
@@ -103,6 +174,11 @@ const CURSOR_COMMANDS: &[(&str, &str, KeyboardCommand)] = &[
 ];
 
 pub(crate) fn command_key(command: Command) -> &'static str {
+    match command {
+        Command::Editor => return "Ctrl-G e",
+        Command::Terminal => return "Ctrl-G t",
+        _ => {}
+    }
     COMMANDS
         .iter()
         .find(|(_, _, candidate)| *candidate == command)
@@ -161,7 +237,10 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
             .filter(|(_, _, command)| {
                 matches!(
                     command,
-                    Command::Editor | Command::Terminal | Command::RelativeSession(_)
+                    Command::Editor
+                        | Command::Terminal
+                        | Command::RelativeSession(_)
+                        | Command::SearchSessions
                 )
             })
             .map(|(key, label, _)| ("From anywhere", format!("ctrl-g {key}"), *label)),
@@ -175,16 +254,48 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     rows.extend(
         COMMANDS
             .iter()
+            .filter(|(_, _, command)| {
+                matches!(
+                    command,
+                    Command::Composer | Command::RelativeSession(_) | Command::Session(_)
+                )
+            })
             .map(|(key, label, _)| ("Chat normal", (*key).into(), *label)),
     );
-    rows.push(("Chat normal", "0".into(), "First unsubmitted draft"));
-    for number in 1..=9 {
-        rows.push((
-            "Chat normal",
-            number.to_string(),
-            "Jump to numbered session",
-        ));
-    }
+    rows.extend([
+        ("Chat normal", "1–9".into(), "Switch session"),
+        (
+            "Chat normal / visual",
+            "z t / z z / z b".into(),
+            "Align cursor line at top / center / bottom",
+        ),
+        (
+            "Chat normal / visual",
+            "g e".into(),
+            "Previous word end (g E for WORD)",
+        ),
+        (
+            "Chat normal / visual",
+            "g j".into(),
+            "Next wrapped line (g k for previous)",
+        ),
+        (
+            "Chat normal / visual",
+            "g 0".into(),
+            "Wrapped-line start (g ^ / g $ for nonblank / end)",
+        ),
+        ("Chat normal / visual", "g _".into(), "Last nonblank"),
+        (
+            "Chat normal / visual",
+            "f / F / t / T".into(),
+            "Find / till next character, forward / backward",
+        ),
+        (
+            "Chat normal / visual",
+            "/ / ?".into(),
+            "Search rendered text forward / backward; Enter confirms",
+        ),
+    ]);
     rows.extend(
         SCROLLS
             .iter()
@@ -219,6 +330,15 @@ pub(super) fn chat_focus_key(key: &str, modifiers: gpui::Modifiers) -> Option<bo
 }
 
 pub(super) fn normal_command(key: &str, prefix: Option<Prefix>) -> Option<Command> {
+    activated_command(key, prefix).filter(|command| {
+        matches!(
+            command,
+            Command::Composer | Command::RelativeSession(_) | Command::Session(1..=9)
+        )
+    })
+}
+
+pub(super) fn activated_command(key: &str, prefix: Option<Prefix>) -> Option<Command> {
     if prefix.is_none()
         && matches!(
             key,
@@ -293,19 +413,36 @@ pub(super) fn keyboard_command(
     {
         return Some(Copy);
     }
-    let key = if key == "v"
-        && modifiers
-            == (gpui::Modifiers {
-                shift: true,
-                ..Default::default()
-            }) {
-        "V"
-    } else if modifiers.modified() {
-        return None;
-    } else {
-        key
-    };
+    let key = plain_key(key, modifiers)?;
+
     CURSOR_COMMANDS
         .iter()
-        .find_map(|(candidate, _, command)| (*candidate == key).then_some(*command))
+        .find_map(|(candidate, _, command)| (*candidate == key.as_str()).then_some(*command))
+}
+
+/// GPUI normalizes uppercase letters to a lowercase key plus Shift. Punctuation
+/// can arrive either already shifted or as the physical key plus Shift.
+pub(super) fn plain_key(key: &str, modifiers: gpui::Modifiers) -> Option<String> {
+    if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        return None;
+    }
+    if !modifiers.shift {
+        return Some(key.to_owned());
+    }
+    Some(match key {
+        "4" => "$".into(),
+        "6" => "^".into(),
+        "5" => "%".into(),
+        "8" => "*".into(),
+        "3" => "#".into(),
+        "9" => "(".into(),
+        "0" => ")".into(),
+        "[" => "{".into(),
+        "]" => "}".into(),
+        "-" => "_".into(),
+        "=" => "+".into(),
+        "\\" => "|".into(),
+        "/" => "?".into(),
+        _ => key.to_uppercase(),
+    })
 }

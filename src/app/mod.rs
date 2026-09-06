@@ -263,15 +263,10 @@ pub(crate) struct FarcasterApp {
     _composer_subscription: Subscription,
     _search_subscription: Subscription,
     _session_title_subscription: Subscription,
-    _window_activation_subscription: Subscription,
     _window_placement_subscription: Subscription,
     _event_task: Task<()>,
     _workgraph_update_task: Task<()>,
     _worker_update_task: Task<()>,
-}
-
-fn session_shortcuts_visible_for_window(current: bool, window_active: bool) -> bool {
-    current && window_active
 }
 
 #[cfg(test)]

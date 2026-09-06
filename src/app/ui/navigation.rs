@@ -9,6 +9,7 @@ pub(crate) struct ChatNavigation {
     // Remember the chat owner across temporary focus and async session resets.
     pub normal_mode: bool,
     pub pending_key: Option<Prefix>,
+    pub vim: vim::VimInput,
     pub activation: Activation,
     pub activation_focus: Option<FocusHandle>,
     pub activation_blur: Option<gpui::Subscription>,
@@ -16,9 +17,12 @@ pub(crate) struct ChatNavigation {
 }
 
 mod shortcuts;
+mod vim;
 use crate::app::views::transcript::list::KeyboardCommand;
+#[cfg(test)]
+use shortcuts::keyboard_command;
 pub(crate) use shortcuts::{Command, Prefix, command_key, help_shortcuts};
-use shortcuts::{Scroll, keyboard_command, normal_command, transcript_scroll};
+use shortcuts::{Scroll, normal_command, transcript_scroll};
 
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -83,7 +87,7 @@ impl Activation {
             return ActivatedKey::Scroll(scroll);
         }
         if !modifiers.modified()
-            && let Some(command) = normal_command(key, prefix)
+            && let Some(command) = shortcuts::activated_command(key, prefix)
         {
             return ActivatedKey::Command(command);
         }
@@ -143,6 +147,7 @@ impl FarcasterApp {
                             }
                             ActivatedKey::Pending => {
                                 this.chat_navigation.pending_key = None;
+                                this.chat_navigation.vim.clear();
                                 this.chat_navigation.activation_focus = window.focused(cx);
                                 this.chat_navigation.activation_blur =
                                     this.chat_navigation.activation_focus.clone().map(|focus| {
@@ -189,6 +194,7 @@ impl FarcasterApp {
             if !window.is_window_active() {
                 this.chat_navigation.activation.clear();
                 this.chat_navigation.pending_key = None;
+                this.chat_navigation.vim.clear();
                 this.notify_composer(cx);
             }
         })
@@ -218,7 +224,6 @@ impl FarcasterApp {
                     .list
                     .set_keyboard_active(normal_mode);
                 this.notify_transcript(cx);
-                this.set_session_shortcuts_visible(normal_mode && window.is_window_active(), cx);
                 this.notify_composer(cx);
             })
             .detach();
@@ -228,8 +233,8 @@ impl FarcasterApp {
                     .list
                     .set_keyboard_active(false);
                 this.notify_transcript(cx);
-                this.set_session_shortcuts_visible(false, cx);
                 this.chat_navigation.pending_key = None;
+                this.chat_navigation.vim.clear();
                 this.notify_composer(cx);
             })
             .detach();
@@ -244,6 +249,7 @@ impl FarcasterApp {
         self.chat_navigation.activation.clear();
         self.chat_navigation.normal_mode = !self.snapshot.conversation.items.is_empty();
         self.chat_navigation.pending_key = None;
+        self.chat_navigation.vim.clear();
         self.transcript_view
             .read(cx)
             .list
@@ -298,6 +304,7 @@ impl FarcasterApp {
             return false;
         };
         self.chat_navigation.pending_key = None;
+        self.chat_navigation.vim.clear();
         let normal_mode = normal_mode && !self.snapshot.conversation.items.is_empty();
         self.chat_navigation.normal_mode = normal_mode;
         let focus = if normal_mode {
@@ -331,22 +338,40 @@ impl FarcasterApp {
         }
         if self.surface != AppSurface::Chat || !self.chat_navigation.focus.is_focused(window) {
             self.chat_navigation.pending_key = None;
+            self.chat_navigation.vim.clear();
             return;
         }
-        let cursor_command = keyboard_command(key, modifiers, self.chat_navigation.pending_key)
-            .filter(|command| {
-                *command != KeyboardCommand::Copy
-                    || self.transcript_view.read(cx).list.has_keyboard_selection()
-            });
-        // Holding g must not synthesize gg, and held v must not toggle repeatedly.
-        if event.is_held && !cursor_command.is_some_and(KeyboardCommand::repeats) {
-            window.prevent_default();
-            cx.stop_propagation();
-            return;
-        }
-        if let Some(command) = cursor_command {
-            self.chat_navigation.pending_key = None;
-            self.move_transcript_cursor(command, window, cx);
+        if self.chat_navigation.pending_key.is_none() {
+            match self.chat_navigation.vim.key(key, modifiers, event.is_held) {
+                vim::Input::Command(command) => {
+                    if command == KeyboardCommand::Copy
+                        && !self.transcript_view.read(cx).list.has_keyboard_selection()
+                    {
+                        return;
+                    }
+                    gpui_base::TextSelection::clear(window, cx);
+                    self.transcript_view.read(cx).list.keyboard_command(command);
+                    self.notify_transcript(cx);
+                }
+                vim::Input::Pending => {}
+                vim::Input::Pass if event.is_held => {}
+                vim::Input::Pass => {
+                    if !modifiers.modified()
+                        && let Some(prefix) = Prefix::from_key(key)
+                    {
+                        self.chat_navigation.pending_key = Some(prefix);
+                    } else if !modifiers.modified()
+                        && let Some(command) = normal_command(key, None)
+                    {
+                        self.execute_navigation_command(command, true, window, cx);
+                    } else {
+                        // Modified app shortcuts retain their existing route.
+                        if modifiers.modified() {
+                            return;
+                        }
+                    }
+                }
+            }
             window.prevent_default();
             cx.stop_propagation();
             self.notify_composer(cx);
@@ -355,6 +380,7 @@ impl FarcasterApp {
         // Never reinterpret a modified shortcut as a bare normal-mode command.
         if modifiers.modified() {
             self.chat_navigation.pending_key = None;
+            self.chat_navigation.vim.clear();
             self.notify_composer(cx);
             return;
         }
@@ -640,9 +666,6 @@ mod tests {
         for (key, prefix, command) in [
             ("i", None, Command::Composer),
             ("a", None, Command::Composer),
-            ("/", None, Command::SearchSessions),
-            ("e", None, Command::Editor),
-            ("t", None, Command::Terminal),
             ("j", Some(Prefix::Space), Command::RelativeSession(1)),
             ("k", Some(Prefix::Space), Command::RelativeSession(-1)),
         ] {
@@ -664,7 +687,12 @@ mod tests {
 
     #[test]
     fn session_numbers_are_bare_not_leader_commands() {
-        for number in 0..=9 {
+        assert_eq!(normal_command("0", None), None);
+        assert_eq!(
+            shortcuts::activated_command("0", None),
+            Some(Command::Session(0))
+        );
+        for number in 1..=9 {
             let key = number.to_string();
             assert_eq!(normal_command(&key, None), Some(Command::Session(number)));
             assert_eq!(normal_command(&key, Some(Prefix::Space)), None);

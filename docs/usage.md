@@ -28,23 +28,42 @@ In chat normal:
 | Keys | Action |
 | --- | --- |
 | `i` / `a` | Focus composer, preserving draft and caret |
-| `0` / `1`–`9` | First unsubmitted draft / numbered session |
-| `/` | Search sessions |
-| `e` / `t` | Editor / terminal |
+| `1`–`9` | Numbered session (no motion counts) |
+| `Ctrl+G 0` | First unsubmitted draft |
+| `Ctrl+G /` | Search sessions |
+| `Ctrl+G e` / `Ctrl+G t` | Editor / terminal |
 | `Space j` / `Space k` | Next / previous session |
 | `h` / `l` | Previous / next character (Unicode grapheme) |
-| `j` / `k` | Cursor down / up one rendered line |
-| `w` / `b` | Next / previous word |
+| `j` / `k` | Cursor down / up one logical line |
+| `gj` / `gk` | Down / up one soft-wrapped screen line |
+| `w` / `b` / `e` / `ge` | Next word start / previous start / end / previous end |
+| `W` / `B` / `E` / `gE` | Same motions for whitespace-delimited WORDs |
+| `0` / `^` / `$` / `g_` | Line start / first nonblank / end / last nonblank |
+| `g0` / `g^` / `g$` | Screen-line start / first nonblank / end |
+| `+` / `Enter` / `-` | Next / previous line's first nonblank |
+| `f<char>` / `F<char>` | Find character on the current line, forward / backward |
+| `t<char>` / `T<char>` | Stop just before / after a character |
+| `;` / `,` | Repeat / reverse the last character find |
+| `{` / `}` / `(` / `)` | Previous / next paragraph or sentence |
+| `%` | Matching bracket, including nested pairs |
+| `H` / `M` / `L` | Top / middle / bottom visible line |
+| `zt` / `zz` / `zb` | Align cursor line at viewport top / center / bottom |
+| `/` / `?` | Literal rendered-text search forward / backward; Enter confirms, Escape cancels |
+| `n` / `N` / `*` / `#` | Next / previous match; search current word forward / backward |
+| `o` | Swap active and anchored ends of a visual selection |
 | `gg` | Transcript top |
 | `G` (Shift+g) | Transcript end; resume following unless selecting |
 | `Ctrl+f` / `Ctrl+b` | Page down / up |
 | `Ctrl+d` / `Ctrl+u` | Half-page down / up |
-| `v` / `V` | Toggle character / rendered-line visual selection |
+| `v` / `V` | Toggle character / logical-line visual selection |
 | `y` | Copy selection; return to normal |
 | `Cmd+c` (macOS) / `Ctrl+c` | Copy selection without leaving visual mode |
 | `Escape` | Clear selection / cancel pending Space or g sequence |
 
-Session badges show bare numbers while chat normal owns input. Pointer clicks
+All transcript motions also work in visual mode, preserving the selection anchor.
+Arrow keys, Home/End, and PageUp/PageDown are supported. Motions operate on rendered
+text, not Markdown source; this is navigation/selection, not a Vim editing engine.
+Session badges show bare 1–9 while chat normal owns input. Pointer clicks
 on incidental controls do not take keyboard ownership. Menus/dialogs temporarily
 own input and restore their return target when dismissed; an explicit action
 such as opening the editor can intentionally move focus. Tab navigation remains
@@ -75,9 +94,9 @@ choose options rather than switch sessions.
 
 ### Transcript selection
 
-Chat normal has a visible transcript caret. Motions scroll it into view; in
+Chat normal shows its transcript caret while moving and for two seconds afterwards. Motions scroll it into view; in
 `VISUAL` / `VISUAL LINE` they extend an inclusive selection from its anchor.
-`V` selects displayed lines, including soft-wrapped lines. Copy uses rendered
+`V` selects logical text lines, including their soft-wrapped continuations. Copy uses rendered
 text: prose, code, and visible labels/summaries, not Markdown delimiters, link
 URLs, hidden disclosure contents, or image bytes. Character copying preserves
 text across soft wraps; linewise copying ends with a newline.

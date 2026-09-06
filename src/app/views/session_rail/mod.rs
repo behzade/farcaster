@@ -117,7 +117,7 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
 }
 
 fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
-    let mut shortcuts = rows
+    let shortcuts = rows
         .iter()
         .filter_map(|row| match row {
             ActiveSessionItem::Draft(draft) if draft.submitted => Some(draft.app_session_id),
@@ -129,11 +129,6 @@ fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
         .enumerate()
         .map(|(index, id)| (id, (index + 1) as u8))
         .collect::<HashMap<_, _>>();
-    if let Some(draft) = first_unsubmitted_draft(rows)
-        && draft.app_session_id > 0
-    {
-        shortcuts.insert(draft.app_session_id, 0);
-    }
     shortcuts
 }
 
@@ -274,18 +269,6 @@ impl FarcasterApp {
             ActiveSessionItem::Draft(_) => None,
         })
         .collect()
-    }
-
-    pub(in crate::app) fn set_session_shortcuts_visible(
-        &mut self,
-        visible: bool,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        self.session_rail_view.update(cx, |view, cx| {
-            if view.set_shortcuts_visible(visible) {
-                cx.notify();
-            }
-        });
     }
 
     pub(super) fn begin_session_rail_resize(

@@ -38,7 +38,6 @@ impl FarcasterApp {
         session_drag_active: bool,
         session_list: ListState,
         session_list_rows: &RefCell<Vec<String>>,
-        shortcuts_visible: bool,
     ) -> impl IntoElement {
         let new_entity = entity.clone();
         let actions_entity = entity.clone();
@@ -93,9 +92,7 @@ impl FarcasterApp {
                         &submitted_drafts,
                         &active_run_statuses,
                     );
-                    let shortcut = shortcuts_visible
-                        .then(|| session_shortcuts.get(&draft.app_session_id).copied())
-                        .flatten();
+                    let shortcut = session_shortcuts.get(&draft.app_session_id).copied();
                     let drop_position = active_drop_target
                         .filter(|(target, _)| *target == draft.app_session_id)
                         .map(|(_, position)| position);
@@ -122,9 +119,9 @@ impl FarcasterApp {
                         &active_live_status,
                         active_waiting_roots.contains(&item.session.id),
                     );
-                    let shortcut = shortcuts_visible
-                        .then(|| session_shortcuts.get(&item.session.app_session_id).copied())
-                        .flatten();
+                    let shortcut = session_shortcuts
+                        .get(&item.session.app_session_id)
+                        .copied();
                     let editing =
                         active_editing_path.as_deref() == Some(item.session.path.as_path());
                     let drop_position = active_drop_target

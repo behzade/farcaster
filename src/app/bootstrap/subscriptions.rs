@@ -4,7 +4,6 @@ pub(super) struct BootstrapSubscriptions {
     pub(super) composer: Subscription,
     pub(super) search: Subscription,
     pub(super) session_title: Subscription,
-    pub(super) window_activation: Subscription,
     pub(super) window_placement: Subscription,
 }
 
@@ -34,20 +33,12 @@ pub(super) fn create(
             InputEvent::Change | InputEvent::Focus => {}
         },
     );
-    let window_activation = cx.observe_window_activation(window, |this, window, cx| {
-        let visible = session_shortcuts_visible_for_window(
-            this.chat_navigation.focus.is_focused(window),
-            window.is_window_active(),
-        );
-        this.set_session_shortcuts_visible(visible, cx);
-    });
     let window_placement = launch::observe_window_placement(window, cx);
 
     BootstrapSubscriptions {
         composer,
         search,
         session_title,
-        window_activation,
         window_placement,
     }
 }

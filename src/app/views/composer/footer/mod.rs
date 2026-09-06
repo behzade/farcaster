@@ -44,7 +44,7 @@ impl FarcasterApp {
     pub(in crate::app::views) fn render_composer_status(
         &self,
         scroll: &gpui::ScrollHandle,
-        mode: Option<&'static str>,
+        mode: Option<&str>,
     ) -> AnyElement {
         let usage = composer_usage(self);
         div()
@@ -67,7 +67,7 @@ impl FarcasterApp {
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.accent)
                         .whitespace_nowrap()
-                        .child(mode),
+                        .child(mode.to_owned()),
                 )
             })
             .child(div().min_w_0().flex_1())

@@ -64,6 +64,7 @@ impl Render for ComposerView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
+        let vim_hint = app.chat_navigation.vim.hint();
         let mode = if let Some(hint) = app.chat_navigation.activation.hint() {
             Some(hint)
         } else if app.chat_navigation.focus.is_focused(window) {
@@ -71,6 +72,7 @@ impl Render for ComposerView {
                 app.chat_navigation
                     .pending_key
                     .map(|prefix| prefix.hint())
+                    .or(vim_hint.as_deref())
                     .unwrap_or_else(|| app.transcript_view.read(cx).list.keyboard_mode()),
             )
         } else if app.composer_focus.is_focused(window) {

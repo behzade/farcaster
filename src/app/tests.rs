@@ -8,13 +8,6 @@ use crate::{
 };
 
 #[test]
-fn deactivating_window_hides_session_shortcuts() {
-    assert!(!session_shortcuts_visible_for_window(true, false));
-    assert!(session_shortcuts_visible_for_window(true, true));
-    assert!(!session_shortcuts_visible_for_window(false, true));
-}
-
-#[test]
 fn close_targets_a_draft_before_its_backing_session() {
     let session = std::path::Path::new("/tmp/session.jsonl");
 

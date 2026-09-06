@@ -22,7 +22,7 @@ fn closing_a_session_keeps_its_visual_slot_when_possible() {
 }
 
 #[test]
-fn shortcuts_reserve_zero_for_the_first_unsubmitted_draft() {
+fn shortcuts_number_sessions_without_binding_zero_to_a_draft() {
     let mut first_draft = DraftSession::with_id("first".into(), PathBuf::from("/project"));
     first_draft.app_session_id = 12;
     let mut second_draft = DraftSession::with_id("second".into(), PathBuf::from("/project"));
@@ -44,7 +44,7 @@ fn shortcuts_reserve_zero_for_the_first_unsubmitted_draft() {
         first_unsubmitted_draft(&rows).map(|draft| draft.id.as_str()),
         Some("first")
     );
-    assert_eq!(shortcuts.get(&12), Some(&0));
+    assert_eq!(shortcuts.get(&12), None);
     assert!(!shortcuts.contains_key(&11));
     assert_eq!(shortcuts.get(&10), Some(&1));
     assert_eq!(shortcuts.get(&9), Some(&2));

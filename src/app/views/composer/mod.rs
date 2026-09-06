@@ -34,12 +34,19 @@ impl FarcasterApp {
         suggestion_selection: usize,
         footer_scroll: &gpui::ScrollHandle,
         status_scroll: &gpui::ScrollHandle,
-        mode: Option<&'static str>,
+        mode: Option<&str>,
         focused: bool,
         cx: &App,
     ) -> AnyElement {
         if self.extension.dialog.is_some() {
-            return self.render_composer_request(entity, focused);
+            return div()
+                .w_full()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .child(self.render_composer_request(entity, focused))
+                .child(self.render_composer_status(status_scroll, mode))
+                .into_any_element();
         }
 
         let composer = self.composer.read(cx);
