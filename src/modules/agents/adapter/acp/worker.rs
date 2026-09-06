@@ -14,8 +14,8 @@ use super::{
     connection::{AcpConnection, read_message},
     translate::{
         ConfigIds, commands_from_update, commands_from_value, content_text, find_permission_option,
-        is_acceptance, merge_tool_metadata, merged_tool_content, metadata_from_options,
-        metadata_from_session, normalize_content, normalize_tool_name, tool_args, usage_update,
+        is_acceptance, merge_tool_metadata, metadata_from_options, metadata_from_session,
+        normalize_content, normalize_tool_name, tool_args, tool_result, usage_update,
     },
     wire::{AcpInbound, AcpRequestId, encode_notification, encode_request, encode_response},
 };
@@ -622,7 +622,7 @@ impl AcpWorkerSession {
                 state.finished = true;
                 emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolFinished {
                     id: id.clone(),
-                    result: merged_tool_content(&state.metadata, update),
+                    result: tool_result(&state.metadata, update),
                     is_error: status == Some("failed"),
                 }));
             } else if !state.finished

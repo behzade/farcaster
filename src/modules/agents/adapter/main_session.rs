@@ -24,6 +24,14 @@ fn activity(value: Value) -> SessionEvent {
     SessionEvent::Activity(value.into())
 }
 
+fn finished_tool_result(result: Value) -> Value {
+    if result.get("content").is_some() || result.get("details").is_some() {
+        result
+    } else {
+        json!({"content": result})
+    }
+}
+
 pub(super) struct WorkerSessionTransport {
     harness: String,
     locator: String,
@@ -317,7 +325,7 @@ impl WorkerSessionTransport {
             } => json!({
                 "type": "tool_execution_end",
                 "toolCallId": id,
-                "result": {"content": result},
+                "result": finished_tool_result(result),
                 "isError": is_error,
             }),
             WorkerActivity::ToolReviewChanged { id, state, detail } => json!({

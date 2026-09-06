@@ -209,13 +209,81 @@ pub(super) fn tool_metadata(update: &Value) -> ToolMetadata {
     metadata
 }
 
+const PATH_KEYS: &[&str] = &["path", "file_path", "filePath"];
+const OLD_TEXT_KEYS: &[&str] = &["oldText", "old_string", "oldString"];
+const NEW_TEXT_KEYS: &[&str] = &["newText", "new_string", "newString"];
+
 pub(super) fn tool_args(metadata: &ToolMetadata) -> Value {
-    metadata
-        .native
-        .as_ref()
+    let native = metadata.native.as_ref();
+    let mut arguments = native
         .and_then(|native| native.get("rawInput"))
+        .and_then(Value::as_object)
         .cloned()
-        .unwrap_or_else(|| json!({}))
+        .unwrap_or_default();
+    promote(&mut arguments, "path", PATH_KEYS);
+    promote(&mut arguments, "oldText", OLD_TEXT_KEYS);
+    promote(&mut arguments, "newText", NEW_TEXT_KEYS);
+    if let Some(diff) = native.and_then(first_diff_block) {
+        fill_missing(&mut arguments, "path", text_field(diff, PATH_KEYS));
+        fill_missing(&mut arguments, "oldText", text_field(diff, OLD_TEXT_KEYS));
+        fill_missing(&mut arguments, "newText", text_field(diff, NEW_TEXT_KEYS));
+    }
+    fill_missing(
+        &mut arguments,
+        "path",
+        metadata.targets.first().map(String::as_str),
+    );
+    Value::Object(arguments)
+}
+
+fn promote(arguments: &mut serde_json::Map<String, Value>, canonical: &str, names: &[&str]) {
+    let value = names
+        .iter()
+        .filter(|name| **name != canonical)
+        .find_map(|name| arguments.remove(*name));
+    if let Some(value) = value {
+        arguments.entry(canonical.to_owned()).or_insert(value);
+    }
+}
+
+fn fill_missing(
+    arguments: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if !arguments.contains_key(key)
+        && let Some(value) = value
+    {
+        arguments.insert(key.into(), json!(value));
+    }
+}
+
+fn text_field<'a>(value: &'a Value, names: &[&str]) -> Option<&'a str> {
+    names
+        .iter()
+        .find_map(|name| value.get(*name).and_then(Value::as_str))
+}
+
+fn first_diff_block(native: &Value) -> Option<&Value> {
+    content_values(native.get("content")?).find_map(|value| {
+        let block = unwrap_content_block(value);
+        (block.get("type").and_then(Value::as_str) == Some("diff")).then_some(block)
+    })
+}
+
+fn content_values(content: &Value) -> impl Iterator<Item = &Value> {
+    content
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| std::slice::from_ref(content))
+        .iter()
+}
+
+fn unwrap_content_block(value: &Value) -> &Value {
+    match value.get("type").and_then(Value::as_str) {
+        Some("content") => value.get("content").unwrap_or(value),
+        _ => value,
+    }
 }
 
 fn merge_value(current: &mut Value, update: &Value) {
@@ -234,6 +302,53 @@ fn merge_value(current: &mut Value, update: &Value) {
 
 pub(super) fn merged_tool_content(metadata: &ToolMetadata, update: &Value) -> Value {
     tool_content(metadata.native.as_ref().unwrap_or(update))
+}
+
+pub(super) fn tool_result(metadata: &ToolMetadata, update: &Value) -> Value {
+    let mut result = json!({"content": merged_tool_content(metadata, update)});
+    if let Some(details) = edit_result_details(metadata) {
+        result["details"] = details;
+    }
+    result
+}
+
+fn edit_result_details(metadata: &ToolMetadata) -> Option<Value> {
+    let args = tool_args(metadata);
+    let old = args.get("oldText").and_then(Value::as_str).unwrap_or("");
+    let new = args.get("newText").and_then(Value::as_str).unwrap_or("");
+    if old.is_empty() && new.is_empty() {
+        return None;
+    }
+    let mut details = json!({"diff": counted_diff(old, new)});
+    if let Some(line) = first_changed_line(metadata) {
+        details["firstChangedLine"] = json!(line);
+    }
+    Some(details)
+}
+
+fn counted_diff(old: &str, new: &str) -> String {
+    let mut diff = String::new();
+    append_prefixed(&mut diff, '-', old);
+    append_prefixed(&mut diff, '+', new);
+    diff
+}
+
+fn append_prefixed(diff: &mut String, prefix: char, text: &str) {
+    for line in text.lines() {
+        diff.push(prefix);
+        diff.push_str(line);
+        diff.push('\n');
+    }
+}
+
+fn first_changed_line(metadata: &ToolMetadata) -> Option<u64> {
+    metadata
+        .native
+        .as_ref()?
+        .get("locations")?
+        .as_array()?
+        .iter()
+        .find_map(|location| location.get("line").and_then(Value::as_u64))
 }
 
 pub(super) fn tool_content(update: &Value) -> Value {
@@ -255,13 +370,8 @@ pub(super) fn tool_content(update: &Value) -> Value {
 }
 
 pub(super) fn normalize_content(content: &Value) -> Value {
-    let values = content
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_else(|| std::slice::from_ref(content));
     Value::Array(
-        values
-            .iter()
+        content_values(content)
             .filter_map(|value| match value.get("type").and_then(Value::as_str) {
                 Some("content") => value.get("content").cloned(),
                 Some("text" | "image" | "resource") => Some(value.clone()),
@@ -280,9 +390,9 @@ pub(super) fn normalize_content(content: &Value) -> Value {
 }
 
 fn format_diff(value: &Value) -> String {
-    let path = value.get("path").and_then(Value::as_str).unwrap_or("file");
-    let old = value.get("oldText").and_then(Value::as_str).unwrap_or("");
-    let new = value.get("newText").and_then(Value::as_str).unwrap_or("");
+    let path = text_field(value, PATH_KEYS).unwrap_or("file");
+    let old = text_field(value, OLD_TEXT_KEYS).unwrap_or("");
+    let new = text_field(value, NEW_TEXT_KEYS).unwrap_or("");
     format!("Diff for {path}\n--- before\n{old}\n+++ after\n{new}")
 }
 
@@ -426,6 +536,52 @@ mod tests {
         assert_eq!(
             merged_tool_content(&metadata, &completed),
             json!([{"type":"text", "text":"earlier output"}])
+        );
+    }
+
+    #[test]
+    fn edit_payloads_use_canonical_args_and_diff_details() {
+        assert_eq!(
+            tool_args(&tool_metadata(&json!({
+                "kind": "edit",
+                "rawInput": {
+                    "filePath": "src/main.rs",
+                    "old_string": "old",
+                    "new_string": "new\nline"
+                }
+            }))),
+            json!({
+                "path": "src/main.rs",
+                "oldText": "old",
+                "newText": "new\nline"
+            })
+        );
+
+        let metadata = tool_metadata(&json!({
+            "kind": "edit",
+            "locations": [{"path": "src/lib.rs", "line": 10}],
+            "rawInput": {"path": "src/lib.rs"},
+            "content": [{
+                "type": "diff",
+                "path": "src/lib.rs",
+                "oldText": "fn a() {}",
+                "newText": "fn a() {}\nfn b() {}"
+            }]
+        }));
+        assert_eq!(
+            tool_args(&metadata),
+            json!({
+                "path": "src/lib.rs",
+                "oldText": "fn a() {}",
+                "newText": "fn a() {}\nfn b() {}"
+            })
+        );
+        assert_eq!(
+            tool_result(&metadata, &json!({}))["details"],
+            json!({
+                "diff": "-fn a() {}\n+fn a() {}\n+fn b() {}\n",
+                "firstChangedLine": 10
+            })
         );
     }
 

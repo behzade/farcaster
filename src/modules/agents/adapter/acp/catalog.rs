@@ -13,8 +13,8 @@ use super::{
     AcpProfile,
     connection::AcpConnection,
     translate::{
-        commands_from_update, merge_tool_metadata, merged_tool_content, metadata_from_session,
-        normalize_tool_name, tool_args, tool_metadata,
+        commands_from_update, merge_tool_metadata, metadata_from_session, normalize_tool_name,
+        tool_args, tool_metadata, tool_result,
     },
     wire::AcpInbound,
     worker::configure_command,
@@ -258,13 +258,12 @@ fn replay_history(messages: impl IntoIterator<Item = AcpInbound>) -> Vec<Value> 
                 let status = update.get("status").and_then(Value::as_str);
                 if matches!(status, Some("completed" | "failed")) && !state.finished {
                     state.finished = true;
-                    history.push(json!({
-                        "role":"toolResult",
-                        "toolCallId":id,
-                        "toolName":state.name,
-                        "content":merged_tool_content(&state.metadata, update),
-                        "isError":status == Some("failed"),
-                    }));
+                    let mut message = tool_result(&state.metadata, update);
+                    message["role"] = json!("toolResult");
+                    message["toolCallId"] = json!(id);
+                    message["toolName"] = json!(state.name);
+                    message["isError"] = json!(status == Some("failed"));
+                    history.push(message);
                 }
             }
             _ => {}
@@ -436,6 +435,54 @@ mod tests {
         assert_eq!(
             history[1].pointer("/content/0/text"),
             Some(&json!("output before completion"))
+        );
+    }
+
+    #[test]
+    fn replay_cursor_edits_expose_canonical_args_and_diff_details() {
+        let notification = |update| AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"update":update}),
+        };
+        let history = replay_history([
+            notification(json!({
+                "sessionUpdate":"tool_call",
+                "toolCallId":"edit-1",
+                "kind":"edit",
+                "title":"Edit src/main.rs",
+                "locations":[{"path":"src/main.rs","line":4}],
+                "rawInput":{
+                    "filePath":"src/main.rs",
+                    "old_string":"old",
+                    "new_string":"new"
+                }
+            })),
+            notification(json!({
+                "sessionUpdate":"tool_call_update",
+                "toolCallId":"edit-1",
+                "status":"completed",
+                "content":[{
+                    "type":"diff",
+                    "path":"src/main.rs",
+                    "oldText":"old",
+                    "newText":"new"
+                }]
+            })),
+        ]);
+        assert_eq!(history[0].pointer("/content/0/name"), Some(&json!("edit")));
+        assert_eq!(
+            history[0].pointer("/content/0/arguments"),
+            Some(&json!({
+                "path":"src/main.rs",
+                "oldText":"old",
+                "newText":"new"
+            }))
+        );
+        assert_eq!(history[1]["role"], "toolResult");
+        assert_eq!(history[1].pointer("/details/diff"), Some(&json!("-old\n+new\n")));
+        assert_eq!(
+            history[1].pointer("/details/firstChangedLine"),
+            Some(&json!(4))
         );
     }
 
