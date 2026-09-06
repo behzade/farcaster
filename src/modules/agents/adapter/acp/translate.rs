@@ -225,8 +225,6 @@ pub(super) fn tool_args(metadata: &ToolMetadata) -> Value {
     promote(&mut arguments, "newText", NEW_TEXT_KEYS);
     if let Some(diff) = native.and_then(first_diff_block) {
         fill_missing(&mut arguments, "path", text_field(diff, PATH_KEYS));
-        fill_missing(&mut arguments, "oldText", text_field(diff, OLD_TEXT_KEYS));
-        fill_missing(&mut arguments, "newText", text_field(diff, NEW_TEXT_KEYS));
     }
     fill_missing(
         &mut arguments,
@@ -313,32 +311,119 @@ pub(super) fn tool_result(metadata: &ToolMetadata, update: &Value) -> Value {
 }
 
 fn edit_result_details(metadata: &ToolMetadata) -> Option<Value> {
-    let args = tool_args(metadata);
-    let old = args.get("oldText").and_then(Value::as_str).unwrap_or("");
-    let new = args.get("newText").and_then(Value::as_str).unwrap_or("");
-    if old.is_empty() && new.is_empty() {
+    let (old, new) = edit_texts(metadata)?;
+    let diff = line_diff(old, new);
+    if diff.is_empty() {
         return None;
     }
-    let mut details = json!({"diff": counted_diff(old, new)});
+    let mut details = json!({"diff": diff});
     if let Some(line) = first_changed_line(metadata) {
         details["firstChangedLine"] = json!(line);
     }
     Some(details)
 }
 
-fn counted_diff(old: &str, new: &str) -> String {
+fn edit_texts(metadata: &ToolMetadata) -> Option<(&str, &str)> {
+    let native = metadata.native.as_ref()?;
+    if let Some(diff) = first_diff_block(native) {
+        let old = text_field(diff, OLD_TEXT_KEYS).unwrap_or("");
+        let new = text_field(diff, NEW_TEXT_KEYS).unwrap_or("");
+        if !old.is_empty() || !new.is_empty() {
+            return Some((old, new));
+        }
+    }
+    let raw = native.get("rawInput")?;
+    let old = text_field(raw, OLD_TEXT_KEYS)?;
+    let new = text_field(raw, NEW_TEXT_KEYS)?;
+    Some((old, new))
+}
+
+fn line_diff(old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
     let mut diff = String::new();
-    append_prefixed(&mut diff, '-', old);
-    append_prefixed(&mut diff, '+', new);
+    for edit in changed_lines(&old_lines, &new_lines) {
+        match edit {
+            LineEdit::Delete(line) => {
+                diff.push('-');
+                diff.push_str(line);
+                diff.push('\n');
+            }
+            LineEdit::Insert(line) => {
+                diff.push('+');
+                diff.push_str(line);
+                diff.push('\n');
+            }
+        }
+    }
     diff
 }
 
-fn append_prefixed(diff: &mut String, prefix: char, text: &str) {
-    for line in text.lines() {
-        diff.push(prefix);
-        diff.push_str(line);
-        diff.push('\n');
+#[derive(Clone, Copy)]
+enum LineEdit<'a> {
+    Delete(&'a str),
+    Insert(&'a str),
+}
+
+fn changed_lines<'a>(old: &'a [&str], new: &'a [&str]) -> Vec<LineEdit<'a>> {
+    let prefix = old
+        .iter()
+        .zip(new.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let old = &old[prefix..];
+    let new = &new[prefix..];
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let old = &old[..old.len().saturating_sub(suffix)];
+    let new = &new[..new.len().saturating_sub(suffix)];
+    if old.len().saturating_mul(new.len()) > 1_000_000 {
+        return old
+            .iter()
+            .copied()
+            .map(LineEdit::Delete)
+            .chain(new.iter().copied().map(LineEdit::Insert))
+            .collect();
     }
+    lcs_edits(old, new)
+}
+
+fn lcs_edits<'a>(old: &'a [&str], new: &'a [&str]) -> Vec<LineEdit<'a>> {
+    let n = old.len();
+    let m = new.len();
+    let width = m.saturating_add(1);
+    let mut dp = vec![0_u32; n.saturating_add(1).saturating_mul(width)];
+    let cell = |row: usize, column: usize| row.saturating_mul(width).saturating_add(column);
+    for i in 0..n {
+        for j in 0..m {
+            dp[cell(i + 1, j + 1)] = if old[i] == new[j] {
+                dp[cell(i, j)].saturating_add(1)
+            } else {
+                dp[cell(i + 1, j)].max(dp[cell(i, j + 1)])
+            };
+        }
+    }
+    let mut edits = Vec::new();
+    let mut i = n;
+    let mut j = m;
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || dp[cell(i, j - 1)] >= dp[cell(i - 1, j)]) {
+            j -= 1;
+            edits.push(LineEdit::Insert(new[j]));
+        } else if i > 0 {
+            i -= 1;
+            edits.push(LineEdit::Delete(old[i]));
+        }
+    }
+    edits.reverse();
+    edits
 }
 
 fn first_changed_line(metadata: &ToolMetadata) -> Option<u64> {
@@ -564,24 +649,38 @@ mod tests {
             "content": [{
                 "type": "diff",
                 "path": "src/lib.rs",
-                "oldText": "fn a() {}",
-                "newText": "fn a() {}\nfn b() {}"
+                "oldText": "fn a() {}\nfn keep() {}",
+                "newText": "fn a() {}\nfn keep() {}\nfn b() {}"
             }]
         }));
-        assert_eq!(
-            tool_args(&metadata),
-            json!({
-                "path": "src/lib.rs",
-                "oldText": "fn a() {}",
-                "newText": "fn a() {}\nfn b() {}"
-            })
-        );
+        assert_eq!(tool_args(&metadata), json!({"path": "src/lib.rs"}));
         assert_eq!(
             tool_result(&metadata, &json!({}))["details"],
             json!({
-                "diff": "-fn a() {}\n+fn a() {}\n+fn b() {}\n",
+                "diff": "+fn b() {}\n",
                 "firstChangedLine": 10
             })
+        );
+    }
+
+    #[test]
+    fn full_file_acp_diffs_count_only_changed_lines() {
+        let old = (0..80).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n");
+        let mut new_lines: Vec<String> = (0..80).map(|n| format!("line {n}")).collect();
+        new_lines[10] = "changed".into();
+        new_lines.insert(40, "inserted".into());
+        let metadata = tool_metadata(&json!({
+            "kind": "edit",
+            "content": [{
+                "type": "diff",
+                "path": "big.rs",
+                "oldText": old,
+                "newText": new_lines.join("\n")
+            }]
+        }));
+        assert_eq!(
+            tool_result(&metadata, &json!({}))["details"]["diff"],
+            json!("-line 10\n+changed\n+inserted\n")
         );
     }
 
