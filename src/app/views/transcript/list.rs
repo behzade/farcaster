@@ -2,9 +2,9 @@ use std::{cell::RefCell, collections::BTreeMap, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element, ElementId,
-    EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    ScrollWheelEvent, Size, Style, Window, point, px, relative,
+    EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, LayoutId, ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, ScrollWheelEvent, Size, Style, Window, point, px, relative,
 };
 
 #[path = "list/height_index.rs"]
@@ -39,6 +39,7 @@ struct StateInner {
     selection_scroll_delta: Option<Pixels>,
     selection_text: Option<String>,
     scroll_handler: Option<Rc<RefCell<Box<ScrollHandler>>>>,
+    text_focus: Option<FocusHandle>,
 }
 
 impl StateInner {
@@ -316,6 +317,10 @@ impl TranscriptListState {
         self.0.borrow_mut().scroll_handler = Some(Rc::new(RefCell::new(Box::new(handler))));
     }
 
+    pub(crate) fn set_text_focus(&self, focus: FocusHandle) {
+        self.0.borrow_mut().text_focus = Some(focus);
+    }
+
     pub(crate) fn selection_contains(&self, key: usize) -> bool {
         self.0.borrow().selection_contains(key)
     }
@@ -544,28 +549,39 @@ impl Element for TranscriptList {
         let selection_key = self.selection_key.clone();
         let selection_hitbox_id = prepaint.hitbox.id;
         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-                let mut state = selection_state.0.borrow_mut();
-                let had_selection = state.selection_anchor.is_some();
-                if state.keyboard.cancel_selection() {
-                    if let Some(view) = state.keyboard_observer {
-                        cx.notify(view);
-                    }
-                    cx.notify(current_view);
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                return;
+            }
+            let mut state = selection_state.0.borrow_mut();
+            let had_selection = state.selection_anchor.is_some();
+            let inside = selection_hitbox_id.is_hovered(window);
+            let text_click = state.keyboard.apply_pointer_down(
+                inside,
+                window.default_prevented(),
+                event.position - bounds.origin,
+            );
+            if text_click {
+                if let Some(focus) = state.text_focus.clone() {
+                    focus.focus(window, cx);
                 }
-                let inside = selection_hitbox_id.is_hovered(window);
-                state.selection_drag_active = inside;
-                state.selection_anchor_candidate = inside
-                    .then(|| state.row_at_viewport_y(event.position.y - bounds.top()))
-                    .flatten()
-                    .map(|row| selection_key(row));
-                state.selection_anchor = None;
-                state.selection_cursor = None;
-                state.selection_text = None;
-                state.selection_drag_position = inside.then_some(event.position);
-                if had_selection {
-                    cx.notify(current_view);
+            }
+            if window.default_prevented() {
+                return;
+            }
+            state.selection_drag_active = text_click;
+            state.selection_anchor_candidate = inside
+                .then(|| state.row_at_viewport_y(event.position.y - bounds.top()))
+                .flatten()
+                .map(|row| selection_key(row));
+            state.selection_anchor = None;
+            state.selection_cursor = None;
+            state.selection_text = None;
+            state.selection_drag_position = inside.then_some(event.position);
+            if had_selection || text_click {
+                if let Some(view) = state.keyboard_observer {
+                    cx.notify(view);
                 }
+                cx.notify(current_view);
             }
         });
 

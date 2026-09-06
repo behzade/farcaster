@@ -4,35 +4,73 @@
 
 ## Keyboard navigation
 
-`Ctrl+G` activates app keybindings for **1 second**, without changing focus or
-leaving insert mode. macOS also accepts `Cmd+G`. These chords are reserved even
-inside Neovim and the terminal. Double `Ctrl+G` returns to **chat normal mode**.
+Keyboard focus has four main targets: the **composer**, the **transcript**,
+**Neovim**, and the **terminal**. There is no app-wide NORMAL or INSERT mode;
+each target keeps its own input semantics. Menus, dialogs, sheets, and pickers
+temporarily own input and restore their return target when dismissed; an
+explicit action such as opening the editor can intentionally move focus. Tab
+navigation remains available for controls. Text fields and embedded tools keep
+their own keys.
 
-Activation is not the Space leader: `Ctrl+G 2` switches to session 2;
-`Ctrl+G e` opens the editor, and `Ctrl+G t` opens the terminal.
-Surface/session commands and transcript scrolling are available after activation.
-Cursor selection requires chat normal ownership (double `Ctrl+G` first). A pending Space
-or `g` refreshes the one-second timeout. A command ends activation; Escape or an unknown key
-cancels it without forwarding that key to the input/editor/shell. Expiry does
-nothing and subsequent keys type normally. Session/surface/focus changes cancel
-pending activation. New sessions automatically focus the composer in insert mode.
+### Focus and clicks
 
-In chat, `Ctrl+K` focuses the transcript in normal mode and `Ctrl+J` focuses the
-composer. They only switch focus: pressing either in its target region does nothing.
-They do not intercept keys in the editor, terminal, or app dialogs. When an agent
-request replaces the composer, Ctrl+J focuses that request and Ctrl+K returns to
-the transcript.
+- New sessions, session switches, and explicitly returning to chat from the
+  editor or terminal focus the composer, preserving its draft and caret.
+- Background work — agent completions, async session updates, indexing — never
+  steals focus.
+- In chat, `Ctrl+K` focuses the transcript and `Ctrl+J` focuses the composer.
+  They only switch focus between chat targets: pressing either in its target
+  region does nothing. They do not intercept keys in the editor, terminal, or
+  app dialogs. When an agent request replaces the composer, `Ctrl+J` focuses
+  that request and `Ctrl+K` returns to the transcript.
+- Clicking the composer's blank input area focuses the composer. Clicking
+  transcript text focuses the transcript and places the cursor at the clicked
+  position; action buttons never reposition the transcript cursor.
+- Empty sessions stay in the composer because there is no transcript to
+  navigate.
 
-In chat normal:
+### Ctrl+G prefix
+
+`Ctrl+G` is the single reserved prefix, honored for **1 second** even inside
+Neovim and the terminal, which otherwise own every key including Cmd combos.
+Activating the prefix never changes focus. Continuations:
 
 | Keys | Action |
 | --- | --- |
-| `i` / `a` | Focus composer, preserving draft and caret |
-| `1`–`9` | Numbered session (no motion counts) |
+| `Ctrl+G Ctrl+G` | Return to the chat composer |
+| `Ctrl+G e` / `Ctrl+G t` | Open the editor / terminal |
+| `Ctrl+G 1`–`9` | Switch to the numbered session (composer focus) |
 | `Ctrl+G 0` | First unsubmitted draft |
 | `Ctrl+G /` | Search sessions |
-| `Ctrl+G e` / `Ctrl+G t` | Editor / terminal |
-| `Space j` / `Space k` | Next / previous session |
+
+`Ctrl+G e` and `Ctrl+G t` focus the surface they open; session switches and
+`Ctrl+G Ctrl+G` land on the composer. Escape or an unknown continuation is
+consumed, never forwarded to the input, editor, or shell. Expiry does nothing
+and subsequent keys type normally. Session, surface, or focus changes cancel a
+pending prefix.
+
+### Direct shortcuts
+
+Direct shortcuts fire only in app-owned contexts (composer, transcript, and
+chat overlays) — never inside Neovim or the terminal, where all keys belong to
+the embedded surface.
+
+- macOS: `Cmd+T` / `Cmd+W` / `Cmd+1`–`9` for new / close / numbered session;
+  `Cmd+E` editor, `Cmd+J` terminal, `Cmd+G` chat composer.
+- Linux: `Ctrl+T` / `Ctrl+W` / `Ctrl+1`–`9` for new / close / numbered session;
+  editor, terminal, and the chat composer go through the `Ctrl+G` prefix.
+
+macOS has no blanket `Ctrl`↔`Cmd` aliasing; the lists above are complete.
+`Ctrl+J` (composer) and `Ctrl+K` (transcript) keep their chat focus roles on
+every platform.
+
+### Transcript motions
+
+The transcript owns a Vim-style cursor while focused (via `Ctrl+K`, a text
+click, or explicit navigation):
+
+| Keys | Action |
+| --- | --- |
 | `h` / `l` | Previous / next character (Unicode grapheme) |
 | `j` / `k` | Cursor down / up one logical line |
 | `gj` / `gk` | Down / up one soft-wrapped screen line |
@@ -56,45 +94,39 @@ In chat normal:
 | `Ctrl+f` / `Ctrl+b` | Page down / up |
 | `Ctrl+d` / `Ctrl+u` | Half-page down / up |
 | `v` / `V` | Toggle character / logical-line visual selection |
-| `y` | Copy selection; return to normal |
+| `y` | Copy selection; exit visual mode |
 | `Cmd+c` (macOS) / `Ctrl+c` | Copy selection without leaving visual mode |
-| `Escape` | Clear selection / cancel pending Space or g sequence |
+| `Escape` | Clear selection / cancel a pending motion or operator |
 
-All transcript motions also work in visual mode, preserving the selection anchor.
-Arrow keys, Home/End, and PageUp/PageDown are supported. Motions operate on rendered
-text, not Markdown source; this is navigation/selection, not a Vim editing engine.
-Session badges show bare 1–9 while chat normal owns input. Pointer clicks
-on incidental controls do not take keyboard ownership. Menus/dialogs temporarily
-own input and restore their return target when dismissed; an explicit action
-such as opening the editor can intentionally move focus. Tab navigation remains
-available for controls. Text fields and embedded tools keep their own keys.
+All motions also work in visual mode, preserving the selection anchor. Arrow
+keys, Home/End, and PageUp/PageDown are supported. Motions operate on rendered
+text, not Markdown source; this is navigation/selection, not a Vim editing
+engine.
 
-Composer Escape returns to chat normal when idle; while a run is active, it applies
-queued steer / double-Escape aborts. Double `Ctrl+G` leaves the composer even during a run.
-Empty sessions stay in the composer because there is no transcript to navigate.
-
-The composer region (including agent requests replacing it) uses a muted blue-gray
-border while focused, and a muted border when focus is elsewhere or the window
-is inactive.
+Composer Escape applies queued steer / double-Escape aborts while a run is
+active. The composer region (including agent requests replacing it) uses a
+muted blue-gray border while focused, and a muted border when focus is
+elsewhere or the window is inactive.
 
 ### Agent requests
 
-Agent requests replace the composer without taking focus from transcript normal /
-visual mode. Use `Ctrl+J` or `i` / `a` to focus a request, and `Ctrl+K` to return to
-the transcript. In normal / visual mode, `y` remains yank and cannot grant permission.
+Agent requests replace the composer and belong to the composer focus target;
+they never take focus from the transcript. Use `Ctrl+J` to focus a request and
+`Ctrl+K` to return to the transcript. While the transcript owns the cursor,
+`y` remains yank and cannot grant permission.
 
 Confirmation buttons show `[n] No` and `[y] Yes`; press the corresponding bare key
 while the request has focus. Select requests show numbered choices. Enter, Space,
 and held keys do not approve requests.
 
-Pending requests do not block session switching: use direct session shortcuts or
-`Ctrl+G` followed by a session number (or `Space j` / `Space k`). Switching away
-leaves the request unanswered; returning restores it. Bare numbers in a request
-choose options rather than switch sessions.
+Pending requests do not block session switching: use `Ctrl+G` followed by a
+session number (or the platform session shortcuts while a chat target owns
+input). Switching away leaves the request unanswered; returning restores it.
+Bare numbers in a request choose options rather than switch sessions.
 
 ### Transcript selection
 
-Chat normal shows its transcript caret while moving and for two seconds afterwards. Motions scroll it into view; in
+The transcript shows its caret while moving and for two seconds afterwards. Motions scroll it into view; in
 `VISUAL` / `VISUAL LINE` they extend an inclusive selection from its anchor.
 `V` selects logical text lines, including their soft-wrapped continuations. Copy uses rendered
 text: prose, code, and visible labels/summaries, not Markdown delimiters, link
@@ -109,7 +141,7 @@ selection remains available and replaces keyboard selection.
 
 Keyboard help lists these commands first and **Direct** shortcuts separately.
 Settings → **Direct shortcut modifier** changes only those direct shortcuts;
-it does not change normal-mode keys, the Space leader, or `Ctrl+G` / `Cmd+G`.
+it does not change the `Ctrl+G` prefix or `Ctrl+J` / `Ctrl+K`.
 
 ## Access modes
 

@@ -57,7 +57,8 @@ impl RenderOnce for ComposerInput {
         let next_completion_entity = self.app.clone();
         let paste_entity = self.app.clone();
         let key_entity = self.app.clone();
-        let cursor_entity = self.app;
+        let cursor_entity = self.app.clone();
+        let focus_entity = self.app;
         let composer_for_paste = self.composer.clone();
         let suggestion_count = self.suggestion_count;
 
@@ -131,6 +132,14 @@ impl RenderOnce for ComposerInput {
             })
             .capture_key_down(move |_: &KeyDownEvent, _, cx| {
                 capture_after_input(key_entity.clone(), cx);
+            })
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if window.default_prevented() {
+                    return;
+                }
+                let _ = focus_entity.update(cx, |this, cx| {
+                    this.composer_focus.focus(window, cx);
+                });
             })
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                 capture_after_input(cursor_entity.clone(), cx);

@@ -157,6 +157,18 @@ impl TextRow {
         })
         .unwrap_or(0)
     }
+
+    fn nearest_point(&self, point: gpui::Point<Pixels>) -> usize {
+        let Some((index, _)) = self.cells.iter().enumerate().min_by(|(_, left), (_, right)| {
+            (left.bounds.center().y - point.y)
+                .abs()
+                .partial_cmp(&(right.bounds.center().y - point.y).abs())
+                .unwrap()
+        }) else {
+            return 0;
+        };
+        self.nearest_column(self.line_range(index), point.x)
+    }
 }
 
 #[derive(Default)]
@@ -177,6 +189,7 @@ pub(super) struct Keyboard {
     search_forward: bool,
     search_whole_word: bool,
     search_draft: Option<(String, bool)>,
+    pending_click: Option<gpui::Point<Pixels>>,
     cache: BTreeMap<usize, TextRow>,
 }
 
@@ -228,6 +241,7 @@ impl Keyboard {
         self.anchor.is_some()
     }
 
+    #[cfg(test)]
     pub(super) fn mode(&self) -> &'static str {
         match (self.anchor, self.linewise) {
             (Some(_), true) => "VISUAL LINE",
@@ -236,17 +250,63 @@ impl Keyboard {
         }
     }
 
+    pub(super) fn request_click(&mut self, point: gpui::Point<Pixels>) {
+        self.active = true;
+        self.pending_click = Some(point);
+    }
+
+    /// Action buttons call `prevent_default`. Those clicks must not move the
+    /// caret, drop visual selection, or consume a pending motion.
+    pub(super) fn apply_pointer_down(
+        &mut self,
+        inside: bool,
+        default_prevented: bool,
+        click: gpui::Point<Pixels>,
+    ) -> bool {
+        if default_prevented {
+            return false;
+        }
+        self.cancel_selection();
+        if inside {
+            self.request_click(click);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn set_active(&mut self, active: bool) {
         if self.active != active {
             self.active = active;
-            self.cancel_selection();
-            self.clear_geometry();
-            self.cursor = None;
-            self.preferred_x = None;
-            self.preferred_column = None;
-            self.recent_motion = false;
-            self.caret_timeout = None;
+            if !active {
+                self.cancel_selection();
+                self.pending_click = None;
+                self.recent_motion = false;
+                self.caret_timeout = None;
+            }
         }
+    }
+
+    fn place_at(
+        &mut self,
+        click: gpui::Point<Pixels>,
+        row: usize,
+        row_top_in_viewport: Pixels,
+        load: &mut impl FnMut(usize) -> TextRow,
+    ) {
+        let text = self.row(row, load);
+        if text.cells.is_empty() {
+            return;
+        }
+        let cell = text.nearest_point(point(click.x, click.y - row_top_in_viewport));
+        self.cursor = Some(Position { row, cell });
+        self.anchor = None;
+        self.linewise = false;
+        self.preferred_x = None;
+        self.preferred_column = None;
+        self.recent_motion = true;
+        self.pending.clear();
+        self.search_draft = None;
     }
 
     pub(super) fn invalidate(&mut self, range: Range<usize>, structural: bool) {
@@ -585,6 +645,7 @@ impl TranscriptListState {
         self.0.borrow().keyboard.has_selection()
     }
 
+    #[cfg(test)]
     pub(crate) fn keyboard_mode(&self) -> &'static str {
         self.0.borrow().keyboard.mode()
     }
@@ -635,11 +696,24 @@ impl TranscriptList {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        let (mut keyboard, count, scroll_top, following, viewport) = {
+        let (mut keyboard, count, scroll_top, following, viewport, click_row, click_top) = {
             let mut state = self.state.0.borrow_mut();
-            if !state.keyboard.active || state.heights.is_empty() {
+            if (!state.keyboard.active && state.keyboard.pending_click.is_none())
+                || state.heights.is_empty()
+            {
                 return false;
             }
+            if state.keyboard.pending_click.is_some() {
+                state.keyboard.active = true;
+            }
+            let pending_click = state.keyboard.pending_click;
+            let click_row = pending_click.map(|click| {
+                state
+                    .heights
+                    .row_at((state.scroll_y + click.y).max(px(0.0)))
+                    .min(state.heights.len() - 1)
+            });
+            let click_top = click_row.map(|row| state.heights.prefix(row) - state.scroll_y);
             (
                 std::mem::take(&mut state.keyboard),
                 state.heights.len(),
@@ -653,15 +727,23 @@ impl TranscriptList {
                         offset_in_item: y - state.heights.prefix(item_ix),
                     }
                 }),
+                click_row,
+                click_top,
             )
         };
         let top = scroll_top.item_ix.min(count - 1);
         let has_commands = !keyboard.pending.is_empty();
-        let changed = std::mem::take(&mut keyboard.geometry_dirty) || has_commands;
-        let initializing = keyboard.cursor.is_none();
-        let resume_tail = !has_commands && following;
+        let placed_click = keyboard.pending_click.take().zip(click_row).zip(click_top);
+        let click_placed = placed_click.is_some();
+        let changed =
+            std::mem::take(&mut keyboard.geometry_dirty) || has_commands || click_placed;
+        let initializing = keyboard.cursor.is_none() && placed_click.is_none();
+        let resume_tail = !has_commands && following && placed_click.is_none();
         let (copied, resume_tail, moved) = {
             let mut load = |index| self.keyboard_row(index, bounds, window, cx);
+            if let Some(((click, row), row_top)) = placed_click {
+                keyboard.place_at(click, row, row_top, &mut load);
+            }
             if let Some(pos) = keyboard.cursor {
                 let len = keyboard.row(pos.row.min(count - 1), &mut load).cells.len();
                 keyboard.cursor = (len > 0).then_some(Position {
@@ -695,7 +777,18 @@ impl TranscriptList {
                     ..pos
                 });
             }
-            keyboard.apply_pending(count, bounds.size.height, resume_tail, viewport, &mut load)
+            let pending = keyboard.apply_pending(
+                count,
+                bounds.size.height,
+                resume_tail,
+                viewport,
+                &mut load,
+            );
+            (
+                pending.0,
+                pending.1,
+                pending.2 || click_placed,
+            )
         };
         if let Some(text) = copied {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));

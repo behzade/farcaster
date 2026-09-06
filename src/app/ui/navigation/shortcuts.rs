@@ -3,12 +3,13 @@ use crate::app::views::transcript::list::KeyboardCommand;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
-    Composer,
     Editor,
     Terminal,
     RelativeSession(isize),
     Session(usize),
     SearchSessions,
+    NewSession,
+    Close,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,11 +56,11 @@ impl Scroll {
 }
 
 const COMMANDS: &[(&str, &str, Command)] = &[
-    ("i", "Focus composer", Command::Composer),
-    ("a", "Focus composer (alias)", Command::Composer),
     ("/", "Search sessions", Command::SearchSessions),
     ("e", "Open editor", Command::Editor),
     ("t", "Open terminal", Command::Terminal),
+    ("n", "New session", Command::NewSession),
+    ("w", "Close surface or session", Command::Close),
     ("space j", "Next session", Command::RelativeSession(1)),
     ("space k", "Previous session", Command::RelativeSession(-1)),
 ];
@@ -163,7 +164,7 @@ const CURSOR_COMMANDS: &[(&str, &str, KeyboardCommand)] = &[
     ),
     (
         "y",
-        "Copy selection and return to normal",
+        "Copy selection and leave visual selection",
         KeyboardCommand::Yank,
     ),
     (
@@ -177,6 +178,8 @@ pub(crate) fn command_key(command: Command) -> &'static str {
     match command {
         Command::Editor => return "Ctrl-G e",
         Command::Terminal => return "Ctrl-G t",
+        Command::NewSession => return "Ctrl-G n",
+        Command::Close => return "Ctrl-G w",
         _ => {}
     }
     COMMANDS
@@ -211,20 +214,15 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     )];
     if cfg!(target_os = "macos") {
         rows.push((
-            "From anywhere",
+            "App-owned contexts",
             "cmd-g".into(),
-            "Activate app keys (macOS alias)",
-        ));
-        rows.push((
-            "From anywhere",
-            "cmd-g cmd-g".into(),
-            "Return to chat normal (macOS alias)",
+            "Focus chat composer",
         ));
     }
     rows.push((
         "From anywhere",
         "ctrl-g ctrl-g".into(),
-        "Return to chat normal mode",
+        "Return to chat composer",
     ));
     rows.push((
         "From anywhere",
@@ -239,6 +237,8 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
                     command,
                     Command::Editor
                         | Command::Terminal
+                        | Command::NewSession
+                        | Command::Close
                         | Command::RelativeSession(_)
                         | Command::SearchSessions
                 )
@@ -246,7 +246,7 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
             .map(|(key, label, _)| ("From anywhere", format!("ctrl-g {key}"), *label)),
     );
     rows.extend([
-        ("Chat", "ctrl-k".into(), "Focus transcript (normal mode)"),
+        ("Chat", "ctrl-k".into(), "Focus transcript"),
         ("Chat", "ctrl-j".into(), "Focus composer"),
         ("Agent confirmation", "n".into(), "No / deny"),
         ("Agent confirmation", "y".into(), "Yes / allow"),
@@ -254,44 +254,39 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     rows.extend(
         COMMANDS
             .iter()
-            .filter(|(_, _, command)| {
-                matches!(
-                    command,
-                    Command::Composer | Command::RelativeSession(_) | Command::Session(_)
-                )
-            })
-            .map(|(key, label, _)| ("Chat normal", (*key).into(), *label)),
+            .filter(|(_, _, command)| matches!(command, Command::RelativeSession(_)))
+            .map(|(key, label, _)| ("Transcript", (*key).into(), *label)),
     );
     rows.extend([
-        ("Chat normal", "1–9".into(), "Switch session"),
+        ("Transcript", "1–9".into(), "Switch session"),
         (
-            "Chat normal / visual",
+            "Transcript",
             "z t / z z / z b".into(),
             "Align cursor line at top / center / bottom",
         ),
         (
-            "Chat normal / visual",
+            "Transcript",
             "g e".into(),
             "Previous word end (g E for WORD)",
         ),
         (
-            "Chat normal / visual",
+            "Transcript",
             "g j".into(),
             "Next wrapped line (g k for previous)",
         ),
         (
-            "Chat normal / visual",
+            "Transcript",
             "g 0".into(),
             "Wrapped-line start (g ^ / g $ for nonblank / end)",
         ),
-        ("Chat normal / visual", "g _".into(), "Last nonblank"),
+        ("Transcript", "g _".into(), "Last nonblank"),
         (
-            "Chat normal / visual",
+            "Transcript",
             "f / F / t / T".into(),
             "Find / till next character, forward / backward",
         ),
         (
-            "Chat normal / visual",
+            "Transcript",
             "/ / ?".into(),
             "Search rendered text forward / backward; Enter confirms",
         ),
@@ -299,20 +294,20 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     rows.extend(
         SCROLLS
             .iter()
-            .map(|(key, label, _)| ("Chat normal / visual", (*key).into(), *label)),
+            .map(|(key, label, _)| ("Transcript", (*key).into(), *label)),
     );
     rows.extend(CURSOR_COMMANDS.iter().map(|(key, label, command)| {
         let section = if *command == KeyboardCommand::Yank {
-            "Chat visual"
+            "Transcript visual"
         } else {
-            "Chat normal / visual"
+            "Transcript"
         };
         (section, (*key).into(), *label)
     }));
     rows
 }
 
-/// True selects transcript normal mode; false selects the composer.
+/// True selects the transcript; false selects the composer.
 pub(super) fn chat_focus_key(key: &str, modifiers: gpui::Modifiers) -> Option<bool> {
     if modifiers
         != (gpui::Modifiers {
@@ -333,7 +328,7 @@ pub(super) fn normal_command(key: &str, prefix: Option<Prefix>) -> Option<Comman
     activated_command(key, prefix).filter(|command| {
         matches!(
             command,
-            Command::Composer | Command::RelativeSession(_) | Command::Session(1..=9)
+            Command::RelativeSession(_) | Command::Session(1..=9)
         )
     })
 }

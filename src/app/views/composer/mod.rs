@@ -10,8 +10,8 @@ mod tests;
 mod widgets;
 
 use gpui::{
-    AnyElement, App, Context, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    AnyElement, App, Context, InteractiveElement as _, IntoElement as _, MouseButton,
+    ParentElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use super::super::FarcasterApp;
@@ -103,6 +103,7 @@ impl FarcasterApp {
             actions,
         );
 
+        let composer_focus = self.composer_focus.clone();
         let composer = div()
             .relative()
             .w_full()
@@ -114,6 +115,11 @@ impl FarcasterApp {
             .border(THEME.border)
             .border_color(composer_border_color(focused))
             .bg(THEME.colors.composer)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                if !window.default_prevented() {
+                    composer_focus.focus(window, cx);
+                }
+            })
             .child(
                 div()
                     .relative()

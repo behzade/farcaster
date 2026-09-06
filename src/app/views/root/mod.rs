@@ -25,9 +25,12 @@ impl Render for FarcasterApp {
 
         let mode = layout_mode(window.viewport_size().width);
         let entity = cx.entity().downgrade();
-        let key_context = match self.surface {
-            AppSurface::Chat | AppSurface::Work => APP_INPUT_CONTEXT,
-            AppSurface::Editor | AppSurface::Terminal => NATIVE_INPUT_CONTEXT,
+        let key_context = if self.native_workspace_covered_by_overlay()
+            || matches!(self.surface, AppSurface::Chat | AppSurface::Work)
+        {
+            APP_INPUT_CONTEXT
+        } else {
+            NATIVE_INPUT_CONTEXT
         };
         let work_active = self.surface == AppSurface::Work;
         let main = self.render_workspace_main(

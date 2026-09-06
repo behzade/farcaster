@@ -22,7 +22,7 @@ impl FarcasterApp {
             self.overlays.pending_setup = false;
             let focus = self.sheet_focus.clone();
             cx.defer_in(window, move |this, window, cx| {
-                if this.keyboard_overlay_focus(cx).as_ref() == Some(&focus) {
+                if this.keyboard_overlay_focus(window, cx).as_ref() == Some(&focus) {
                     focus.focus(window, cx);
                 }
             });
@@ -55,6 +55,13 @@ impl FarcasterApp {
             } else {
                 self.dialog_focus.clone()
             };
+            let composer_slot_owns = self.composer_focus.is_focused(window)
+                || self.dialog_focus.contains_focused(window, cx)
+                || self
+                    .dialog_input
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window);
             cx.defer_in(window, move |this, window, cx| {
                 if dialog_id.is_none()
                     || this
@@ -71,8 +78,9 @@ impl FarcasterApp {
                         state.set_value(prefill, window, cx);
                     });
                 }
-                // A new sheet/confirmation may have opened since this was queued.
-                if this.keyboard_overlay_focus(cx).as_ref() == Some(&focus) {
+                // Requests replace the composer slot only. Never steal from the
+                // transcript, editor, terminal, or a later modal overlay.
+                if composer_slot_owns && this.keyboard_overlay_focus(window, cx).is_none() {
                     focus.focus(window, cx);
                 }
             });

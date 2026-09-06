@@ -1,6 +1,9 @@
 use std::{collections::HashMap, sync::Arc};
 
-use gpui::{Context, IntoElement as _, Render, WeakEntity};
+use gpui::{
+    Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render, Styled as _,
+    WeakEntity,
+};
 
 use super::super::{FarcasterApp, transcript};
 use crate::app::ui::persistent_vec::PersistentVec;
@@ -70,11 +73,16 @@ impl Render for TranscriptView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
+        let transcript = app.chat_navigation.transcript.clone();
+        let empty = self.rows.is_empty();
+        if !empty {
+            self.list.set_text_focus(transcript.clone());
+        }
         self.list.set_keyboard_active(
-            app.chat_navigation.focus.is_focused(window) && window.is_window_active(),
+            !empty && transcript.is_focused(window) && window.is_window_active(),
         );
         let viewport = window.viewport_size();
-        transcript::render(
+        let content = transcript::render(
             &self.list,
             transcript::TranscriptViewport {
                 following: self.following,
@@ -87,7 +95,15 @@ impl Render for TranscriptView {
             self.markdown_cache.clone(),
             crate::agents::backend_display_name(&app.snapshot.harness).into(),
             self.app.clone(),
-        )
-        .into_any_element()
+        );
+        if empty {
+            content
+        } else {
+            gpui::div()
+                .size_full()
+                .track_focus(&transcript)
+                .child(content)
+                .into_any_element()
+        }
     }
 }

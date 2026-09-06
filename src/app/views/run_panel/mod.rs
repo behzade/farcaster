@@ -220,7 +220,12 @@ impl FarcasterApp {
                         true,
                         move |window, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                this.select_session(path.clone(), project.clone(), window, cx);
+                                this.select_session_to_composer(
+                                    path.clone(),
+                                    project.clone(),
+                                    window,
+                                    cx,
+                                );
                             });
                         },
                     )

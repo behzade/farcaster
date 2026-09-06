@@ -107,7 +107,7 @@ impl FarcasterApp {
             self.picker_return_focus = if sheet_open {
                 self.sheet_return_focus
                     .clone()
-                    .or_else(|| Some(self.preferred_chat_focus()))
+                    .or_else(|| Some(self.chat_composer_focus(cx)))
             } else {
                 window.focused(cx)
             };
@@ -252,8 +252,6 @@ impl FarcasterApp {
         else {
             return;
         };
-        let return_to_normal =
-            self.picker_return_focus.as_ref() == Some(&self.chat_navigation.focus);
         match command {
             PickerCommand::OpenProjects(intent) => {
                 self.open_picker(PickerScope::Projects(intent), window, cx);
@@ -288,17 +286,11 @@ impl FarcasterApp {
             }
             PickerCommand::SelectSession { path, project } => {
                 self.close_picker(window, cx);
-                self.select_session(path, project, window, cx);
-                if return_to_normal {
-                    self.return_to_chat_normal(window, cx);
-                }
+                self.select_session_to_composer(path, project, window, cx);
             }
             PickerCommand::ResumeDraft { id, project } => {
                 self.close_picker(window, cx);
-                self.resume_draft(id, project, window, cx);
-                if return_to_normal {
-                    self.return_to_chat_normal(window, cx);
-                }
+                self.resume_draft_to_composer(id, project, window, cx);
             }
         }
     }

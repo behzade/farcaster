@@ -65,11 +65,7 @@ impl FarcasterApp {
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
-        // The runtime reset arrives after the synchronous session navigation.
-        // Do not turn a normal-mode session jump into composer insert mode.
-        self.post_render_focus = Some(PostRenderFocus::ActiveSurface(Some(
-            self.preferred_chat_focus(),
-        )));
+        // Async session loads must not steal whatever the user already focused.
         self.dialog_return_focus = None;
         self.overlays.sessions = false;
         self.overlays.run = false;

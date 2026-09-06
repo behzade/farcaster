@@ -1,5 +1,10 @@
 use super::*;
 
+/// Explicit session switches keep the chat composer. They never reopen a
+/// remembered editor or terminal. Background activation uses
+/// [`FarcasterApp::select_session`] without moving focus.
+pub(in crate::app) const USER_SESSION_SWITCH_RESTORES_CENTER: bool = false;
+
 pub(in crate::app) fn current_close_target(
     selected_draft: Option<&str>,
     selected_session: Option<&std::path::Path>,
@@ -14,6 +19,31 @@ pub(in crate::app) fn current_close_target(
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn close_current_target(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.surface == AppSurface::Editor {
+            self.close_editor(cx);
+            return;
+        }
+        if self.surface == AppSurface::Terminal {
+            self.close_terminal(window, cx);
+            return;
+        }
+        match current_close_target(
+            self.selected_draft.as_deref(),
+            self.snapshot.selected_session.as_deref(),
+        ) {
+            CurrentCloseTarget::Draft(id) => self.discard_draft(&id, window, cx),
+            CurrentCloseTarget::Session(path) => {
+                self.archive_selected_session_and_advance(path, window, cx);
+            }
+            CurrentCloseTarget::None => {}
+        }
+    }
+
     pub(in crate::app) fn backend_target_for_path(&self, path: &Path) -> SessionTarget {
         self.all_sessions
             .iter()
@@ -26,6 +56,34 @@ impl FarcasterApp {
         &mut self,
         path: PathBuf,
         project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_session_restoring_center(
+            path,
+            project,
+            USER_SESSION_SWITCH_RESTORES_CENTER,
+            window,
+            cx,
+        );
+    }
+
+    pub(in crate::app) fn select_session_to_composer(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_session(path, project, window, cx);
+        self.return_to_chat_composer(window, cx);
+    }
+
+    pub(in crate::app) fn select_session_restoring_center(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        restore_center: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -48,7 +106,9 @@ impl FarcasterApp {
         self.switch_composer_target(session_target(&path), window, cx);
         self.selected_draft = None;
         self.select_project(project.clone(), cx);
-        self.restore_center_surface(project.clone(), window, cx);
+        if restore_center {
+            self.restore_center_surface(project.clone(), window, cx);
+        }
         if let Some((_, timing)) = self.pending_session_switch.take() {
             timing.cancel();
         }
@@ -154,7 +214,6 @@ impl FarcasterApp {
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.close_sessions_sheet_after_selection(window, cx);
-        self.chat_navigation.normal_mode = false;
         self.show_chat_surface(window, cx);
         self.composer_focus.focus(window, cx);
         self.notify_session_rail(cx);
@@ -171,6 +230,34 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.resume_draft_restoring_center(
+            id,
+            project,
+            USER_SESSION_SWITCH_RESTORES_CENTER,
+            window,
+            cx,
+        );
+    }
+
+    pub(in crate::app) fn resume_draft_to_composer(
+        &mut self,
+        id: String,
+        project: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.resume_draft(id, project, window, cx);
+        self.return_to_chat_composer(window, cx);
+    }
+
+    pub(in crate::app) fn resume_draft_restoring_center(
+        &mut self,
+        id: String,
+        project: PathBuf,
+        restore_center: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_project_trust_command.is_some() {
             return;
         }
@@ -182,7 +269,9 @@ impl FarcasterApp {
         self.switch_composer_target(draft_target(&id), window, cx);
         self.selected_draft = Some(id.clone());
         self.select_project(project.clone(), cx);
-        self.restore_center_surface(project.clone(), window, cx);
+        if restore_center {
+            self.restore_center_surface(project.clone(), window, cx);
+        }
         let draft_harness = self
             .drafts
             .iter()

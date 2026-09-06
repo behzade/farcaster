@@ -77,14 +77,24 @@ impl FarcasterApp {
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.select_session(path.clone(), project.clone(), window, cx);
+                        this.select_session_to_composer(
+                            path.clone(),
+                            project.clone(),
+                            window,
+                            cx,
+                        );
                     });
                 })
                 .on_key_down(move |event, window, cx| {
                     if activates_button(event) {
                         cx.stop_propagation();
                         let _ = key_entity.update(cx, |this, cx| {
-                            this.select_session(key_path.clone(), key_project.clone(), window, cx)
+                            this.select_session_to_composer(
+                                key_path.clone(),
+                                key_project.clone(),
+                                window,
+                                cx,
+                            )
                         });
                     }
                 })

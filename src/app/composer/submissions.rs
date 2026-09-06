@@ -162,14 +162,9 @@ impl FarcasterApp {
         )
     }
 
-    pub(crate) fn handle_composer_escape(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn handle_composer_escape(&mut self, cx: &mut Context<Self>) {
         if !self.snapshot.conversation.running {
             self.composer_escape_armed = None;
-            self.return_to_chat_normal(window, cx);
             return;
         }
         let (abort, arm) = composer_escape(

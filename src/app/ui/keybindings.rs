@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
+#[cfg(target_os = "linux")]
+use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias};
+use crate::app::ui::keyboard::CopySelection;
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
@@ -102,11 +104,8 @@ pub(crate) fn application_key(suffix: &str) -> String {
     application_modifier().key(suffix)
 }
 
-fn application_context(modifier: ApplicationModifier) -> Option<&'static str> {
-    match modifier {
-        ApplicationModifier::Command | ApplicationModifier::Super => None,
-        ApplicationModifier::Control | ApplicationModifier::Alt => Some(APP_SHORTCUT_CONTEXT),
-    }
+fn application_context(_modifier: ApplicationModifier) -> Option<&'static str> {
+    Some(APP_SHORTCUT_CONTEXT)
 }
 
 const fn platform_key(macos: &'static str, non_macos: &'static str) -> &'static str {
@@ -214,7 +213,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             shortcut_with_modifier!(modifier, $section, $label, $key, $action, $show)
         };
     }
-    vec![
+    let mut shortcuts = vec![
         application_shortcut!(
             "Sessions",
             "Open first unsubmitted draft",
@@ -291,23 +290,38 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             ),
         },
         application_shortcut!("Workspace", "Chat and composer", "l", FocusComposer),
+        #[cfg(target_os = "macos")]
+        shortcut!(
+            "Workspace",
+            "Chat composer",
+            "cmd-g",
+            FocusComposer,
+            Some(APP_SHORTCUT_CONTEXT)
+        ),
         shortcut!(
             "Workspace",
             "Chat and composer",
             "f1",
             FocusComposer,
-            None,
+            Some(APP_SHORTCUT_CONTEXT),
             false
         ),
         application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
-        shortcut!("Workspace", "Open Neovim", "f2", ShowEditor, None, false),
+        shortcut!(
+            "Workspace",
+            "Open Neovim",
+            "f2",
+            ShowEditor,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
         application_shortcut!("Workspace", "Open terminal", "j", ShowTerminal),
         shortcut!(
             "Workspace",
             "Open terminal",
             "f3",
             ShowTerminal,
-            None,
+            Some(APP_SHORTCUT_CONTEXT),
             false
         ),
         shortcut!(
@@ -315,14 +329,14 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             "Next workspace surface",
             "ctrl-tab",
             CycleWorkspaceForward,
-            None
+            Some(APP_SHORTCUT_CONTEXT)
         ),
         shortcut!(
             "Workspace",
             "Previous workspace surface",
             "ctrl-shift-tab",
             CycleWorkspaceBackward,
-            None
+            Some(APP_SHORTCUT_CONTEXT)
         ),
         #[cfg(target_os = "linux")]
         shortcut!(
@@ -330,7 +344,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             "Copy",
             "super-c",
             ClipboardCopyAlias,
-            None,
+            Some(APP_SHORTCUT_CONTEXT),
             false
         ),
         #[cfg(target_os = "linux")]
@@ -339,7 +353,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             "Paste",
             "super-v",
             ClipboardPasteAlias,
-            None,
+            Some(APP_SHORTCUT_CONTEXT),
             false
         ),
         Shortcut {
@@ -426,7 +440,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             "Open action picker",
             "f4",
             ShowActionPicker,
-            None,
+            Some(APP_SHORTCUT_CONTEXT),
             false
         ),
         application_shortcut!("Application", "Keyboard shortcuts", "/", ShowKeybindings),
@@ -473,7 +487,121 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
         },
         application_shortcut!("Application", "Quit", "q", QuitApplication),
-    ]
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "New session",
+            "ctrl-t",
+            NewSession,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Close surface or draft; archive session",
+            "ctrl-w",
+            CloseCurrent,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open first unsubmitted draft",
+            "ctrl-0",
+            SwitchSession0,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 1",
+            "ctrl-1",
+            SwitchSession1,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 2",
+            "ctrl-2",
+            SwitchSession2,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 3",
+            "ctrl-3",
+            SwitchSession3,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 4",
+            "ctrl-4",
+            SwitchSession4,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 5",
+            "ctrl-5",
+            SwitchSession5,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 6",
+            "ctrl-6",
+            SwitchSession6,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 7",
+            "ctrl-7",
+            SwitchSession7,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 8",
+            "ctrl-8",
+            SwitchSession8,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+        #[cfg(not(target_os = "macos"))]
+        shortcut!(
+            "Sessions",
+            "Open session 9",
+            "ctrl-9",
+            SwitchSession9,
+            Some(APP_SHORTCUT_CONTEXT),
+            false
+        ),
+    ];
+    // Reserved chat chords. A configured Control modifier must not alias them
+    // to terminal / action-picker in app-owned chat.
+    if modifier == ApplicationModifier::Control {
+        shortcuts.retain(|shortcut| !matches!(shortcut.keystroke.as_str(), "ctrl-j" | "ctrl-k"));
+    }
+    shortcuts
 }
 
 #[cfg(test)]
@@ -549,7 +677,36 @@ mod tests {
     }
 
     #[test]
-    fn application_shortcuts_use_the_configured_modifier_globally() {
+    fn legacy_global_actions_are_scoped_to_app_owned_contexts() {
+        use crate::app::APP_SHORTCUT_CONTEXT;
+        let app_context = gpui::KeyBindingContextPredicate::parse(APP_SHORTCUT_CONTEXT)
+            .expect("app shortcut context");
+        let shortcuts = registry();
+        for keystroke in ["f1", "f2", "f3", "f4", "ctrl-tab", "ctrl-shift-tab"] {
+            let matches = shortcuts
+                .iter()
+                .filter(|shortcut| shortcut.keystroke == keystroke)
+                .collect::<Vec<_>>();
+            assert!(
+                !matches.is_empty(),
+                "{keystroke} must remain registered"
+            );
+            for shortcut in matches {
+                assert_eq!(
+                    shortcut.binding.predicate().as_deref(),
+                    Some(&app_context),
+                    "{keystroke} must not be a global None-context binding"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn application_shortcuts_stay_in_app_owned_contexts() {
+        use super::{APP_SHORTCUT_CONTEXT, registry_for_modifier};
+        use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
+        let app_context = gpui::KeyBindingContextPredicate::parse(APP_SHORTCUT_CONTEXT)
+            .expect("app shortcut context");
         let shortcuts = registry();
         for (label, suffix) in [
             ("New session", "t"),
@@ -562,34 +719,64 @@ mod tests {
             assert!(shortcuts.iter().any(|shortcut| {
                 shortcut.label == label
                     && shortcut.keystroke == keystroke
-                    && shortcut.binding.predicate().is_none()
+                    && shortcut.binding.predicate().as_deref() == Some(&app_context)
             }));
         }
-    }
 
-    #[test]
-    fn command_direct_shortcuts_remain_global_alongside_activation() {
-        use super::registry_for_modifier;
         let keymap = gpui::Keymap::new(
             registry_for_modifier(ApplicationModifier::Command)
                 .into_iter()
                 .map(|shortcut| shortcut.binding)
                 .collect(),
         );
-        for context in ["FarcasterComposer", "FarcasterNative", "Input", "Terminal"] {
-            let contexts = [gpui::KeyContext::parse(context).unwrap()];
-            for key in ["cmd-2", "cmd-t", "cmd-e", "cmd-j", "cmd-k", "cmd-q"] {
-                let (bindings, _) =
-                    keymap.bindings_for_input(&[gpui::Keystroke::parse(key).unwrap()], &contexts);
-                assert!(!bindings.is_empty(), "{key} missing in {context}");
-            }
+        let app_contexts = [gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()];
+        let native_contexts = [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()];
+        for key in ["cmd-2", "cmd-t", "cmd-e", "cmd-j", "cmd-g"] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            let (app_bindings, _) = keymap.bindings_for_input(&[stroke.clone()], &app_contexts);
+            assert!(!app_bindings.is_empty(), "{key} missing in app context");
+            let (native_bindings, _) = keymap.bindings_for_input(&[stroke], &native_contexts);
+            assert!(
+                native_bindings.is_empty(),
+                "{key} must not reach embedded views"
+            );
         }
-        // Activation aliases are intercepted separately, not ordinary direct bindings.
-        assert!(
-            registry_for_modifier(ApplicationModifier::Command)
-                .iter()
-                .all(|shortcut| shortcut.keystroke != "cmd-g")
+        let (ctrl_j, _) = keymap.bindings_for_input(
+            &[gpui::Keystroke::parse("ctrl-j").unwrap()],
+            &app_contexts,
         );
+        assert!(
+            ctrl_j.is_empty(),
+            "Ctrl+J must remain chat focus, not a Mac terminal alias"
+        );
+        for key in ["f1", "f2", "f3", "f4", "ctrl-tab", "ctrl-shift-tab"] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            let (native_bindings, _) =
+                keymap.bindings_for_input(&[stroke.clone()], &native_contexts);
+            assert!(
+                native_bindings.is_empty(),
+                "{key} must not reach embedded views"
+            );
+            let (app_bindings, _) = keymap.bindings_for_input(&[stroke], &app_contexts);
+            assert!(!app_bindings.is_empty(), "{key} missing in app context");
+        }
+
+        let control_map = gpui::Keymap::new(
+            registry_for_modifier(ApplicationModifier::Control)
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
+        );
+        for key in ["ctrl-j", "ctrl-k"] {
+            let (bindings, _) = control_map.bindings_for_input(
+                &[gpui::Keystroke::parse(key).unwrap()],
+                &app_contexts,
+            );
+            assert!(
+                bindings.is_empty(),
+                "{key} must stay a chat focus chord when Control is the modifier"
+            );
+        }
     }
 
     #[test]

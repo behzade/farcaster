@@ -145,7 +145,7 @@ impl FarcasterApp {
             .gap(gpui::px(2.0))
             .child(surface_control(
                 "show-chat-surface",
-                "Chat composer (i / a in chat normal; double Ctrl+G returns to chat normal)"
+                "Chat composer (Ctrl+J; Cmd+G on macOS; Ctrl+G Ctrl+G)"
                     .to_owned(),
                 harness_icon,
                 self.surface == AppSurface::Chat,

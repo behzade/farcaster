@@ -255,7 +255,12 @@ impl RenderOnce for SessionRow {
                     });
                 } else {
                     let _ = open_entity.update(cx, |this, cx| {
-                        this.select_session(path.clone(), project.clone(), window, cx)
+                        this.select_session_to_composer(
+                            path.clone(),
+                            project.clone(),
+                            window,
+                            cx,
+                        )
                     });
                 }
             })

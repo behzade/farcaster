@@ -51,8 +51,11 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
     !flags.any()
 }
 
-fn request_preserves_transcript(surface: AppSurface, normal_mode: bool) -> bool {
-    surface == AppSurface::Chat && normal_mode
+/// Agent requests replace the composer slot. They never become a modal
+/// recovery target and only receive focus when that slot already owns input.
+#[cfg(test)]
+const fn arriving_request_takes_focus(composer_slot_owns: bool) -> bool {
+    composer_slot_owns
 }
 
 impl FarcasterApp {
@@ -63,7 +66,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(focus) = self.keyboard_overlay_focus(cx) {
+        if let Some(focus) = self.keyboard_overlay_focus(window, cx) {
             focus.focus(window, cx);
         } else {
             self.request_active_surface_focus(None);
@@ -71,7 +74,11 @@ impl FarcasterApp {
         }
     }
 
-    pub(in crate::app) fn keyboard_overlay_focus(&self, cx: &gpui::App) -> Option<FocusHandle> {
+    pub(in crate::app) fn keyboard_overlay_focus(
+        &self,
+        _window: &Window,
+        cx: &gpui::App,
+    ) -> Option<FocusHandle> {
         if self.image_preview.is_some() {
             Some(self.image_preview_focus.clone())
         } else if let Some(pending) = &self.repository.pending_jj_init {
@@ -86,15 +93,6 @@ impl FarcasterApp {
             self.picker_focus(cx)
         } else if self.surface == AppSurface::Work {
             Some(self.workgraph_view.read(cx).focus_handle())
-        } else if self.extension.dialog.is_some() {
-            // Inline requests replace the composer, not the transcript's keyboard owner.
-            Some(
-                if request_preserves_transcript(self.surface, self.chat_navigation.normal_mode) {
-                    self.chat_navigation.focus.clone()
-                } else {
-                    self.composer_region_focus(cx)
-                },
-            )
         } else {
             None
         }
@@ -126,14 +124,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let overlay = self.keyboard_overlay_focus(cx);
+        let overlay = self.keyboard_overlay_focus(window, cx);
         let restored = crate::app::ui::focus::restore(
             target,
             closing,
             &self.chat_navigation.focus,
             overlay
                 .clone()
-                .unwrap_or_else(|| self.preferred_chat_focus()),
+                .unwrap_or_else(|| self.chat_composer_focus(cx)),
             window,
             cx,
         );
@@ -285,7 +283,7 @@ impl FarcasterApp {
             }
             return;
         }
-        let _ = self.enter_chat_surface(self.preferred_chat_focus(), cx);
+        let _ = self.enter_chat_surface(self.chat_composer_focus(cx), cx);
     }
 
     pub(in crate::app) fn reveal_native_center_surface(
@@ -329,7 +327,7 @@ impl FarcasterApp {
                 match self.surface {
                     AppSurface::Chat => chat
                         .filter(|focus| self.chat_navigation.focus.contains(focus, window))
-                        .unwrap_or_else(|| self.preferred_chat_focus())
+                        .unwrap_or_else(|| self.chat_composer_focus(cx))
                         .focus(window, cx),
                     AppSurface::Editor => {
                         if self.editor_ready
@@ -553,7 +551,6 @@ impl FarcasterApp {
             && self.extension.dialog.is_some()
             && !self.native_workspace_modal_active()
         {
-            self.chat_navigation.normal_mode = false;
             self.composer_region_focus(cx).focus(window, cx);
             self.notify_composer(cx);
             return;
@@ -871,19 +868,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inline_requests_preserve_chat_normal_ownership_only() {
-        for surface in [
-            AppSurface::Chat,
-            AppSurface::Editor,
-            AppSurface::Terminal,
-            AppSurface::Work,
-        ] {
-            assert_eq!(
-                request_preserves_transcript(surface, true),
-                surface == AppSurface::Chat
-            );
-            assert!(!request_preserves_transcript(surface, false));
-        }
+    fn arriving_requests_only_focus_when_replacing_the_composer_slot() {
+        assert!(arriving_request_takes_focus(true));
+        assert!(!arriving_request_takes_focus(false));
     }
 
     #[test]

@@ -23,7 +23,6 @@ use composer::submissions::PendingSubmission;
 use composer::{completion as composer_completion, file_mentions};
 pub(crate) use navigation::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use project::{registry as project_registry, repository};
-use session::lifecycle::current_close_target;
 use session::{archive, drafts};
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 pub(crate) use views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT;

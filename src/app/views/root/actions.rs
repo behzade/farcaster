@@ -4,13 +4,13 @@ use super::super::FarcasterApp;
 use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{
-    AbortRun, AddProject, AppSurface, CloseCurrent, ComposerEscape, CurrentCloseTarget,
-    DismissSurface, FocusComposer, FocusSessionSearch, NewSession, NextSession, PickerBack,
-    PickerScope, PreviousSession, ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor,
-    ShowKeybindings, ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession0,
-    SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6,
-    SwitchSession7, SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue,
-    WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue, current_close_target,
+    AbortRun, AddProject, CloseCurrent, ComposerEscape, DismissSurface, FocusComposer,
+    FocusSessionSearch, NewSession, NextSession, PickerBack, PickerScope, PreviousSession,
+    ProjectPickerIntent, RemoveProject, ShowActionPicker, ShowEditor, ShowKeybindings,
+    ShowTerminal, ShowWorkGraph, SubmitFollowUp, SubmitPrompt, SwitchSession0, SwitchSession1,
+    SwitchSession2, SwitchSession3, SwitchSession4, SwitchSession5, SwitchSession6, SwitchSession7,
+    SwitchSession8, SwitchSession9, ToggleArchivedSessions, WorkCreateIssue, WorkDismiss,
+    WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 
 pub(super) fn bind(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
@@ -101,28 +101,11 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             this.send(crate::runtime::RuntimeCommand::Abort, cx);
         }
     }))
-    .on_action(cx.listener(|this, _: &ComposerEscape, window, cx| {
-        this.handle_composer_escape(window, cx);
+    .on_action(cx.listener(|this, _: &ComposerEscape, _, cx| {
+        this.handle_composer_escape(cx);
     }))
     .on_action(cx.listener(|this, _: &CloseCurrent, window, cx| {
-        if this.surface == AppSurface::Editor {
-            this.close_editor(cx);
-            return;
-        }
-        if this.surface == AppSurface::Terminal {
-            this.close_terminal(window, cx);
-            return;
-        }
-        match current_close_target(
-            this.selected_draft.as_deref(),
-            this.snapshot.selected_session.as_deref(),
-        ) {
-            CurrentCloseTarget::Draft(id) => this.discard_draft(&id, window, cx),
-            CurrentCloseTarget::Session(path) => {
-                this.archive_selected_session_and_advance(path, window, cx);
-            }
-            CurrentCloseTarget::None => {}
-        }
+        this.close_current_target(window, cx);
     }))
     .on_action(cx.listener(|this, _: &ShowKeybindings, window, cx| {
         this.open_keybindings_help(window, cx);

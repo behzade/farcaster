@@ -72,6 +72,63 @@ fn append_preserves_anchors_but_replacing_selected_content_and_blur_cancel() {
     assert!(keyboard.pending.is_empty());
 }
 
+#[test]
+fn deactivating_clears_pending_without_dropping_the_cursor() {
+    let cursor = Some(Position { row: 1, cell: 2 });
+    let mut keyboard = Keyboard {
+        active: true,
+        cursor,
+        anchor: Some(Position { row: 0, cell: 1 }),
+        ..Default::default()
+    };
+    keyboard.pending.push_back(KeyboardCommand::Yank);
+    keyboard.set_active(false);
+    assert!(keyboard.pending.is_empty());
+    assert!(!keyboard.has_selection());
+    assert_eq!(keyboard.cursor, cursor);
+    keyboard.set_active(true);
+    assert_eq!(keyboard.cursor, cursor);
+}
+
+#[test]
+fn action_clicks_do_not_reposition_the_transcript_cursor() {
+    let cursor = Some(Position { row: 1, cell: 2 });
+    let mut keyboard = Keyboard {
+        active: true,
+        cursor,
+        anchor: Some(Position { row: 0, cell: 1 }),
+        ..Default::default()
+    };
+    keyboard.pending.push_back(KeyboardCommand::Yank);
+
+    assert!(!keyboard.apply_pointer_down(true, true, point(px(55.0), px(8.0))));
+    assert_eq!(keyboard.cursor, cursor);
+    assert!(keyboard.has_selection());
+    assert_eq!(keyboard.pending.len(), 1);
+    assert!(keyboard.pending_click.is_none());
+
+    assert!(keyboard.apply_pointer_down(true, false, point(px(55.0), px(8.0))));
+    assert!(!keyboard.has_selection());
+    assert!(keyboard.pending.is_empty());
+    assert_eq!(keyboard.pending_click, Some(point(px(55.0), px(8.0))));
+    assert_eq!(keyboard.cursor, cursor);
+}
+
+#[test]
+fn click_places_the_nearest_cell_without_keeping_visual() {
+    let mut keyboard = Keyboard {
+        active: true,
+        cursor: Some(Position { row: 0, cell: 0 }),
+        anchor: Some(Position { row: 0, cell: 0 }),
+        ..Default::default()
+    };
+    let mut load = |_| text_row("hello world");
+    // text_row places each grapheme at (cell * 10, 0) with size 10x20.
+    keyboard.place_at(point(px(55.0), px(8.0)), 0, px(0.0), &mut load);
+    assert_eq!(keyboard.cursor, Some(Position { row: 0, cell: 5 }));
+    assert!(!keyboard.has_selection());
+}
+
 struct TextList {
     state: TranscriptListState,
     texts: Vec<String>,

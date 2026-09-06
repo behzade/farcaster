@@ -164,7 +164,7 @@ impl FarcasterApp {
         }
     }
 
-    pub(super) fn archive_selected_session_and_advance(
+    pub(in crate::app) fn archive_selected_session_and_advance(
         &mut self,
         path: std::path::PathBuf,
         window: &mut gpui::Window,
@@ -239,15 +239,15 @@ impl FarcasterApp {
     ) {
         // Agent requests belong to their session, not the whole workspace.
         // The runtime retains pending dialogs when selecting another session.
-        if self.native_workspace_modal_active() || self.surface == crate::app::AppSurface::Work {
+        if self.native_workspace_modal_active() {
             return;
         }
         match target {
             VisibleSessionTarget::Draft(draft) => {
-                self.resume_draft(draft.id, draft.project, window, cx);
+                self.resume_draft_to_composer(draft.id, draft.project, window, cx);
             }
             VisibleSessionTarget::Persisted(session) => {
-                self.select_session(session.path, session.project, window, cx);
+                self.select_session_to_composer(session.path, session.project, window, cx);
             }
         }
     }
