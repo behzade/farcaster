@@ -74,11 +74,14 @@ pub(super) fn render_activity_group(
                     .w_auto()
                     .flex_none()
                     .aria_expanded(expanded)
-                    .child(tool_changes::tool_label(if expanded {
-                        "Hide activity"
-                    } else {
-                        "Activity"
-                    })),
+                    .child(app_icon(
+                        if expanded {
+                            AppIcon::CaretDown
+                        } else {
+                            AppIcon::CaretRight
+                        },
+                        AppIconSize::Inline,
+                    )),
                 ),
         )
         .child(files)
@@ -184,16 +187,7 @@ pub(super) fn render_tool(
                         .text_color(THEME.colors.muted)
                         .child(summary),
                 )
-            })
-            .when(
-                status.is_some_and(|status| status != ToolStatus::Succeeded),
-                |row| row.child(tool_changes::tool_label(status.unwrap().label())),
-            )
-            .child(tool_changes::tool_label(if expanded {
-                "Hide details"
-            } else {
-                "Details"
-            })),
+            }),
         )
         .when(expanded, |tool| {
             tool.child(

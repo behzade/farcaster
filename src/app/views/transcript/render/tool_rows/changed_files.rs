@@ -219,7 +219,6 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
     .child(file_icon(Path::new(&file.path)))
     .child(
         div()
-            .flex_1()
             .min_w_0()
             .overflow_hidden()
             .whitespace_nowrap()

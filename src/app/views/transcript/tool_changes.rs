@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, Div, ElementId, InteractiveElement as _, ParentElement as _, Role, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use gpui_base::GlobalState;
 use gpui_component::tooltip::Tooltip;
@@ -48,18 +48,6 @@ pub(super) fn title_row(
                 press(window, cx);
             }
         })
-}
-
-pub(super) fn tool_label(label: impl Into<gpui::SharedString>) -> Div {
-    div()
-        .max_w(px(160.0))
-        .flex_none()
-        .overflow_hidden()
-        .whitespace_nowrap()
-        .text_ellipsis()
-        .text_size(THEME.type_scale.body_small)
-        .text_color(THEME.colors.muted)
-        .child(label.into())
 }
 
 pub(super) fn file_label(
