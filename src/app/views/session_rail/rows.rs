@@ -304,40 +304,36 @@ impl RenderOnce for SessionRow {
                                             .child(
                                                 div()
                                                     .id(format!("move-project-{}", session.id))
-                                                    .role(Role::Button)
-                                                    .aria_label("Move session to another project")
-                                                    .tab_index(0)
-                                                    .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
                                                     .min_w_0()
-                                                    .rounded(THEME.radius)
-                                                    .cursor(CursorStyle::PointingHand)
-                                                    .hover(|icon| {
-                                                        icon.text_color(THEME.colors.accent)
-                                                    })
-                                                    .focus(|icon| {
-                                                        icon.border(THEME.border)
-                                                            .border_color(THEME.colors.accent)
-                                                    })
-                                                    .tooltip(move |window, cx| {
-                                                        Tooltip::new("Move to project…")
-                                                            .build(window, cx)
-                                                    })
-                                                    .on_click(move |_, window, cx| {
-                                                        cx.stop_propagation();
-                                                        let _ =
-                                                            move_entity.update(cx, |this, cx| {
-                                                                this.open_picker(
-                                                            PickerScope::Projects(
-                                                                ProjectPickerIntent::MoveSession {
-                                                                    path: move_path.clone(),
-                                                                    source_project: move_project
-                                                                        .clone(),
-                                                                },
-                                                            ),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                            });
+                                                    .when(crate::agents::supports_session_move(&session.harness), |label| {
+                                                        label
+                                                            .role(Role::Button)
+                                                            .aria_label("Move session to another project")
+                                                            .tab_index(0)
+                                                            .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
+                                                            .rounded(THEME.radius)
+                                                            .cursor(CursorStyle::PointingHand)
+                                                            .hover(|icon| icon.text_color(THEME.colors.accent))
+                                                            .focus(|icon| {
+                                                                icon.border(THEME.border)
+                                                                    .border_color(THEME.colors.accent)
+                                                            })
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::new("Move to project…").build(window, cx)
+                                                            })
+                                                            .on_click(move |_, window, cx| {
+                                                                cx.stop_propagation();
+                                                                let _ = move_entity.update(cx, |this, cx| {
+                                                                    this.open_picker(
+                                                                        PickerScope::Projects(ProjectPickerIntent::MoveSession {
+                                                                            path: move_path.clone(),
+                                                                            source_project: move_project.clone(),
+                                                                        }),
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            })
                                                     })
                                                     .child(
                                                         div()
@@ -361,15 +357,8 @@ impl RenderOnce for SessionRow {
             )
             .child(archive_action)
             .when(is_archived, |row| row.child(delete_action));
-        let context_menu = session_context_menu(
-            &session.id,
-            session.path.clone(),
-            session.project.clone(),
-            session.title.clone(),
-            target_kind,
-            entity,
-            row.into_any_element(),
-        );
+        let context_menu =
+            session_context_menu(session, target_kind, entity, row.into_any_element());
 
         session_hover_panel(
             hover_id,
@@ -522,24 +511,22 @@ fn session_delete_action(
 }
 
 fn session_context_menu(
-    id: &str,
-    path: PathBuf,
-    project: PathBuf,
-    title: String,
+    session: &crate::sessions::SessionSummary,
     kind: SessionRailKind,
     entity: WeakEntity<FarcasterApp>,
     row: AnyElement,
 ) -> AnyElement {
-    ContextMenuTrigger::new(format!("session-context-trigger-{id}"), row)
+    let path = session.path.clone();
+    let project = session.project.clone();
+    let title = session.title.clone();
+    let can_fork = crate::agents::supports_session_fork(&session.harness);
+    ContextMenuTrigger::new(format!("session-context-trigger-{}", session.id), row)
         .size_full()
         .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
             let rename_path = path.clone();
             let rename_project = project.clone();
             let rename_title = title.clone();
             let rename_entity = entity.clone();
-            let fork_path = path.clone();
-            let fork_project = project.clone();
-            let fork_entity = entity.clone();
             let mut menu = menu
                 .min_w(px(190.0))
                 .item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
@@ -553,20 +540,25 @@ fn session_context_menu(
                         );
                     });
                 }))
-                .item(
-                    PopupMenuItem::new("Fork session")
-                        .icon(AppIcon::GitFork)
-                        .on_click(move |_, window, cx| {
-                            let _ = fork_entity.update(cx, |this, cx| {
-                                this.fork_session(
-                                    fork_path.clone(),
-                                    fork_project.clone(),
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }),
-                );
+                .when(can_fork, |menu| {
+                    let fork_path = path.clone();
+                    let fork_project = project.clone();
+                    let fork_entity = entity.clone();
+                    menu.item(
+                        PopupMenuItem::new("Fork session")
+                            .icon(AppIcon::GitFork)
+                            .on_click(move |_, window, cx| {
+                                let _ = fork_entity.update(cx, |this, cx| {
+                                    this.fork_session(
+                                        fork_path.clone(),
+                                        fork_project.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+                });
 
             if kind == SessionRailKind::Project {
                 let archive_path = path.clone();

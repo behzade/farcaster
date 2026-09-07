@@ -174,6 +174,14 @@ impl FarcasterApp {
         let Some(target) = self.backend_target_for_path(&path, cx) else {
             return;
         };
+        if !crate::agents::supports_session_fork(&target.harness) {
+            self.sessions_error = Some(format!(
+                "Forking {} sessions is not supported",
+                target.harness
+            ));
+            self.notify_session_rail(cx);
+            return;
+        }
         self.reset_run_panel_scroll(cx);
         self.selected_draft = None;
         self.select_project(project.clone(), cx);

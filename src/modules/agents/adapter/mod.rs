@@ -45,6 +45,14 @@ pub(crate) fn supports_reasoning_effort(harness: &str) -> bool {
     })
 }
 
+pub(crate) fn supports_session_fork(harness: &str) -> bool {
+    known_backend_descriptors().into_iter().any(|descriptor| {
+        descriptor.id.as_str() == harness
+            && descriptor.capabilities.sessions.fork
+                == super::contract::CapabilitySupport::Available
+    })
+}
+
 pub(crate) fn normalize_access_mode(
     harness: &str,
     mode: crate::agents::HarnessAccessMode,
