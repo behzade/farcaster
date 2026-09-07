@@ -61,6 +61,11 @@ impl ToolDetails {
     }
 
     pub(crate) fn summary(&self) -> String {
+        if self.metadata.category == Some(ToolCategory::Execute)
+            && let Some(command) = self.command_preview()
+        {
+            return short_summary(command);
+        }
         if let Some(title) = self
             .metadata
             .title

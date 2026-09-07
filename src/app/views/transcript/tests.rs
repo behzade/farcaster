@@ -165,6 +165,53 @@ fn markdown_inline_code_uses_the_reading_palette() {
 }
 
 #[test]
+fn commands_render_directly_until_multiple_calls_share_a_group() {
+    use serde_json::json;
+
+    let mut state = conversation::ConversationState::default();
+    for (id, command, failed) in [
+        ("format", "rustfmt --check src/main.rs", false),
+        ("check", "cargo check --bin farcaster", true),
+        ("diff", "git diff --check", false),
+    ] {
+        state.reduce(&json!({
+            "type":"tool_execution_start", "toolCallId":id, "toolName":"bash",
+            "args":{"command":command},
+            "toolMetadata":{"category":"execute", "title":"Run command"}
+        }));
+        state.reduce(&json!({
+            "type":"tool_execution_end", "toolCallId":id, "isError":failed,
+            "result":{"content":[]}
+        }));
+    }
+    let rows = project_rows(&state.items);
+    assert_eq!(rows.len(), 3);
+    for index in 0..3 {
+        assert!(
+            matches!(rows[index], TranscriptRow::Item { index: actual, .. } if actual == index)
+        );
+    }
+    let previous = state.items.clone();
+    let mut completed = state.items[1].as_ref().clone();
+    completed.is_error = false;
+    Arc::make_mut(completed.tool_details.as_mut().unwrap()).state =
+        conversation::ToolExecutionState::Succeeded;
+    state.items.set(1, Arc::new(completed));
+    let grouped = update_rows_from(&rows, &previous, &state.items, Some(1));
+    assert_eq!(grouped, project_rows(&state.items));
+    assert!(matches!(
+        grouped[0],
+        TranscriptRow::ActivityGroup { len: 3, .. }
+    ));
+    assert_eq!(grouped.len(), 1);
+    assert!(resolved_expanded(
+        grouped[0],
+        &state.items,
+        &std::collections::HashMap::from([(0, true)])
+    ));
+}
+
+#[test]
 fn mixed_completed_tools_collapse_into_one_activity_row() {
     let rows = project_rows(&[
         item(TranscriptKind::User, "", "question"),

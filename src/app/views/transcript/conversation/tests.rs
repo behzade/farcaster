@@ -873,7 +873,7 @@ fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
         "toolMetadata":{"category":"execute", "native":{"original":true}}
     }));
     let details = state.items[0].tool_details.as_ref().unwrap();
-    assert_eq!(details.summary(), "Run command");
+    assert_eq!(details.summary(), "python3 - <<'PY'…");
     assert_eq!(details.state, ToolExecutionState::Running);
     let args = details.arguments.clone();
     state.reduce(&json!({
@@ -883,7 +883,7 @@ fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
     assert_eq!(state.items.len(), 1);
     let details = state.items[0].tool_details.as_ref().unwrap();
     assert_eq!(details.arguments, args);
-    assert_eq!(details.summary(), "Run attachment tests");
+    assert_eq!(details.summary(), "python3 - <<'PY'…");
     assert_eq!(details.state, ToolExecutionState::Running);
     state.reduce(&json!({
         "type":"tool_execution_end", "toolCallId":"t", "isError":false,
