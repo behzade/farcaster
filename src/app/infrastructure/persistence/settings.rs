@@ -1,6 +1,35 @@
 use super::*;
 
 impl StateStore {
+    pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<String, String> {
+        // Before the first saved choice, infer it from this project's main sessions.
+        self.connection
+            .query_row(
+                "SELECT COALESCE(
+                    (SELECT value FROM meta WHERE key='preferred_harness'),
+                    (SELECT harness FROM sessions
+                     WHERE submitted=1 AND client_key IS NOT NULL
+                       AND project_id=(SELECT id FROM projects WHERE path=?1)
+                       AND parent_id IS NULL AND parent_backend_id IS NULL
+                     ORDER BY created_ms DESC, id DESC LIMIT 1),
+                    'pi')",
+                [project.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("load preferred harness: {error}"))
+    }
+
+    pub(crate) fn save_preferred_harness(&self, harness: &str) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('preferred_harness', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [harness],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save preferred harness: {error}"))
+    }
+
     pub(crate) fn save_worker_family(
         &self,
         link: &crate::agents::WorkerFamilyLink,

@@ -5,6 +5,7 @@ pub(super) struct PersistedState {
     pub(super) error: Option<String>,
     pub(super) session_order: Vec<i64>,
     pub(super) selected_draft: String,
+    pub(super) preferred_harness: String,
     pub(super) draft_session_ids: HashMap<String, i64>,
     pub(super) composer_sessions: ComposerSessions,
     pub(super) submitted_drafts: HashMap<String, Option<PathBuf>>,
@@ -37,16 +38,29 @@ pub(super) fn load(project: &Path) -> PersistedState {
     };
     drop(session_order_timing);
 
+    let preferred_harness = match crate::app::infrastructure::persistence::StateStore::open()
+        .and_then(|store| store.load_preferred_harness(project))
+    {
+        Ok(harness) => harness,
+        Err(load_error) => {
+            error.get_or_insert(load_error);
+            "pi".into()
+        }
+    };
     let draft_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
-    let initial_draft = match project_registry::new_draft(project.to_path_buf(), "pi") {
+    let initial_draft = match project_registry::new_draft(project.to_path_buf(), &preferred_harness)
+    {
         Ok(draft) => draft,
         Err(load_error) => {
             error.get_or_insert(load_error);
-            projects::DraftSession::with_id(
-                format!("untracked-draft-{}", std::process::id()),
-                project.to_path_buf(),
-            )
+            projects::DraftSession {
+                harness: preferred_harness.clone(),
+                ..projects::DraftSession::with_id(
+                    format!("untracked-draft-{}", std::process::id()),
+                    project.to_path_buf(),
+                )
+            }
         }
     };
     drop(draft_timing);
@@ -90,6 +104,7 @@ pub(super) fn load(project: &Path) -> PersistedState {
         error,
         session_order,
         selected_draft,
+        preferred_harness,
         draft_session_ids,
         composer_sessions,
         submitted_drafts,

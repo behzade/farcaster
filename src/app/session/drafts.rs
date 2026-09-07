@@ -81,6 +81,17 @@ impl FarcasterApp {
         let Some(id) = self.selected_draft.clone() else {
             return;
         };
+        if self.editable_draft_harness().is_none() {
+            return;
+        }
+        if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
+            .and_then(|store| store.save_preferred_harness(&harness))
+        {
+            self.sessions_error = Some(error);
+            self.notify_session_rail(cx);
+            cx.notify();
+            return;
+        }
         if !self.drafts.iter().any(|draft| draft.id == id) {
             let mut draft = DraftSession::with_id(id.clone(), self.project.clone());
             draft.app_session_id = self.draft_session_ids.get(&id).copied().unwrap_or_default();

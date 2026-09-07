@@ -22,6 +22,34 @@ use crate::{
 };
 
 #[test]
+fn preferred_harness_survives_reopen_and_overrides_session_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    assert_eq!(store.load_preferred_harness(temp.path())?, "pi");
+
+    let mut draft = DraftSession::new("main".into(), 0, temp.path().to_path_buf(), 1);
+    draft.harness = "codex-cli".into();
+    draft.submitted = true;
+    store.allocate_app_session_id(&draft)?;
+    // An unused startup draft must not reset the inferred preference.
+    let empty = DraftSession::new("empty".into(), 0, temp.path().to_path_buf(), 2);
+    store.allocate_app_session_id(&empty)?;
+    assert_eq!(store.load_preferred_harness(temp.path())?, "codex-cli");
+    drop(store);
+
+    for harness in ["opencode", "codex-cli"] {
+        StateStore::open_at(&database)?.save_preferred_harness(harness)?;
+        assert_eq!(
+            StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
+            harness
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");

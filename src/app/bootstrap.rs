@@ -72,7 +72,7 @@ impl FarcasterApp {
             drafts: persisted.registry.drafts,
             draft_session_ids: persisted.draft_session_ids,
             selected_draft: Some(persisted.selected_draft),
-            preferred_harness: "pi".into(),
+            preferred_harness: persisted.preferred_harness,
             submitted_drafts: persisted.submitted_drafts,
             sessions_error: persisted.error,
             session_project_filter: None,
