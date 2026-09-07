@@ -348,6 +348,22 @@ fn file_target_line(item: &TranscriptItem, path: &str) -> Option<u64> {
         .as_ref()
         .filter(|presentation| presentation.path() == path)
         .and_then(|presentation| presentation.first_changed_line())
+        .or_else(|| {
+            changed_files::recorded_edits(item, path, None)?
+                .iter()
+                .find_map(|edit| {
+                    if edit.old == edit.new {
+                        return None;
+                    }
+                    let context = edit
+                        .old
+                        .iter()
+                        .zip(&edit.new)
+                        .take_while(|(old, new)| old == new)
+                        .count();
+                    u64::try_from(edit.start.checked_add(context)?.checked_add(1)?).ok()
+                })
+        })
 }
 
 fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
@@ -454,6 +470,36 @@ mod tests {
             "result": {"content": [{"type": "text", "text": "Wrote src/main.rs"}]}
         }));
         (*state.items[0]).clone()
+    }
+
+    #[test]
+    fn file_links_use_each_targets_first_changed_line() {
+        let mut item = write_item();
+        let details = Arc::make_mut(item.tool_details.as_mut().unwrap());
+        details.metadata.targets = vec!["src/main.rs".into(), "src/other.rs".into()];
+        details.arguments = json!({"changes": [
+            {"path": "src/main.rs", "diff": "@@ -37,3 +37,3 @@\n context\n-old\n+new\n tail"},
+            {"path": "src/other.rs", "diff": "@@ -80 +80 @@\n-before\n+after"}
+        ]});
+        assert_eq!(file_target_line(&item, "src/main.rs"), Some(38));
+        assert_eq!(file_target_line(&item, "src/other.rs"), Some(80));
+        assert_eq!(file_target_line(&item, "missing.rs"), None);
+    }
+
+    #[test]
+    fn file_links_handle_insertions_deletions_and_missing_positions() {
+        for (diff, expected) in [
+            ("@@ -0,0 +1,2 @@\n+one\n+two", Some(1)),
+            ("@@ -37,2 +36,0 @@\n-one\n-two", Some(37)),
+            ("@@ -1 +1 @@\n same\n@@ -9 +9 @@\n-old\n+new", Some(9)),
+            ("@@ -1 +1 @@\n same", None),
+            ("+new\n-old", None),
+        ] {
+            let mut item = write_item();
+            Arc::make_mut(item.tool_details.as_mut().unwrap()).result =
+                Some(json!({"details": {"unifiedDiff": diff}}));
+            assert_eq!(file_target_line(&item, "src/main.rs"), expected, "{diff}");
+        }
     }
 
     #[test]

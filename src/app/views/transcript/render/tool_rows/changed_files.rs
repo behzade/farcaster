@@ -16,17 +16,22 @@ struct ChangedFile {
     net: Option<NetChanges>,
 }
 
-fn recorded_edits(item: &TranscriptItem, path: &str, project: Option<&Path>) -> Option<Vec<Edit>> {
+pub(super) fn recorded_edits(
+    item: &TranscriptItem,
+    path: &str,
+    project: Option<&Path>,
+) -> Option<Vec<Edit>> {
     let details = item.tool_details.as_ref()?;
     if let Some(changes) = details
         .arguments
         .get("changes")
         .and_then(serde_json::Value::as_array)
     {
+        let path = tool_changes::file_path(path, project);
         let mut edits = Vec::new();
         for change in changes {
             let target = change.get("path").and_then(serde_json::Value::as_str)?;
-            if tool_changes::file_path(target, project) == Path::new(path) {
+            if tool_changes::file_path(target, project) == path {
                 edits.extend(unified_edits(change.get("diff")?.as_str()?)?);
             }
         }
@@ -72,12 +77,13 @@ fn collect<'a>(
                 })
                 .map(|presentation| presentation.counts())
                 .filter(|counts| *counts != (0, 0));
+            let line = file_target_line(item, target);
             let file = files.entry(path.clone()).or_insert_with(|| ChangedFile {
                 label: tool_changes::file_label(&path, project, home),
                 path,
                 last_operation: None,
                 counts,
-                line: file_target_line(item, target),
+                line,
                 net: Some(NetChanges::default()),
             });
             if file.last_operation == Some(index) {
@@ -86,7 +92,7 @@ fn collect<'a>(
             if file.last_operation.replace(index).is_some() {
                 file.counts = None;
             }
-            file.line = file_target_line(item, target);
+            file.line = line;
             let edits = recorded_edits(item, &file.path, project);
             let applied = file
                 .net
@@ -256,6 +262,8 @@ mod tests {
         );
         assert_eq!(files[0].counts, Some((1, 1)));
         assert_eq!(files[1].counts, Some((2, 0)));
+        assert_eq!(files[0].line, Some(1));
+        assert_eq!(files[1].line, Some(1));
     }
 
     #[test]
