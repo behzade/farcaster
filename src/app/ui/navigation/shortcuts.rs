@@ -6,6 +6,10 @@ pub(crate) enum Command {
     Session(usize),
     SearchSessions,
     NewSession,
+    AddProject,
+    Sandbox,
+    Runtime,
+    RestoreSession,
     Close,
 }
 
@@ -41,6 +45,10 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ("e", "Open editor", Command::Editor),
     ("t", "Open terminal", Command::Terminal),
     ("n", "New session", Command::NewSession),
+    ("p", "Add project", Command::AddProject),
+    ("s", "Set sandbox", Command::Sandbox),
+    ("m", "Set provider/model/effort", Command::Runtime),
+    ("a", "Restore session", Command::RestoreSession),
     ("w", "Close surface or session", Command::Close),
     ("j", "Next session", Command::RelativeSession(1)),
     ("k", "Previous session", Command::RelativeSession(-1)),

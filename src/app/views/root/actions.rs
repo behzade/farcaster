@@ -46,8 +46,20 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         );
     }))
     .on_action(cx.listener(|this, _: &AddProject, window, cx| {
+        this.close_picker(window, cx);
         this.choose_project_folder(None, window, cx);
     }))
+    .on_action(cx.listener(|this, _: &crate::app::SetSandbox, window, cx| {
+        this.open_picker(PickerScope::Sandbox, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &crate::app::SetRuntime, window, cx| {
+        this.open_picker(PickerScope::Providers, window, cx);
+    }))
+    .on_action(
+        cx.listener(|this, _: &crate::app::RestoreSession, window, cx| {
+            this.open_picker(PickerScope::ArchivedSessions, window, cx);
+        }),
+    )
     .on_action(cx.listener(|this, _: &ShowActionPicker, window, cx| {
         this.open_picker(PickerScope::Actions, window, cx);
     }))

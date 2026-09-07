@@ -16,6 +16,10 @@ These mimic common browser keybindings:
 mod+number -> jump to session
 mod+t -> new session
 mod+w -> close surface or draft; archive session
+mod+shift+n -> add project
+mod+shift+s -> set sandbox
+mod+shift+m -> set provider/model/effort
+mod+shift+a -> restore session
 ```
 
 ## Leader shortcuts
@@ -32,8 +36,14 @@ The second group also works inside Neovim and the terminal:
 <leader> j -> next session
 <leader> k -> previous session
 <leader> n -> new session
+<leader> p -> add project
+<leader> s -> set sandbox
+<leader> m -> set provider/model/effort
+<leader> a -> restore session
 ```
 
 For session shortcuts, `1–9` select sessions and `0` opens the first unsubmitted draft.
+
+The action picker also lists these actions. Sandbox choices and provider/model/effort choices happen inside the picker. Restore session lists archived sessions; selecting one restores it. Add project opens a folder chooser.
 
 The terminal/Neovim keeps its Ctrl keys. Super is unbound on Linux.

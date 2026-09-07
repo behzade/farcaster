@@ -276,6 +276,12 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         match command {
+            Command::AddProject => window.dispatch_action(Box::new(crate::app::AddProject), cx),
+            Command::Sandbox => window.dispatch_action(Box::new(crate::app::SetSandbox), cx),
+            Command::Runtime => window.dispatch_action(Box::new(crate::app::SetRuntime), cx),
+            Command::RestoreSession => {
+                window.dispatch_action(Box::new(crate::app::RestoreSession), cx)
+            }
             Command::Editor => self.show_editor_surface(window, cx),
             Command::Terminal => self.show_terminal_surface(window, cx),
             Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),
@@ -412,7 +418,14 @@ mod tests {
     fn activation_routes_bare_surfaces_and_transcript_boundaries() {
         let now = Instant::now();
         let mut state = Activation::default();
-        for (key, command) in [("e", Command::Editor), ("t", Command::Terminal)] {
+        for (key, command) in [
+            ("e", Command::Editor),
+            ("t", Command::Terminal),
+            ("p", Command::AddProject),
+            ("s", Command::Sandbox),
+            ("m", Command::Runtime),
+            ("a", Command::RestoreSession),
+        ] {
             activated(&mut state, "ctrl-g", now);
             assert_eq!(
                 activated(&mut state, key, now),

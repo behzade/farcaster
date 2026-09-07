@@ -10,8 +10,7 @@ use crate::app::{
     QuitApplication, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
     SubmitFollowUp, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
-    ToggleArchivedSessions, WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue,
-    WorkPreviousIssue,
+    WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use gpui::{KeyBinding, Unbind};
@@ -229,13 +228,25 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
         application_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
         application_shortcut!("Sessions", "New session", "t", NewSession),
         application_shortcut!("Sessions", "Add project", "shift-n", AddProject),
+        application_shortcut!(
+            "Configuration",
+            "Set sandbox",
+            "shift-s",
+            crate::app::SetSandbox
+        ),
+        application_shortcut!(
+            "Configuration",
+            "Set provider/model/effort",
+            "shift-m",
+            crate::app::SetRuntime
+        ),
         application_shortcut!("Sessions", "Previous session", "[", PreviousSession),
         application_shortcut!("Sessions", "Next session", "]", NextSession),
         application_shortcut!(
             "Sessions",
-            "Show archived sessions",
+            "Restore session",
             "shift-a",
-            ToggleArchivedSessions
+            crate::app::RestoreSession
         ),
         application_shortcut!(
             "Sessions",
@@ -607,6 +618,45 @@ mod tests {
                     ]) == Some(false)
                     && binding.predicate().as_deref() == Some(&root_context)
             }));
+        }
+    }
+
+    #[test]
+    fn configuration_shortcuts_route_to_actions_only_in_app_views() {
+        use super::registry_for_modifier;
+        use crate::app::{
+            APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
+        };
+
+        for modifier in [ApplicationModifier::Command, ApplicationModifier::Control] {
+            let keymap = gpui::Keymap::new(
+                registry_for_modifier(modifier)
+                    .into_iter()
+                    .map(|shortcut| shortcut.binding)
+                    .collect(),
+            );
+            for (suffix, action) in [
+                ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
+                ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
+                ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
+            ] {
+                let stroke = gpui::Keystroke::parse(&modifier.key(suffix)).unwrap();
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[stroke.clone()],
+                    &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
+                );
+                assert_eq!(bindings.first().unwrap().action().name(), action.name());
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[stroke],
+                    &[gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()],
+                );
+                assert!(bindings.is_empty());
+            }
+            let (bindings, _) = keymap.bindings_for_input(
+                &[gpui::Keystroke::parse(&modifier.key("m")).unwrap()],
+                &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
+            );
+            assert!(bindings.is_empty(), "unshifted M must remain unbound");
         }
     }
 

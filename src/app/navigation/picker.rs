@@ -27,6 +27,8 @@ use crate::{
 
 pub(crate) const PICKER_KEY_CONTEXT: &str = "PiPicker";
 
+mod configuration;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectPickerIntent {
     NewSession,
@@ -42,6 +44,11 @@ pub(crate) enum PickerScope {
     Actions,
     Projects(ProjectPickerIntent),
     Sessions,
+    Sandbox,
+    Providers,
+    Models(String),
+    Efforts(crate::protocol::Model),
+    ArchivedSessions,
 }
 
 impl PickerScope {
@@ -51,6 +58,11 @@ impl PickerScope {
             Self::Projects(ProjectPickerIntent::MoveSession { .. }) => "Move session",
             Self::Projects(_) => "Choose project",
             Self::Sessions => "Find session",
+            Self::Sandbox => "Set sandbox",
+            Self::Providers => "Choose provider",
+            Self::Models(_) => "Choose model",
+            Self::Efforts(_) => "Choose reasoning effort",
+            Self::ArchivedSessions => "Restore session",
         }
     }
 
@@ -59,6 +71,11 @@ impl PickerScope {
             Self::Actions => "Search actions…",
             Self::Projects(_) => "Search projects…",
             Self::Sessions => "Search sessions…",
+            Self::Sandbox => "Search sandbox modes…",
+            Self::Providers => "Search providers…",
+            Self::Models(_) => "Search models…",
+            Self::Efforts(_) => "Search reasoning efforts…",
+            Self::ArchivedSessions => "Search archived sessions…",
         }
     }
 }
@@ -73,9 +90,25 @@ enum PickerCommand {
     ImportSessions,
     NewSession(PathBuf),
     ChangeDraftProject(PathBuf),
-    MoveSession { path: PathBuf, project: PathBuf },
-    SelectSession { path: PathBuf, project: PathBuf },
-    ResumeDraft { id: String, project: PathBuf },
+    MoveSession {
+        path: PathBuf,
+        project: PathBuf,
+    },
+    SelectSession {
+        path: PathBuf,
+        project: PathBuf,
+    },
+    ResumeDraft {
+        id: String,
+        project: PathBuf,
+    },
+    OpenScope(PickerScope),
+    SetSandbox(crate::runtime::HarnessAccessMode),
+    SetRuntime {
+        model: crate::protocol::Model,
+        effort: Option<String>,
+    },
+    RestoreSession(PathBuf),
 }
 
 pub(in crate::app) struct PickerState {
@@ -182,10 +215,14 @@ impl FarcasterApp {
             cx.stop_propagation();
             return;
         }
-        if matches!(picker.scope, PickerScope::Actions) {
-            self.close_picker(window, cx);
-        } else {
-            self.open_picker(PickerScope::Actions, window, cx);
+        match &picker.scope {
+            PickerScope::Actions => self.close_picker(window, cx),
+            PickerScope::Models(_) => self.open_picker(PickerScope::Providers, window, cx),
+            PickerScope::Efforts(model) => {
+                let provider = model.provider.clone();
+                self.open_picker(PickerScope::Models(provider), window, cx);
+            }
+            _ => self.open_picker(PickerScope::Actions, window, cx),
         }
         cx.stop_propagation();
     }
@@ -254,11 +291,39 @@ impl FarcasterApp {
             return;
         };
         match command {
+            PickerCommand::OpenScope(PickerScope::Sandbox) => {
+                window.dispatch_action(Box::new(crate::app::SetSandbox), cx);
+            }
+            PickerCommand::OpenScope(PickerScope::Providers) => {
+                window.dispatch_action(Box::new(crate::app::SetRuntime), cx);
+            }
+            PickerCommand::OpenScope(PickerScope::ArchivedSessions) => {
+                window.dispatch_action(Box::new(crate::app::RestoreSession), cx);
+            }
+            PickerCommand::OpenScope(scope) => self.open_picker(scope, window, cx),
+            PickerCommand::SetSandbox(mode) => {
+                self.close_picker(window, cx);
+                self.set_access_mode(mode, cx);
+            }
+            PickerCommand::SetRuntime { model, effort } => {
+                self.close_picker(window, cx);
+                self.select_model(&model, cx);
+                if let Some(effort) = effort {
+                    self.set_thinking_level(effort, cx);
+                }
+            }
+            PickerCommand::RestoreSession(path) => {
+                self.close_picker(window, cx);
+                self.set_session_archived(path, false, cx);
+            }
             PickerCommand::OpenProjects(intent) => {
                 self.open_picker(PickerScope::Projects(intent), window, cx);
             }
             PickerCommand::OpenSessions => {
                 self.open_picker(PickerScope::Sessions, window, cx);
+            }
+            PickerCommand::AddProject(None) => {
+                window.dispatch_action(Box::new(crate::app::AddProject), cx);
             }
             PickerCommand::AddProject(intent) => {
                 self.close_picker(window, cx);
@@ -304,6 +369,36 @@ impl FarcasterApp {
         let mut commands = HashMap::new();
         let rows = match scope {
             PickerScope::Actions => vec![
+                picker_row(
+                    &mut commands,
+                    "action:sandbox",
+                    PickerCommand::OpenScope(PickerScope::Sandbox),
+                    AppIcon::Shield,
+                    "Set sandbox…",
+                    None,
+                    Some(application_key("shift-s")),
+                    "access permissions approval",
+                ),
+                picker_row(
+                    &mut commands,
+                    "action:runtime",
+                    PickerCommand::OpenScope(PickerScope::Providers),
+                    AppIcon::List,
+                    "Set provider/model/effort…",
+                    None,
+                    Some(application_key("shift-m")),
+                    "model reasoning thinking runtime",
+                ),
+                picker_row(
+                    &mut commands,
+                    "action:restore",
+                    PickerCommand::OpenScope(PickerScope::ArchivedSessions),
+                    AppIcon::ChatCircle,
+                    "Restore session…",
+                    None,
+                    Some(application_key("shift-a")),
+                    "unarchive archived thread",
+                ),
                 picker_row(
                     &mut commands,
                     "action:new-session",
@@ -365,6 +460,11 @@ impl FarcasterApp {
                     "configuration preferences keybindings modifier",
                 ),
             ],
+            PickerScope::Sandbox
+            | PickerScope::Providers
+            | PickerScope::Models(_)
+            | PickerScope::Efforts(_)
+            | PickerScope::ArchivedSessions => self.configuration_picker_rows(scope, &mut commands),
             PickerScope::Projects(intent) => {
                 let open_session_project = (matches!(intent, ProjectPickerIntent::NewSession)
                     && self.snapshot.selected_session.is_some())

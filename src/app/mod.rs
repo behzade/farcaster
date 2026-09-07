@@ -1,4 +1,3 @@
-
 mod bootstrap;
 mod change_detection;
 mod composer;
@@ -96,6 +95,9 @@ actions!(
         SwitchSession9,
         NewSession,
         AddProject,
+        SetSandbox,
+        SetRuntime,
+        RestoreSession,
         ShowActionPicker,
         PickerBack,
         FocusSessionSearch,
