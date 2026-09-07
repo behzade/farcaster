@@ -77,7 +77,7 @@ fn collect<'a>(
                 })
                 .map(|presentation| presentation.counts())
                 .filter(|counts| *counts != (0, 0));
-            let line = file_target_line(item, target);
+            let line = file_target_line(item, target, project);
             let file = files.entry(path.clone()).or_insert_with(|| ChangedFile {
                 label: tool_changes::file_label(&path, project, home),
                 path,

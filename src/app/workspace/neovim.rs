@@ -1,4 +1,3 @@
-
 use std::{
     io::{Read as _, Seek as _},
     path::{Path, PathBuf},

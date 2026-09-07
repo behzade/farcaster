@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -65,7 +65,6 @@ pub(super) fn render_activity_group(
             .text_color(THEME.colors.muted)
             .child(summary),
         )
-        .child(files)
         .when(expanded, |group| {
             group.child(
                 disclosure_detail()
@@ -84,6 +83,7 @@ pub(super) fn render_activity_group(
                     })),
             )
         })
+        .child(files)
         .into_any_element()
 }
 
@@ -176,7 +176,7 @@ pub(super) fn render_tool(
                     .id(("tool-detail-scroll", key))
                     .max_h(THEME.layout.tool_max_height)
                     .overflow_y_scroll()
-                    .children(file_links(key, item, entity))
+                    .children(file_links(key, item, entity, project.as_deref()))
                     .child(expanded_tool_body(("tool-detail", key), item)),
             )
         })
@@ -249,6 +249,7 @@ fn file_links(
     key: usize,
     item: &TranscriptItem,
     entity: WeakEntity<FarcasterApp>,
+    project: Option<&Path>,
 ) -> Vec<AnyElement> {
     file_targets(item)
         .enumerate()
@@ -256,7 +257,7 @@ fn file_links(
             let path = path.to_owned();
             let entity = entity.clone();
             let label = format!("Open current file: {path}");
-            let line = file_target_line(item, &path);
+            let line = file_target_line(item, &path, project);
             tool_changes::title_row(
                 format!("tool-file-{key}-{offset}"),
                 label.clone(),
@@ -324,13 +325,16 @@ fn item_status(item: &TranscriptItem) -> Option<ToolStatus> {
     }
 }
 
-fn file_target_line(item: &TranscriptItem, path: &str) -> Option<u64> {
+fn file_target_line(item: &TranscriptItem, path: &str, project: Option<&Path>) -> Option<u64> {
     item.tool_presentation
         .as_ref()
-        .filter(|presentation| presentation.path() == path)
+        .filter(|presentation| {
+            tool_changes::file_path(presentation.path(), project)
+                == tool_changes::file_path(path, project)
+        })
         .and_then(|presentation| presentation.first_changed_line())
         .or_else(|| {
-            changed_files::recorded_edits(item, path, None)?
+            changed_files::recorded_edits(item, path, project)?
                 .iter()
                 .find_map(|edit| {
                     if edit.old == edit.new {
@@ -462,9 +466,9 @@ mod tests {
             {"path": "src/main.rs", "diff": "@@ -37,3 +37,3 @@\n context\n-old\n+new\n tail"},
             {"path": "src/other.rs", "diff": "@@ -80 +80 @@\n-before\n+after"}
         ]});
-        assert_eq!(file_target_line(&item, "src/main.rs"), Some(38));
-        assert_eq!(file_target_line(&item, "src/other.rs"), Some(80));
-        assert_eq!(file_target_line(&item, "missing.rs"), None);
+        assert_eq!(file_target_line(&item, "src/main.rs", None), Some(38));
+        assert_eq!(file_target_line(&item, "src/other.rs", None), Some(80));
+        assert_eq!(file_target_line(&item, "missing.rs", None), None);
     }
 
     #[test]
@@ -479,7 +483,11 @@ mod tests {
             let mut item = write_item();
             Arc::make_mut(item.tool_details.as_mut().unwrap()).result =
                 Some(json!({"details": {"unifiedDiff": diff}}));
-            assert_eq!(file_target_line(&item, "src/main.rs"), expected, "{diff}");
+            assert_eq!(
+                file_target_line(&item, "src/main.rs", None),
+                expected,
+                "{diff}"
+            );
         }
     }
 

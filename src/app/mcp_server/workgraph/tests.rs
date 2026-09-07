@@ -76,6 +76,20 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
     assert!(claim(&database, &bob, TaskParams { task: second }).is_err());
     let claimed = claim(&database, &alice, TaskParams { task: first })?;
     assert_eq!(claimed["tasks"][0]["ownedByYou"], true);
+    for session in ["alice", "backend:/alice"] {
+        let mut alias = alice.clone();
+        alias.session = session.into();
+        assert_eq!(
+            search(
+                &database,
+                &alias,
+                SearchParams {
+                    query: String::new()
+                }
+            )?["tasks"][0]["ownedByYou"],
+            true
+        );
+    }
     assert_eq!(
         search(
             &database,

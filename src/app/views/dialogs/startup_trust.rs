@@ -1,4 +1,3 @@
-
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use gpui::{

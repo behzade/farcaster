@@ -69,15 +69,29 @@ fn forced_backend_never_falls_back() {
     let temp = TestDirectory::new("forced");
     fs::create_dir(temp.path().join(".jj")).expect("create JJ marker");
 
-    let error = discover_available(temp.path(), BackendPreference::Git)
-        .expect_err("forced Git must not use JJ");
-    assert!(matches!(
-        error,
-        RepositoryError::BackendUnavailable {
-            kind: RepositoryKind::Git,
-            ..
+    let parent_git = discover_available(temp.path().parent().unwrap(), BackendPreference::Git)
+        .ok()
+        .flatten();
+    match parent_git {
+        Some(parent) => {
+            let git = discover_available(temp.path(), BackendPreference::Git)
+                .expect("discover enclosing Git repository")
+                .expect("enclosing Git repository");
+            assert_eq!(git.location.kind, RepositoryKind::Git);
+            assert_eq!(git.location.workspace_root, parent.location.workspace_root);
         }
-    ));
+        None => {
+            let error = discover_available(temp.path(), BackendPreference::Git)
+                .expect_err("forced Git must not use JJ");
+            assert!(matches!(
+                error,
+                RepositoryError::BackendUnavailable {
+                    kind: RepositoryKind::Git,
+                    ..
+                }
+            ));
+        }
+    }
 
     fs::create_dir(temp.path().join(".git")).expect("create Git marker");
     let git = discover_available(temp.path(), BackendPreference::Git)
@@ -116,9 +130,18 @@ fn unavailable_backend_is_ignored_for_auto_and_stale_preference() {
 #[test]
 fn no_repository_is_distinct_from_failure() {
     let temp = TestDirectory::new("none");
+    let parent =
+        RepositoryBackend::discover(temp.path().parent().unwrap(), BackendPreference::Auto)
+            .expect("discover enclosing repository");
     let result = RepositoryBackend::discover(temp.path(), BackendPreference::Auto)
         .expect("marker scan should succeed");
-    assert!(result.is_none());
+    assert_eq!(
+        result.map(|backend| (backend.location.kind, backend.location.workspace_root)),
+        parent.map(|backend| (backend.location.kind, backend.location.workspace_root))
+    );
+    assert!(
+        RepositoryBackend::discover(&temp.path().join("missing"), BackendPreference::Auto).is_err()
+    );
 }
 
 #[test]

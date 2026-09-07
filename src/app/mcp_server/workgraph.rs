@@ -93,7 +93,11 @@ fn project_graph(database: &Path, caller: &CallerContext) -> Result<ProjectGraph
     Ok(project)
 }
 
-fn task_views(graph: &ProjectGraph, query: &str, caller: &CallerContext) -> Vec<Value> {
+fn task_views(
+    graph: &ProjectGraph,
+    query: &str,
+    identity: Option<&(String, String)>,
+) -> Vec<Value> {
     let query = query.trim().to_lowercase();
     graph
         .nodes
@@ -143,7 +147,7 @@ fn task_views(graph: &ProjectGraph, query: &str, caller: &CallerContext) -> Vec<
                 "title": node.title,
                 "acceptance": node.acceptance,
                 "owner": owner.map(|owner| &owner.session_id),
-                "ownedByYou": owner.is_some_and(|owner| owner.session_id == caller.session || owner.session_path == caller.session),
+                "ownedByYou": owner.is_some_and(|owner| identity.is_some_and(|(id, path)| owner.session_id == *id && owner.session_path == *path)),
                 "status": status,
                 "blockers": blockers,
                 "predecessors": predecessors,
@@ -159,7 +163,10 @@ pub(super) fn search(
     caller: &CallerContext,
     params: SearchParams,
 ) -> Result<Value, String> {
-    Ok(json!({ "tasks": task_views(&project_graph(database, caller)?, &params.query, caller) }))
+    let identity = session_identity(database, caller).ok();
+    Ok(
+        json!({ "tasks": task_views(&project_graph(database, caller)?, &params.query, identity.as_ref()) }),
+    )
 }
 
 pub(super) fn patch(
@@ -276,7 +283,13 @@ fn edit(database: &Path, caller: &CallerContext, action: EditAction) -> Result<V
             action,
         })
         .map_err(|error| error.to_string())?;
-    Ok(json!({ "tasks": task_views(&project_graph(database, caller)?, "", caller) }))
+    search(
+        database,
+        caller,
+        SearchParams {
+            query: String::new(),
+        },
+    )
 }
 
 fn project_key(caller: &CallerContext) -> Result<String, String> {

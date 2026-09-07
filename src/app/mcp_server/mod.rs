@@ -1,4 +1,3 @@
-
 mod lifecycle;
 mod notices;
 pub(crate) use lifecycle::{set_enabled, start};
