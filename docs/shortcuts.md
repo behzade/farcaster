@@ -14,7 +14,6 @@ These mimic common browser keybindings:
 
 ```text
 mod+number -> jump to session
-mod+t -> new session
 mod+w -> close surface or draft; archive session
 mod+shift+n -> add project
 mod+shift+s -> set sandbox

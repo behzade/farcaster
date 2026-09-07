@@ -501,7 +501,7 @@ impl FarcasterApp {
                     AppIcon::Plus,
                     "New session…",
                     None,
-                    Some(application_key("t")),
+                    None,
                     "project thread",
                 ),
                 picker_row(

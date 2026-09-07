@@ -4,7 +4,7 @@ use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
     ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
-    NewSession, NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
+    NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
     QuitApplication, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
     SubmitFollowUp, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
     SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
@@ -104,7 +104,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         application_shortcut!("Sessions", "Open session 7", "7", SwitchSession7),
         application_shortcut!("Sessions", "Open session 8", "8", SwitchSession8),
         application_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
-        application_shortcut!("Sessions", "New session", "t", NewSession),
         application_shortcut!("Sessions", "Add project", "shift-n", AddProject),
         application_shortcut!(
             "Configuration",
@@ -176,7 +175,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
                 Some("FarcasterComposer > Input"),
             ),
         },
-        application_shortcut!("Workspace", "Chat and composer", "l", FocusComposer),
         #[cfg(target_os = "macos")]
         shortcut!(
             "Workspace",
@@ -193,7 +191,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(APP_SHORTCUT_CONTEXT),
             false
         ),
-        application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
         shortcut!(
             "Workspace",
             "Open Neovim",
@@ -372,15 +369,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         #[cfg(not(target_os = "macos"))]
         shortcut!(
             "Sessions",
-            "New session",
-            "ctrl-t",
-            NewSession,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
             "Close surface or draft; archive session",
             "ctrl-w",
             CloseCurrent,
@@ -486,7 +474,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
 
 #[cfg(test)]
 mod tests {
-    use super::{application_key, bindings, platform_key, registry};
+    use super::{bindings, platform_key, registry};
 
     use crate::app::ComposerCompletionNext;
 
@@ -544,11 +532,14 @@ mod tests {
                 );
                 assert!(bindings.is_empty());
             }
-            let (bindings, _) = keymap.bindings_for_input(
-                &[gpui::Keystroke::parse(&format!("{prefix}-m")).unwrap()],
-                &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
-            );
-            assert!(bindings.is_empty(), "unshifted M must remain unbound");
+            for suffix in ["m", "t", "e", "l"] {
+                let key = format!("{prefix}-{suffix}");
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse(&key).unwrap()],
+                    &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
+                );
+                assert!(bindings.is_empty(), "{key} must remain unbound");
+            }
             for (context, expected) in [
                 ("PiPicker", true),
                 (APP_INPUT_CONTEXT, false),
@@ -620,28 +611,8 @@ mod tests {
 
     #[test]
     fn application_shortcuts_stay_in_app_owned_contexts() {
-        use super::{APP_SHORTCUT_CONTEXT, registry_for_platform};
+        use super::registry_for_platform;
         use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
-        let app_context = gpui::KeyBindingContextPredicate::parse(APP_SHORTCUT_CONTEXT)
-            .expect("app shortcut context");
-        let shortcuts = registry();
-        for (label, suffix) in [
-            ("New session", "t"),
-            ("Chat and composer", "l"),
-            ("Open Neovim", "e"),
-            ("Open terminal", "j"),
-            ("Open action picker", "k"),
-        ] {
-            let keystroke = application_key(suffix);
-            if matches!(keystroke.as_str(), "ctrl-j" | "ctrl-k") {
-                continue;
-            }
-            assert!(shortcuts.iter().any(|shortcut| {
-                shortcut.label == label
-                    && shortcut.keystroke == keystroke
-                    && shortcut.binding.predicate().as_deref() == Some(&app_context)
-            }));
-        }
 
         let keymap = gpui::Keymap::new(
             registry_for_platform("cmd")
@@ -651,7 +622,7 @@ mod tests {
         );
         let app_contexts = [gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()];
         let native_contexts = [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()];
-        for key in ["cmd-2", "cmd-t", "cmd-e", "cmd-j", "cmd-g"] {
+        for key in ["cmd-2", "cmd-j", "cmd-k", "cmd-g"] {
             if key == "cmd-g" && !cfg!(target_os = "macos") {
                 continue;
             }

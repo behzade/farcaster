@@ -108,13 +108,11 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
         ("Agent confirmation", "n".into(), "No / deny"),
         ("Agent confirmation", "y".into(), "Yes / allow"),
     ]);
-    rows.extend(SCROLLS.iter().map(|(key, label, _)| {
-        if key.starts_with("ctrl-") {
-            ("Chat", (*key).into(), *label)
-        } else {
-            ("From anywhere", format!("ctrl-g {key}"), *label)
-        }
-    }));
+    rows.extend(
+        SCROLLS
+            .iter()
+            .map(|(key, label, _)| ("From anywhere", format!("ctrl-g {key}"), *label)),
+    );
     rows
 }
 
@@ -155,24 +153,13 @@ pub(super) fn transcript_scroll(
         return Some(Scroll::End);
     }
     let plain = unmodified && prefix.is_none();
-    chat_scroll(key, modifiers).or_else(|| {
-        SCROLLS
-            .iter()
-            .find_map(|(sequence, _, scroll)| (plain && *sequence == key).then_some(*scroll))
-    })
-}
-
-/// Direct scrolling is limited to exact Ctrl chords, so typing stays in the composer.
-pub(super) fn chat_scroll(key: &str, modifiers: gpui::Modifiers) -> Option<Scroll> {
-    if modifiers
-        != (gpui::Modifiers {
+    let control = modifiers
+        == (gpui::Modifiers {
             control: true,
             ..Default::default()
-        })
-    {
-        return None;
-    }
+        });
     SCROLLS.iter().find_map(|(sequence, _, scroll)| {
-        (sequence.strip_prefix("ctrl-") == Some(key)).then_some(*scroll)
+        ((control && sequence.strip_prefix("ctrl-") == Some(key)) || (plain && *sequence == key))
+            .then_some(*scroll)
     })
 }

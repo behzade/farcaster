@@ -124,7 +124,7 @@ impl FarcasterApp {
                         );
                         match result {
                             ActivatedKey::Pass => {
-                                return this.handle_chat_scroll(&event.keystroke, window, cx);
+                                return false;
                             }
                             ActivatedKey::Pending => {
                                 this.chat_navigation.activation_focus = window.focused(cx);
@@ -219,25 +219,6 @@ impl FarcasterApp {
         self.notify_composer(cx);
     }
 
-    fn handle_chat_scroll(
-        &mut self,
-        keystroke: &gpui::Keystroke,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.surface != AppSurface::Chat
-            || self.native_workspace_covered_by_overlay()
-            || !self.composer_region_focus(cx).is_focused(window)
-        {
-            return false;
-        }
-        let Some(scroll) = shortcuts::chat_scroll(&keystroke.key, keystroke.modifiers) else {
-            return false;
-        };
-        self.scroll_transcript(scroll, window, cx);
-        true
-    }
-
     pub(in crate::app) fn capture_chat_navigation(
         &mut self,
         event: &KeyDownEvent,
@@ -316,31 +297,12 @@ mod tests {
     }
 
     #[test]
-    fn direct_chat_scroll_accepts_only_the_four_control_chords() {
-        for (key, expected) in [
-            ("ctrl-f", Some(Scroll::Pages(1.0))),
-            ("ctrl-b", Some(Scroll::Pages(-1.0))),
-            ("ctrl-u", Some(Scroll::Pages(-0.5))),
-            ("ctrl-d", Some(Scroll::Pages(0.5))),
-            ("f", None),
-            ("b", None),
-            ("u", None),
-            ("d", None),
-            ("j", None),
-            ("k", None),
-            ("v", None),
-            ("ctrl-j", None),
-            ("ctrl-k", None),
-            ("ctrl-shift-f", None),
-            ("ctrl-alt-b", None),
-            ("cmd-u", None),
-            ("cmd-ctrl-d", None),
-        ] {
-            let stroke = gpui::Keystroke::parse(key).unwrap();
+    fn control_editing_keys_pass_through_without_leader() {
+        let now = Instant::now();
+        for key in ["ctrl-f", "ctrl-b", "ctrl-u", "ctrl-d"] {
             assert_eq!(
-                shortcuts::chat_scroll(&stroke.key, stroke.modifiers),
-                expected,
-                "{key}"
+                activated(&mut Activation::default(), key, now),
+                ActivatedKey::Pass
             );
         }
     }
@@ -520,7 +482,8 @@ mod tests {
         for key in ["ctrl-f", "ctrl-b", "ctrl-u", "ctrl-d"] {
             assert!(
                 rows.iter()
-                    .any(|(section, chord, _)| *section == "Chat" && chord == key)
+                    .any(|(section, chord, _)| *section == "From anywhere"
+                        && chord == &format!("ctrl-g {key}"))
             );
         }
         assert!(
