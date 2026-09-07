@@ -74,8 +74,7 @@ impl FarcasterApp {
             );
             return;
         }
-        // Hide the previous session's tab until this request completes, even
-        // when both sessions use the same project server.
+        // Hide the previous session's editor until this request completes.
         self.hide_editor(cx);
         self.editor = None;
         self.editor_ready = false;
@@ -83,21 +82,23 @@ impl FarcasterApp {
         self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
 
         let project = project.canonicalize().unwrap_or(project);
-        let Some(editor) = self
-            .project_editors
-            .get(&project)
-            .filter(|editor| editor.read(cx).is_alive(cx))
-            .cloned()
-            .or_else(|| self.spawn_editor(project, window, cx))
-        else {
-            return;
-        };
-        self.editor = Some(editor.clone());
         let target = self.composer_sessions.current_target().to_owned();
+        // The view ID survives draft promotion and owns a separate process,
+        // even when another session edits the same project or file.
         let tab = *self
             .session_editor_tabs
             .entry(target.clone())
             .or_insert_with(new_session_tab);
+        let Some(editor) = self
+            .project_editors
+            .get(&(project.clone(), tab))
+            .filter(|editor| editor.read(cx).is_alive(cx))
+            .cloned()
+            .or_else(|| self.spawn_editor(project, tab, window, cx))
+        else {
+            return;
+        };
+        self.editor = Some(editor.clone());
         self.hide_terminal(cx);
         self.set_surface(AppSurface::Editor, cx);
         let generation = self.editor_request_generation;
@@ -137,22 +138,24 @@ impl FarcasterApp {
     fn spawn_editor(
         &mut self,
         project: PathBuf,
+        tab: u64,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<NvimEditor>> {
         match NvimEditor::spawn(project.clone(), window, cx) {
             Ok(editor) => {
                 let editor = cx.new(|_| editor);
-                self.project_editors.insert(project.clone(), editor.clone());
+                let key = (project, tab);
+                self.project_editors.insert(key.clone(), editor.clone());
                 let monitored = editor.clone();
                 self.monitor_native_process(window, cx, move |this, _window, cx| {
-                    if this.project_editors.get(&project) != Some(&monitored) {
+                    if this.project_editors.get(&key) != Some(&monitored) {
                         return false;
                     }
                     if monitored.read(cx).is_alive(cx) {
                         return true;
                     }
-                    this.project_editors.remove(&project);
+                    this.project_editors.remove(&key);
                     if this.editor.as_ref() != Some(&monitored) {
                         return false;
                     }
@@ -191,8 +194,8 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn close_editor(&mut self, cx: &mut Context<Self>) {
-        // Closing a surface must not kill other sessions' tabs or shared unsaved
-        // buffers. Keep the project server until Neovim exits (or the app does).
+        // Keep the session's process and unsaved buffers when leaving its view.
+        // The process stays alive until Neovim exits (or the app does).
         self.hide_editor(cx);
         self.editor = None;
         self.editor_ready = false;

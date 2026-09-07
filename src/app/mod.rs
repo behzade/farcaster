@@ -200,7 +200,7 @@ pub(crate) struct FarcasterApp {
     workgraph_detail_view: Entity<WorkGraphDetailView>,
     workgraph_sidebar_view: Entity<WorkGraphSidebarView>,
     editor: Option<Entity<NvimEditor>>,
-    project_editors: HashMap<PathBuf, Entity<NvimEditor>>,
+    project_editors: HashMap<(PathBuf, u64), Entity<NvimEditor>>,
     session_editor_tabs: HashMap<String, u64>,
     editor_ready: bool,
     editor_request_generation: u64,

@@ -1,4 +1,4 @@
-//! Project-scoped Neovim transport. Session views are native tabpages, not processes.
+//! Session-scoped Neovim transport. Each session owns its process and buffers.
 
 use std::{
     io::{Read as _, Seek as _},
@@ -46,9 +46,12 @@ impl NvimEditor {
                 .tempdir()
                 .map_err(|error| format!("create Neovim socket directory: {error}"))?,
         );
+        // Keep the user's config, with separate swap, backup, undo, and ShaDa files.
         let command = format!(
-            "{} --listen {} -- {}",
+            "{} -i {} --cmd {} --listen {} -- {}",
             shell_quote(&executable),
+            shell_quote(&socket_dir.path().join("shada")),
+            shell_quote(Path::new(&state_setup(socket_dir.path()))),
             shell_quote(&socket_dir.path().join("nvim.sock")),
             shell_quote(&project),
         );
@@ -132,6 +135,14 @@ fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
+fn state_setup(state_dir: &Path) -> String {
+    let state = format!("{}//", state_dir.display());
+    format!(
+        "let &directory = {0} | let &backupdir = {0} | let &undodir = {0}",
+        vim_string(&state)
+    )
+}
+
 fn vim_string(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
@@ -209,8 +220,8 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "requires a Neovim executable; runs a real headless server"]
-    fn session_tabs_preserve_views_and_share_modified_buffers() -> Result<(), String> {
+    #[ignore = "requires a Neovim executable; runs two real headless servers"]
+    fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> {
         struct Server(std::process::Child);
         impl Drop for Server {
             fn drop(&mut self) {
@@ -219,79 +230,93 @@ mod tests {
             }
         }
         let project = tempfile::tempdir().map_err(|error| error.to_string())?;
-        let socket = project.path().join("nvim.sock");
+        let a = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let b = tempfile::tempdir().map_err(|error| error.to_string())?;
         let executable = nvim_executable();
-        let _server = Server(
+        let start = |state: &Path| {
             Command::new(&executable)
                 .current_dir(project.path())
-                .args(["--clean", "--headless", "-n", "-i", "NONE", "--listen"])
-                .arg(&socket)
+                .args(["--clean", "--headless", "-i"])
+                .arg(state.join("shada"))
+                .args(["--cmd", &state_setup(state), "--listen"])
+                .arg(state.join("nvim.sock"))
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
                 .spawn()
-                .map_err(|error| error.to_string())?,
-        );
-        let a = project.path().join("a's | file.rs");
-        let b = project.path().join("b.rs");
-        for path in [&a, &b] {
-            std::fs::write(path, "one\ntwo\nthree\nfour\nfive\n")
-                .map_err(|error| error.to_string())?;
-        }
-        let request =
-            |expression: String| run_remote(&executable, project.path(), &socket, &expression);
-        let lua = |body: &str| {
-            request(format!(
-                "luaeval({})",
-                vim_string(&format!("(function() {body}; return 0 end)()"))
-            ))
+                .map(Server)
+                .map_err(|error| error.to_string())
         };
-        request(session_expression(11, Some(&a), None))?;
-        lua(r#"
+        let _a = start(a.path())?;
+        let server_b = start(b.path())?;
+        let path = project.path().join("it's | shared.rs");
+        std::fs::write(&path, "one\ntwo\nthree\nfour\nfive\n")
+            .map_err(|error| error.to_string())?;
+        let request = |state: &Path, expression: String| {
+            run_remote(
+                &executable,
+                project.path(),
+                &state.join("nvim.sock"),
+                &expression,
+            )
+        };
+        let lua = |state: &Path, body: &str| {
+            request(
+                state,
+                format!(
+                    "luaeval({})",
+                    vim_string(&format!("(function() {body}; return 0 end)()"))
+                ),
+            )
+        };
+        request(a.path(), session_expression(11, Some(&path), None))?;
+        lua(
+            a.path(),
+            r#"
             vim.o.hidden = false
-            a_tab = vim.api.nvim_get_current_tabpage()
-            a_buf = vim.api.nvim_get_current_buf()
+            vim.g.session_marker = 'a'
             vim.cmd('vsplit')
-            a_win = vim.api.nvim_get_current_win()
             vim.api.nvim_win_set_cursor(0, {4, 1})
-            vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved'})
-            "#)?;
-        request(session_expression(22, Some(&b), Some(2)))?;
-        lua(r#"
-            b_tab = vim.api.nvim_get_current_tabpage()
-            assert(b_tab ~= a_tab)
-            assert(vim.api.nvim_win_get_cursor(0)[1] == 2)
-            assert(vim.bo[a_buf].modified)
-            assert(#vim.api.nvim_list_tabpages() == 2)
-            "#)?;
-        request(session_expression(11, None, None))?;
-        lua(r#"
-            assert(vim.api.nvim_get_current_tabpage() == a_tab)
-            assert(vim.api.nvim_get_current_win() == a_win)
-            assert(#vim.api.nvim_tabpage_list_wins(a_tab) == 2)
-            assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), {4, 1}))
-            assert(vim.api.nvim_get_current_buf() == a_buf)
-            "#)?;
-        // Opening the same file in another session shares its unsaved buffer,
-        // but not the first session's cursor or split layout.
-        request(session_expression(22, Some(&a), Some(1)))?;
-        lua(r#"
-            assert(vim.api.nvim_get_current_buf() == a_buf)
-            assert(vim.api.nvim_get_current_line() == 'unsaved')
+            vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved a'})
+        "#,
+        )?;
+        request(b.path(), session_expression(22, Some(&path), Some(1)))?;
+        lua(
+            b.path(),
+            r#"
+            assert(vim.api.nvim_get_current_line() == 'one')
+            assert(not vim.bo.modified)
+            assert(vim.g.session_marker == nil)
             assert(#vim.api.nvim_tabpage_list_wins(0) == 1)
-            "#)?;
-        request(session_expression(11, None, None))?;
-        lua("assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), {4, 1}))")?;
-        // A user-closed tab is recreated without invalid-handle errors.
-        lua("vim.cmd('tabclose')")?;
-        request(session_expression(11, Some(&b), None))?;
-        lua(r#"
-            assert(vim.api.nvim_get_current_tabpage() ~= b_tab)
-            assert(#vim.api.nvim_list_tabpages() == 2)
-            assert(vim.bo[a_buf].modified)
-            "#)?;
-        // The remote client must propagate Lua errors, not report success.
-        assert!(lua("error('expected test error')").is_err());
+            vim.api.nvim_buf_set_lines(0, 0, 1, false, {'unsaved b'})
+        "#,
+        )?;
+        for state in [a.path(), b.path()] {
+            lua(
+                state,
+                &format!(
+                    "assert(vim.o.directory == {0}); assert(vim.o.backupdir == {0}); assert(vim.o.undodir == {0})",
+                    vim_string(&format!("{}//", state.display()))
+                ),
+            )?;
+        }
+        request(a.path(), session_expression(11, None, None))?;
+        lua(
+            a.path(),
+            r#"
+            assert(vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == 'unsaved a')
+            assert(vim.bo.modified)
+            assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), {4, 1}))
+            assert(#vim.api.nvim_tabpage_list_wins(0) == 2)
+        "#,
+        )?;
+        drop(server_b);
+        lua(a.path(), "assert(vim.g.session_marker == 'a')")?;
+        assert!(lua(a.path(), "error('expected test error')").is_err());
+        assert_eq!(
+            std::fs::read_to_string(path).map_err(|error| error.to_string())?,
+            "one\ntwo\nthree\nfour\nfive\n"
+        );
         Ok(())
     }
 
