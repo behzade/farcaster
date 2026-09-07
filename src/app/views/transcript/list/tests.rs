@@ -1,7 +1,7 @@
 use super::*;
 use gpui::{
-    AppContext as _, Context, Render, ScrollDelta, Styled as _, TestAppContext, VisualTestContext,
-    div, size,
+    AppContext as _, Context, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext,
+    VisualTestContext, div, size,
 };
 
 struct FixedHeightView {
@@ -110,6 +110,67 @@ fn wheel_events_coalesce_until_the_next_layout(cx: &mut TestAppContext) {
     assert_eq!(offset.item_ix, 9);
     assert_eq!(offset.offset_in_item, px(4.0));
     assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
+}
+
+#[gpui::test]
+fn copy_resolves_highlight_within_a_message(cx: &mut TestAppContext) {
+    struct TextRows(
+        TranscriptListState,
+        gpui::Entity<gpui_component::text::TextViewState>,
+    );
+
+    impl Render for TextRows {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let text = self.1.clone();
+            div()
+                .w(px(240.))
+                .h(px(100.))
+                .child(gpui_base::TextSelectionLayer)
+                .child(transcript_list_grouped(
+                    self.0.clone(),
+                    |index| index,
+                    |_| "whole message".to_owned(),
+                    move |_, _, _| {
+                        gpui_component::text::TextView::new(&text)
+                            .selectable(true)
+                            .focusable(false)
+                            .into_any_element()
+                    },
+                ))
+        }
+    }
+
+    cx.update(gpui_component::init);
+    let state = state_with_rows(1);
+    let (_, cx) = cx.add_window_view(|_, cx| {
+        let text =
+            cx.new(|cx| gpui_component::text::TextViewState::markdown("select this text", cx));
+        TextRows(state.clone(), text)
+    });
+    let start = point(px(10.), px(10.));
+    let end = point(px(90.), px(10.));
+    cx.simulate_mouse_down(start, MouseButton::Left, gpui::Modifiers::default());
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), gpui::Modifiers::default());
+    cx.simulate_mouse_up(end, MouseButton::Left, gpui::Modifiers::default());
+    let selected = cx.update(|window, cx| {
+        assert_eq!(state.selected_text(), None, "not a whole-row selection");
+        let selected = gpui_base::TextSelection::selected_text(window, cx);
+        assert!(!selected.is_empty());
+        assert_ne!(selected, "select this text");
+        assert_eq!(
+            state.copy_selection_text(window, cx),
+            Some(selected.clone())
+        );
+        selected
+    });
+
+    cx.simulate_mouse_down(end, MouseButton::Right, gpui::Modifiers::default());
+    cx.simulate_mouse_up(end, MouseButton::Right, gpui::Modifiers::default());
+    cx.update(|window, cx| {
+        assert_eq!(state.copy_selection_text(window, cx), Some(selected));
+        gpui_base::TextSelection::clear(window, cx);
+        assert_eq!(state.copy_selection_text(window, cx), None);
+    });
 }
 
 #[test]

@@ -309,6 +309,13 @@ impl TranscriptListState {
         self.0.borrow().selection_text.clone()
     }
 
+    pub(crate) fn copy_selection_text(&self, window: &mut Window, cx: &mut App) -> Option<String> {
+        self.selected_text().or_else(|| {
+            let text = gpui_base::TextSelection::selected_text(window, cx);
+            (!text.is_empty()).then_some(text)
+        })
+    }
+
     fn queue_scroll(&self, delta: Pixels) -> Option<u64> {
         self.0.borrow_mut().queue_scroll(delta)
     }

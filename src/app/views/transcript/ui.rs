@@ -31,8 +31,16 @@ impl FarcasterApp {
         });
     }
 
-    pub(in crate::app) fn transcript_selected_text(&self, cx: &Context<Self>) -> Option<String> {
-        self.transcript_view.read(cx).list.selected_text()
+    pub(in crate::app) fn transcript_selected_text(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        self.transcript_view
+            .read(cx)
+            .list
+            .clone()
+            .copy_selection_text(window, cx)
     }
 
     pub(in crate::app) fn project_transcript_rows(

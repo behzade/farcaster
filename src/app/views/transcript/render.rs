@@ -300,17 +300,18 @@ fn transcript_context_menu(
     content: AnyElement,
 ) -> AnyElement {
     ContextMenuTrigger::new(format!("transcript-context-trigger-{row_index}"), content)
-        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
-            let selected_text = selection_state
-                .selected_text()
-                .filter(|text| !text.trim().is_empty());
+        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
+            // Capture before the popup takes focus or clears the highlight.
+            let selected_text = selection_state.copy_selection_text(window, cx);
             let mut menu = menu.min_w(px(190.0));
             if let Some(text) = selected_text {
                 menu = menu
                     .item(
-                        PopupMenuItem::new("Copy selection").on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-                        }),
+                        PopupMenuItem::new("Copy")
+                            .action(Box::new(crate::app::ui::keyboard::CopySelection))
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                            }),
                     )
                     .separator();
             }
@@ -345,7 +346,7 @@ fn transcript_context_menu(
                 PopupMenuItem::new(if matches!(row, TranscriptRow::ActivityGroup { .. }) {
                     "Copy tool group"
                 } else {
-                    "Copy message"
+                    "Copy entire message"
                 })
                 .disabled(row_text.trim().is_empty())
                 .on_click(move |_, _, cx| {
@@ -353,7 +354,7 @@ fn transcript_context_menu(
                 }),
             )
             .item(
-                PopupMenuItem::new("Copy transcript")
+                PopupMenuItem::new("Copy entire transcript")
                     .disabled(all_text.is_none())
                     .on_click(move |_, _, cx| {
                         if let Some(text) = &all_text {

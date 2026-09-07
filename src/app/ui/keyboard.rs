@@ -1,4 +1,4 @@
-use gpui::{App, ClipboardItem, Context, Keystroke, Window, actions};
+use gpui::{ClipboardItem, Context, Keystroke, Window, actions};
 
 use crate::app::{AppSurface, FarcasterApp};
 
@@ -7,13 +7,16 @@ actions!(
     [CopySelection, ClipboardCopyAlias, ClipboardPasteAlias]
 );
 
-pub(crate) fn copy_selection(transcript: Option<String>, composer: String, cx: &mut App) {
-    if let Some(text) = copy_text(transcript, composer) {
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-}
-
 impl FarcasterApp {
+    pub(in crate::app) fn copy_selection(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = copy_text(
+            self.transcript_selected_text(window, cx),
+            self.composer.read(cx).selected_value().to_string(),
+        ) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+    }
+
     pub(in crate::app) fn handle_clipboard_alias(
         &mut self,
         paste: bool,
@@ -22,11 +25,7 @@ impl FarcasterApp {
     ) {
         let native = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         if !paste && !native {
-            copy_selection(
-                self.transcript_selected_text(cx),
-                self.composer.read(cx).selected_value().to_string(),
-                cx,
-            );
+            self.copy_selection(window, cx);
             return;
         }
 
@@ -46,7 +45,7 @@ impl FarcasterApp {
 
 fn copy_text(transcript: Option<String>, composer: String) -> Option<String> {
     transcript
-        .filter(|text| !text.trim().is_empty())
+        .filter(|text| !text.is_empty())
         .or_else(|| (!composer.is_empty()).then_some(composer))
 }
 
@@ -59,6 +58,14 @@ mod tests {
         assert_eq!(
             copy_text(Some("transcript".to_owned()), "composer".to_owned()),
             Some("transcript".to_owned())
+        );
+    }
+
+    #[test]
+    fn copy_preserves_selected_whitespace() {
+        assert_eq!(
+            copy_text(Some(" \n\t".to_owned()), "composer".to_owned()),
+            Some(" \n\t".to_owned())
         );
     }
 
