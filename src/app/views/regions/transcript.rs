@@ -86,7 +86,6 @@ impl Render for TranscriptView {
             self.disclosure_states.clone(),
             self.file_trees.clone(),
             self.markdown_cache.clone(),
-            crate::agents::backend_display_name(&app.snapshot.harness).into(),
             self.app.clone(),
         )
     }

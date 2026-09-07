@@ -58,7 +58,6 @@ use links::with_file_links;
 #[allow(unused_imports)]
 pub(super) use message_rows::{
     highlighted_invocation_markdown, invocation_kind, is_mixed_invocation_message,
-    message_role_label,
 };
 use message_rows::{render_invocation, render_message, render_message_chunk};
 #[cfg(test)]
@@ -186,7 +185,6 @@ pub(crate) fn render(
     disclosure_states: std::collections::HashMap<usize, bool>,
     file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: TranscriptMarkdownCache,
-    assistant_label: Arc<str>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     if rows.is_empty() {
@@ -233,7 +231,6 @@ pub(crate) fn render(
                             &disclosure_states,
                             file_trees.get(&row.disclosure_key()),
                             &markdown_cache,
-                            &assistant_label,
                             row_entity.clone(),
                             cx,
                         ))),
@@ -395,7 +392,6 @@ fn render_row(
     disclosure_states: &std::collections::HashMap<usize, bool>,
     file_tree: Option<&crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: &TranscriptMarkdownCache,
-    assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
     cx: &mut gpui::App,
 ) -> AnyElement {
@@ -437,7 +433,6 @@ fn render_row(
                     &markdown,
                     cx,
                 ),
-                assistant_label,
                 entity.clone(),
             )
         }
@@ -464,7 +459,6 @@ fn render_row(
                     text,
                     cx,
                 ),
-                assistant_label,
                 entity.clone(),
             )
         }
@@ -484,7 +478,6 @@ fn render_row(
                 follows_tool,
                 Some(markdown_cache.state(MarkdownStateKey::item(index, revision), &markdown, cx)),
                 Some(invocation_transcript_markdown_style(resolved)),
-                assistant_label,
                 entity.clone(),
             )
         }
@@ -530,7 +523,6 @@ fn render_row(
                 follows_tool,
                 markdown_state,
                 None,
-                assistant_label,
                 entity,
             )
         }

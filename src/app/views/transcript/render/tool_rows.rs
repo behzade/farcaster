@@ -20,7 +20,7 @@ use crate::app::{
 };
 
 use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text, technical_text,
+    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
     toggle_transcript_item,
 };
 
@@ -53,36 +53,17 @@ pub(super) fn render_activity_group(
         .flex()
         .flex_col()
         .child(
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .gap(THEME.space.sm)
-                .child(
-                    technical_text(("activity-summary", key), summary)
-                        .flex_1()
-                        .min_w_0()
-                        .font_family(UI_FONT_FAMILY)
-                        .text_color(THEME.colors.muted),
-                )
-                .child(
-                    tool_changes::title_row(
-                        ("activity-title", key),
-                        disclosure_label,
-                        toggle_transcript_item(entity.clone(), key, expanded),
-                    )
-                    .w_auto()
-                    .flex_none()
-                    .aria_expanded(expanded)
-                    .child(app_icon(
-                        if expanded {
-                            AppIcon::CaretDown
-                        } else {
-                            AppIcon::CaretRight
-                        },
-                        AppIconSize::Inline,
-                    )),
-                ),
+            tool_changes::title_row(
+                ("activity-title", key),
+                disclosure_label,
+                toggle_transcript_item(entity.clone(), key, expanded),
+            )
+            .aria_expanded(expanded)
+            .font_family(UI_FONT_FAMILY)
+            .text_size(THEME.type_scale.body_small)
+            .line_height(THEME.type_scale.line_body)
+            .text_color(THEME.colors.muted)
+            .child(summary),
         )
         .child(files)
         .when(expanded, |group| {

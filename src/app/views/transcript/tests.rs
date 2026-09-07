@@ -598,10 +598,6 @@ fn agent_results_are_collapsed_by_default() {
     let row = project_rows(&items)[0];
 
     assert!(!expanded_by_default(row, &items));
-    assert_eq!(
-        message_role_label(TranscriptKind::AgentResult, "Codex"),
-        None
-    );
 }
 
 #[test]
@@ -639,14 +635,6 @@ fn assistant_turn_after_tool_receives_conclusion_spacing_signal() {
     ];
     let rows = project_rows(&items);
 
-    assert_eq!(
-        message_role_label(TranscriptKind::User, "Codex"),
-        Some("You")
-    );
-    assert_eq!(
-        message_role_label(TranscriptKind::Assistant, "Codex"),
-        Some("Codex")
-    );
     assert!(!message_follows_tool(rows[0], &items));
     assert!(message_follows_tool(rows[2], &items));
 }

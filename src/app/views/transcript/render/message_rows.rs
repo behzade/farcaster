@@ -190,11 +190,9 @@ pub(super) fn render_message(
     follows_tool: bool,
     markdown_state: Option<Entity<TextViewState>>,
     markdown_style: Option<TextViewStyle>,
-    assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
-    let role = item_role_label(item, assistant_label);
     let tooltip = invocation_tooltip_text(item);
     div()
         .id(("transcript-row", key))
@@ -212,7 +210,9 @@ pub(super) fn render_message(
         .when_some(tooltip, |row, tooltip| {
             row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         })
-        .children(role.map(|role| message_role(role, user)))
+        .when(item.kind == TranscriptKind::PeerMessage, |row| {
+            row.child(peer_label(&item.label))
+        })
         .when(user && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity.clone()))
         })
@@ -241,7 +241,6 @@ pub(super) fn render_message_chunk(
     last: bool,
     follows_tool: bool,
     markdown_state: Entity<TextViewState>,
-    assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let user = item.kind == TranscriptKind::User;
@@ -259,10 +258,8 @@ pub(super) fn render_message_chunk(
         })
         .when(!first, |row| row.pt(THEME.space.xs))
         .when(last, |row| row.pb(THEME.space.md))
-        .when(first, |row| {
-            row.children(
-                item_role_label(item, assistant_label).map(|role| message_role(role, user)),
-            )
+        .when(first && item.kind == TranscriptKind::PeerMessage, |row| {
+            row.child(peer_label(&item.label))
         })
         .when(first && user && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity.clone()))
@@ -275,40 +272,11 @@ pub(super) fn render_message_chunk(
         .into_any_element()
 }
 
-pub(in crate::app::views::transcript) fn message_role_label(
-    kind: TranscriptKind,
-    assistant_label: &str,
-) -> Option<&str> {
-    match kind {
-        TranscriptKind::User => Some("You"),
-        TranscriptKind::Assistant => Some(assistant_label),
-        TranscriptKind::Thinking
-        | TranscriptKind::Tool
-        | TranscriptKind::Error
-        | TranscriptKind::Notice
-        | TranscriptKind::Custom
-        | TranscriptKind::AgentResult
-        | TranscriptKind::PeerMessage => None,
-    }
-}
-
-fn item_role_label<'a>(item: &'a TranscriptItem, assistant_label: &'a str) -> Option<&'a str> {
-    if item.kind == TranscriptKind::PeerMessage {
-        Some(item.label.as_str())
-    } else {
-        message_role_label(item.kind, assistant_label)
-    }
-}
-
-fn message_role(label: &str, user: bool) -> impl gpui::IntoElement {
+fn peer_label(label: &str) -> impl gpui::IntoElement {
     div()
         .mb(px(7.0))
         .text_size(THEME.type_scale.caption)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(if user {
-            THEME.colors.accent
-        } else {
-            THEME.colors.muted
-        })
+        .text_color(THEME.colors.muted)
         .child(label.to_owned())
 }
