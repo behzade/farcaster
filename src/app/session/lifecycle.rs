@@ -1,6 +1,6 @@
 use super::*;
 
-pub(in crate::app) const USER_SESSION_SWITCH_RESTORES_CENTER: bool = false;
+pub(in crate::app) const USER_SESSION_SWITCH_RESTORES_CENTER: bool = true;
 
 pub(in crate::app) fn current_close_target(
     selected_draft: Option<&str>,
@@ -88,7 +88,7 @@ impl FarcasterApp {
         );
     }
 
-    pub(in crate::app) fn select_session_to_composer(
+    pub(in crate::app) fn select_session_and_focus(
         &mut self,
         path: PathBuf,
         project: PathBuf,
@@ -96,7 +96,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.select_session(path, project, window, cx);
-        self.return_to_chat_composer(window, cx);
+        self.recover_keyboard_focus(window, cx);
     }
 
     pub(in crate::app) fn select_session_restoring_center(
@@ -271,7 +271,7 @@ impl FarcasterApp {
         );
     }
 
-    pub(in crate::app) fn resume_draft_to_composer(
+    pub(in crate::app) fn resume_draft_and_focus(
         &mut self,
         id: String,
         project: PathBuf,
@@ -279,7 +279,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.resume_draft(id, project, window, cx);
-        self.return_to_chat_composer(window, cx);
+        self.recover_keyboard_focus(window, cx);
     }
 
     pub(in crate::app) fn resume_draft_restoring_center(

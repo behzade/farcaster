@@ -291,11 +291,11 @@ impl FarcasterApp {
             }
             PickerCommand::SelectSession { path, project } => {
                 self.close_picker(window, cx);
-                self.select_session_to_composer(path, project, window, cx);
+                self.select_session_and_focus(path, project, window, cx);
             }
             PickerCommand::ResumeDraft { id, project } => {
                 self.close_picker(window, cx);
-                self.resume_draft_to_composer(id, project, window, cx);
+                self.resume_draft_and_focus(id, project, window, cx);
             }
         }
     }

@@ -242,10 +242,10 @@ impl FarcasterApp {
         }
         match target {
             VisibleSessionTarget::Draft(draft) => {
-                self.resume_draft_to_composer(draft.id, draft.project, window, cx);
+                self.resume_draft_and_focus(draft.id, draft.project, window, cx);
             }
             VisibleSessionTarget::Persisted(session) => {
-                self.select_session_to_composer(session.path, session.project, window, cx);
+                self.select_session_and_focus(session.path, session.project, window, cx);
             }
         }
     }

@@ -218,7 +218,7 @@ impl FarcasterApp {
                         true,
                         move |window, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                this.select_session_to_composer(
+                                this.select_session_and_focus(
                                     path.clone(),
                                     project.clone(),
                                     window,

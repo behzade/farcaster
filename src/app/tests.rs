@@ -3,9 +3,7 @@ use std::time::SystemTime;
 use super::*;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle},
-    app::session::lifecycle::{
-        USER_SESSION_SWITCH_RESTORES_CENTER, current_close_target,
-    },
+    app::session::lifecycle::{USER_SESSION_SWITCH_RESTORES_CENTER, current_close_target},
     app::views::transcript::conversation::{TranscriptItem, TranscriptKind},
     sessions::UsageSummary,
 };
@@ -25,8 +23,8 @@ fn close_targets_a_draft_before_its_backing_session() {
 }
 
 #[test]
-fn explicit_session_switches_do_not_restore_native_center() {
-    assert!(!USER_SESSION_SWITCH_RESTORES_CENTER);
+fn explicit_session_switches_restore_each_sessions_native_center() {
+    assert!(USER_SESSION_SWITCH_RESTORES_CENTER);
 }
 
 fn item(text: &str) -> TranscriptItem {

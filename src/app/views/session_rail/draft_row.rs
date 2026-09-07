@@ -173,7 +173,7 @@ impl RenderOnce for DraftRow {
                         )
                         .on_click(move |_, window, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                this.resume_draft_to_composer(
+                                this.resume_draft_and_focus(
                                     id.clone(),
                                     project.clone(),
                                     window,
