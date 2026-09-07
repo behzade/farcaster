@@ -1,6 +1,6 @@
 mod agents;
 mod background_jobs;
-pub(crate) mod change_tree;
+pub(crate) use crate::app::ui::change_tree;
 mod performance;
 mod repository;
 mod repository_controls;
@@ -32,7 +32,6 @@ use crate::{
     sessions::{descendant_sessions, root_session_for_path},
 };
 
-/// Borrowed browser inputs shared by the panel and repository renderers.
 pub(crate) struct RepositoryView<'a> {
     pub(crate) state: &'a change_tree::ChangeTreeState,
     pub(crate) search: &'a gpui::Entity<gpui_component::input::InputState>,
@@ -201,7 +200,6 @@ impl FarcasterApp {
             .pb(px(14.0))
             .pl(px(18.0))
             .gap(THEME.space.md)
-            // Keep the root reachable independently of worker lifecycle and scroll position.
             .when_some(root, |run, root| {
                 let selected =
                     self.snapshot.selected_session.as_deref() == Some(root.path.as_path());
@@ -234,10 +232,9 @@ impl FarcasterApp {
                 )
             })
             .child(activity)
-            .when(
-                self.repository.backend.is_some(),
-                |run| run.child(self.render_repository(entity.clone(), run_panel.clone(), browser)),
-            );
+            .when(self.repository.backend.is_some(), |run| {
+                run.child(self.render_repository(entity.clone(), run_panel.clone(), browser))
+            });
         panel()
             .size_full()
             .rounded_none()

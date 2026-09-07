@@ -89,8 +89,6 @@ pub(super) fn resolved_expanded(
         .get(&row.disclosure_key())
         .copied()
         .unwrap_or_else(|| {
-            // A running call can join a completed group. Keep details the user
-            // already opened visible unless they explicitly closed the group.
             (matches!(row, TranscriptRow::ActivityGroup { .. })
                 && (row.item_start()..row.item_end())
                     .any(|index| disclosure_states.get(&index) == Some(&true)))
@@ -183,7 +181,7 @@ pub(crate) fn render(
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
     conversation: Arc<conversation::ConversationState>,
     disclosure_states: std::collections::HashMap<usize, bool>,
-    file_details: std::collections::HashMap<usize, String>,
+    file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: TranscriptMarkdownCache,
     assistant_label: Arc<str>,
     entity: WeakEntity<FarcasterApp>,
@@ -230,7 +228,7 @@ pub(crate) fn render(
                             &conversation.items,
                             expanded,
                             &disclosure_states,
-                            file_details.get(&row.disclosure_key()).map(String::as_str),
+                            file_trees.get(&row.disclosure_key()),
                             &markdown_cache,
                             &assistant_label,
                             row_entity.clone(),
@@ -392,7 +390,7 @@ fn render_row(
     items: &PersistentVec<Arc<TranscriptItem>>,
     expanded: bool,
     disclosure_states: &std::collections::HashMap<usize, bool>,
-    selected_file: Option<&str>,
+    file_tree: Option<&crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: &TranscriptMarkdownCache,
     assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
@@ -408,7 +406,7 @@ fn render_row(
             len,
             expanded,
             disclosure_states,
-            selected_file,
+            file_tree,
             entity,
             cx,
         ),

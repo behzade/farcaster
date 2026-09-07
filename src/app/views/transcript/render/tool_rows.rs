@@ -34,7 +34,7 @@ pub(super) fn render_activity_group(
     len: usize,
     expanded: bool,
     disclosure_states: &std::collections::HashMap<usize, bool>,
-    selected_file: Option<&str>,
+    file_tree: Option<&crate::app::ui::change_tree::ChangeTreeState>,
     entity: WeakEntity<FarcasterApp>,
     cx: &gpui::App,
 ) -> AnyElement {
@@ -44,16 +44,7 @@ pub(super) fn render_activity_group(
         "{} activity details for {summary}",
         if expanded { "Collapse" } else { "Expand" },
     );
-    let files = changed_files::render(
-        key,
-        items,
-        start,
-        len,
-        !expanded,
-        selected_file,
-        entity.clone(),
-        cx,
-    );
+    let files = changed_files::render(key, items, start, len, file_tree, entity.clone(), cx);
     div()
         .id(("activity-group", key))
         .w_full()

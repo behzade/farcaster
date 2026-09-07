@@ -16,7 +16,7 @@ pub(crate) struct TranscriptView {
     pub(crate) following: bool,
     pub(crate) unseen: usize,
     pub(crate) disclosure_states: HashMap<usize, bool>,
-    pub(crate) file_details: HashMap<usize, String>,
+    pub(crate) file_trees: HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     pub(crate) last_count: usize,
 }
 
@@ -33,7 +33,7 @@ impl TranscriptView {
             following: true,
             unseen: 0,
             disclosure_states: HashMap::new(),
-            file_details: HashMap::new(),
+            file_trees: HashMap::new(),
             last_count: 0,
         }
     }
@@ -43,7 +43,7 @@ impl TranscriptView {
         self.list.scroll_to_end();
         self.rows = Arc::new(PersistentVec::default());
         self.disclosure_states.clear();
-        self.file_details.clear();
+        self.file_trees.clear();
         self.following = true;
         self.unseen = 0;
         self.last_count = 0;
@@ -95,7 +95,7 @@ impl Render for TranscriptView {
             self.rows.clone(),
             app.snapshot.conversation.clone(),
             self.disclosure_states.clone(),
-            self.file_details.clone(),
+            self.file_trees.clone(),
             self.markdown_cache.clone(),
             crate::agents::backend_display_name(&app.snapshot.harness).into(),
             self.app.clone(),

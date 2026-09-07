@@ -1,12 +1,47 @@
 use std::{collections::BTreeMap, path::Path};
 
 use super::*;
+use crate::app::ui::{
+    change_tree::{self, ChangeTreeState, TreeRow},
+    file_icons::file_icon,
+};
+use crate::app::views::transcript::net_changes::{Edit, NetChanges, unified_edits};
 
 struct ChangedFile {
     path: String,
     label: String,
-    operations: Vec<usize>,
+    last_operation: Option<usize>,
     counts: Option<(usize, usize)>,
+    line: Option<u64>,
+    net: Option<NetChanges>,
+}
+
+fn recorded_edits(item: &TranscriptItem, path: &str, project: Option<&Path>) -> Option<Vec<Edit>> {
+    let details = item.tool_details.as_ref()?;
+    if let Some(changes) = details
+        .arguments
+        .get("changes")
+        .and_then(serde_json::Value::as_array)
+    {
+        let mut edits = Vec::new();
+        for change in changes {
+            let target = change.get("path").and_then(serde_json::Value::as_str)?;
+            if tool_changes::file_path(target, project) == Path::new(path) {
+                edits.extend(unified_edits(change.get("diff")?.as_str()?)?);
+            }
+        }
+        return (!edits.is_empty()).then_some(edits);
+    }
+    if details.metadata.targets.len() > 1 {
+        return None;
+    }
+    let result = details.result.as_ref();
+    let diff = result
+        .and_then(|result| result.pointer("/details/unifiedDiff"))
+        .or_else(|| result.and_then(|result| result.pointer("/details/diff")))
+        .or_else(|| details.arguments.get("diff"))?
+        .as_str()?;
+    unified_edits(diff)
 }
 
 fn collect<'a>(
@@ -30,7 +65,6 @@ fn collect<'a>(
                 .tool_presentation
                 .as_ref()
                 .filter(|presentation| presentation.path() == target)
-                // A multi-file presentation can contain aggregate counts.
                 .filter(|_| {
                     item.tool_details
                         .as_ref()
@@ -41,19 +75,38 @@ fn collect<'a>(
             let file = files.entry(path.clone()).or_insert_with(|| ChangedFile {
                 label: tool_changes::file_label(&path, project, home),
                 path,
-                operations: Vec::new(),
+                last_operation: None,
                 counts,
+                line: file_target_line(item, target),
+                net: Some(NetChanges::default()),
             });
-            if file.operations.last() != Some(&index) {
-                file.operations.push(index);
+            if file.last_operation == Some(index) {
+                continue;
             }
-            // Repeated patches are not a net diff. Keep each operation inspectable.
-            if file.operations.len() > 1 {
+            if file.last_operation.replace(index).is_some() {
                 file.counts = None;
+            }
+            file.line = file_target_line(item, target);
+            let edits = recorded_edits(item, &file.path, project);
+            let applied = file
+                .net
+                .as_mut()
+                .zip(edits.as_deref())
+                .is_some_and(|(net, edits)| net.apply(edits).is_some());
+            if !applied {
+                file.net = None;
             }
         }
     }
-    files.into_values().collect()
+    files
+        .into_values()
+        .map(|mut file| {
+            if let Some(net) = file.net.take() {
+                file.counts = net.counts();
+            }
+            file
+        })
+        .collect()
 }
 
 pub(super) fn render(
@@ -61,8 +114,7 @@ pub(super) fn render(
     items: &PersistentVec<Arc<TranscriptItem>>,
     start: usize,
     len: usize,
-    show_details: bool,
-    selected_file: Option<&str>,
+    state: Option<&ChangeTreeState>,
     entity: WeakEntity<FarcasterApp>,
     cx: &gpui::App,
 ) -> AnyElement {
@@ -78,138 +130,134 @@ pub(super) fn render(
         project.as_deref(),
         home.as_deref(),
     );
-    let compact = files.len() <= 2;
-    let selected = files
-        .iter()
-        .find(|file| selected_file == Some(file.path.as_str()));
-    let mut directories = BTreeMap::<&str, Vec<&ChangedFile>>::new();
-    for file in &files {
-        let directory = if compact {
-            ""
-        } else {
-            Path::new(&file.label)
-                .parent()
-                .and_then(Path::to_str)
-                .unwrap_or("")
-        };
-        directories.entry(directory).or_default().push(file);
-    }
+    let project = project.unwrap_or_default();
+    let default_state = ChangeTreeState::default();
+    let rows = change_tree::rows(
+        files
+            .iter()
+            .enumerate()
+            .map(|(index, file)| (index, Path::new(&file.label), None)),
+        "",
+        &project,
+        state.unwrap_or(&default_state),
+    );
 
     div()
         .id(("activity-files", key))
         .w_full()
         .flex()
         .flex_col()
-        .children(directories.into_iter().map(|(directory, files)| {
-            let nested = !directory.is_empty();
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .py(THEME.space.xs)
-                .when(nested, |section| {
-                    section.child(
-                        div()
-                            .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small)
-                            .text_color(THEME.colors.muted)
-                            .child(format!("{directory}/")),
+        .children(rows.into_iter().map(|row| {
+            match row {
+                TreeRow::Folder {
+                    path,
+                    label,
+                    depth,
+                    open,
+                    ..
+                } => {
+                    let entity = entity.clone();
+                    let project = project.clone();
+                    tool_changes::title_row(
+                        format!("activity-folder-{key}-{}", path.display()),
+                        format!(
+                            "{} folder {}",
+                            if open { "Collapse" } else { "Expand" },
+                            path.display()
+                        ),
+                        move |_, cx| {
+                            let _ = entity.update(cx, |this, cx| {
+                                this.toggle_transcript_folder(key, &project, &path, cx);
+                            });
+                        },
                     )
-                })
-                .children(files.into_iter().map(|file| {
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .when(nested, |row| row.pl(THEME.space.sm))
-                        .child(file_row(
-                            key,
-                            file,
-                            compact,
-                            show_details && selected_file == Some(file.path.as_str()),
-                            entity.clone(),
-                        ))
-                }))
-        }))
-        .when_some(selected.filter(|_| show_details), |section, file| {
-            section.child(
-                div()
-                    .id(("file-history", key))
+                    .aria_expanded(open)
+                    .h(px(22.0))
+                    .pl(px(depth as f32 * 12.0))
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .child(app_icon(
+                        if open {
+                            AppIcon::CaretDown
+                        } else {
+                            AppIcon::CaretRight
+                        },
+                        AppIconSize::Inline,
+                    ))
+                    .child(div().min_w_0().text_ellipsis().child(label))
+                    .into_any_element()
+                }
+                TreeRow::File { index, depth } => div()
                     .w_full()
-                    .max_h(THEME.layout.tool_max_height)
-                    .overflow_y_scroll()
-                    .border_l(THEME.border)
-                    .border_color(THEME.colors.subtle)
-                    .pl(THEME.space.sm)
-                    .children(file.operations.iter().map(|&operation| {
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .children(file_links(operation, &items[operation], entity.clone()))
-                            .child(expanded_tool_body(
-                                ("file-operation", operation),
-                                &items[operation],
-                            ))
-                    })),
-            )
-        })
+                    .pl(px(depth as f32 * 12.0))
+                    .child(file_row(key, &files[index], entity.clone()))
+                    .into_any_element(),
+            }
+        }))
         .into_any_element()
 }
 
-fn file_row(
-    key: usize,
-    file: &ChangedFile,
-    compact: bool,
-    expanded: bool,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    let label = if compact {
-        file.label.clone()
-    } else {
-        Path::new(&file.label)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned()
-    };
+fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let label = Path::new(&file.label)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     let path = file.path.clone();
+    let line = file.line;
     tool_changes::title_row(
         format!("change-file-{key}-{path}"),
-        format!(
-            "{} changes to {} from this activity",
-            if expanded { "Hide" } else { "Show" },
-            file.label
-        ),
-        move |_, cx| {
+        format!("Edit {}", file.label),
+        move |window, cx| {
             let _ = entity.update(cx, |this, cx| {
-                this.set_transcript_file_details(key, (!expanded).then(|| path.clone()), cx);
+                this.open_file_editor_at_line(path.clone().into(), line, window, cx);
             });
         },
     )
-    .aria_expanded(expanded)
+    .h(px(22.0))
     .text_size(THEME.type_scale.body_small)
+    .child(file_icon(Path::new(&file.path)))
     .child(
         div()
             .flex_1()
             .min_w_0()
-            .font_family(MONO_FONT_FAMILY)
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
             .text_color(THEME.colors.text)
             .child(label),
     )
     .children(tool_changes::change_counts(file.counts.unwrap_or_default()))
-    .when(file.operations.len() > 1, |row| {
-        row.child(tool_changes::tool_label(format!(
-            "{} edits",
-            file.operations.len()
-        )))
-    })
     .into_any_element()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_file_edits_keep_independent_net_counts() {
+        let mut first = super::super::tests::write_item();
+        let details = Arc::make_mut(first.tool_details.as_mut().unwrap());
+        details.metadata.targets = vec!["src/main.rs".into(), "src/other.rs".into()];
+        details.arguments = serde_json::json!({"changes":[
+            {"path":"src/main.rs", "diff":"@@ -1 +1 @@\n-old\n+middle"},
+            {"path":"src/other.rs", "diff":"@@ -0,0 +1,2 @@\n+one\n+two"}
+        ]});
+        let mut second = first.clone();
+        let details = Arc::make_mut(second.tool_details.as_mut().unwrap());
+        details.metadata.targets = vec!["src/main.rs".into()];
+        details.arguments = serde_json::json!({"changes":[
+            {"path":"/repo/src/main.rs", "diff":"@@ -1 +1 @@\n-middle\n+final"}
+        ]});
+        let files = collect(
+            [(0, &first), (1, &second)].into_iter(),
+            Some(Path::new("/repo")),
+            None,
+        );
+        assert_eq!(files[0].counts, Some((1, 1)));
+        assert_eq!(files[1].counts, Some((2, 0)));
+    }
 
     #[test]
     fn repeated_files_keep_history_without_summing_patch_counts() {
@@ -224,7 +272,7 @@ mod tests {
         );
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].label, "src/main.rs");
-        assert_eq!(files[0].operations, [7, 9]);
+        assert_eq!(files[0].last_operation, Some(9));
         assert_eq!(files[0].counts, None);
         assert_eq!(files[1].label, "src/other.rs");
         assert_eq!(files[1].counts, None);

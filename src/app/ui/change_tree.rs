@@ -5,12 +5,12 @@ use std::{
 
 const LARGE_CHANGESET: usize = 20;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ChangeTreeState {
     projects: BTreeMap<PathBuf, FolderState>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct FolderState {
     default_open: Option<bool>,
     overrides: BTreeMap<PathBuf, bool>,
@@ -58,7 +58,7 @@ impl ChangeTreeState {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum TreeRow {
+pub(crate) enum TreeRow {
     Folder {
         path: PathBuf,
         label: String,
@@ -79,7 +79,7 @@ struct Node {
     count: usize,
 }
 
-pub(super) fn rows<'a>(
+pub(crate) fn rows<'a>(
     files: impl Iterator<Item = (usize, &'a Path, Option<&'a Path>)>,
     query: &str,
     project: &Path,
@@ -142,7 +142,9 @@ fn flatten(
         while child.files.is_empty() && child.folders.len() == 1 {
             let (name, next) = child.folders.pop_first().unwrap();
             path.push(&name);
-            label.push('/');
+            if !label.ends_with('/') {
+                label.push('/');
+            }
             label.push_str(&name);
             child = next;
         }
@@ -169,6 +171,59 @@ fn flatten(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_tree_shares_folders_and_preserves_external_paths() {
+        let paths = [
+            Path::new("src/modules/agents/mod.rs"),
+            Path::new("src/modules/agents/adapter/mod.rs"),
+            Path::new("src/modules/sessions/mod.rs"),
+            Path::new("/outside/config"),
+            Path::new("~/notes.txt"),
+        ];
+        let project = Path::new("/repo");
+        let mut state = ChangeTreeState::default();
+        let render = |state: &ChangeTreeState| {
+            rows(
+                paths.iter().enumerate().map(|(i, path)| (i, *path, None)),
+                "",
+                project,
+                state,
+            )
+        };
+        let expanded = render(&state);
+        assert!(expanded.contains(&TreeRow::Folder {
+            path: "/outside".into(),
+            label: "/outside".into(),
+            count: 1,
+            depth: 0,
+            open: true,
+        }));
+        assert!(expanded.contains(&TreeRow::Folder {
+            path: "src/modules".into(),
+            label: "src/modules".into(),
+            count: 3,
+            depth: 0,
+            open: true,
+        }));
+        assert!(expanded.contains(&TreeRow::File { index: 0, depth: 2 }));
+        assert!(expanded.contains(&TreeRow::File { index: 1, depth: 3 }));
+        assert_eq!(
+            expanded
+                .iter()
+                .filter(|row| matches!(row, TreeRow::File { .. }))
+                .count(),
+            5
+        );
+        state.toggle(project, Path::new("src/modules/agents"));
+        let collapsed = render(&state);
+        assert!(
+            !collapsed
+                .iter()
+                .any(|row| matches!(row, TreeRow::File { index: 0 | 1, .. }))
+        );
+        assert!(collapsed.contains(&TreeRow::File { index: 2, depth: 2 }));
+    }
 
     #[test]
     fn large_changesets_collapse_and_refresh_preserves_choices() {
@@ -230,7 +285,6 @@ mod tests {
         let mut paths = (0..50)
             .map(|i| PathBuf::from(format!("src/app/file-{i:02}.rs")))
             .collect::<Vec<_>>();
-        // A staged and an unstaged row for the same file count as one file.
         paths.push(paths[0].clone());
         let mut state = ChangeTreeState::default();
         state.observe(project, paths.len());

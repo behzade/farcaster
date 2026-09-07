@@ -1,8 +1,15 @@
 use serde_json::Value;
 
+mod edit_diff;
+
 use crate::agents::{ToolCategory, ToolMetadata};
 
 pub(super) fn annotate_pi_value(value: &mut Value) {
+    if value.get("type").and_then(Value::as_str) == Some("tool_execution_end")
+        && let Some(result) = value.get_mut("result")
+    {
+        annotate_edit_result(result);
+    }
     if value.get("type").and_then(Value::as_str) == Some("tool_execution_start") {
         annotate_tool(value, "toolName", "args");
     }
@@ -27,6 +34,9 @@ pub(super) fn annotate_pi_value(value: &mut Value) {
 }
 
 pub(crate) fn annotate_pi_message(message: &mut Value) {
+    if message.get("role").and_then(Value::as_str) == Some("toolResult") {
+        annotate_edit_result(message);
+    }
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
         return;
     }
@@ -35,6 +45,15 @@ pub(crate) fn annotate_pi_message(message: &mut Value) {
     };
     for block in content {
         annotate_tool_call(block);
+    }
+}
+
+fn annotate_edit_result(result: &mut Value) {
+    if let Some(details) = result.get_mut("details")
+        && let Some(diff) = details.get("diff").and_then(Value::as_str)
+        && let Some(unified) = edit_diff::unified_diff(diff)
+    {
+        details["unifiedDiff"] = Value::String(unified);
     }
 }
 
@@ -100,6 +119,21 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn edit_patches_match_in_live_events_and_history_without_changing_raw_diff() {
+        let details = json!({"diff":"-1 old\n+1 new", "firstChangedLine":1});
+        let mut live = json!({"type":"tool_execution_end", "result":{"details":details}});
+        let mut history = json!({"role":"toolResult", "details":details});
+        annotate_pi_value(&mut live);
+        annotate_pi_message(&mut history);
+        assert_eq!(live["result"]["details"], history["details"]);
+        assert_eq!(history["details"]["diff"], details["diff"]);
+        assert_eq!(
+            history["details"]["unifiedDiff"],
+            "@@ -1,1 +1,1 @@\n-old\n+new\n"
+        );
+    }
 
     #[test]
     fn builtin_metadata_matches_across_live_history_and_stream_events() {

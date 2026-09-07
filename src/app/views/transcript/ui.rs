@@ -6,20 +6,20 @@ use super::{
 use crate::app::FarcasterApp;
 
 impl FarcasterApp {
-    pub(in crate::app) fn set_transcript_file_details(
+    pub(in crate::app) fn toggle_transcript_folder(
         &mut self,
         key: usize,
-        path: Option<String>,
+        project: &std::path::Path,
+        path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
         self.transcript_view.update(cx, |transcript, cx| {
-            if let Some(path) = path {
-                transcript.list.pause_following_tail();
-                transcript.file_details.insert(key, path);
-                transcript.disclosure_states.insert(key, false);
-            } else {
-                transcript.file_details.remove(&key);
-            }
+            transcript.list.pause_following_tail();
+            transcript
+                .file_trees
+                .entry(key)
+                .or_default()
+                .toggle(project, path);
             if let Some(index) = transcript
                 .rows
                 .iter()
