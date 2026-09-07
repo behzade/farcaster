@@ -7,14 +7,12 @@ use gpui_component::{
     Sizable as _, Size,
     button::{Button, ButtonVariants as _},
     input::Input,
-    menu::{DropdownMenu as _, PopupMenuItem},
 };
 
 use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
-    app::ui::keybindings::ApplicationModifier,
-    app::ui::primitives::{ButtonTone, FeedbackTone, button, dropdown_button, feedback, modal},
+    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
     app::ui::theme::THEME,
 };
 
@@ -60,11 +58,7 @@ pub(in crate::app::views) fn render(
                         .p(THEME.space.md)
                         .child(setting_label(
                             "Keyboard focus",
-                            "Ctrl+G activates app keys for 1 second without moving focus. Double Ctrl+G returns to the chat composer. In chat, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page without moving focus. On macOS, Cmd+G also focuses the composer. Ctrl+G e/t open the editor/terminal, 0–9 switch sessions, and / searches. Composer Escape applies queued steer or double-Escape abort while a run is active.",
-                        ))
-                        .child(modifier_setting(
-                            app.settings_application_modifier,
-                            entity.clone(),
+                            "Ctrl+G activates app keys for 2 seconds without moving focus. Double Ctrl+G returns to the chat composer. In chat, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page without moving focus. On macOS, Cmd+G also focuses the composer. Ctrl+G e/t open the editor/terminal, 0–9 switch sessions, and / searches. Composer Escape applies queued steer or double-Escape abort while a run is active.",
                         ))
                         .child(builtin_mcp_setting(
                             crate::builtin_mcp::enabled(),
@@ -185,46 +179,6 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
                 .text_size(THEME.type_scale.body_small)
                 .text_color(THEME.colors.subtle)
                 .child(description),
-        )
-        .into_any_element()
-}
-
-fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .flex_wrap()
-        .justify_between()
-        .gap(THEME.space.md)
-        .child(setting_label(
-            "Direct shortcut modifier",
-            "Direct shortcuts use Cmd on macOS and Ctrl on Linux by default. This modifier does not change Ctrl+G commands.",
-        ))
-        .child(
-            dropdown_button(
-                "keybinding-modifier",
-                selected.label(),
-                ButtonTone::Neutral,
-                true,
-            )
-            .flex_none()
-            .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
-                ApplicationModifier::platform_choices().iter().copied().fold(
-                    menu.min_w(gpui::px(150.0)),
-                    |menu, modifier| {
-                        let entity = entity.clone();
-                        menu.item(
-                            PopupMenuItem::new(modifier.label())
-                                .checked(modifier == selected)
-                                .on_click(move |_, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.select_settings_application_modifier(modifier, cx);
-                                    });
-                                }),
-                        )
-                    },
-                )
-            }),
         )
         .into_any_element()
 }

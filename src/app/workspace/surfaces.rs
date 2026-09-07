@@ -643,7 +643,6 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.settings_application_modifier = crate::app::ui::keybindings::application_modifier();
         match crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| crate::access::load_proxy(&store))
         {
@@ -677,15 +676,6 @@ impl FarcasterApp {
         self.persist_settings((!value.is_empty()).then_some(value), window, cx);
     }
 
-    pub(in crate::app) fn select_settings_application_modifier(
-        &mut self,
-        modifier: crate::app::ui::keybindings::ApplicationModifier,
-        cx: &mut Context<Self>,
-    ) {
-        self.settings_application_modifier = modifier;
-        cx.notify();
-    }
-
     pub(in crate::app) fn toggle_settings_builtin_mcp(&mut self, cx: &mut Context<Self>) {
         let enabled = !crate::builtin_mcp::enabled();
         match crate::app::mcp_server::set_enabled(enabled) {
@@ -711,19 +701,13 @@ impl FarcasterApp {
                 return;
             }
         };
-        let modifier = self.settings_application_modifier;
         let result =
             crate::app::infrastructure::persistence::StateStore::open().and_then(|store| {
-                store.save_application_settings_with_workers(
-                    modifier.prefix(),
-                    proxy.as_deref(),
-                    Some(&tasks),
-                )
+                store.save_application_settings_with_workers(proxy.as_deref(), Some(&tasks))
             });
         match result {
             Ok(()) => {
                 self.network_proxy_error = None;
-                crate::app::ui::keybindings::set_application_modifier(modifier, cx);
                 self.send(RuntimeCommand::SetAppProxy(proxy), cx);
                 self.close_sheet(window, cx);
             }

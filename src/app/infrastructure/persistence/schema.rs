@@ -60,6 +60,11 @@ impl StateStore {
                     super::migrate_legacy::migrate_to_v11(&migration, version)?;
                     super::migrate_v12::migrate_v11_to_v12(&migration)?;
                 }
+                Some(12) => {
+                    migration
+                        .execute_batch("ALTER TABLE ui_state DROP COLUMN application_modifier;")
+                        .map_err(|error| format!("remove application modifier setting: {error}"))?;
+                }
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -107,7 +112,7 @@ impl StateStore {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
-            if !matches!(version, 7 | 11 | SCHEMA_VERSION) {
+            if !matches!(version, 7 | 11 | 12 | SCHEMA_VERSION) {
                 return Err(format!(
                     "legacy pi-gpui state schema {version} is not supported by this build"
                 ));

@@ -1,4 +1,3 @@
-
 use std::{
     cell::RefCell,
     path::PathBuf,
@@ -91,10 +90,6 @@ pub(crate) fn run(
     let startup_trust =
         crate::app::project::trust::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
     drop(trust_timing);
-    let saved_modifier = StateStore::open()
-        .and_then(|store| store.load_application_modifier())
-        .unwrap_or(None);
-    keybindings::initialize_application_modifier(saved_modifier.as_deref());
     let failure = Arc::new(AtomicU8::new(0));
     let failure_in_app = failure.clone();
     gpui_platform::application()

@@ -95,7 +95,6 @@ CREATE TABLE ui_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   window_placement_json TEXT,
   network_proxy TEXT,
-  application_modifier TEXT,
   builtin_mcp_enabled INTEGER NOT NULL DEFAULT 1,
   worker_tasks_json TEXT,
   configuration_catalogs_json TEXT,

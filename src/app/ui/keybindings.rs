@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicU8, Ordering};
-
 use crate::app::ui::keyboard::CopySelection;
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
@@ -16,93 +14,8 @@ use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ApplicationModifier {
-    Command,
-    Super,
-    Control,
-    Alt,
-}
-
-impl ApplicationModifier {
-    pub(crate) const fn prefix(self) -> &'static str {
-        match self {
-            Self::Command => "cmd",
-            Self::Super => "super",
-            Self::Control => "ctrl",
-            Self::Alt => "alt",
-        }
-    }
-
-    fn key(self, suffix: &str) -> String {
-        format!("{}-{suffix}", self.prefix())
-    }
-
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Command => "Cmd",
-            Self::Super => "Super",
-            Self::Control => "Ctrl",
-            Self::Alt if cfg!(target_os = "macos") => "Option",
-            Self::Alt => "Alt",
-        }
-    }
-
-    pub(crate) const fn platform_choices() -> &'static [Self] {
-        if cfg!(target_os = "macos") {
-            &[Self::Command, Self::Control, Self::Alt]
-        } else {
-            &[Self::Control, Self::Alt]
-        }
-    }
-}
-
-fn parse_application_modifier(value: Option<&str>) -> ApplicationModifier {
-    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
-        Some("cmd" | "command") if cfg!(target_os = "macos") => ApplicationModifier::Command,
-        Some("super" | "meta") if cfg!(target_os = "macos") => ApplicationModifier::Super,
-        Some("ctrl" | "control") => ApplicationModifier::Control,
-        Some("alt" | "option") => ApplicationModifier::Alt,
-        _ if cfg!(target_os = "macos") => ApplicationModifier::Command,
-        _ => ApplicationModifier::Control,
-    }
-}
-
-const DEFAULT_APPLICATION_MODIFIER: ApplicationModifier = if cfg!(target_os = "macos") {
-    ApplicationModifier::Command
-} else {
-    ApplicationModifier::Control
-};
-
-static APPLICATION_MODIFIER: AtomicU8 = AtomicU8::new(DEFAULT_APPLICATION_MODIFIER as u8);
-
-pub(crate) fn initialize_application_modifier(saved: Option<&str>) {
-    let environment = std::env::var("FARCASTER_APP_MODIFIER")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-    let configured = saved.or(environment.as_deref());
-    APPLICATION_MODIFIER.store(
-        parse_application_modifier(configured) as u8,
-        Ordering::Relaxed,
-    );
-}
-
-pub(crate) fn application_modifier() -> ApplicationModifier {
-    match APPLICATION_MODIFIER.load(Ordering::Relaxed) {
-        value if value == ApplicationModifier::Command as u8 => ApplicationModifier::Command,
-        value if value == ApplicationModifier::Control as u8 => ApplicationModifier::Control,
-        value if value == ApplicationModifier::Alt as u8 => ApplicationModifier::Alt,
-        value if value == ApplicationModifier::Super as u8 => ApplicationModifier::Super,
-        _ => DEFAULT_APPLICATION_MODIFIER,
-    }
-}
-
 pub(crate) fn application_key(suffix: &str) -> String {
-    application_modifier().key(suffix)
-}
-
-fn application_context(_modifier: ApplicationModifier) -> Option<&'static str> {
-    Some(APP_SHORTCUT_CONTEXT)
+    format!("{}-{suffix}", platform_key("cmd", "ctrl"))
 }
 
 const fn platform_key(macos: &'static str, non_macos: &'static str) -> &'static str {
@@ -143,25 +56,6 @@ macro_rules! shortcut {
     }};
 }
 
-macro_rules! shortcut_with_modifier {
-    ($modifier:expr, $section:literal, $label:literal, $key:literal, $action:expr) => {
-        shortcut_with_modifier!($modifier, $section, $label, $key, $action, true)
-    };
-    ($modifier:expr, $section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {
-        Shortcut {
-            section: $section,
-            label: $label,
-            keystroke: $modifier.key($key),
-            show_in_help: $show,
-            binding: KeyBinding::new(
-                &$modifier.key($key),
-                $action,
-                application_context($modifier),
-            ),
-        }
-    };
-}
-
 pub(crate) fn bindings() -> Vec<KeyBinding> {
     let mut bindings = registry()
         .into_iter()
@@ -174,40 +68,24 @@ pub(crate) fn bindings() -> Vec<KeyBinding> {
     bindings
 }
 
-pub(crate) fn set_application_modifier(modifier: ApplicationModifier, cx: &mut gpui::App) {
-    let previous = application_modifier();
-    if previous == modifier {
-        return;
-    }
-
-    let changed = registry_for_modifier(previous)
-        .into_iter()
-        .zip(registry_for_modifier(modifier))
-        .filter(|(old, new)| old.keystroke != new.keystroke);
-    let mut bindings = Vec::new();
-    for (old, new) in changed {
-        bindings.push(KeyBinding::new(
-            &old.keystroke,
-            Unbind(old.binding.action().name().into()),
-            application_context(previous),
-        ));
-        bindings.push(new.binding);
-    }
-    APPLICATION_MODIFIER.store(modifier as u8, Ordering::Relaxed);
-    cx.bind_keys(bindings);
-}
-
 pub(crate) fn registry() -> Vec<Shortcut> {
-    registry_for_modifier(application_modifier())
+    registry_for_platform(platform_key("cmd", "ctrl"))
 }
 
-fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
+fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
     macro_rules! application_shortcut {
         ($section:literal, $label:literal, $key:literal, $action:expr) => {
-            shortcut_with_modifier!(modifier, $section, $label, $key, $action)
+            application_shortcut!($section, $label, $key, $action, true)
         };
         ($section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {
-            shortcut_with_modifier!(modifier, $section, $label, $key, $action, $show)
+            shortcut!(
+                $section,
+                $label,
+                format!("{prefix}-{}", $key),
+                $action,
+                Some(APP_SHORTCUT_CONTEXT),
+                $show
+            )
         };
     }
     let mut shortcuts = vec![
@@ -587,7 +465,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             false
         ),
     ];
-    if modifier == ApplicationModifier::Control {
+    if prefix == "ctrl" {
         shortcuts.retain(|shortcut| !matches!(shortcut.keystroke.as_str(), "ctrl-j" | "ctrl-k"));
     }
     shortcuts
@@ -595,10 +473,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ApplicationModifier, application_key, bindings, parse_application_modifier, platform_key,
-        registry,
-    };
+    use super::{application_key, bindings, platform_key, registry};
 
     use crate::app::ComposerCompletionNext;
 
@@ -623,14 +498,14 @@ mod tests {
 
     #[test]
     fn configuration_shortcuts_route_to_actions_only_in_app_views() {
-        use super::registry_for_modifier;
+        use super::registry_for_platform;
         use crate::app::{
             APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
         };
 
-        for modifier in [ApplicationModifier::Command, ApplicationModifier::Control] {
+        for prefix in ["cmd", "ctrl"] {
             let keymap = gpui::Keymap::new(
-                registry_for_modifier(modifier)
+                registry_for_platform(prefix)
                     .into_iter()
                     .map(|shortcut| shortcut.binding)
                     .collect(),
@@ -640,7 +515,7 @@ mod tests {
                 ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
                 ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
             ] {
-                let stroke = gpui::Keystroke::parse(&modifier.key(suffix)).unwrap();
+                let stroke = gpui::Keystroke::parse(&format!("{prefix}-{suffix}")).unwrap();
                 let (bindings, _) = keymap.bindings_for_input(
                     &[stroke.clone()],
                     &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
@@ -653,39 +528,11 @@ mod tests {
                 assert!(bindings.is_empty());
             }
             let (bindings, _) = keymap.bindings_for_input(
-                &[gpui::Keystroke::parse(&modifier.key("m")).unwrap()],
+                &[gpui::Keystroke::parse(&format!("{prefix}-m")).unwrap()],
                 &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
             );
             assert!(bindings.is_empty(), "unshifted M must remain unbound");
         }
-    }
-
-    #[test]
-    fn application_modifier_configuration_accepts_familiar_names() {
-        assert_eq!(
-            parse_application_modifier(Some("command")),
-            if cfg!(target_os = "macos") {
-                ApplicationModifier::Command
-            } else {
-                ApplicationModifier::Control
-            }
-        );
-        assert_eq!(
-            parse_application_modifier(Some("meta")),
-            if cfg!(target_os = "macos") {
-                ApplicationModifier::Super
-            } else {
-                ApplicationModifier::Control
-            }
-        );
-        assert_eq!(
-            parse_application_modifier(Some("control")),
-            ApplicationModifier::Control
-        );
-        assert_eq!(
-            parse_application_modifier(Some("option")),
-            ApplicationModifier::Alt
-        );
     }
 
     #[test]
@@ -712,27 +559,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_defaults_and_saved_super_settings_leave_super_unbound() {
-        use super::registry_for_modifier;
-
-        assert!(!ApplicationModifier::platform_choices().contains(&ApplicationModifier::Super));
-        for saved in [None, Some("super"), Some("meta"), Some("cmd")] {
-            let modifier = parse_application_modifier(saved);
-            assert_eq!(modifier, ApplicationModifier::Control);
-            let shortcuts = registry_for_modifier(modifier);
-            assert!(shortcuts.iter().all(|shortcut| {
-                !shortcut.keystroke.starts_with("super-") && !shortcut.keystroke.starts_with("cmd-")
-            }));
-            assert!(
-                shortcuts
-                    .iter()
-                    .any(|shortcut| shortcut.keystroke == "ctrl-t")
-            );
-        }
-    }
-
     #[test]
     fn legacy_global_actions_are_scoped_to_app_owned_contexts() {
         use crate::app::APP_SHORTCUT_CONTEXT;
@@ -757,7 +583,7 @@ mod tests {
 
     #[test]
     fn application_shortcuts_stay_in_app_owned_contexts() {
-        use super::{APP_SHORTCUT_CONTEXT, registry_for_modifier};
+        use super::{APP_SHORTCUT_CONTEXT, registry_for_platform};
         use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
         let app_context = gpui::KeyBindingContextPredicate::parse(APP_SHORTCUT_CONTEXT)
             .expect("app shortcut context");
@@ -781,7 +607,7 @@ mod tests {
         }
 
         let keymap = gpui::Keymap::new(
-            registry_for_modifier(ApplicationModifier::Command)
+            registry_for_platform("cmd")
                 .into_iter()
                 .map(|shortcut| shortcut.binding)
                 .collect(),
@@ -817,7 +643,7 @@ mod tests {
         }
 
         let control_map = gpui::Keymap::new(
-            registry_for_modifier(ApplicationModifier::Control)
+            registry_for_platform("ctrl")
                 .into_iter()
                 .map(|shortcut| shortcut.binding)
                 .collect(),

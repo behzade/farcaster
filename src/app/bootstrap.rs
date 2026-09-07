@@ -116,7 +116,6 @@ impl FarcasterApp {
             worker_task_editor: workspace::worker_tasks::WorkerTaskEditor::default(),
             network_proxy_input: inputs.network_proxy,
             network_proxy_error: None,
-            settings_application_modifier: ui::keybindings::application_modifier(),
             editing_session_title: None,
             pending_session_titles: HashMap::new(),
             pending_session_title_focus: false,

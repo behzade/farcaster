@@ -160,17 +160,10 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");
     let store = StateStore::open_at(&database)?;
-    assert_eq!(store.load_application_modifier()?, None);
     assert!(store.load_builtin_mcp_enabled()?);
 
-    store.save_application_settings("ctrl", Some("http://proxy.example:8080"))?;
+    store.save_application_settings(Some("http://proxy.example:8080"))?;
     store.save_builtin_mcp_enabled(false)?;
-    assert_eq!(
-        StateStore::open_at(&database)?
-            .load_application_modifier()?
-            .as_deref(),
-        Some("ctrl")
-    );
     assert_eq!(
         StateStore::open_at(&database)?
             .load_network_proxy()?
@@ -178,6 +171,42 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
         Some("http://proxy.example:8080")
     );
     assert!(!StateStore::open_at(&database)?.load_builtin_mcp_enabled()?);
+    Ok(())
+}
+
+#[test]
+fn v12_migration_removes_modifier_and_preserves_settings() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempdir()?;
+    let database = temp.path().join("settings.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    store.save_network_proxy(Some("http://proxy.example:8080"))?;
+    store.save_builtin_mcp_enabled(false)?;
+    drop(store);
+    let connection = rusqlite::Connection::open(&database)?;
+    connection.execute_batch(
+        "ALTER TABLE ui_state ADD COLUMN application_modifier TEXT;
+         UPDATE ui_state SET application_modifier='alt';
+         UPDATE meta SET value='12' WHERE key='schema_version';",
+    )?;
+    drop(connection);
+
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(
+        store.load_network_proxy()?.as_deref(),
+        Some("http://proxy.example:8080")
+    );
+    assert!(!store.load_builtin_mcp_enabled()?);
+    let connection = rusqlite::Connection::open(&database)?;
+    let has_modifier: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('ui_state') WHERE name='application_modifier')",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(!has_modifier);
+    assert_eq!(database_schema_version(&database)?, 13);
+    drop(store);
+    StateStore::open_at(&database)?;
     Ok(())
 }
 
@@ -780,7 +809,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 12);
+    assert_eq!(database_schema_version(&database)?, 13);
     Ok(())
 }
 
@@ -818,7 +847,7 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 12);
+    assert_eq!(database_schema_version(&database)?, 13);
     Ok(())
 }
 
@@ -836,7 +865,7 @@ fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::e
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 12);
+    assert_eq!(database_schema_version(&database)?, 13);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
@@ -857,7 +886,7 @@ fn schema_v4_migrates_to_v11_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 12);
+    assert_eq!(database_schema_version(&database)?, 13);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -900,7 +929,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 12);
+    assert_eq!(database_schema_version(&database)?, 13);
     Ok(())
 }
 
@@ -1396,10 +1425,10 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
     tasks.tasks[0].independent.harness = "codex-cli".into();
     tasks.tasks[0].independent.provider = "openai".into();
     tasks.tasks.remove(1);
-    store.save_application_settings_with_workers("ctrl", None, Some(&tasks))?;
+    store.save_application_settings_with_workers(None, Some(&tasks))?;
     assert_eq!(StateStore::open_at(&database)?.load_worker_tasks()?, tasks);
     tasks.tasks.clear();
-    store.save_application_settings_with_workers("ctrl", None, Some(&tasks))?;
+    store.save_application_settings_with_workers(None, Some(&tasks))?;
     assert!(
         StateStore::open_at(&database)?
             .load_worker_tasks()?
@@ -1413,19 +1442,22 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
 fn invalid_worker_tasks_do_not_partially_save_application_settings() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
-    store.save_application_settings("ctrl", None)?;
+    store.save_application_settings(Some("http://proxy.example:8080"))?;
     let original = store.load_worker_tasks()?;
     let mut invalid = original.clone();
     invalid.tasks[0].guided.provider.clear();
     assert!(
         store
-            .save_application_settings_with_workers("cmd", None, Some(&invalid))
+            .save_application_settings_with_workers(None, Some(&invalid))
             .is_err()
     );
-    assert_eq!(store.load_application_modifier()?.as_deref(), Some("ctrl"));
+    assert_eq!(
+        store.load_network_proxy()?.as_deref(),
+        Some("http://proxy.example:8080")
+    );
     assert_eq!(store.load_worker_tasks()?, original);
-    store.save_application_settings_with_workers("cmd", None, Some(&original))?;
-    assert_eq!(store.load_application_modifier()?.as_deref(), Some("cmd"));
+    store.save_application_settings_with_workers(None, Some(&original))?;
+    assert_eq!(store.load_network_proxy()?, None);
     Ok(())
 }
 

@@ -149,10 +149,6 @@ impl StateStore {
             .map_err(|error| format!("save network proxy: {error}"))
     }
 
-    pub(crate) fn load_application_modifier(&self) -> Result<Option<String>, String> {
-        self.load_text_setting("application_modifier", "application modifier")
-    }
-
     pub(crate) fn load_builtin_mcp_enabled(&self) -> Result<bool, String> {
         let value = self
             .connection
@@ -178,17 +174,12 @@ impl StateStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn save_application_settings(
-        &self,
-        modifier: &str,
-        proxy: Option<&str>,
-    ) -> Result<(), String> {
-        self.save_application_settings_with_workers(modifier, proxy, None)
+    pub(crate) fn save_application_settings(&self, proxy: Option<&str>) -> Result<(), String> {
+        self.save_application_settings_with_workers(proxy, None)
     }
 
     pub(crate) fn save_application_settings_with_workers(
         &self,
-        modifier: &str,
         proxy: Option<&str>,
         tasks: Option<&crate::agents::WorkerTasks>,
     ) -> Result<(), String> {
@@ -205,9 +196,9 @@ impl StateStore {
         self.ensure_ui_state()?;
         self.connection
             .execute(
-                "UPDATE ui_state SET application_modifier=?1, network_proxy=?2,
-                   worker_tasks_json=COALESCE(?3, worker_tasks_json) WHERE id=1",
-                params![modifier, proxy, tasks],
+                "UPDATE ui_state SET network_proxy=?1,
+                   worker_tasks_json=COALESCE(?2, worker_tasks_json) WHERE id=1",
+                params![proxy, tasks],
             )
             .map(|_| ())
             .map_err(|error| format!("save application settings: {error}"))

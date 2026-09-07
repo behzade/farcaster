@@ -298,14 +298,13 @@ fn copy_ui_state(tx: &Transaction<'_>) -> Result<(), String> {
     };
     tx.execute(
         "INSERT INTO ui_state(
-           id, window_placement_json, network_proxy, application_modifier,
+           id, window_placement_json, network_proxy,
            builtin_mcp_enabled, worker_tasks_json, configuration_catalogs_json,
            session_control_defaults_json, app_session_order_json
-         ) VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         ) VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             meta("window_placement"),
             meta("network_proxy"),
-            meta("application_modifier"),
             mcp,
             meta("worker_tasks"),
             meta("configuration_catalogs"),

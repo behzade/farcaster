@@ -224,7 +224,6 @@ pub(crate) struct FarcasterApp {
     worker_task_editor: workspace::worker_tasks::WorkerTaskEditor,
     network_proxy_input: Entity<InputState>,
     network_proxy_error: Option<String>,
-    settings_application_modifier: ui::keybindings::ApplicationModifier,
     editing_session_title: Option<SessionTitleEdit>,
     pending_session_titles: HashMap<PathBuf, String>,
     pending_session_title_focus: bool,
