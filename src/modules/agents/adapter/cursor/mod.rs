@@ -146,10 +146,12 @@ mod tests {
             &project,
         )?;
         assert!(!catalog.models.is_empty(), "Cursor returned no models");
-        assert!(catalog
-            .models
-            .iter()
-            .all(|model| { model.provider == super::PROFILE.backend && !model.id.is_empty() }));
+        assert!(
+            catalog
+                .models
+                .iter()
+                .all(|model| { model.provider == super::PROFILE.backend && !model.id.is_empty() })
+        );
         eprintln!("Cursor catalog loaded {} models", catalog.models.len());
         Ok(())
     }

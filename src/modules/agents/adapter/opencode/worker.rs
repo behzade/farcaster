@@ -1128,7 +1128,9 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
-        let known = self.effort_catalog.get(&(provider.to_owned(), model.to_owned()));
+        let known = self
+            .effort_catalog
+            .get(&(provider.to_owned(), model.to_owned()));
         let variant = variant_for_model(self.effort.as_deref(), known);
         self.caller_identity.select_model(provider, model);
         self.server
@@ -1592,7 +1594,10 @@ mod tests {
         // A stale effort from a previous model is dropped when the new model
         // publishes its variants; unknown catalogs keep current behavior.
         assert_eq!(variant_for_model(Some("high"), Some(&efforts)), None);
-        assert_eq!(variant_for_model(Some("low"), Some(&efforts)), Some("low".into()));
+        assert_eq!(
+            variant_for_model(Some("low"), Some(&efforts)),
+            Some("low".into())
+        );
         assert_eq!(variant_for_model(Some("low"), None), Some("low".into()));
     }
 
@@ -1625,7 +1630,11 @@ mod tests {
         );
         assert_eq!(
             catalog.get(&("opencode".to_owned(), "gpt-5.4".to_owned())),
-            Some(&vec!["none".to_owned(), "low".to_owned(), "high".to_owned()])
+            Some(&vec![
+                "none".to_owned(),
+                "low".to_owned(),
+                "high".to_owned()
+            ])
         );
         assert!(!catalog.contains_key(&("opencode".to_owned(), "legacy".to_owned())));
     }
@@ -1652,10 +1661,7 @@ mod tests {
         let (turn, session) = tracker.step_ended(tokens(72, 4, 3776));
         assert_eq!((turn.total(), session.total()), (3852, 8222));
         let (turn, session) = tracker.session_total(tokens(4428, 18, 3776));
-        assert_eq!(
-            (turn.input, turn.cache_read, turn.output),
-            (72, 3776, 4)
-        );
+        assert_eq!((turn.input, turn.cache_read, turn.output), (72, 3776, 4));
         assert_eq!(
             (session.input, session.cache_read, session.output),
             (4428, 3776, 18)

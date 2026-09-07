@@ -126,8 +126,8 @@ fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
     project: &Path,
     operation: impl FnOnce(&mut CatalogConnection, &AcpProfile, &Path) -> Result<T, String>
-        + Send
-        + 'static,
+    + Send
+    + 'static,
 ) -> Result<T, String> {
     let mut processes = catalog_processes()
         .lock()
@@ -635,7 +635,10 @@ mod tests {
             }))
         );
         assert_eq!(history[1]["role"], "toolResult");
-        assert_eq!(history[1].pointer("/details/diff"), Some(&json!("-old\n+new\n")));
+        assert_eq!(
+            history[1].pointer("/details/diff"),
+            Some(&json!("-old\n+new\n"))
+        );
         assert_eq!(
             history[1].pointer("/details/firstChangedLine"),
             Some(&json!(4))
@@ -743,7 +746,10 @@ mod tests {
             Some(&json!("replayed"))
         );
         assert_eq!(
-            history.model.as_ref().map(|(provider, id)| (provider.as_str(), id.as_str())),
+            history
+                .model
+                .as_ref()
+                .map(|(provider, id)| (provider.as_str(), id.as_str())),
             Some(("cursor-cli", "composer-2"))
         );
         assert_eq!(history.thinking_level.as_deref(), Some("high"));

@@ -244,11 +244,7 @@ fn promote(arguments: &mut serde_json::Map<String, Value>, canonical: &str, name
     }
 }
 
-fn fill_missing(
-    arguments: &mut serde_json::Map<String, Value>,
-    key: &str,
-    value: Option<&str>,
-) {
+fn fill_missing(arguments: &mut serde_json::Map<String, Value>, key: &str, value: Option<&str>) {
     if !arguments.contains_key(key)
         && let Some(value) = value
     {
@@ -665,7 +661,10 @@ mod tests {
 
     #[test]
     fn full_file_acp_diffs_count_only_changed_lines() {
-        let old = (0..80).map(|n| format!("line {n}")).collect::<Vec<_>>().join("\n");
+        let old = (0..80)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut new_lines: Vec<String> = (0..80).map(|n| format!("line {n}")).collect();
         new_lines[10] = "changed".into();
         new_lines.insert(40, "inserted".into());

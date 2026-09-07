@@ -149,16 +149,31 @@ impl TextRow {
     }
 
     fn nearest_column(&self, line: Range<usize>, x: Pixels) -> usize {
-        line.min_by(|a, b| {
-            (self.cells[*a].bounds.left() - x)
-                .abs()
-                .partial_cmp(&(self.cells[*b].bounds.left() - x).abs())
-                .unwrap()
-        })
-        .unwrap_or(0)
+        line.clone()
+            .find(|&i| {
+                let bounds = self.cells[i].bounds;
+                x >= bounds.left() && x < bounds.right()
+            })
+            .or_else(|| {
+                line.min_by(|&a, &b| {
+                    (self.cells[a].bounds.center().x - x)
+                        .abs()
+                        .partial_cmp(&(self.cells[b].bounds.center().x - x).abs())
+                        .unwrap()
+                })
+            })
+            .unwrap_or(0)
     }
 
     fn nearest_point(&self, point: gpui::Point<Pixels>) -> usize {
+        if let Some((index, _)) = self
+            .cells
+            .iter()
+            .enumerate()
+            .find(|(_, cell)| cell.bounds.contains(&point))
+        {
+            return index;
+        }
         let Some((index, _)) = self.cells.iter().enumerate().min_by(|(_, left), (_, right)| {
             (left.bounds.center().y - point.y)
                 .abs()
@@ -868,11 +883,12 @@ impl TranscriptList {
                 && let Some(cursor) = keyboard.cursor.filter(|cursor| cursor.row == row)
                 && let Some(cell) = text.cells.get(cursor.cell)
             {
+                let mut size = cell.bounds.size;
+                if size.width <= px(2.0) {
+                    size.width = size.height * 0.55;
+                }
                 window.paint_quad(gpui::fill(
-                    Bounds::new(
-                        origin + cell.bounds.origin,
-                        gpui::size(px(2.0), cell.bounds.size.height),
-                    ),
+                    Bounds::new(origin + cell.bounds.origin, size),
                     theme.colors.accent,
                 ));
             }

@@ -221,9 +221,7 @@ fn summary(
     let Some(cwd) = string(thread, &["cwd"]) else {
         return Ok(None);
     };
-    if string(thread, &["model"])
-        .is_some_and(|model| EPHEMERAL_MODELS.contains(&model))
-    {
+    if string(thread, &["model"]).is_some_and(|model| EPHEMERAL_MODELS.contains(&model)) {
         return Ok(None);
     }
     let project = PathBuf::from(cwd);
