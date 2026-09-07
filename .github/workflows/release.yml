@@ -62,6 +62,7 @@ jobs:
       - name: Stage release asset
         shell: bash
         run: |
+          file target/release/farcaster | grep -q 'ELF 64-bit.*x86-64'
           mkdir -p dist
           appimage=$(find target/release -maxdepth 1 -type f -iname '*farcaster*.AppImage' -print -quit)
           test -n "$appimage"
@@ -76,7 +77,7 @@ jobs:
 
   macos:
     name: macOS arm64
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -107,6 +108,7 @@ jobs:
 
       - name: Stage release asset
         run: |
+          test "$(lipo -archs target/release/Farcaster.app/Contents/MacOS/farcaster)" = arm64
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent target/release/Farcaster.app \
             "dist/Farcaster-${GITHUB_REF_NAME}-macos-arm64.zip"

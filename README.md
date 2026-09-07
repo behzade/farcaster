@@ -57,6 +57,24 @@ nix develop
 cargo run --locked --bin farcaster
 ```
 
+To publish a release, install `cargo-release` once, then run from a clean
+checkout on `main`:
+
+```sh
+cargo install cargo-release --locked
+make release-preview BUMP=patch
+make release-publish BUMP=patch
+```
+
+Use `BUMP=minor` or `BUMP=major` for larger version changes; the default is
+`patch`. The publish target updates `Cargo.toml`, `Cargo.lock`, and
+`packaging/linux.toml`, creates a release commit and matching `v` tag, and pushes
+both. `make release` still runs the app in release mode.
+
+The release workflow builds a macOS ARM64 app ZIP and a Linux x86_64 AppImage,
+then attaches both to a GitHub release. The macOS app uses ad hoc signing;
+the workflow does not notarize it.
+
 ## How I use it
 
 I spawn many concurrent sessions, mostly as I notice/remember issues or tasks; because of the concurrency, I don't care too much about model speed, and I make use of cheaper models as workers for more intelligent top-level agents to save costs. I try to stay in app as agents are working, notice issues in their implementation by the files they are touching, occasionally dropping into neovim to audit/change things.

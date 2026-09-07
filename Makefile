@@ -5,8 +5,9 @@ LOG_LINES ?= 50
 DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/farcaster
 LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER_DATA_DIR))/logs/farcaster.log
 TAIL_ARGS ?= -n $(LOG_LINES)
+BUMP ?= patch
 
-.PHONY: run test e2e debug release release-local release-debug bundle bundle-relaunch package logs check check-flake
+.PHONY: run test e2e debug release release-local release-debug release-preview release-publish bundle bundle-relaunch package logs check check-flake
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
@@ -31,6 +32,12 @@ release-local:
 
 release-debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
+
+release-preview:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo release "$(BUMP)" --package farcaster
+
+release-publish:
+	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo release "$(BUMP)" --package farcaster --execute
 
 bundle:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(BUNDLE_FORMATS)" PROJECT="$(PROJECT)" ./scripts/bundle.sh
