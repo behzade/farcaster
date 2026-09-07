@@ -224,13 +224,15 @@ impl RuntimeOwner {
             }
             SessionOperation::LoadHistory => {
                 if response.data.get("preserve").and_then(Value::as_bool) != Some(true) {
-                    let entries = response
+                    let Some(mut messages) = response
                         .data
-                        .get("entries")
+                        .get("messages")
                         .and_then(Value::as_array)
                         .cloned()
-                        .unwrap_or_default();
-                    let mut messages = project_display_history(&entries);
+                    else {
+                        self.fail("History response has no messages array".into());
+                        return;
+                    };
                     if let (Some(state), Some(session)) =
                         (self.state.as_ref(), self.active_session.as_deref())
                     {

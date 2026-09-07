@@ -12,12 +12,14 @@ use serde_json::Value;
 
 use crate::sessions::activity::{ActivityBuilder, AgentActivity, parse_iso_timestamp};
 
-use super::super::{
+use crate::sessions::{
     LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion, SessionDiscovery, SessionSummary,
-    UsageSummary, filter_session_tree, normalize_lexical,
+    UsageSummary, filter_session_tree, normalize_lexical, normalize_session_path,
 };
 #[cfg(test)]
-use super::super::{descendant_sessions, is_subagent_path, root_session_for_path, root_sessions};
+use crate::sessions::{
+    descendant_sessions, is_subagent_path, root_session_for_path, root_sessions,
+};
 
 const MAX_CANDIDATES: usize = 2_000;
 const MAX_DIRECTORIES: usize = 2_000;
@@ -25,88 +27,6 @@ const MAX_DEPTH: usize = 6;
 const MAX_LINES_PER_FILE: usize = 10_000;
 const MAX_SEARCH_BYTES: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 64 * 1024;
-impl SessionSummary {
-    #[cfg(test)]
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_cached(
-        id: String,
-        path: PathBuf,
-        project: PathBuf,
-        title: String,
-        first_user_message: String,
-        timestamp: String,
-        parent_session: Option<String>,
-        modified: SystemTime,
-        message_count: usize,
-        usage: UsageSummary,
-        archived: bool,
-        is_running: bool,
-        search: String,
-    ) -> Self {
-        Self::from_cached_for_harness(
-            id,
-            "pi".into(),
-            path,
-            project,
-            title,
-            first_user_message,
-            timestamp,
-            parent_session,
-            modified,
-            message_count,
-            usage,
-            archived,
-            is_running,
-            search,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn from_cached_for_harness(
-        id: String,
-        harness: String,
-        path: PathBuf,
-        project: PathBuf,
-        title: String,
-        first_user_message: String,
-        timestamp: String,
-        parent_session: Option<String>,
-        modified: SystemTime,
-        message_count: usize,
-        usage: UsageSummary,
-        archived: bool,
-        is_running: bool,
-        search: String,
-    ) -> Self {
-        let is_running = recently_running(is_running, modified, SystemTime::now());
-        let parent_session = if harness == "pi" {
-            parent_session
-                .as_deref()
-                .and_then(|parent| resolve_parent_session(&path, parent))
-        } else {
-            parent_session
-        };
-        Self {
-            id,
-            app_session_id: 0,
-            harness,
-            path,
-            project,
-            title,
-            first_user_message,
-            timestamp,
-            parent_session,
-            modified,
-            message_count,
-            usage,
-            archived,
-            is_running,
-            model: None,
-            thinking_level: None,
-            search,
-        }
-    }
-}
 
 pub(crate) fn configured_session_root() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -451,7 +371,7 @@ fn discover_in_cached(
     query: &str,
     cache: &mut DiscoveryCache,
 ) -> Result<SessionDiscovery, String> {
-    super::super::core::count_scan();
+    crate::sessions::count_scan();
     match fs::metadata(root) {
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -549,7 +469,7 @@ fn discover_in_cached(
             && cached.len == len
             && cached.modified == modified
         {
-            super::super::core::count_cache_hit();
+            crate::sessions::count_cache_hit();
             let mut value = cached.parsed.clone();
             value.0.is_running =
                 recently_running(value.0.is_running, value.0.modified, SystemTime::now());
@@ -607,7 +527,7 @@ fn discover_in_cached(
 }
 
 fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)>, String> {
-    super::super::core::count_parse();
+    crate::sessions::count_parse();
     let file = File::open(path).map_err(|error| format!("open {}: {error}", path.display()))?;
     let metadata = file.metadata().ok();
     let modified = metadata
@@ -878,6 +798,14 @@ fn unresolved_parent_id(reference: &Path) -> String {
     format!("unresolved-parent-{hash:016x}")
 }
 
+pub(in crate::modules::agents::adapter) fn validate_session_file(
+    path: &Path,
+) -> Result<(), String> {
+    session_header_id(path)
+        .map(|_| ())
+        .ok_or_else(|| format!("invalid Pi session file: {}", path.display()))
+}
+
 fn session_header_id(path: &Path) -> Option<String> {
     let file = File::open(path).ok()?;
     let mut reader = BufReader::new(file).take((MAX_HEADER_BYTES + 1) as u64);
@@ -989,12 +917,6 @@ fn normalize_existing(path: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("resolve project {}: {error}", path.display()))
 }
 
-pub(crate) fn normalize_session_path(path: &Path) -> PathBuf {
-    path.canonicalize()
-        .map(|canonical| normalize_lexical(&canonical))
-        .unwrap_or_else(|_| normalize_lexical(path))
-}
-
 #[cfg(test)]
 mod tool_metadata_tests {
     use serde_json::json;
@@ -1025,5 +947,5 @@ mod tool_metadata_tests {
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "session_files_tests.rs"]
 mod tests;

@@ -1,5 +1,3 @@
-//! UI-neutral application runtime and active-session ownership.
-
 mod access_mode;
 mod catalog;
 mod commands;
@@ -15,7 +13,7 @@ mod status;
 
 pub(crate) use crate::agents::HarnessAccessMode;
 use access_mode::AccessModeChangeState;
-use history::{annotate_history_presentations, import_agent_session};
+use history::annotate_history_presentations;
 #[cfg(test)]
 use process::startup_commands;
 use process::{can_send_prompt, conversation_mut, reset_snapshot_for_process};
@@ -59,8 +57,7 @@ use crate::{
     },
     sessions::{
         self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary,
-        TransferMember, archived_root_family_for_path, configured_session_root,
-        project_display_history, session_family_for_path,
+        archived_root_family_for_path, session_family_for_path,
     },
 };
 use session_controls::PendingSessionControls;

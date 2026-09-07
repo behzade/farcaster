@@ -41,7 +41,6 @@ pub(crate) struct DiscoveredUsage {
 
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveredHistory {
-    /// Canonical message objects, without backend persistence envelopes.
     pub(crate) messages: Vec<serde_json::Value>,
     pub(crate) model: Option<(String, String)>,
     pub(crate) thinking_level: Option<String>,
@@ -372,6 +371,7 @@ pub(crate) struct SessionCapabilities {
     pub resume: CapabilitySupport,
     pub fork: CapabilitySupport,
     pub rename: CapabilitySupport,
+    pub move_project: CapabilitySupport,
     pub close: CapabilitySupport,
     pub delete: CapabilitySupport,
 }

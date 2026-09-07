@@ -4,22 +4,6 @@ use crate::sessions::activity::ActivityBuilder;
 #[cfg(test)]
 use crate::sessions::RUNNING_ACTIVITY_TIMEOUT;
 
-fn discover_catalog(
-    locator_root: Option<&std::path::Path>,
-    query: &str,
-) -> Result<SessionDiscovery, String> {
-    let mut discovery = sessions::discover(query)?;
-    let (external, external_exhaustive) = agents::discover_external_sessions(locator_root, query);
-    discovery
-        .sessions
-        .extend(external.into_iter().map(import_agent_session));
-    discovery.exhaustive &= external_exhaustive;
-    discovery
-        .sessions
-        .sort_by_key(|session| std::cmp::Reverse(session.modified));
-    Ok(discovery)
-}
-
 impl RuntimeOwner {
     pub(super) fn load_sessions(&mut self, query: String) {
         self.session_query = query;
@@ -60,13 +44,16 @@ impl RuntimeOwner {
         if let Err(error) = thread::Builder::new()
             .name("farcaster-sessions".into())
             .spawn(move || {
-                let result = discover_catalog(locator_root.as_deref(), "").map(|mut discovery| {
-                    recover_worker_execution(&mut discovery.sessions, &worker_families, |path| {
-                        agents::load_external_history(path).transpose()
-                    });
-                    discovery
+                let mut discovery = agents::discover_sessions(locator_root.as_deref(), "");
+                recover_worker_execution(
+                    &mut discovery.sessions,
+                    &worker_families,
+                    agents::load_session_history,
+                );
+                let _ = sender.send(DiscoveryResult {
+                    generation,
+                    result: Ok(discovery),
                 });
-                let _ = sender.send(DiscoveryResult { generation, result });
                 wake.unpark();
             })
         {
@@ -138,7 +125,6 @@ impl RuntimeOwner {
                 } else {
                     discovered
                 };
-                // Running status belongs to this observation, never to the persisted catalog.
                 for session in &mut all_sessions {
                     session.is_running =
                         running.contains(&(session.harness.clone(), session.path.clone()));
@@ -194,7 +180,7 @@ impl RuntimeOwner {
         if let Err(error) = thread::Builder::new()
             .name("farcaster-import".into())
             .spawn(move || {
-                let result = discover_import(&harness, locator_root.as_deref())
+                let result = agents::discover_sessions_for(&harness, locator_root.as_deref(), "")
                     .map(|sessions| unknown_import_candidates(sessions, &known));
                 let event = match result {
                     Ok(sessions) => RuntimeEvent::ImportPreview {
@@ -268,21 +254,6 @@ impl RuntimeOwner {
             all_sessions,
             activities,
         }
-    }
-}
-
-fn discover_import(
-    harness: &str,
-    locator_root: Option<&std::path::Path>,
-) -> Result<Vec<SessionSummary>, String> {
-    match harness {
-        "pi" => Ok(sessions::discover("")?.sessions),
-        _ => Ok(
-            agents::discover_external_sessions_for(harness, locator_root, "")?
-                .into_iter()
-                .map(import_agent_session)
-                .collect(),
-        ),
     }
 }
 
@@ -387,13 +358,15 @@ mod tests {
         other.harness = "codex-cli".into();
         let mut sessions = vec![other, child];
         let mut calls = 0;
-        recover_worker_execution(&mut sessions, std::slice::from_ref(&link), |_| {
+        recover_worker_execution(&mut sessions, std::slice::from_ref(&link), |harness, _| {
+            assert_eq!(harness, "opencode2");
             calls += 1;
-            Ok(Some(agents::DiscoveredHistory {
+            Ok(LoadedHistory {
                 messages: vec![],
                 model: Some(("opencode-go".into(), "glm-5.3-flash".into())),
                 thinking_level: Some("high".into()),
-            }))
+                pending_question: None,
+            })
         });
         assert_eq!(calls, 1);
         assert!(sessions[0].model.is_none());
@@ -412,7 +385,7 @@ mod tests {
             ..link
         };
         sessions[1].model = None;
-        recover_worker_execution(&mut sessions, &[saved], |_| {
+        recover_worker_execution(&mut sessions, &[saved], |_, _| {
             panic!("saved identity must not reload history")
         });
     }
@@ -497,8 +470,6 @@ fn apply_worker_families(
     links: &[crate::agents::WorkerFamilyLink],
 ) {
     for link in links {
-        // Locators are opaque: match either the discovered ID or path, scoped by
-        // harness and project. No backend's native locator is passed to another.
         let matches = |session: &crate::sessions::SessionSummary, backend: &str, locator: &str| {
             session.harness == backend
                 && session.project == link.project
@@ -526,12 +497,10 @@ fn worker_child_matches(session: &SessionSummary, link: &agents::WorkerFamilyLin
             || session.path == std::path::Path::new(&link.child_session))
 }
 
-// Legacy links have no execution metadata. Recover it off the UI thread through
-// the owning backend, then persist it during discovery application for reuse.
 fn recover_worker_execution(
     sessions: &mut [SessionSummary],
     links: &[agents::WorkerFamilyLink],
-    mut load: impl FnMut(&std::path::Path) -> Result<Option<agents::DiscoveredHistory>, String>,
+    mut load: impl FnMut(&str, &std::path::Path) -> Result<LoadedHistory, String>,
 ) {
     for link in links {
         if link.execution.is_some() {
@@ -546,12 +515,11 @@ fn recover_worker_execution(
         if session.model.is_some() {
             continue;
         }
-        match load(&session.path) {
-            Ok(Some(history)) => {
+        match load(&session.harness, &session.path) {
+            Ok(history) => {
                 session.model = history.model;
                 session.thinking_level = history.thinking_level;
             }
-            Ok(None) => {}
             Err(error) => {
                 zlog::warn!(
                     "Recover worker execution for {}: {error}",

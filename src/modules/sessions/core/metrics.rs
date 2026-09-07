@@ -11,15 +11,15 @@ pub(crate) struct CatalogMetrics {
     pub(crate) cache_hits: u64,
 }
 
-pub(in crate::modules::sessions) fn count_scan() {
+pub(crate) fn count_scan() {
     SCANS.fetch_add(1, Ordering::Relaxed);
 }
 
-pub(in crate::modules::sessions) fn count_parse() {
+pub(crate) fn count_parse() {
     PARSES.fetch_add(1, Ordering::Relaxed);
 }
 
-pub(in crate::modules::sessions) fn count_cache_hit() {
+pub(crate) fn count_cache_hit() {
     CACHE_HITS.fetch_add(1, Ordering::Relaxed);
 }
 

@@ -49,7 +49,13 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
                 add_usage_total(response.data.get_mut("tokens"));
             }
             if response.success && response.command == "get_entries" {
-                super::tool::annotate_pi_value(&mut response.data);
+                let entries = response
+                    .data
+                    .get("entries")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "Pi history response has no entries array".to_owned())?;
+                let messages = super::session_files::project_display_history(entries);
+                response.data = serde_json::json!({"messages": messages});
             }
             let operation = response_operation(&response.command);
             Ok(PiWireMessage::Response {
@@ -215,6 +221,19 @@ mod tests {
             panic!("expected response");
         };
         assert_eq!(response.data["tokens"]["totalTokens"], 8);
+    }
+
+    #[test]
+    fn history_response_projects_pi_entries_before_leaving_adapter() {
+        let PiWireMessage::Response { response, .. } = parse_frame(
+            br#"{"type":"response","command":"get_entries","success":true,"data":{"entries":[{"type":"message","id":"a","parentId":null,"message":{"role":"user","content":"hello"}}]}}"#,
+        ).expect("history") else { panic!("expected response"); };
+        assert_eq!(response.data["messages"][0]["content"], "hello");
+        assert!(response.data.get("entries").is_none());
+        assert!(
+            parse_frame(br#"{"type":"response","command":"get_entries","success":true,"data":{}}"#)
+                .is_err()
+        );
     }
 
     #[test]

@@ -53,6 +53,9 @@ impl FarcasterApp {
             .map(PathBuf::from)
             .map(|path| normalize_session_path(&path));
         let edited_path = normalize_session_path(&edit.path);
+        let Some(target) = self.backend_target_for_path(&edit.path, cx) else {
+            return;
+        };
         self.pending_session_titles
             .insert(edited_path.clone(), title.clone());
         set_session_title(
@@ -65,7 +68,6 @@ impl FarcasterApp {
         if active_path.as_deref() == Some(edited_path.as_path()) && !self.snapshot.history_preview {
             self.send(RuntimeCommand::SetSessionName(title), cx);
         } else {
-            let target = self.backend_target_for_path(&edit.path);
             self.send(
                 RuntimeCommand::RenameSession {
                     path: edit.path,

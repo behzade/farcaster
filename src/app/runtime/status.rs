@@ -34,8 +34,6 @@ pub(super) fn tool_starts_worker(kind: &SessionActivityKind, event: &Value) -> b
         .unwrap_or_default()
         .to_ascii_lowercase();
     if normalized == "worker_send" {
-        // A top-level caller creates a child when the requested name is new.
-        // Refreshing after an existing-child or child-to-parent send is harmless.
         return true;
     }
     matches!(
@@ -67,7 +65,7 @@ pub(super) fn failure_summary(details: &str) -> String {
     truncate_chars(
         preferred
             .or(fallback)
-            .unwrap_or("Pi exited without an error message."),
+            .unwrap_or("The agent exited without an error message."),
         MAX_FAILURE_SUMMARY_CHARS,
     )
 }

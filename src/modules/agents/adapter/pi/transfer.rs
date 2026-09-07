@@ -8,7 +8,18 @@ use std::{
 
 use serde_json::Value;
 
-use super::super::{SessionTransfer, TransferMember};
+use crate::sessions::{SessionTransfer, TransferMember};
+
+pub(in crate::modules::agents::adapter) fn move_to_project(
+    members: &[TransferMember],
+    root_id: &str,
+    project: &Path,
+    source: &Path,
+) -> Result<SessionTransfer, String> {
+    let root = super::session_files::configured_session_root()?;
+    let destination = destination_directory(&root, project, source);
+    move_family(members, root_id, project, &destination)
+}
 
 pub(crate) fn destination_directory(
     session_root: &Path,

@@ -85,8 +85,6 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
         ),
     );
     runtime.send(RuntimeCommand::Reload)?;
-    // Pi permits up to 15 seconds for its readiness handshake; leave headroom for
-    // build-machine load.
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut connected = false;
     while Instant::now() < deadline && !connected {
@@ -341,16 +339,20 @@ fn persisted_submitted_draft_selects_its_session() {
     let project = PathBuf::from("/project");
     let session = PathBuf::from("/sessions/submitted.jsonl");
     assert!(matches!(
-        initial_draft_command("draft".into(), project.clone(), Some(session.clone())),
+        initial_draft_command("draft".into(), project.clone(), Some(crate::sessions::SessionTarget {
+            harness: "pi".into(), id: "saved-pi-id".into(), path: session.clone(),
+        })),
         RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
             if path == session
                 && harness == "pi"
-                && session_id == "/sessions/submitted.jsonl"
+                && session_id == "saved-pi-id"
                 && selected_project == project
     ));
     let codex = PathBuf::from("/locators/codex-cli/thread-1");
     assert!(matches!(
-        initial_draft_command("draft".into(), project.clone(), Some(codex.clone())),
+        initial_draft_command("draft".into(), project.clone(), Some(crate::sessions::SessionTarget {
+            harness: "codex-cli".into(), id: "thread-1".into(), path: codex.clone(),
+        })),
         RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
             if path == codex
                 && harness == "codex-cli"
@@ -1667,7 +1669,6 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     };
     defaults.reconcile_snapshot(&mut root, true);
 
-    // A descendant's model must not replace the defaults inherited by new drafts.
     let mut subagent = RuntimeSnapshot {
         harness: "codex-cli".into(),
         live_session: Some(PathBuf::from("/sessions/child.jsonl")),

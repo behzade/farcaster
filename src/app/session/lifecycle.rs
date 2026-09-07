@@ -1,8 +1,5 @@
 use super::*;
 
-/// Explicit session switches keep the chat composer. They never reopen a
-/// remembered editor or terminal. Background activation uses
-/// [`FarcasterApp::select_session`] without moving focus.
 pub(in crate::app) const USER_SESSION_SWITCH_RESTORES_CENTER: bool = false;
 
 pub(in crate::app) fn current_close_target(
@@ -44,12 +41,35 @@ impl FarcasterApp {
         }
     }
 
-    pub(in crate::app) fn backend_target_for_path(&self, path: &Path) -> SessionTarget {
-        self.all_sessions
+    pub(in crate::app) fn backend_target_for_path(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) -> Option<SessionTarget> {
+        let target = self
+            .all_sessions
             .iter()
             .find(|session| session.path == path)
             .map(SessionSummary::target)
-            .unwrap_or_else(|| SessionTarget::pi(path.to_path_buf()))
+            .or_else(|| {
+                if self.snapshot.selected_session.as_deref() != Some(path) {
+                    return None;
+                }
+                let state = self.snapshot.session.as_ref()?;
+                Some(SessionTarget {
+                    harness: self.snapshot.harness.clone(),
+                    id: state.session_id.clone(),
+                    path: path.to_owned(),
+                })
+            });
+        if target.is_none() {
+            self.sessions_error = Some(
+                "The session's harness identity is unavailable; refresh sessions and try again"
+                    .into(),
+            );
+            self.notify_session_rail(cx);
+        }
+        target
     }
 
     pub(in crate::app) fn select_session(
@@ -101,6 +121,9 @@ impl FarcasterApp {
         let previous_root =
             root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
                 .map(|session| session.id.clone());
+        let Some(target) = self.backend_target_for_path(&path, cx) else {
+            return;
+        };
         let next_root =
             root_session_for_path(&self.sessions, Some(&path)).map(|session| session.id.clone());
         self.switch_composer_target(session_target(&path), window, cx);
@@ -116,7 +139,6 @@ impl FarcasterApp {
             path.clone(),
             crate::app::infrastructure::performance::Timing::new("switch.session_total"),
         ));
-        let target = self.backend_target_for_path(&path);
         self.send_project_command(
             &project,
             RuntimeCommand::SelectSession {
@@ -149,11 +171,13 @@ impl FarcasterApp {
         if self.pending_project_trust_command.is_some() || self.workspace_switch_blocked() {
             return;
         }
+        let Some(target) = self.backend_target_for_path(&path, cx) else {
+            return;
+        };
         self.reset_run_panel_scroll(cx);
         self.selected_draft = None;
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project.clone(), window, cx);
-        let target = self.backend_target_for_path(&path);
         self.send_project_command(
             &project,
             RuntimeCommand::ForkSession {
@@ -265,21 +289,10 @@ impl FarcasterApp {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
-        self.reset_run_panel_scroll(cx);
-        self.switch_composer_target(draft_target(&id), window, cx);
-        self.selected_draft = Some(id.clone());
-        self.select_project(project.clone(), cx);
-        if restore_center {
-            self.restore_center_surface(project.clone(), window, cx);
-        }
-        let draft_harness = self
-            .drafts
-            .iter()
-            .find(|draft| draft.id == id)
-            .map(|draft| draft.harness.clone())
-            .unwrap_or_else(|| "pi".into());
         let command = if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
-            let target = self.backend_target_for_path(&path);
+            let Some(target) = self.backend_target_for_path(&path, cx) else {
+                return;
+            };
             RuntimeCommand::SelectSession {
                 path,
                 harness: target.harness,
@@ -287,12 +300,29 @@ impl FarcasterApp {
                 project: project.clone(),
             }
         } else {
+            let Some(draft_harness) = self
+                .drafts
+                .iter()
+                .find(|draft| draft.id == id)
+                .map(|draft| draft.harness.clone())
+            else {
+                self.sessions_error = Some("The draft's harness identity is unavailable".into());
+                self.notify_session_rail(cx);
+                return;
+            };
             RuntimeCommand::ResumeDraft {
-                id,
+                id: id.clone(),
                 harness: draft_harness,
                 project: project.clone(),
             }
         };
+        self.reset_run_panel_scroll(cx);
+        self.switch_composer_target(draft_target(&id), window, cx);
+        self.selected_draft = Some(id);
+        self.select_project(project.clone(), cx);
+        if restore_center {
+            self.restore_center_surface(project.clone(), window, cx);
+        }
         self.send_project_command(&project, command, window, cx);
         self.close_sessions_sheet_after_selection(window, cx);
         self.notify_session_rail(cx);
@@ -383,7 +413,7 @@ impl FarcasterApp {
         if session.project == target_project {
             return;
         }
-        if session.harness != "pi" {
+        if !crate::agents::supports_session_move(&session.harness) {
             self.sessions_error = Some(format!(
                 "Moving {} sessions between projects is not supported",
                 session.harness

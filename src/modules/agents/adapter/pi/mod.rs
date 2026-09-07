@@ -1,8 +1,11 @@
+pub(super) mod deletion;
 mod framing;
 mod mcp_config;
 mod process;
 mod protocol;
+pub(super) mod session_files;
 mod tool;
+pub(super) mod transfer;
 pub(super) mod trust;
 mod wire;
 mod worker;
@@ -30,6 +33,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 resume: Available,
                 fork: Available,
                 rename: Available,
+                move_project: Available,
                 close: Available,
                 delete: Available,
             },

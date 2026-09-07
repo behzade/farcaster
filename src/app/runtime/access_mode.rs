@@ -1,5 +1,3 @@
-//! Runtime policy for applying harness-native access mode changes.
-
 use super::*;
 
 const ACCESS_MODE_CHANGE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -91,7 +89,9 @@ impl RuntimeOwner {
         }
         let mut next_command = self.process_command.clone();
         next_command.access_mode = mode;
-        if let Err(error) = crate::agents::validate_launch(&next_command, &self.project) {
+        if let Err(error) =
+            crate::agents::validate_launch(&next_command, &self.harness, &self.project)
+        {
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Access mode unchanged".into();
             conversation_mut(snapshot).push_local_error("Access mode unchanged", error);
@@ -116,7 +116,9 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        if let Err(error) = crate::agents::validate_launch(&self.process_command, &self.project) {
+        if let Err(error) =
+            crate::agents::validate_launch(&self.process_command, &self.harness, &self.project)
+        {
             self.process_command.app_proxy = previous;
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Proxy unchanged".into();

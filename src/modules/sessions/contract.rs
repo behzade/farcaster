@@ -35,16 +35,6 @@ pub(crate) struct SessionTarget {
     pub path: PathBuf,
 }
 
-impl SessionTarget {
-    pub(crate) fn pi(path: PathBuf) -> Self {
-        Self {
-            harness: "pi".into(),
-            id: path.to_string_lossy().into_owned(),
-            path,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionImport {
     pub id: String,
@@ -81,7 +71,7 @@ pub(crate) struct SessionSummary {
     pub is_running: bool,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
-    pub(super) search: String,
+    pub(crate) search: String,
 }
 
 impl SessionSummary {
@@ -127,6 +117,84 @@ impl SessionSummary {
 
     pub(crate) fn search_text(&self) -> &str {
         &self.search
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_cached(
+        id: String,
+        path: PathBuf,
+        project: PathBuf,
+        title: String,
+        first_user_message: String,
+        timestamp: String,
+        parent_session: Option<String>,
+        modified: SystemTime,
+        message_count: usize,
+        usage: UsageSummary,
+        archived: bool,
+        is_running: bool,
+        search: String,
+    ) -> Self {
+        Self::from_cached_for_harness(
+            id,
+            "pi".into(),
+            path,
+            project,
+            title,
+            first_user_message,
+            timestamp,
+            parent_session,
+            modified,
+            message_count,
+            usage,
+            archived,
+            is_running,
+            search,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_cached_for_harness(
+        id: String,
+        harness: String,
+        path: PathBuf,
+        project: PathBuf,
+        title: String,
+        first_user_message: String,
+        timestamp: String,
+        parent_session: Option<String>,
+        modified: SystemTime,
+        message_count: usize,
+        usage: UsageSummary,
+        archived: bool,
+        is_running: bool,
+        search: String,
+    ) -> Self {
+        let is_running = is_running
+            && SystemTime::now()
+                .duration_since(modified)
+                .unwrap_or_default()
+                <= RUNNING_ACTIVITY_TIMEOUT;
+        Self {
+            id,
+            app_session_id: 0,
+            harness,
+            path,
+            project,
+            title,
+            first_user_message,
+            timestamp,
+            parent_session,
+            modified,
+            message_count,
+            usage,
+            archived,
+            is_running,
+            model: None,
+            thinking_level: None,
+            search,
+        }
     }
 }
 

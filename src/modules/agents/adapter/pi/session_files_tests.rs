@@ -403,7 +403,7 @@ fn official_path_parent_resolves_to_id_and_keeps_live_hierarchy() -> TestResult 
         "Cached child".into(),
         String::new(),
         String::new(),
-        parent_path.to_str().map(str::to_owned),
+        child.parent_session.clone(),
         SystemTime::now(),
         0,
         UsageSummary::default(),

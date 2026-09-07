@@ -1,5 +1,3 @@
-//! Runtime thread handles and multi-session command routing.
-
 use super::*;
 
 mod commands;
@@ -20,21 +18,6 @@ pub(super) struct UiEventSender {
     pub(super) wake: async_channel::Sender<()>,
 }
 
-fn delete_session_files(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
-    if paths
-        .first()
-        .is_some_and(|path| agents::is_external_session(path))
-    {
-        for path in paths.iter().rev() {
-            agents::delete_external_session(path)
-                .ok_or_else(|| "session family mixes backend locators".to_owned())??;
-        }
-        Ok(Vec::new())
-    } else {
-        sessions::delete_family(paths)
-    }
-}
-
 impl UiEventSender {
     fn send(&self, event: RuntimeEvent) -> Result<(), ()> {
         self.events.send(event).map_err(|_| ())?;
@@ -47,7 +30,7 @@ impl RuntimeHandle {
     pub(crate) fn spawn(
         project: PathBuf,
         draft_id: String,
-        initial_session: Option<PathBuf>,
+        initial_session: Option<crate::sessions::SessionTarget>,
         app_proxy: Option<String>,
     ) -> Self {
         let command = AgentLaunchConfig {
@@ -64,7 +47,7 @@ impl RuntimeHandle {
     pub(crate) fn spawn_with(
         project: PathBuf,
         draft_id: String,
-        initial_session: Option<PathBuf>,
+        initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
     ) -> Self {
         Self::spawn_with_configuration_refresh(
@@ -79,7 +62,7 @@ impl RuntimeHandle {
     fn spawn_with_configuration_refresh(
         project: PathBuf,
         draft_id: String,
-        initial_session: Option<PathBuf>,
+        initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
         refresh_configuration: bool,
     ) -> Self {
@@ -103,7 +86,7 @@ impl RuntimeHandle {
                     refresh_configuration,
                 );
             })
-            .expect("start Pi supervisor");
+            .expect("start session supervisor");
         Self {
             commands,
             events,
@@ -116,7 +99,7 @@ impl RuntimeHandle {
     pub(crate) fn send(&self, command: RuntimeCommand) -> Result<(), String> {
         self.commands
             .send(command)
-            .map_err(|_| "Pi runtime has stopped".to_owned())?;
+            .map_err(|_| "Session runtime has stopped".to_owned())?;
         self.thread.unpark();
         Ok(())
     }
@@ -417,7 +400,7 @@ struct Supervisor {
 fn run_supervisor(
     project: PathBuf,
     draft_id: String,
-    initial_session: Option<PathBuf>,
+    initial_session: Option<crate::sessions::SessionTarget>,
     process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: UiEventSender,
@@ -439,7 +422,7 @@ impl Supervisor {
     fn new(
         project: PathBuf,
         draft_id: String,
-        initial_session: Option<PathBuf>,
+        initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
         command_rx: mpsc::Receiver<RuntimeCommand>,
         event_tx: UiEventSender,
@@ -480,19 +463,20 @@ impl Supervisor {
         let catalog_sessions = Vec::<SessionSummary>::new();
         let catalog_generation = 0_u64;
         let activity_tracker = ExternalActivityTracker::default();
-        if let Some(path) = initial_session.clone() {
+        if let Some(target) = initial_session.clone() {
             latest.insert(
                 initial_key.clone(),
                 Arc::new(RuntimeSnapshot {
                     project: initial_project.clone(),
-                    selected_session: Some(path),
+                    selected_session: Some(target.path),
+                    harness: target.harness,
                     history_preview: true,
                     ..RuntimeSnapshot::default()
                 }),
             );
         }
         let actor_paths = initial_session
-            .map(|path| HashMap::from([(path, initial_key.clone())]))
+            .map(|target| HashMap::from([(target.path, initial_key.clone())]))
             .unwrap_or_default();
         let interacted = HashSet::from([initial_key.clone()]);
         let document_revisions = HashMap::new();
@@ -599,7 +583,7 @@ impl Supervisor {
 pub(super) fn initial_draft_command(
     id: String,
     project: PathBuf,
-    session: Option<PathBuf>,
+    session: Option<crate::sessions::SessionTarget>,
 ) -> RuntimeCommand {
     session.map_or(
         RuntimeCommand::ResumeDraft {
@@ -607,15 +591,11 @@ pub(super) fn initial_draft_command(
             harness: "pi".into(),
             project: project.clone(),
         },
-        |path| {
-            let (harness, session_id) = agents::external_session_identity(&path)
-                .unwrap_or_else(|| ("pi", path.to_string_lossy().into_owned()));
-            RuntimeCommand::SelectSession {
-                session_id,
-                path,
-                harness: harness.into(),
-                project,
-            }
+        |target| RuntimeCommand::SelectSession {
+            session_id: target.id,
+            path: target.path,
+            harness: target.harness,
+            project,
         },
     )
 }

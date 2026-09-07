@@ -100,8 +100,6 @@ impl WorkerSessionTransport {
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
             model,
-            // Report only a level that was actually picked or restored; a display
-            // default such as Pi's "off" is not valid for every backend.
             effort: history
                 .as_ref()
                 .and_then(|history| history.thinking_level.clone())
@@ -503,14 +501,8 @@ impl SessionTransport for WorkerSessionTransport {
             }
             SessionCommand::LoadHistory => {
                 let data = self.history.as_ref().map_or_else(
-                    || json!({"entries": [], "preserve": true}),
-                    |messages| {
-                        let entries = messages
-                            .iter()
-                            .map(|message| json!({"type": "message", "message": message}))
-                            .collect::<Vec<_>>();
-                        json!({"entries": entries, "preserve": false})
-                    },
+                    || json!({"messages": [], "preserve": true}),
+                    |messages| json!({"messages": messages, "preserve": false}),
                 );
                 self.response(id.clone(), operation, data);
             }
@@ -562,8 +554,6 @@ impl SessionTransport for WorkerSessionTransport {
                 };
                 let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
                 self.worker.send_with_images(message, worker_mode, images)?;
-                // Count accepted input before the next state request, even if
-                // the worker has not emitted InputDelivered yet.
                 self.message_count = self.message_count.saturating_add(1);
                 if let Some(message) = queued_message {
                     self.enqueue_message(mode, message);
@@ -1078,10 +1068,7 @@ mod tests {
         };
         assert_eq!(response.operation, SessionOperation::LoadHistory);
         assert_eq!(response.data["preserve"], false);
-        assert_eq!(
-            response.data["entries"][0]["message"]["content"],
-            "persisted"
-        );
+        assert_eq!(response.data["messages"][0]["content"], "persisted");
 
         transport
             .send(SessionCommand::LoadState)

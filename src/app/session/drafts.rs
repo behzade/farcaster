@@ -53,7 +53,7 @@ impl FarcasterApp {
                     .find(|session| session.path == path)
             })
             .map(|session| session.harness.as_str())
-            .unwrap_or("pi")
+            .unwrap_or(&self.snapshot.harness)
     }
 
     pub(in crate::app) fn editable_draft_harness(&self) -> Option<String> {
@@ -69,7 +69,7 @@ impl FarcasterApp {
             .iter()
             .find(|draft| draft.id == id)
             .map(|draft| draft.harness.clone())
-            .or_else(|| Some("pi".into()))
+            .or_else(|| Some(self.snapshot.harness.clone()).filter(|harness| !harness.is_empty()))
     }
 
     pub(in crate::app) fn change_draft_harness(
@@ -147,7 +147,7 @@ impl FarcasterApp {
                     .iter()
                     .find(|draft| draft.id == self.selected_draft.as_deref().unwrap_or_default())
                     .map(|draft| draft.harness.clone())
-                    .unwrap_or_else(|| "pi".into()),
+                    .unwrap_or_else(|| self.active_harness().to_owned()),
                 project: project.clone(),
             },
             window,

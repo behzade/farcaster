@@ -44,6 +44,10 @@ impl Supervisor {
             let result = (|| {
                 let family = archived_root_family_for_path(&self.catalog_sessions, path)
                     .ok_or_else(|| "Only an archived root session can be deleted".to_owned())?;
+                let targets = family
+                    .iter()
+                    .map(|session| session.target())
+                    .collect::<Vec<_>>();
                 if family.iter().any(|session| session.is_running) {
                     return Err(
                         "Wait for the session family to finish before deleting it".to_owned()
@@ -98,7 +102,7 @@ impl Supervisor {
                     self.selected = self.catalog_key.clone();
                     self.generation = self.generation.saturating_add(1);
                 }
-                let leftovers = delete_session_files(&paths)?;
+                let leftovers = agents::delete_session_family(&targets)?;
                 let state_warning = sessions::delete_state(&mut state, &paths).err();
                 Ok((family_paths, leftovers, state_warning))
             })();
@@ -160,6 +164,11 @@ impl Supervisor {
                 if root.path != *path {
                     return Err("Only a root session can be moved".to_owned());
                 }
+                let owned_family = family
+                    .iter()
+                    .map(|session| (*session).clone())
+                    .collect::<Vec<_>>();
+                agents::validate_session_move(&owned_family)?;
                 if family.iter().any(|session| session.is_running) {
                     return Err("Wait for the session family to finish before moving it".to_owned());
                 }
@@ -213,19 +222,7 @@ impl Supervisor {
                     self.selected = self.catalog_key.clone();
                     self.generation = self.generation.saturating_add(1);
                 }
-                let members = family
-                    .iter()
-                    .map(|session| TransferMember {
-                        path: session.path.clone(),
-                        id: session.id.clone(),
-                        parent_id: session.parent_session.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                let session_root = configured_session_root()?;
-                let destination =
-                    sessions::destination_directory(&session_root, target_project, &root.path);
-                let moved =
-                    sessions::move_family(&members, &root.id, target_project, &destination)?;
+                let moved = agents::move_session_family(&owned_family, target_project)?;
                 let path_updates = moved
                     .paths
                     .iter()

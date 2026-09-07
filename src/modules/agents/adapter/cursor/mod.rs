@@ -32,6 +32,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 resume: Available,
                 fork: Unsupported,
                 rename: Available,
+                move_project: Unsupported,
                 close: Available,
                 delete: Available,
             },

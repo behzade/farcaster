@@ -12,7 +12,12 @@ mod main_session;
 mod opencode;
 mod pi;
 mod process_command;
+mod session_storage;
 mod shell_environment;
+pub(crate) use session_storage::{
+    delete_session_family, discover_sessions, discover_sessions_for, load_session_history,
+    move_session_family, supports_session_move, validate_session_move,
+};
 mod trust;
 pub(crate) use trust::{
     apply_project_trust, project_trust, project_trust_description, saved_project_trust,
@@ -54,9 +59,31 @@ pub(crate) fn normalize_access_mode(
 
 pub(crate) fn validate_launch(
     config: &crate::agents::AgentLaunchConfig,
+    harness: &str,
     project: &std::path::Path,
 ) -> Result<(), String> {
-    config.command(project).map(|_| ())
+    launch_configuration(config, harness)?
+        .command(project)
+        .map(|_| ())
+}
+
+fn launch_configuration(
+    config: &crate::agents::AgentLaunchConfig,
+    harness: &str,
+) -> Result<crate::agents::AgentLaunchConfig, String> {
+    let mut config = config.clone();
+    config.program = match harness {
+        "pi" => return Ok(config),
+        "codex-cli" => std::env::var_os("FARCASTER_CODEX_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "codex".into()),
+        "cursor-cli" => cursor::PROFILE.program(),
+        "opencode2" => std::env::var_os("FARCASTER_OPENCODE_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "opencode2".into()),
+        _ => return Err(format!("unsupported session harness: {harness}")),
+    };
+    Ok(config)
 }
 
 pub(crate) fn worker_factories(
@@ -105,18 +132,12 @@ pub(crate) fn load_configuration_catalog(
 ) -> Result<crate::agents::ConfigurationCatalog, String> {
     match harness {
         "codex-cli" => {
-            let mut command = config.clone();
-            command.program = std::env::var_os("FARCASTER_CODEX_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| "codex".into());
+            let command = launch_configuration(config, harness)?;
             codex::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "cursor-cli" => cursor::load_configuration(project).and_then(configuration_catalog),
         "opencode2" => {
-            let mut command = config.clone();
-            command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| "opencode2".into());
+            let command = launch_configuration(config, harness)?;
             opencode::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "pi" => load_pi_configuration(config, project),
@@ -202,12 +223,15 @@ pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,
 ) -> Result<Box<dyn crate::agents::SessionTransport>, String> {
+    if launch.harness != "pi"
+        && let crate::agents::SessionStart::Resume(path) | crate::agents::SessionStart::Fork(path) =
+            &launch.start
+    {
+        session_storage::validate_session_locator(&launch.harness, path)?;
+    }
     if launch.harness == "codex-cli" {
         let history = launch_history(&launch, codex::load_history)?;
-        let mut command = config.clone();
-        command.program = std::env::var_os("FARCASTER_CODEX_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| "codex".into());
+        let command = launch_configuration(config, &launch.harness)?;
         let (worker, locator, metadata) = codex::spawn_main(&command, &launch)?;
         let locator_root = config
             .session_locator_root
@@ -227,8 +251,7 @@ pub(crate) fn spawn_session(
         if matches!(&launch.start, crate::agents::SessionStart::Fork(_)) {
             return Err("Cursor ACP does not expose session fork".into());
         }
-        let mut command = config.clone();
-        command.program = cursor::PROFILE.program();
+        let command = launch_configuration(config, &launch.harness)?;
         let (worker, locator, metadata, history) = cursor::spawn_main(&command, &launch)?;
         let locator_root = config
             .session_locator_root
@@ -246,10 +269,7 @@ pub(crate) fn spawn_session(
     }
     if launch.harness == "opencode2" {
         let history = launch_history(&launch, opencode::load_history)?;
-        let mut command = config.clone();
-        command.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| "opencode2".into());
+        let command = launch_configuration(config, &launch.harness)?;
         let (worker, locator, metadata) = opencode::spawn_main(&command, &launch)?;
         let locator_root = config
             .session_locator_root
@@ -303,6 +323,11 @@ pub(crate) fn rename_session(
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
+    session_storage::validate_session_target(&crate::sessions::SessionTarget {
+        harness: harness.into(),
+        id: session_id.into(),
+        path: session.into(),
+    })?;
     match harness {
         "pi" => pi::PiRpcProcess::rename_session(config, project, session, name),
         "codex-cli" => codex::rename_session(session_id, name),
@@ -322,10 +347,7 @@ pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(&'sta
     main_session::external_session_locator("opencode2", path).map(|locator| ("opencode2", locator))
 }
 
-pub(crate) fn is_external_session(path: &std::path::Path) -> bool {
-    external_session_identity(path).is_some()
-}
-
+#[cfg(test)]
 pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
     external_session_identity(path).map(|(harness, locator)| match harness {
         "codex-cli" => codex::delete_session(&locator),
@@ -391,13 +413,13 @@ pub(crate) fn discover_external_sessions_for(
     }
 }
 
-/// Apply backend-specific presentation facts before history reaches the UI.
 pub(crate) fn annotate_history_message(harness: &str, message: &mut serde_json::Value) {
     if harness == "pi" {
         pi::annotate_history_message(message);
     }
 }
 
+#[cfg(test)]
 pub(crate) fn load_external_history(
     path: &std::path::Path,
 ) -> Option<Result<crate::agents::DiscoveredHistory, String>> {
