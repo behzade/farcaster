@@ -1097,6 +1097,9 @@ impl CodexWorkerSession {
             self.reasoning_started = false;
             self.turn_error = None;
             if !self.manual_compaction {
+                // The initial thinking block reserves slot 0 even if Codex sends
+                // answer text before any reasoning notification.
+                self.reasoning_started = true;
                 self.events
                     .push_back(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
                         content_index: 0,
@@ -1555,6 +1558,92 @@ fn approval_prompt(method: &str, params: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_before_reasoning_uses_a_separate_content_slot() {
+        use crate::modules::agents::core::{CallerProfile, CallerRegistry};
+
+        let registry = CallerRegistry::default();
+        let caller_identity = registry.issue(
+            std::path::Path::new("/project"),
+            CallerProfile {
+                backend: "codex-cli".into(),
+                provider: None,
+                model: None,
+                effort: None,
+            },
+            None,
+        );
+        let (_sender, incoming) = mpsc::channel();
+        let mut session = CodexWorkerSession {
+            caller_identity,
+            child: std::process::Command::new("true")
+                .spawn()
+                .expect("test child"),
+            writer: None,
+            incoming,
+            thread_id: "thread-1".into(),
+            model: None,
+            effort: None,
+            collaboration_mode: None,
+            collaboration_modes: HashMap::new(),
+            native_queue: false,
+            next_id: 0,
+            current_turn: None,
+            output: String::new(),
+            reasoning_started: false,
+            compacting: false,
+            manual_compaction: false,
+            pending: HashMap::new(),
+            pending_inputs: HashMap::new(),
+            queued_inbound: VecDeque::new(),
+            peer_messages: VecDeque::new(),
+            events: VecDeque::new(),
+            turn_error: None,
+        };
+
+        for turn_id in ["turn-1", "turn-2"] {
+            assert!(session.begin_turn(turn_id));
+            assert!(!session.begin_turn(turn_id));
+            assert!(matches!(
+                session.poll(),
+                Some(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
+                    content_index: 0
+                }))
+            ));
+            for (method, delta, index) in [
+                ("item/agentMessage/delta", "The answer", 1),
+                ("item/reasoning/summaryTextDelta", "A thought", 0),
+                ("item/agentMessage/delta", " continues", 1),
+            ] {
+                session
+                    .queued_inbound
+                    .push_back(Ok(CodexInbound::Notification {
+                        method: method.into(),
+                        params: json!({"threadId": "thread-1", "turnId": turn_id, "delta": delta}),
+                    }));
+                match session.poll().expect("stream event") {
+                    WorkerEvent::Activity(WorkerActivity::TextDelta {
+                        content_index,
+                        delta: text,
+                    }) => {
+                        assert_eq!(index, 1);
+                        assert_eq!(content_index, index);
+                        assert_eq!(text, delta);
+                    }
+                    WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+                        content_index,
+                        delta: text,
+                    }) => {
+                        assert_eq!(index, 0);
+                        assert_eq!(content_index, index);
+                        assert_eq!(text, delta);
+                    }
+                    event => panic!("unexpected event: {event:?}"),
+                }
+            }
+        }
+    }
 
     #[test]
     fn maps_codex_telemetry() {
