@@ -255,6 +255,7 @@ pub(crate) struct FarcasterApp {
     pending_archive: Option<session::archive::PendingArchive>,
     pending_delete: Option<session::deletion::PendingDelete>,
     session_import: Option<session::import::SessionImportDialog>,
+    session_import_generation: u64,
     archived_sessions_expanded: bool,
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,

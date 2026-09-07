@@ -174,8 +174,9 @@ impl FarcasterApp {
     }
 
     fn preview_session_import(&mut self, cx: &mut Context<Self>) {
+        self.session_import_generation = self.session_import_generation.saturating_add(1);
         let Some((harness, generation)) = self.session_import.as_mut().map(|dialog| {
-            dialog.preview_generation = dialog.preview_generation.saturating_add(1);
+            dialog.preview_generation = self.session_import_generation;
             dialog.loading = true;
             dialog.error = None;
             dialog.candidates.clear();

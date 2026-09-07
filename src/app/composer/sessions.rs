@@ -1,10 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     ops::Range,
     path::Path,
     sync::mpsc::{self, RecvTimeoutError, Sender},
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::app::infrastructure::persistence::{ComposerRecord, StateStore};
@@ -366,6 +366,16 @@ enum PersistenceCommand {
     Shutdown,
 }
 
+impl PersistenceCommand {
+    fn target(&self) -> Option<&str> {
+        match self {
+            Self::Save(record) => Some(&record.target),
+            Self::Delete(target) => Some(target),
+            Self::Shutdown => None,
+        }
+    }
+}
+
 struct ComposerPersistence {
     sender: Sender<PersistenceCommand>,
     worker: Option<JoinHandle<()>>,
@@ -377,31 +387,42 @@ impl ComposerPersistence {
         let worker = std::thread::Builder::new()
             .name("farcaster-composer-state".into())
             .spawn(move || {
-                let Ok(store) = StateStore::open() else {
-                    while !matches!(receiver.recv(), Ok(PersistenceCommand::Shutdown) | Err(_)) {}
-                    return;
+                let store = match StateStore::open() {
+                    Ok(store) => store,
+                    Err(error) => {
+                        zlog::error!("Open composer state: {error}");
+                        return;
+                    }
                 };
-                let mut pending = HashMap::new();
-                let mut deleted = HashSet::new();
+                let mut pending: Vec<PersistenceCommand> = Vec::new();
+                let mut deadline: Option<Instant> = None;
                 loop {
-                    match receiver.recv_timeout(WRITE_DELAY) {
-                        Ok(PersistenceCommand::Save(record)) => {
-                            deleted.remove(&record.target);
-                            pending.insert(record.target.clone(), record);
+                    let received = match deadline {
+                        Some(due) => {
+                            receiver.recv_timeout(due.saturating_duration_since(Instant::now()))
                         }
-                        Ok(PersistenceCommand::Delete(target)) => {
-                            pending.remove(&target);
-                            deleted.insert(target);
-                        }
+                        None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    };
+                    match received {
                         Ok(PersistenceCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
-                            flush(&store, &mut pending, &mut deleted);
+                            flush(&store, &mut pending);
                             break;
                         }
-                        Err(RecvTimeoutError::Timeout) => {
-                            flush(&store, &mut pending, &mut deleted);
+                        Ok(command) => {
+                            pending.retain(|previous| previous.target() != command.target());
+                            pending.push(command);
+                            deadline.get_or_insert_with(|| Instant::now() + WRITE_DELAY);
                         }
+                        Err(RecvTimeoutError::Timeout) => {}
+                    }
+                    if deadline.is_some_and(|due| Instant::now() >= due) {
+                        flush(&store, &mut pending);
+                        deadline = (!pending.is_empty()).then(|| Instant::now() + WRITE_DELAY);
                     }
                 }
+            })
+            .inspect_err(|error| {
+                zlog::error!("Start composer persistence: {error}");
             })
             .ok();
         Self { sender, worker }
@@ -435,15 +456,59 @@ impl Drop for ComposerPersistence {
     }
 }
 
-fn flush(
-    store: &StateStore,
-    pending: &mut HashMap<String, ComposerRecord>,
-    deleted: &mut HashSet<String>,
-) {
-    for target in deleted.drain() {
-        let _ = store.delete_composer_session(&target);
+fn flush(store: &StateStore, pending: &mut Vec<PersistenceCommand>) {
+    // Different target strings may now refer to the same session row.
+    // Apply the last change for each target in send order, including deletions.
+    let mut completed = 0;
+    for command in pending.iter() {
+        let result = match command {
+            PersistenceCommand::Save(record) => store.save_composer_session(record),
+            PersistenceCommand::Delete(target) => store.delete_composer_session(target),
+            PersistenceCommand::Shutdown => unreachable!("shutdown is not queued"),
+        };
+        if let Err(error) = result {
+            zlog::error!("Save composer state: {error}");
+            break;
+        }
+        completed += 1;
     }
-    for (_, record) in pending.drain() {
-        let _ = store.save_composer_session(&record);
+    pending.drain(..completed);
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    #[test]
+    fn bound_draft_aliases_preserve_write_and_delete_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+        let mut draft =
+            crate::projects::DraftSession::new("draft".into(), 0, temp.path().to_path_buf(), 1);
+        draft.session_path = Some(temp.path().join("session.jsonl"));
+        store.allocate_app_session_id(&draft)?;
+        let bound = session_target(draft.session_path.as_ref().unwrap());
+        let save = |target: String, text: &str| {
+            PersistenceCommand::Save(ComposerRecord {
+                target,
+                text: text.into(),
+                ..ComposerRecord::default()
+            })
+        };
+        let mut pending = vec![
+            save("draft:draft".into(), "older"),
+            save(bound.clone(), "newer"),
+        ];
+        flush(&store, &mut pending);
+        assert!(pending.is_empty());
+        assert_eq!(store.load_composer_sessions()?[0].text, "newer");
+        pending.extend([
+            save(bound, "obsolete"),
+            PersistenceCommand::Delete("draft:draft".into()),
+        ]);
+        flush(&store, &mut pending);
+        assert!(store.load_composer_sessions()?.is_empty());
+        Ok(())
     }
 }

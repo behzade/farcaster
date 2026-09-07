@@ -30,19 +30,33 @@ impl StateStore {
         invocation: Option<&str>,
         images: &[PromptImage],
     ) -> Result<i64, String> {
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+                .map_err(|error| format!("start prompt enqueue: {error}"))?;
+        let session_id = match self.session_id_for_target(target, session, Some(harness))? {
+            Some(id) => id,
+            None => super::identity::create_target_session(
+                &transaction,
+                target,
+                harness,
+                project,
+                session,
+            )?,
+        };
         let images_json = serde_json::to_string(images)
             .map_err(|error| format!("encode prompt images: {error}"))?;
-        self.connection
+        let inserted = self
+            .connection
             .execute(
                 "INSERT INTO outbox(
-                   target, harness, project, session_path, mode, message, display_message,
-                   invocation, images_json, created_ms
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                   session_id, mode, message, display_message, invocation, images_json,
+                   provider, model, effort, service_tier, created_ms
+                 ) SELECT s.id, ?2, ?3, ?4, ?5, ?6,
+                          m.provider, m.model, m.effort, m.service_tier, ?7
+                     FROM sessions s LEFT JOIN session_models m ON m.session_id=s.id
+                    WHERE s.id=?1",
                 params![
-                    target,
-                    harness,
-                    project.to_string_lossy(),
-                    session.map(|path| path.to_string_lossy()),
+                    session_id,
                     prompt_mode(mode),
                     message,
                     display_message,
@@ -52,16 +66,28 @@ impl StateStore {
                 ],
             )
             .map_err(|error| format!("queue prompt: {error}"))?;
-        Ok(self.connection.last_insert_rowid())
+        if inserted != 1 {
+            return Err(format!(
+                "session disappeared before queuing prompt for {target}"
+            ));
+        }
+        let id = transaction.last_insert_rowid();
+        transaction
+            .commit()
+            .map_err(|error| format!("commit prompt enqueue: {error}"))?;
+        Ok(id)
     }
 
     pub(crate) fn queued_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, target, harness, project, session_path, mode, message,
-                        display_message, invocation, images_json
-                   FROM outbox WHERE state='queued' ORDER BY id",
+                "SELECT o.id, s.client_key, s.locator, s.harness, p.path, o.mode, o.message,
+                        o.display_message, o.invocation, o.images_json
+                   FROM outbox o
+                   JOIN sessions s ON s.id = o.session_id
+                   JOIN projects p ON p.id = s.project_id
+                  WHERE o.state='queued' ORDER BY o.id",
             )
             .map_err(|error| format!("prepare prompt queue: {error}"))?;
         statement
@@ -75,12 +101,15 @@ impl StateStore {
                         Box::new(error),
                     )
                 })?;
+                let client_key = row.get::<_, Option<String>>(1)?;
+                let locator = row.get::<_, Option<String>>(2)?;
+                let target = target_for_session(client_key.as_deref(), locator.as_deref())?;
                 Ok(QueuedPrompt {
                     id: row.get(0)?,
-                    target: row.get(1)?,
-                    harness: row.get(2)?,
-                    project: PathBuf::from(row.get::<_, String>(3)?),
-                    session: row.get::<_, Option<String>>(4)?.map(PathBuf::from),
+                    target,
+                    harness: row.get(3)?,
+                    project: PathBuf::from(row.get::<_, String>(4)?),
+                    session: locator.map(PathBuf::from),
                     mode: parse_prompt_mode(&mode),
                     message: row.get(6)?,
                     display_message: row.get(7)?,
@@ -97,21 +126,42 @@ impl StateStore {
         &self,
         session: &Path,
     ) -> Result<Vec<PromptPresentation>, String> {
+        let locator = crate::sessions::normalize_session_path(session);
         let mut statement = self
             .connection
             .prepare(
-                "SELECT resolved_message, display_message, invocation
-                   FROM prompt_presentations
-                  WHERE session_path=?1
-                  ORDER BY created_ms, id",
+                "SELECT e.body FROM session_events e
+                   JOIN sessions s ON s.id = e.session_id
+                  WHERE s.locator=?1 AND json_extract(e.body, '$.type')='prompt_presentation'
+                  ORDER BY e.seq",
             )
             .map_err(|error| format!("prepare prompt presentations: {error}"))?;
         statement
-            .query_map([session.to_string_lossy()], |row| {
+            .query_map([locator.to_string_lossy()], |row| {
+                let body = row.get::<_, String>(0)?;
+                let value: serde_json::Value = serde_json::from_str(&body).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
                 Ok(PromptPresentation {
-                    resolved_message: row.get(0)?,
-                    display_message: row.get(1)?,
-                    invocation: row.get(2)?,
+                    resolved_message: value
+                        .get("resolved")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    display_message: value
+                        .get("display")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    invocation: value
+                        .get("invocation")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
                 })
             })
             .map_err(|error| format!("query prompt presentations: {error}"))?
@@ -122,53 +172,45 @@ impl StateStore {
     pub(crate) fn complete_prompt(
         &mut self,
         id: i64,
-        target: &str,
+        _target: &str,
         session: Option<&Path>,
     ) -> Result<(), String> {
         let transaction = self
             .connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start queued prompt completion {id}: {error}"))?;
-        if let Some(draft_id) = target.strip_prefix("draft:").filter(|id| !id.is_empty())
+        let draft_id = transaction.query_row(
+            "SELECT s.client_key FROM outbox o JOIN sessions s ON s.id=o.session_id WHERE o.id=?1",
+            [id], |row| row.get::<_, Option<String>>(0),
+        ).optional().map_err(|error| format!("identify queued prompt {id}: {error}"))?;
+        let Some(draft_id) = draft_id else {
+            return transaction
+                .commit()
+                .map_err(|error| format!("finish duplicate prompt acknowledgement: {error}"));
+        };
+        if let Some(draft_id) = draft_id
             && let Some(session) = session
         {
             let session = crate::sessions::normalize_session_path(session);
-            let app_session_id = transaction
-                .query_row(
-                    "SELECT app_session_id FROM drafts WHERE id=?1",
-                    [draft_id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()
-                .map_err(|error| format!("identify queued prompt {id} draft: {error}"))?;
-            if let Some(app_session_id) = app_session_id {
-                associate_app_session(&transaction, app_session_id, draft_id, &session).map_err(
-                    |error| format!("associate queued prompt {id} application session: {error}"),
-                )?;
-            }
-            transaction
-                .execute(
-                    "UPDATE drafts SET submitted=1, session_path=?2 WHERE id=?1",
-                    params![draft_id, session.to_string_lossy()],
-                )
-                .map_err(|error| {
-                    format!("associate queued prompt {id} with its session: {error}")
-                })?;
+            bind_locator(&transaction, &draft_id, &session).map_err(|error| {
+                format!("associate queued prompt {id} with its session: {error}")
+            })?;
         }
-        if let Some(session) = session {
-            let session = crate::sessions::normalize_session_path(session);
-            transaction
-                .execute(
-                    "INSERT INTO prompt_presentations(
-                       session_path, resolved_message, display_message, invocation, created_ms
-                     )
-                     SELECT ?2, message, display_message, invocation, created_ms
-                       FROM outbox
-                      WHERE id=?1 AND display_message IS NOT NULL AND invocation IS NOT NULL",
-                    params![id, session.to_string_lossy()],
-                )
-                .map_err(|error| format!("save prompt presentation {id}: {error}"))?;
-        }
+        transaction.execute(
+            "UPDATE sessions SET submitted=1 WHERE id=(SELECT session_id FROM outbox WHERE id=?1)",
+            [id],
+        ).map_err(|error| format!("record prompt acceptance: {error}"))?;
+        transaction.execute(
+            "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+             SELECT o.session_id,
+                    (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                    o.created_ms, 1,
+                    json_object('type','prompt_presentation','resolved',o.message,
+                                'display',o.display_message,'invocation',o.invocation)
+               FROM outbox o
+              WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
+            [id],
+        ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
         transaction
             .execute("DELETE FROM outbox WHERE id=?1", [id])
             .map_err(|error| format!("complete queued prompt {id}: {error}"))?;
@@ -176,7 +218,8 @@ impl StateStore {
             .commit()
             .map_err(|error| format!("commit queued prompt completion {id}: {error}"))
     }
-
+}
+impl StateStore {
     pub(crate) fn begin_prompt(&self, id: i64) -> Result<(), String> {
         let changed = self
             .connection

@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Instant, SystemTime},
 };
 
@@ -12,34 +12,6 @@ pub(crate) struct ExternalActivityTracker {
 }
 
 impl ExternalActivityTracker {
-    pub(crate) fn observe_files(
-        &mut self,
-        owned: &HashSet<PathBuf>,
-        paths: &[PathBuf],
-        now: Instant,
-        normalize: impl Fn(&Path) -> PathBuf,
-    ) -> bool {
-        let mut refresh = false;
-        for candidate in paths {
-            if owned.contains(candidate) {
-                continue;
-            }
-            let path = if self.deadlines.contains_key(candidate) {
-                candidate.clone()
-            } else {
-                normalize(candidate)
-            };
-            if owned.contains(&path) {
-                continue;
-            }
-            self.deadlines.insert(path, now + RUNNING_ACTIVITY_TIMEOUT);
-            // Reload external state on every write, even while its activity
-            // deadline is already armed.
-            refresh = true;
-        }
-        refresh
-    }
-
     pub(crate) fn remove_owned(&mut self, owned: &HashSet<PathBuf>) {
         self.deadlines.retain(|path, _| !owned.contains(path));
     }

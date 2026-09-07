@@ -97,8 +97,8 @@ impl crate::sessions::SessionStore for StateStore {
 }
 
 impl crate::projects::ProjectStore for StateStore {
-    fn allocate_session_id(&mut self, draft_id: &str, created_ms: u64) -> Result<i64, String> {
-        self.allocate_app_session_id(draft_id, created_ms)
+    fn allocate_session_id(&mut self, draft: &DraftSession) -> Result<i64, String> {
+        self.allocate_app_session_id(draft)
     }
 
     fn load_registry(&self) -> Result<Registry, String> {

@@ -1,17 +1,16 @@
-use super::super::contract::Registry;
+use super::super::contract::{DraftSession, Registry};
 
 pub(crate) trait ProjectStore {
-    fn allocate_session_id(&mut self, draft_id: &str, created_ms: u64) -> Result<i64, String>;
+    fn allocate_session_id(&mut self, draft: &DraftSession) -> Result<i64, String>;
     fn load_registry(&self) -> Result<Registry, String>;
     fn save_registry(&mut self, registry: &Registry) -> Result<(), String>;
 }
 
 pub(crate) fn allocate_session_id(
     store: &mut impl ProjectStore,
-    draft_id: &str,
-    created_ms: u64,
+    draft: &DraftSession,
 ) -> Result<i64, String> {
-    store.allocate_session_id(draft_id, created_ms)
+    store.allocate_session_id(draft)
 }
 
 pub(crate) fn load_registry(store: &impl ProjectStore) -> Result<Registry, String> {

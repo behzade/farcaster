@@ -7,35 +7,27 @@ impl StateStore {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, path, project, title, first_user_message, timestamp,
-                        parent_session, modified_ms, message_count, input_tokens,
-                        output_tokens, cache_read_tokens, cache_write_tokens,
-                        total_tokens, cost_micros, search_text, settled_ms IS NOT NULL,
-                        is_running, app_session_id, harness
-                   FROM sessions
-                  ORDER BY modified_ms DESC, timestamp DESC",
+                "SELECT s.id, s.locator, p.path, s.title, s.first_user_message, s.timestamp,
+                        COALESCE(parent.backend_id, parent.locator, s.parent_backend_id),
+                        s.modified_ms, s.message_count, s.input_tokens,
+                        s.output_tokens, s.cache_read_tokens, s.cache_write_tokens,
+                        s.total_tokens, s.cost_micros, s.search_text,
+                        s.archived_at IS NOT NULL, s.harness,
+                        m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator)
+                   FROM sessions s
+                   JOIN projects p ON p.id = s.project_id
+                   LEFT JOIN sessions parent ON parent.id = s.parent_id
+                   LEFT JOIN session_models m ON m.session_id = s.id
+                  WHERE s.locator IS NOT NULL
+                  ORDER BY s.modified_ms DESC, s.timestamp DESC",
             )
             .map_err(|error| format!("prepare cached sessions: {error}"))?;
         let rows = statement
             .query_map([], row_to_session)
             .map_err(|error| format!("query cached sessions: {error}"))?;
-        let mut sessions = rows
+        let sessions = rows
             .map(|row| row.map_err(|error| format!("decode cached session: {error}")))
             .collect::<Result<Vec<_>, _>>()?;
-        for link in self.load_worker_families()? {
-            let Some(execution) = link.execution else {
-                continue;
-            };
-            if let Some(session) = sessions.iter_mut().find(|session| {
-                session.project == link.project
-                    && session.harness == link.child_backend
-                    && (session.id == link.child_session
-                        || session.path == std::path::Path::new(&link.child_session))
-            }) {
-                session.model = Some((execution.provider, execution.model));
-                session.thinking_level = execution.effort;
-            }
-        }
         Ok(crate::sessions::filter_session_tree(sessions, query))
     }
 
@@ -51,103 +43,63 @@ impl StateStore {
     ) -> Result<(), String> {
         let transaction = self
             .connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session index update: {error}"))?;
         let known = sessions
             .iter()
-            .map(|session| session.path.to_string_lossy().into_owned())
-            .collect::<HashSet<_>>();
-        {
-            let mut statement = transaction
-                .prepare(
-                    "INSERT INTO sessions(
-                       path, id, project, title, first_user_message, timestamp,
-                       parent_session, modified_ms, file_size, message_count,
-                       input_tokens, output_tokens, cache_read_tokens,
-                       cache_write_tokens, total_tokens, cost_micros, search_text,
-                       is_running, app_session_id, harness, settled_ms
-                     ) VALUES(
-                       ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                       ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
-                     ) ON CONFLICT(path) DO UPDATE SET
-                       id=excluded.id, project=excluded.project, title=excluded.title,
-                       first_user_message=excluded.first_user_message,
-                       timestamp=excluded.timestamp, parent_session=excluded.parent_session,
-                       modified_ms=excluded.modified_ms, file_size=excluded.file_size,
-                       message_count=excluded.message_count, input_tokens=excluded.input_tokens,
-                       output_tokens=excluded.output_tokens,
-                       cache_read_tokens=excluded.cache_read_tokens,
-                       cache_write_tokens=excluded.cache_write_tokens,
-                       total_tokens=excluded.total_tokens, cost_micros=excluded.cost_micros,
-                       search_text=excluded.search_text, is_running=excluded.is_running,
-                       app_session_id=excluded.app_session_id, harness=excluded.harness",
+            .map(|session| {
+                (
+                    session.harness.clone(),
+                    crate::sessions::normalize_session_path(&session.path)
+                        .to_string_lossy()
+                        .into_owned(),
                 )
-                .map_err(|error| format!("prepare session index update: {error}"))?;
-            for session in sessions {
-                let (app_session_id, classify_import) =
-                    ensure_session_app_session(&transaction, session).map_err(|error| {
-                        format!("identify session {}: {error}", session.path.display())
-                    })?;
-                let settled_ms = (session.archived
-                    || classify_import && imported_session_is_archived(session, SystemTime::now()))
-                .then(now_ms);
-                let size = std::fs::metadata(&session.path)
-                    .map(|metadata| metadata.len())
-                    .unwrap_or(0);
-                statement
-                    .execute(params![
-                        session.path.to_string_lossy(),
-                        session.id,
-                        session.project.to_string_lossy(),
-                        session.title,
-                        session.first_user_message,
-                        session.timestamp,
-                        session.parent_session,
-                        system_time_ms(session.modified),
-                        size,
-                        usize_to_u64(session.message_count),
-                        session.usage.input,
-                        session.usage.output,
-                        session.usage.cache_read,
-                        session.usage.cache_write,
-                        session.usage.total,
-                        session.usage.cost_micros,
-                        session.search_text(),
-                        session.is_running,
-                        app_session_id,
-                        session.harness,
-                        settled_ms,
-                    ])
-                    .map_err(|error| {
-                        format!("index session {}: {error}", session.path.display())
-                    })?;
-                if classify_import {
-                    transaction
-                        .execute(
-                            "UPDATE app_sessions SET import_classified=1 WHERE id=?1",
-                            [app_session_id],
-                        )
-                        .map_err(|error| {
-                            format!(
-                                "classify imported session {}: {error}",
-                                session.path.display()
-                            )
-                        })?;
-                }
-            }
+            })
+            .collect::<HashSet<_>>();
+        for session in sessions {
+            upsert_bound_session(&transaction, session)?;
         }
+        // Resolve after all rows exist, including parents discovered after their children.
+        transaction
+            .execute_batch(
+                "UPDATE sessions AS child SET parent_id=COALESCE(
+               (SELECT parent.id FROM sessions parent
+                 WHERE parent.harness=child.harness
+                   AND (parent.backend_id=child.parent_backend_id
+                        OR parent.locator=child.parent_backend_id)
+                   AND parent.id != child.id LIMIT 1), child.parent_id)
+             WHERE child.parent_backend_id IS NOT NULL;",
+            )
+            .map_err(|error| format!("resolve session parents: {error}"))?;
         if prune_missing {
-            let mut paths = transaction
-                .prepare("SELECT path FROM sessions")
-                .map_err(|error| format!("read indexed paths: {error}"))?
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(|error| format!("query indexed paths: {error}"))?
+            let candidates = transaction
+                .prepare(
+                    "SELECT id, harness, locator FROM sessions s
+                      WHERE locator IS NOT NULL AND client_key IS NULL AND archived_at IS NULL
+                        AND NOT EXISTS(SELECT 1 FROM composer_sessions WHERE session_id=s.id)
+                        AND NOT EXISTS(SELECT 1 FROM outbox WHERE session_id=s.id)
+                        AND NOT EXISTS(SELECT 1 FROM session_events WHERE session_id=s.id)
+                        AND NOT EXISTS(SELECT 1 FROM session_ops WHERE session_id=s.id)
+                        AND NOT EXISTS(SELECT 1 FROM sessions child WHERE child.parent_id=s.id)
+                        AND NOT EXISTS(SELECT 1 FROM worker_families WHERE child_id=s.id)",
+                )
+                .map_err(|error| format!("read indexed locators: {error}"))?
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|error| format!("query indexed locators: {error}"))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| format!("decode indexed paths: {error}"))?;
-            paths.retain(|path| !known.contains(path));
-            for path in paths {
+                .map_err(|error| format!("decode indexed locators: {error}"))?;
+            for (id, harness, locator) in candidates {
+                if known.contains(&(harness, locator)) {
+                    continue;
+                }
                 transaction
-                    .execute("DELETE FROM sessions WHERE path=?1", [path])
+                    .execute("DELETE FROM sessions WHERE id=?1", [id])
                     .map_err(|error| format!("remove stale session: {error}"))?;
             }
         }
@@ -158,11 +110,16 @@ impl StateStore {
 
     pub(crate) fn has_queued_prompts_for(&self, paths: &[PathBuf]) -> Result<bool, String> {
         for path in paths {
+            let locator = crate::sessions::normalize_session_path(path);
             let queued = self
                 .connection
                 .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM outbox WHERE session_path=?1 AND state='queued')",
-                    [path.to_string_lossy()],
+                    "SELECT EXISTS(
+                       SELECT 1 FROM outbox o
+                       JOIN sessions s ON s.id = o.session_id
+                      WHERE s.locator=?1 AND o.state='queued'
+                     )",
+                    [locator.to_string_lossy()],
                     |row| row.get::<_, bool>(0),
                 )
                 .map_err(|error| format!("check queued prompts for {}: {error}", path.display()))?;
@@ -182,51 +139,19 @@ impl StateStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session path relocation: {error}"))?;
+        let project_id = ensure_project(&transaction, target_project, u64_to_i64(now_ms()))?;
         for (source, target) in paths {
-            let source_text = source.to_string_lossy();
-            let target_text = target.to_string_lossy();
-            let source_target = format!("session:{source_text}");
-            let target_target = format!("session:{target_text}");
+            let source_text = crate::sessions::normalize_session_path(source);
+            let target_text = crate::sessions::normalize_session_path(target);
             transaction
                 .execute(
-                    "UPDATE app_sessions SET session_path=?2 WHERE session_path=?1",
-                    params![source_text, target_text],
+                    "UPDATE sessions SET locator=?2, project_id=?3 WHERE locator=?1",
+                    params![
+                        source_text.to_string_lossy(),
+                        target_text.to_string_lossy(),
+                        project_id
+                    ],
                 )
-                .and_then(|_| {
-                    transaction.execute(
-                        "UPDATE sessions SET path=?2, project=?3 WHERE path=?1",
-                        params![source_text, target_text, target_project.to_string_lossy()],
-                    )
-                })
-                .and_then(|_| {
-                    transaction.execute(
-                        "UPDATE drafts SET session_path=?2, project=?3 WHERE session_path=?1",
-                        params![source_text, target_text, target_project.to_string_lossy()],
-                    )
-                })
-                .and_then(|_| {
-                    transaction.execute(
-                        "UPDATE outbox SET target=?2, project=?3, session_path=?4 WHERE target=?1",
-                        params![
-                            source_target,
-                            target_target,
-                            target_project.to_string_lossy(),
-                            target_text
-                        ],
-                    )
-                })
-                .and_then(|_| {
-                    transaction.execute(
-                        "UPDATE prompt_presentations SET session_path=?2 WHERE session_path=?1",
-                        params![source_text, target_text],
-                    )
-                })
-                .and_then(|_| {
-                    transaction.execute(
-                        "UPDATE composer_sessions SET target=?2 WHERE target=?1",
-                        params![source_target, target_target],
-                    )
-                })
                 .map_err(|error| {
                     format!(
                         "relocate session state {} to {}: {error}",
@@ -246,31 +171,12 @@ impl StateStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session state deletion: {error}"))?;
         for path in paths {
-            let path_text = path.to_string_lossy();
-            let target = format!("session:{path_text}");
+            let locator = crate::sessions::normalize_session_path(path);
             transaction
-                .execute("DELETE FROM outbox WHERE session_path=?1", [&path_text])
-                .and_then(|_| {
-                    transaction.execute(
-                        "DELETE FROM prompt_presentations WHERE session_path=?1",
-                        [&path_text],
-                    )
-                })
-                .and_then(|_| {
-                    transaction.execute("DELETE FROM composer_sessions WHERE target=?1", [&target])
-                })
-                .and_then(|_| {
-                    transaction.execute("DELETE FROM drafts WHERE session_path=?1", [&path_text])
-                })
-                .and_then(|_| {
-                    transaction.execute("DELETE FROM sessions WHERE path=?1", [&path_text])
-                })
-                .and_then(|_| {
-                    transaction.execute(
-                        "DELETE FROM app_sessions WHERE session_path=?1",
-                        [&path_text],
-                    )
-                })
+                .execute(
+                    "DELETE FROM sessions WHERE locator=?1",
+                    [locator.to_string_lossy()],
+                )
                 .map_err(|error| format!("delete saved state for {}: {error}", path.display()))?;
         }
         transaction
@@ -279,11 +185,12 @@ impl StateStore {
     }
 
     pub(crate) fn set_session_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
+        let locator = crate::sessions::normalize_session_path(path);
         self.connection
             .execute(
-                "UPDATE sessions SET settled_ms=?2 WHERE path=?1",
+                "UPDATE sessions SET archived_at=?2 WHERE locator=?1",
                 params![
-                    path.to_string_lossy(),
+                    locator.to_string_lossy(),
                     archived.then_some(now_ms()).map(u64_to_i64)
                 ],
             )
@@ -292,69 +199,149 @@ impl StateStore {
     }
 }
 
-fn ensure_session_app_session(
+fn upsert_bound_session(
     transaction: &Transaction<'_>,
     session: &SessionSummary,
-) -> rusqlite::Result<(i64, bool)> {
-    let path = crate::sessions::normalize_session_path(&session.path);
-    if let Some((id, classified)) = transaction
+) -> Result<(), String> {
+    let locator = crate::sessions::normalize_session_path(&session.path);
+    let locator_text = locator.to_string_lossy();
+    let project_id = ensure_project(
+        transaction,
+        &session.project,
+        u64_to_i64(system_time_ms(session.modified)),
+    )?;
+    let archived = session
+        .archived
+        .then_some(system_time_ms(session.modified))
+        .map(u64_to_i64);
+    let existing = transaction
         .query_row(
-            "SELECT id, import_classified FROM app_sessions WHERE session_path=?1",
-            [path.to_string_lossy()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
-        )
-        .optional()?
-    {
-        return Ok((id, !classified));
-    }
-    if session.app_session_id > 0 {
-        transaction.execute(
-            "INSERT OR IGNORE INTO app_sessions(id, session_path, created_ms, harness)
-             VALUES(?1, ?2, ?3, ?4)",
+            "SELECT id FROM sessions WHERE harness=?1 AND
+               (locator=?2 OR (backend_id=?3 AND project_id=?4))
+             ORDER BY locator=?2 DESC LIMIT 1",
             params![
-                session.app_session_id,
-                path.to_string_lossy(),
-                u64_to_i64(system_time_ms(session.modified)),
-                session.harness
+                session.harness,
+                locator_text.as_ref(),
+                session.id,
+                project_id
             ],
-        )?;
-        transaction.execute(
-            "UPDATE app_sessions SET session_path=?2 WHERE id=?1 AND session_path IS NULL",
-            params![session.app_session_id, path.to_string_lossy()],
-        )?;
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("find session {}: {error}", session.path.display()))?;
+    let existing = existing.or_else(|| {
+        (session.app_session_id > 0)
+            .then_some(session.app_session_id)
+            .and_then(|id| {
+                transaction
+                    .query_row("SELECT id FROM sessions WHERE id=?1", [id], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .optional()
+                    .ok()
+                    .flatten()
+            })
+    });
+    let id = if let Some(id) = existing {
+        transaction
+            .execute(
+                "UPDATE sessions SET
+                   project_id=?2, harness=?3, locator=?4, backend_id=?5, title=?6,
+                   first_user_message=?7, search_text=?8, timestamp=?9, modified_ms=?10,
+                   archived_at=COALESCE(archived_at, ?11), message_count=?12,
+                   input_tokens=?13, output_tokens=?14, cache_read_tokens=?15,
+                   cache_write_tokens=?16, total_tokens=?17, cost_micros=?18
+                 WHERE id=?1",
+                params![
+                    id,
+                    project_id,
+                    session.harness,
+                    locator_text.as_ref(),
+                    session.id,
+                    session.title,
+                    session.first_user_message,
+                    session.search_text(),
+                    session.timestamp,
+                    u64_to_i64(system_time_ms(session.modified)),
+                    archived,
+                    usize_to_u64(session.message_count),
+                    session.usage.input,
+                    session.usage.output,
+                    session.usage.cache_read,
+                    session.usage.cache_write,
+                    session.usage.total,
+                    session.usage.cost_micros,
+                ],
+            )
+            .map_err(|error| format!("update session {}: {error}", session.path.display()))?;
+        id
     } else {
-        transaction.execute(
-            "INSERT OR IGNORE INTO app_sessions(session_path, created_ms, harness) VALUES(?1, ?2, ?3)",
-            params![
-                path.to_string_lossy(),
-                u64_to_i64(system_time_ms(session.modified)),
-                session.harness
-            ],
-        )?;
-    }
+        transaction
+            .execute(
+                "INSERT INTO sessions(
+                   project_id, harness, locator, backend_id, title, first_user_message,
+                   search_text, timestamp, modified_ms, archived_at, record_coverage,
+                   message_count, input_tokens, output_tokens, cache_read_tokens,
+                   cache_write_tokens, total_tokens, cost_micros, created_ms
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'unloaded', ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?9)",
+                params![
+                    project_id,
+                    session.harness,
+                    locator_text.as_ref(),
+                    session.id,
+                    session.title,
+                    session.first_user_message,
+                    session.search_text(),
+                    session.timestamp,
+                    u64_to_i64(system_time_ms(session.modified)),
+                    archived,
+                    usize_to_u64(session.message_count),
+                    session.usage.input,
+                    session.usage.output,
+                    session.usage.cache_read,
+                    session.usage.cache_write,
+                    session.usage.total,
+                    session.usage.cost_micros,
+                ],
+            )
+            .map_err(|error| format!("insert session {}: {error}", session.path.display()))?;
+        transaction.last_insert_rowid()
+    };
     transaction
-        .query_row(
-            "SELECT id, import_classified FROM app_sessions WHERE session_path=?1",
-            [path.to_string_lossy()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, bool>(1)?)),
+        .execute(
+            "UPDATE sessions SET backend_id=?2, parent_backend_id=?3 WHERE id=?1",
+            params![id, session.id, session.parent_session],
         )
-        .map(|(id, classified)| (id, !classified))
-}
-
-fn imported_session_is_archived(session: &SessionSummary, now: SystemTime) -> bool {
-    now.duration_since(session.modified).unwrap_or_default() > ACTIVE_IMPORT_WINDOW
+        .map_err(|error| format!("save backend session identity: {error}"))?;
+    if let Some((provider, model)) = &session.model {
+        transaction
+            .execute(
+                "INSERT INTO session_models(session_id, provider, model, effort)
+                 VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(session_id) DO UPDATE SET
+                   provider=excluded.provider, model=excluded.model, effort=excluded.effort",
+                params![id, provider, model, session.thinking_level],
+            )
+            .map_err(|error| format!("save session model {}: {error}", session.path.display()))?;
+    }
+    Ok(())
 }
 
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
-    Ok(SessionSummary::from_cached_for_harness(
-        row.get(0)?,
-        row.get(19)?,
-        PathBuf::from(row.get::<_, String>(1)?),
+    let id = row.get::<_, i64>(0)?;
+    let locator = row.get::<_, String>(1)?;
+    let provider = row.get::<_, Option<String>>(18)?;
+    let model = row.get::<_, Option<String>>(19)?;
+    let effort = row.get::<_, Option<String>>(20)?;
+    let mut session = SessionSummary::from_cached_for_harness(
+        row.get(21)?,
+        row.get(17)?,
+        PathBuf::from(locator),
         PathBuf::from(row.get::<_, String>(2)?),
         row.get(3)?,
         row.get(4)?,
-        row.get(5)?,
-        row.get(6)?,
+        row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        None,
         UNIX_EPOCH + std::time::Duration::from_millis(row.get::<_, u64>(7)?),
         row.get::<_, u64>(8)?.try_into().unwrap_or(usize::MAX),
         UsageSummary {
@@ -366,8 +353,15 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
             cost_micros: row.get(14)?,
         },
         row.get(16)?,
-        row.get(17)?,
+        false,
         row.get(15)?,
     )
-    .with_app_session_id(row.get(18)?))
+    .with_app_session_id(id);
+    // Stored references already use the same identity as the cached parent row.
+    session.parent_session = row.get(6)?;
+    if let (Some(provider), Some(model)) = (provider, model) {
+        session.model = Some((provider, model));
+        session.thinking_level = effort;
+    }
+    Ok(session)
 }

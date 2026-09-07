@@ -1218,7 +1218,7 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
 }
 
 #[test]
-fn filesystem_refresh_commands_coalesce_into_one_delayed_scan() {
+fn refresh_commands_coalesce_into_one_delayed_scan() {
     let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
     let command = RuntimeCommand::ScheduleSessionRefresh;
     assert!(command_targets_catalog(&command));
@@ -1347,6 +1347,50 @@ fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
                 == HashSet::from(["root", "child"])
                 && all_sessions.len() == 2
     )));
+    Ok(())
+}
+
+#[test]
+fn importing_during_discovery_releases_the_stale_scan() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let (mut owner, events, _) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(StateStore::open_at(&temp.path().join("gui.sqlite3"))?);
+    owner.session_generation = 1;
+    owner.session_discovery_in_flight = true;
+    owner.session_refresh_pending = true;
+    let session = SessionSummary::from_cached(
+        "imported".into(),
+        temp.path().join("imported.jsonl"),
+        temp.path().to_path_buf(),
+        "Imported".into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        crate::sessions::UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    );
+    owner.commit_import(vec![session]);
+    events.try_iter().for_each(drop);
+    owner.apply_discovery(DiscoveryResult {
+        generation: 1,
+        result: Ok(SessionDiscovery {
+            sessions: vec![],
+            activities: HashMap::new(),
+            exhaustive: true,
+        }),
+    });
+    assert!(!owner.session_discovery_in_flight);
+    assert!(!owner.session_refresh_pending);
+    assert!(owner.session_refresh_due.is_some());
+    assert!(events.try_iter().next().is_none());
+    assert_eq!(
+        owner.state.as_ref().unwrap().cached_sessions("")?[0].id,
+        "imported"
+    );
     Ok(())
 }
 

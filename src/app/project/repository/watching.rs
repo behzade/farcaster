@@ -91,18 +91,14 @@ impl FarcasterApp {
                     RepositoryWatchEvent::Changed => (true, None),
                     RepositoryWatchEvent::Failed(error) => (false, Some(error)),
                 };
-                loop {
-                    cx.background_executor().timer(WATCH_DEBOUNCE).await;
-                    let mut received = false;
-                    while let Ok(event) = events.try_recv() {
-                        received = true;
-                        match event {
-                            RepositoryWatchEvent::Changed => changed = true,
-                            RepositoryWatchEvent::Failed(next) => error = Some(next),
-                        }
-                    }
-                    if !received {
-                        break;
+                // One fixed window coalesces a burst without waiting for writes to stop.
+                cx.background_executor().timer(WATCH_DEBOUNCE).await;
+                let queued = events.len();
+                for _ in 0..queued {
+                    match events.try_recv() {
+                        Ok(RepositoryWatchEvent::Changed) => changed = true,
+                        Ok(RepositoryWatchEvent::Failed(next)) => error = Some(next),
+                        Err(_) => break,
                     }
                 }
                 if weak

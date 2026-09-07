@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    path::PathBuf,
     sync::{Arc, Barrier},
     thread,
     time::SystemTime,
@@ -175,13 +176,23 @@ fn repository_backend_preferences_round_trip_deterministically()
         StateStore::open_at(&database)?.load_repository_backend_preferences()?,
         preferences
     );
-    let stored = Connection::open(&database)?.query_row(
-        "SELECT value FROM meta WHERE key='repository_backend_preferences'",
-        [],
-        |row| row.get::<_, String>(0),
-    )?;
-    assert_eq!(stored, serde_json::to_string(&preferences)?);
-    assert!(stored.find("alpha") < stored.find("zeta"));
+    let stored = Connection::open(&database)?
+        .prepare("SELECT path, repository_backend FROM projects WHERE repository_backend IS NOT NULL ORDER BY path")?
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        stored,
+        vec![
+            (
+                alpha.canonicalize()?.to_string_lossy().into_owned(),
+                "git".into()
+            ),
+            (
+                zeta.canonicalize()?.to_string_lossy().into_owned(),
+                "jj".into()
+            ),
+        ]
+    );
 
     fs::remove_dir_all(&alpha)?;
     StateStore::open_at(&database)?.save_repository_backend_preferences(&preferences)?;
@@ -210,14 +221,15 @@ fn repository_backend_preferences_reject_unknown_and_malformed_values()
 
     let connection = Connection::open(&database)?;
     connection.execute(
-        "INSERT INTO meta(key, value) VALUES('repository_backend_preferences', ?1)",
-        ["not json"],
+        "INSERT INTO projects(path, added_ms, repository_backend) VALUES(?1, 1, 'not-a-backend')
+         ON CONFLICT(path) DO UPDATE SET repository_backend='not-a-backend'",
+        [project.to_string_lossy()],
     )?;
     drop(connection);
     let Err(error) = StateStore::open_at(&database)?.load_repository_backend_preferences() else {
         return Err("malformed repository backend preferences were accepted".into());
     };
-    assert!(error.contains("decode repository backend preferences"));
+    assert!(error.contains("unknown repository backend preference"));
     Ok(())
 }
 
@@ -248,20 +260,31 @@ fn legacy_pi_gpui_v7_state_import_restores_archives_once() -> Result<(), Box<dyn
     );
     let legacy_path = temp.path().join("gui-state.sqlite3");
     let destination_path = temp.path().join("state.sqlite3");
-    {
-        let mut legacy = StateStore::open_at(&legacy_path)?;
-        legacy.replace_sessions(std::slice::from_ref(&session))?;
-        legacy.set_session_archived(&session_path, true)?;
-        legacy.save_composer_session(&ComposerRecord {
-            target: format!("session:{}", session_path.display()),
-            text: "legacy draft".into(),
-            ..ComposerRecord::default()
-        })?;
-    }
-    Connection::open(&legacy_path)?.execute_batch(
-        "ALTER TABLE sessions DROP COLUMN harness;
-         UPDATE meta SET value='7' WHERE key='schema_version';",
+    seed_legacy_database(&legacy_path, 7, &session.project)?;
+    let legacy = Connection::open(&legacy_path)?;
+    legacy.execute_batch(
+        "CREATE TABLE projects(path TEXT PRIMARY KEY, added_ms INTEGER NOT NULL);
+         CREATE TABLE composer_sessions(target TEXT PRIMARY KEY, text TEXT NOT NULL,
+           cursor INTEGER NOT NULL, selection_start INTEGER NOT NULL, selection_end INTEGER NOT NULL,
+           history_json TEXT NOT NULL, updated_ms INTEGER NOT NULL);"
     )?;
+    legacy.execute(
+        "INSERT INTO projects VALUES(?1, 1)",
+        [session.project.to_string_lossy()],
+    )?;
+    legacy.execute(
+        "INSERT INTO sessions VALUES(?1, 'session-one', ?2, 'title', 'hello', '', NULL,
+          1, 0, 1, 0, 0, 0, 0, 0, 0, 'title hello', 1)",
+        params![
+            session_path.to_string_lossy(),
+            session.project.to_string_lossy()
+        ],
+    )?;
+    legacy.execute(
+        "INSERT INTO composer_sessions VALUES(?1, 'legacy draft', 0, 0, 0, '[]', 1)",
+        [format!("session:{}", session_path.display())],
+    )?;
+    drop(legacy);
     let mut destination = StateStore::open_at(&destination_path)?;
     destination.replace_sessions(std::slice::from_ref(&session))?;
 
@@ -372,7 +395,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert_eq!(
         store.load_composer_sessions()?,
         vec![ComposerRecord {
-            target: "draft:draft-one".into(),
+            target: format!("session:{}", session_path.canonicalize()?.display()),
             text: "draft text".into(),
             cursor: 6,
             selection_start: 2,
@@ -382,7 +405,6 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     );
     assert_eq!(store.cached_sessions("literal_100%")?.len(), 1);
     assert!(!store.cached_sessions("")?[0].archived);
-    assert!(store.cached_sessions("")?[0].is_running);
     store.set_session_archived(&catalog_session_path.canonicalize()?, true)?;
     assert!(store.cached_sessions("")?[0].archived);
     store.set_session_archived(&catalog_session_path.canonicalize()?, false)?;
@@ -412,11 +434,22 @@ fn application_session_ids_are_incremental_i64_values() -> Result<(), Box<dyn st
     let temp = tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
-    let first = store.allocate_app_session_id("first", 1)?;
-    let second = store.allocate_app_session_id("second", 2)?;
+    let mut draft = DraftSession::new("first".into(), 0, temp.path().to_path_buf(), 1);
+    draft.harness = "codex-cli".into();
+    let first = store.allocate_app_session_id(&draft)?;
+    draft.id = "second".into();
+    let second = store.allocate_app_session_id(&draft)?;
 
     assert!(first > 0);
     assert_eq!(second, first + 1);
+    let registry = store.load_registry()?;
+    assert_eq!(registry.projects, vec![temp.path().to_path_buf()]);
+    assert!(
+        registry
+            .drafts
+            .iter()
+            .all(|draft| draft.harness == "codex-cli")
+    );
     Ok(())
 }
 
@@ -495,11 +528,11 @@ fn imported_sessions_are_active_while_recent_even_without_running_status()
     let sessions = store.cached_sessions("")?;
     let archived = sessions
         .iter()
-        .map(|session| (session.id.as_str(), session.archived))
+        .map(|session| (session.title.as_str(), session.archived))
         .collect::<std::collections::HashMap<_, _>>();
     assert!(!archived["recent-running"]);
     assert!(!archived["recent-done"]);
-    assert!(archived["old-running"]);
+    assert!(!archived["old-running"]);
     Ok(())
 }
 
@@ -603,6 +636,21 @@ fn prompt_completion_persists_draft_session_association_atomically()
     );
     store.replace_sessions(std::slice::from_ref(&summary))?;
     assert_ne!(store.cached_sessions("")?[0].app_session_id, 1);
+    store.save_composer_session(&ComposerRecord {
+        target: "draft:pending".into(),
+        text: "draft text".into(),
+        ..ComposerRecord::default()
+    })?;
+    store.save_composer_session(&ComposerRecord {
+        target: format!("session:{}", session.display()),
+        text: "newer text".into(),
+        ..ComposerRecord::default()
+    })?;
+    let connection = Connection::open(temp.path().join("gui.sqlite3"))?;
+    connection.execute(
+        "UPDATE composer_sessions SET updated_ms=CASE WHEN session_id=1 THEN 1 ELSE 2 END",
+        [],
+    )?;
     let outbox = store.enqueue_prompt(
         "draft:pending",
         "pi",
@@ -620,6 +668,11 @@ fn prompt_completion_persists_draft_session_association_atomically()
     assert!(draft.submitted);
     assert_eq!(draft.session_path, Some(session.canonicalize()?));
     assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);
+    assert_eq!(store.load_composer_sessions()?.len(), 1);
+    assert_eq!(store.load_composer_sessions()?[0].text, "newer text");
+    let registry = store.load_registry()?;
+    assert_eq!(registry.drafts[0].app_session_id, 1);
+    store.save_registry(&registry)?;
 
     store.replace_sessions(&[summary])?;
     assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);
@@ -693,7 +746,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 11);
+    assert_eq!(database_schema_version(&database)?, 12);
     Ok(())
 }
 
@@ -731,7 +784,7 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 11);
+    assert_eq!(database_schema_version(&database)?, 12);
     Ok(())
 }
 
@@ -749,7 +802,7 @@ fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::e
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 11);
+    assert_eq!(database_schema_version(&database)?, 12);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
@@ -770,7 +823,7 @@ fn schema_v4_migrates_to_v11_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 11);
+    assert_eq!(database_schema_version(&database)?, 12);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -813,7 +866,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 11);
+    assert_eq!(database_schema_version(&database)?, 12);
     Ok(())
 }
 
@@ -828,58 +881,48 @@ fn relocating_session_paths_preserves_application_identity_and_composer_state()
     fs::create_dir(&target_project)?;
     let source = temp.path().join("source.jsonl");
     let target = temp.path().join("target.jsonl");
-    drop(StateStore::open_at(&database)?);
-    let connection = Connection::open(&database)?;
-    connection.execute(
-        "INSERT INTO app_sessions(id, session_path, created_ms) VALUES(42, ?1, 1)",
-        [source.to_string_lossy()],
-    )?;
-    connection.execute(
-        "INSERT INTO sessions(
-           path, id, project, title, first_user_message, timestamp, parent_session,
-           modified_ms, file_size, message_count, input_tokens, output_tokens,
-           cache_read_tokens, cache_write_tokens, total_tokens, cost_micros,
-           search_text, settled_ms, is_running, app_session_id
-         ) VALUES(?1, 'pi-id', ?2, 'Title', '', '', NULL, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-                  'title', 7, 0, 42)",
-        params![source.to_string_lossy(), source_project.to_string_lossy()],
-    )?;
-    connection.execute(
-        "INSERT INTO composer_sessions(
-           target, text, cursor, selection_start, selection_end, history_json, updated_ms
-         ) VALUES(?1, 'draft', 5, 5, 5, '[]', 1)",
-        [format!("session:{}", source.display())],
-    )?;
-    drop(connection);
+    fs::write(&source, "{}")?;
+    let mut session = SessionSummary::from_cached(
+        "pi-id".into(),
+        source.clone(),
+        source_project.clone(),
+        "Title".into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        UsageSummary::default(),
+        false,
+        false,
+        "title".into(),
+    );
+    session.app_session_id = 42;
+    let mut store = StateStore::open_at(&database)?;
+    store.replace_sessions(std::slice::from_ref(&session))?;
+    store.save_composer_session(&ComposerRecord {
+        target: format!("session:{}", source.display()),
+        text: "draft".into(),
+        cursor: 5,
+        selection_start: 5,
+        selection_end: 5,
+        history: Vec::new(),
+    })?;
+    let original_id = store.cached_sessions("")?[0].app_session_id;
+    store.relocate_session_paths(&[(source.clone(), target.clone())], &target_project)?;
 
-    StateStore::open_at(&database)?
-        .relocate_session_paths(&[(source.clone(), target.clone())], &target_project)?;
-
-    let connection = Connection::open(&database)?;
+    let relocated = store.cached_sessions("")?;
+    assert_eq!(relocated.len(), 1);
+    assert_eq!(relocated[0].app_session_id, original_id);
     assert_eq!(
-        connection.query_row(
-            "SELECT id FROM app_sessions WHERE session_path=?1",
-            [target.to_string_lossy()],
-            |row| row.get::<_, i64>(0),
-        )?,
-        42
+        relocated[0].path,
+        crate::sessions::normalize_session_path(&target)
     );
     assert_eq!(
-        connection.query_row(
-            "SELECT project FROM sessions WHERE path=?1",
-            [target.to_string_lossy()],
-            |row| row.get::<_, String>(0),
-        )?,
-        target_project.to_string_lossy()
+        relocated[0].project,
+        target_project.canonicalize().unwrap_or(target_project)
     );
-    assert_eq!(
-        connection.query_row(
-            "SELECT text FROM composer_sessions WHERE target=?1",
-            [format!("session:{}", target.display())],
-            |row| row.get::<_, String>(0),
-        )?,
-        "draft"
-    );
+    assert_eq!(store.load_composer_sessions()?[0].text, "draft");
     Ok(())
 }
 
@@ -893,106 +936,48 @@ fn deleting_session_state_removes_the_family_and_preserves_other_sessions()
     let child = temp.path().join("child.jsonl");
     let other = temp.path().join("other.jsonl");
     fs::create_dir(&project)?;
-    drop(StateStore::open_at(&database)?);
-    let connection = Connection::open(&database)?;
-    for (index, path) in [&root, &child, &other].into_iter().enumerate() {
-        let app_session_id = index as i64 + 1;
-        let id = format!("session-{index}");
-        let draft_id = format!("draft-{index}");
-        connection.execute(
-            "INSERT INTO app_sessions(id, draft_id, session_path, created_ms)
-             VALUES(?1, ?2, ?3, 1)",
-            params![app_session_id, draft_id, path.to_string_lossy()],
-        )?;
-        connection.execute(
-            "INSERT INTO sessions(
-               path, id, project, title, first_user_message, timestamp, parent_session,
-               modified_ms, file_size, message_count, input_tokens, output_tokens,
-               cache_read_tokens, cache_write_tokens, total_tokens, cost_micros,
-               search_text, settled_ms, is_running, app_session_id
-             ) VALUES(?1, ?2, ?3, 'Title', '', '', NULL, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-                      'title', 1, 0, ?4)",
-            params![
-                path.to_string_lossy(),
-                id,
-                project.to_string_lossy(),
-                app_session_id
-            ],
-        )?;
-        connection.execute(
-            "INSERT INTO drafts(
-               id, project, created_ms, submitted, session_path, provisional_title,
-               app_session_id
-             ) VALUES(?1, ?2, 1, 1, ?3, NULL, ?4)",
-            params![
-                draft_id,
-                project.to_string_lossy(),
-                path.to_string_lossy(),
-                app_session_id
-            ],
-        )?;
-        connection.execute(
-            "INSERT INTO outbox(
-               target, project, session_path, mode, message, state, created_ms, images_json
-             ) VALUES(?1, ?2, ?3, 'normal', 'failed prompt', 'failed', 1, '[]')",
-            params![
-                format!("session:{}", path.display()),
-                project.to_string_lossy(),
-                path.to_string_lossy()
-            ],
-        )?;
-        connection.execute(
-            "INSERT INTO composer_sessions(
-               target, text, cursor, selection_start, selection_end, history_json, updated_ms
-             ) VALUES(?1, 'draft', 5, 5, 5, '[]', 1)",
-            [format!("session:{}", path.display())],
-        )?;
+    let mut store = StateStore::open_at(&database)?;
+    let mut sessions = Vec::new();
+    for path in [&root, &child, &other] {
+        fs::write(path, "{}")?;
+        sessions.push(SessionSummary::from_cached(
+            path.file_stem().unwrap().to_string_lossy().into_owned(),
+            path.clone(),
+            project.clone(),
+            "Title".into(),
+            String::new(),
+            String::new(),
+            None,
+            SystemTime::now(),
+            0,
+            UsageSummary::default(),
+            false,
+            false,
+            "title".into(),
+        ));
     }
-    drop(connection);
+    store.replace_sessions(&sessions)?;
+    for path in [&root, &child, &other] {
+        store.save_composer_session(&ComposerRecord {
+            target: format!("session:{}", path.display()),
+            text: "draft".into(),
+            cursor: 5,
+            selection_start: 5,
+            selection_end: 5,
+            history: Vec::new(),
+        })?;
+    }
+    store.delete_session_state(&[root.clone(), child.clone()])?;
 
-    StateStore::open_at(&database)?.delete_session_state(&[root.clone(), child.clone()])?;
-
-    let connection = Connection::open(&database)?;
-    for path in [&root, &child] {
-        let path = path.to_string_lossy();
-        let target = format!("session:{path}");
-        for (table, column, value) in [
-            ("app_sessions", "session_path", path.as_ref()),
-            ("sessions", "path", path.as_ref()),
-            ("drafts", "session_path", path.as_ref()),
-            ("outbox", "session_path", path.as_ref()),
-            ("composer_sessions", "target", target.as_str()),
-        ] {
-            let count = connection.query_row(
-                &format!("SELECT COUNT(*) FROM {table} WHERE {column}=?1"),
-                [value],
-                |row| row.get::<_, i64>(0),
-            )?;
-            assert_eq!(count, 0, "{table} retained deleted session state");
-        }
-    }
-    let other_path = other.to_string_lossy();
-    for (table, column, value) in [
-        ("app_sessions", "session_path", other_path.as_ref()),
-        ("sessions", "path", other_path.as_ref()),
-        ("drafts", "session_path", other_path.as_ref()),
-        ("outbox", "session_path", other_path.as_ref()),
-    ] {
-        let count = connection.query_row(
-            &format!("SELECT COUNT(*) FROM {table} WHERE {column}=?1"),
-            [value],
-            |row| row.get::<_, i64>(0),
-        )?;
-        assert_eq!(count, 1, "{table} lost unrelated session state");
-    }
+    let remaining = store.cached_sessions("")?;
+    assert_eq!(remaining.len(), 1);
     assert_eq!(
-        connection.query_row(
-            "SELECT COUNT(*) FROM composer_sessions WHERE target=?1",
-            [format!("session:{other_path}")],
-            |row| row.get::<_, i64>(0),
-        )?,
-        1
+        remaining[0].path,
+        crate::sessions::normalize_session_path(&other)
     );
+    let composers = store.load_composer_sessions()?;
+    assert_eq!(composers.len(), 1);
+    assert!(composers[0].target.contains("other.jsonl"));
     Ok(())
 }
 
@@ -1027,6 +1012,220 @@ fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn 
     assert_eq!(registry.drafts[0].session_path, None);
     assert_eq!(registry.drafts[0].title.as_deref(), Some("Pending session"));
     Ok(())
+}
+
+#[test]
+fn parent_identity_survives_child_first_and_partial_indexing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    let mut child = persistence_summary(temp.path(), "child");
+    child.parent_session = Some("root".into());
+    let root = persistence_summary(temp.path(), "root");
+    let mut unrelated = persistence_summary(temp.path(), "other");
+    unrelated.id = root.id.clone();
+    unrelated.harness = "codex".into();
+    store.index_sessions(&[child.clone(), unrelated], false)?;
+    store.index_sessions(std::slice::from_ref(&root), false)?;
+    drop(store);
+
+    let store = StateStore::open_at(&database)?;
+    let cached = store.cached_sessions("")?;
+    let cached_child = cached.iter().find(|s| s.path == child.path).unwrap();
+    assert_eq!(cached_child.id, "child");
+    assert_eq!(cached_child.parent_session.as_deref(), Some("root"));
+    let connection = Connection::open(&database)?;
+    let parent: (String, String) = connection.query_row(
+        "SELECT p.backend_id, p.harness FROM sessions c JOIN sessions p ON p.id=c.parent_id
+          WHERE c.backend_id='child'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(parent, ("root".into(), "pi".into()));
+    Ok(())
+}
+
+#[test]
+fn discovery_keeps_project_excluded_until_explicitly_restored()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().canonicalize()?;
+    let database = temp.path().join("gui.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    store.save_registry(&Registry {
+        projects: vec![],
+        excluded_projects: vec![project.clone()],
+        drafts: vec![],
+    })?;
+    store.index_sessions(&[persistence_summary(&project, "session")], false)?;
+    drop(store);
+    let mut store = StateStore::open_at(&database)?;
+    let registry = store.load_registry()?;
+    assert!(registry.projects.is_empty());
+    assert_eq!(registry.excluded_projects, vec![project.clone()]);
+    store.save_registry(&Registry {
+        projects: vec![project.clone()],
+        excluded_projects: vec![],
+        drafts: vec![],
+    })?;
+    assert_eq!(store.load_registry()?.projects, vec![project]);
+    assert!(store.load_registry()?.excluded_projects.is_empty());
+    Ok(())
+}
+
+#[test]
+fn discovery_prunes_only_disposable_catalog_rows() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+    let sessions = ["disposable", "composer", "queued", "archive", "event"]
+        .map(|id| persistence_summary(temp.path(), id));
+    store.index_sessions(&sessions, false)?;
+    store.save_composer_session(&ComposerRecord {
+        target: format!("session:{}", sessions[1].path.display()),
+        text: "unsent".into(),
+        ..ComposerRecord::default()
+    })?;
+    store.enqueue_prompt(
+        &format!("session:{}", sessions[2].path.display()),
+        "pi",
+        temp.path(),
+        Some(&sessions[2].path),
+        PromptMode::Normal,
+        "queued",
+        &[],
+    )?;
+    store.set_session_archived(&sessions[3].path, true)?;
+    // A disposable row in another harness must not delete this archived row.
+    let mut foreign = sessions[3].clone();
+    foreign.harness = "codex-cli".into();
+    foreign.id = "foreign-archive".into();
+    store.index_sessions(&[foreign], false)?;
+    let presentation = store.enqueue_prompt_with_presentation(
+        &format!("session:{}", sessions[4].path.display()),
+        "pi",
+        temp.path(),
+        Some(&sessions[4].path),
+        PromptMode::Normal,
+        "expanded",
+        Some("display"),
+        Some("invocation"),
+        &[],
+    )?;
+    store.complete_prompt(
+        presentation,
+        &format!("session:{}", sessions[4].path.display()),
+        Some(&sessions[4].path),
+    )?;
+    store.index_sessions(&[], true)?;
+    let retained = store
+        .cached_sessions("")?
+        .into_iter()
+        .map(|s| s.id)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        retained,
+        ["composer", "queued", "archive", "event"]
+            .map(String::from)
+            .into()
+    );
+    assert_eq!(store.queued_prompts()?.len(), 1);
+    assert_eq!(store.load_composer_sessions()?[0].text, "unsent");
+    Ok(())
+}
+
+#[test]
+fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+    let draft = DraftSession::new("pending".into(), 0, temp.path().to_path_buf(), 1);
+    store.allocate_app_session_id(&draft)?;
+    let first = store.enqueue_prompt_with_presentation(
+        "draft:pending",
+        "pi",
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "expanded",
+        Some("display"),
+        Some("invocation"),
+        &[],
+    )?;
+    store.complete_prompt(first, "draft:pending", None)?;
+    let mut registry = store.load_registry()?;
+    assert!(registry.drafts[0].submitted);
+    registry.drafts[0].session_path = Some(temp.path().join("bound.jsonl"));
+    store.save_registry(&registry)?;
+    assert_eq!(
+        store.prompt_presentations(registry.drafts[0].session_path.as_ref().unwrap())?[0]
+            .display_message,
+        "display"
+    );
+    let second = store.enqueue_prompt(
+        "draft:pending",
+        "pi",
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "next",
+        &[],
+    )?;
+    assert!(second > first);
+    store.complete_prompt(first, "draft:pending", None)?;
+    assert_eq!(store.queued_prompts()?[0].id, second);
+    Ok(())
+}
+
+#[test]
+fn worker_identity_binds_a_discovered_locator_without_creating_a_second_session()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    store.save_worker_family(&crate::agents::WorkerFamilyLink {
+        project: temp.path().to_path_buf(),
+        parent_backend: "pi".into(),
+        parent_session: "parent".into(),
+        child_backend: "codex-cli".into(),
+        child_session: "child".into(),
+        execution: None,
+    })?;
+    let mut child = persistence_summary(temp.path(), "child");
+    child.harness = "codex-cli".into();
+    store.index_sessions(
+        &[persistence_summary(temp.path(), "parent"), child.clone()],
+        false,
+    )?;
+    assert_eq!(store.cached_sessions("")?.len(), 2);
+    let links = store.load_worker_families()?;
+    assert_eq!(links[0].child_session, child.path.to_string_lossy());
+    let connection = Connection::open(&database)?;
+    assert_eq!(
+        connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    Ok(())
+}
+
+fn persistence_summary(project: &std::path::Path, id: &str) -> SessionSummary {
+    SessionSummary::from_cached(
+        id.into(),
+        project.join(format!("{id}.jsonl")),
+        project.to_path_buf(),
+        id.into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        UsageSummary::default(),
+        false,
+        false,
+        id.into(),
+    )
 }
 
 fn seed_legacy_database(
@@ -1223,7 +1422,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     );
     let mut session = SessionSummary::from_cached(
         link.child_session.clone(),
-        temp.path().join("child"),
+        PathBuf::from(&link.child_session),
         link.project.clone(),
         "Worker".into(),
         String::new(),

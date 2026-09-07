@@ -18,6 +18,9 @@ use crate::{
 };
 
 mod composer;
+mod identity;
+mod migrate_legacy;
+mod migrate_v12;
 mod projects;
 mod prompts;
 mod schema;
@@ -25,17 +28,10 @@ mod sessions;
 mod settings;
 mod traits;
 
-use projects::associate_app_session;
+use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
-const ACTIVE_IMPORT_WINDOW: Duration = Duration::from_secs(3 * 60 * 60);
-const REPOSITORY_BACKEND_PREFERENCES_KEY: &str = "repository_backend_preferences";
-const NETWORK_PROXY_KEY: &str = "network_proxy";
-const APPLICATION_MODIFIER_KEY: &str = "application_modifier";
-const BUILTIN_MCP_ENABLED_KEY: &str = "builtin_mcp_enabled";
-const CONFIGURATION_CATALOGS_KEY: &str = "configuration_catalogs";
-const SESSION_CONTROL_DEFAULTS_KEY: &str = "session_control_defaults";
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 

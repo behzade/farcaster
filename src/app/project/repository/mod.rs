@@ -49,7 +49,6 @@ impl RepositorySyncState {
 
 impl RefreshGate {
     fn request(&mut self) -> Option<u64> {
-        self.desired = self.desired.saturating_add(1);
         if self.in_flight.is_some() {
             self.pending = true;
             None
@@ -64,6 +63,7 @@ impl RefreshGate {
     }
 
     fn start(&mut self) -> u64 {
+        self.desired = self.desired.saturating_add(1);
         let generation = self.desired;
         self.in_flight = Some(generation);
         generation
@@ -170,6 +170,7 @@ impl RepositoryState {
     }
 
     fn clear_observation(&mut self) {
+        self.refresh.invalidate();
         self.backend = None;
         self.snapshot = None;
         self.loading = false;
@@ -364,8 +365,6 @@ impl FarcasterApp {
 
     pub(crate) fn request_repository_refresh(&mut self, cx: &mut Context<Self>) {
         if !self.repository.execution_allowed {
-            self.repository.refresh.invalidate();
-            self.repository.loading = false;
             self.repository.clear_observation();
             self.notify_run_panel(cx);
             return;
@@ -597,17 +596,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn refresh_gate_coalesces_and_rejects_superseded_results() {
+    fn refresh_gate_publishes_during_continuous_changes_and_coalesces_requests() {
         let mut gate = RefreshGate::default();
         let first = gate.request().expect("first refresh should start");
         assert!(gate.request().is_none());
 
         let completion = gate.finish(first).expect("active refresh should finish");
-        assert!(!completion.publish);
+        assert!(completion.publish);
         let second = completion.next.expect("pending refresh should start");
         assert_ne!(first, second);
 
+        assert!(gate.request().is_none());
+        assert!(gate.request().is_none());
         let completion = gate.finish(second).expect("latest refresh should finish");
+        assert!(completion.publish);
+        let third = completion.next.expect("changes need one more refresh");
+        let completion = gate.finish(third).expect("last refresh should finish");
         assert!(completion.publish);
         assert!(completion.next.is_none());
         assert!(gate.finish(first).is_none());
@@ -663,6 +667,18 @@ mod tests {
         let completion = gate.finish(generation).expect("refresh should finish");
         assert!(!completion.publish);
         assert!(completion.next.is_none());
+    }
+
+    #[test]
+    fn project_change_rejects_old_scan_and_starts_pending_scan() {
+        let mut gate = RefreshGate::default();
+        let old = gate.request().unwrap();
+        gate.invalidate();
+        assert!(gate.request().is_none());
+        let completion = gate.finish(old).unwrap();
+        assert!(!completion.publish);
+        let current = completion.next.unwrap();
+        assert!(gate.finish(current).unwrap().publish);
     }
 
     #[test]

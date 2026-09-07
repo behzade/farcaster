@@ -23,33 +23,7 @@ fn discover_catalog(
 impl RuntimeOwner {
     pub(super) fn load_sessions(&mut self, query: String) {
         self.session_query = query;
-        if let Some(state) = &self.state {
-            match crate::sessions::cached_sessions(state, "") {
-                Ok(mut all_sessions) => {
-                    if self.session_generation == 0 {
-                        for session in &mut all_sessions {
-                            session.is_running = false;
-                        }
-                    }
-                    let sessions = crate::sessions::filter_session_tree(
-                        all_sessions.clone(),
-                        &self.session_query,
-                    );
-                    let _ = self.event_tx.send(RuntimeEvent::Sessions {
-                        generation: self.session_generation,
-                        sessions,
-                        all_sessions,
-                        activities: None,
-                    });
-                }
-                Err(error) => {
-                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation: self.session_generation,
-                        message: error,
-                    });
-                }
-            }
-        }
+        self.publish_cached_sessions();
         if self.session_query.is_empty() {
             self.refresh_sessions();
         }
@@ -105,10 +79,12 @@ impl RuntimeOwner {
     }
 
     pub(super) fn apply_discovery(&mut self, result: DiscoveryResult) {
+        self.session_discovery_in_flight = false;
         if result.generation != self.session_generation {
+            self.session_refresh_pending = false;
+            self.schedule_session_refresh();
             return;
         }
-        self.session_discovery_in_flight = false;
         let event = match result.result {
             Ok(discovery) => {
                 let mut discovered = discovery.sessions;
@@ -141,43 +117,34 @@ impl RuntimeOwner {
                     }
                 }
                 let mut activities = discovery.activities;
-                let (sessions, all_sessions) = if let Some(state) = self.state.as_mut() {
+                let running = discovered
+                    .iter()
+                    .filter(|session| session.is_running)
+                    .map(|session| (session.harness.clone(), session.path.clone()))
+                    .collect::<HashSet<_>>();
+                let mut all_sessions = if let Some(state) = self.state.as_mut() {
                     match crate::sessions::index_sessions(state, &discovered, discovery.exhaustive)
                         .and_then(|()| crate::sessions::cached_sessions(state, ""))
                     {
-                        Ok(all_sessions) => {
-                            let sessions = crate::sessions::filter_session_tree(
-                                all_sessions.clone(),
-                                &self.session_query,
-                            );
-                            (sessions, all_sessions)
-                        }
-                        Err(error) => {
+                        Ok(sessions) => sessions,
+                        Err(message) => {
                             let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                                 generation: result.generation,
-                                message: error,
+                                message,
                             });
-                            let sessions = crate::sessions::filter_session_tree(
-                                discovered.clone(),
-                                &self.session_query,
-                            );
-                            (sessions, discovered)
+                            discovered
                         }
                     }
                 } else {
-                    let sessions = crate::sessions::filter_session_tree(
-                        discovered.clone(),
-                        &self.session_query,
-                    );
-                    (sessions, discovered)
+                    discovered
                 };
-                add_limited_activity_fallbacks(&mut activities, &all_sessions);
-                RuntimeEvent::Sessions {
-                    generation: result.generation,
-                    sessions,
-                    all_sessions,
-                    activities: Some((activities, discovery.exhaustive)),
+                // Running status belongs to this observation, never to the persisted catalog.
+                for session in &mut all_sessions {
+                    session.is_running =
+                        running.contains(&(session.harness.clone(), session.path.clone()));
                 }
+                add_limited_activity_fallbacks(&mut activities, &all_sessions);
+                self.catalog_event(all_sessions, Some((activities, discovery.exhaustive)))
             }
             Err(message) => RuntimeEvent::SessionsFailed {
                 generation: result.generation,
@@ -223,7 +190,8 @@ impl RuntimeOwner {
             .collect::<HashSet<_>>();
         let locator_root = self.process_command.session_locator_root.clone();
         let sender = self.event_tx.clone();
-        let _ = thread::Builder::new()
+        let failed_harness = harness.clone();
+        if let Err(error) = thread::Builder::new()
             .name("farcaster-import".into())
             .spawn(move || {
                 let result = discover_import(&harness, locator_root.as_deref())
@@ -241,7 +209,14 @@ impl RuntimeOwner {
                     },
                 };
                 let _ = sender.send(event);
+            })
+        {
+            let _ = self.event_tx.send(RuntimeEvent::ImportPreviewFailed {
+                generation,
+                harness: failed_harness,
+                message: format!("start import preview: {error}"),
             });
+        }
     }
 
     pub(super) fn commit_import(&mut self, sessions: Vec<SessionSummary>) {
@@ -262,28 +237,36 @@ impl RuntimeOwner {
             }
         }
         self.session_generation = self.session_generation.saturating_add(1);
-        let generation = self.session_generation;
-        if let Some(state) = &self.state {
-            match crate::sessions::cached_sessions(state, "") {
-                Ok(all_sessions) => {
-                    let sessions = crate::sessions::filter_session_tree(
-                        all_sessions.clone(),
-                        &self.session_query,
-                    );
-                    let _ = self.event_tx.send(RuntimeEvent::Sessions {
-                        generation,
-                        sessions,
-                        all_sessions,
-                        activities: None,
-                    });
-                }
-                Err(message) => {
-                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
-                        generation,
-                        message,
-                    });
-                }
-            }
+        self.publish_cached_sessions();
+    }
+
+    fn publish_cached_sessions(&self) {
+        let Some(state) = &self.state else {
+            return;
+        };
+        let event = match crate::sessions::cached_sessions(state, "") {
+            Ok(sessions) => self.catalog_event(sessions, None),
+            Err(message) => RuntimeEvent::SessionsFailed {
+                generation: self.session_generation,
+                message,
+            },
+        };
+        let _ = self.event_tx.send(event);
+    }
+
+    fn catalog_event(
+        &self,
+        all_sessions: Vec<SessionSummary>,
+        activities: Option<(HashMap<String, AgentActivity>, bool)>,
+    ) -> RuntimeEvent {
+        RuntimeEvent::Sessions {
+            generation: self.session_generation,
+            sessions: crate::sessions::filter_session_tree(
+                all_sessions.clone(),
+                &self.session_query,
+            ),
+            all_sessions,
+            activities,
         }
     }
 }
@@ -432,38 +415,6 @@ mod tests {
         recover_worker_execution(&mut sessions, &[saved], |_| {
             panic!("saved identity must not reload history")
         });
-    }
-
-    #[test]
-    fn every_external_write_refreshes_the_catalog_and_activity_deadline() {
-        let path = PathBuf::from("/sessions/external.jsonl");
-        let start = Instant::now();
-        let mut activity = ExternalActivityTracker::default();
-
-        assert!(activity.observe_files(
-            &HashSet::new(),
-            std::slice::from_ref(&path),
-            start,
-            crate::sessions::normalize_session_path,
-        ));
-        assert!(activity.observe_files(
-            &HashSet::new(),
-            std::slice::from_ref(&path),
-            start + Duration::from_secs(1),
-            crate::sessions::normalize_session_path,
-        ));
-        assert!(!activity.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
-        assert!(activity.take_expired(start + Duration::from_secs(1) + RUNNING_ACTIVITY_TIMEOUT));
-
-        let mut owned = ExternalActivityTracker::default();
-        let owned_paths = HashSet::from([path.clone()]);
-        assert!(!owned.observe_files(
-            &owned_paths,
-            &[path],
-            start,
-            crate::sessions::normalize_session_path,
-        ));
-        assert!(!owned.take_expired(start + RUNNING_ACTIVITY_TIMEOUT));
     }
 
     #[test]
