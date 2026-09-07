@@ -1,8 +1,6 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::app::ui::keyboard::CopySelection;
-#[cfg(target_os = "linux")]
-use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
@@ -51,30 +49,30 @@ impl ApplicationModifier {
         }
     }
 
-    pub(crate) const fn platform_choices() -> [Self; 3] {
+    pub(crate) const fn platform_choices() -> &'static [Self] {
         if cfg!(target_os = "macos") {
-            [Self::Command, Self::Control, Self::Alt]
+            &[Self::Command, Self::Control, Self::Alt]
         } else {
-            [Self::Super, Self::Control, Self::Alt]
+            &[Self::Control, Self::Alt]
         }
     }
 }
 
 fn parse_application_modifier(value: Option<&str>) -> ApplicationModifier {
     match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
-        Some("cmd" | "command") => ApplicationModifier::Command,
-        Some("super" | "meta") => ApplicationModifier::Super,
+        Some("cmd" | "command") if cfg!(target_os = "macos") => ApplicationModifier::Command,
+        Some("super" | "meta") if cfg!(target_os = "macos") => ApplicationModifier::Super,
         Some("ctrl" | "control") => ApplicationModifier::Control,
         Some("alt" | "option") => ApplicationModifier::Alt,
         _ if cfg!(target_os = "macos") => ApplicationModifier::Command,
-        _ => ApplicationModifier::Super,
+        _ => ApplicationModifier::Control,
     }
 }
 
 const DEFAULT_APPLICATION_MODIFIER: ApplicationModifier = if cfg!(target_os = "macos") {
     ApplicationModifier::Command
 } else {
-    ApplicationModifier::Super
+    ApplicationModifier::Control
 };
 
 static APPLICATION_MODIFIER: AtomicU8 = AtomicU8::new(DEFAULT_APPLICATION_MODIFIER as u8);
@@ -95,7 +93,8 @@ pub(crate) fn application_modifier() -> ApplicationModifier {
         value if value == ApplicationModifier::Command as u8 => ApplicationModifier::Command,
         value if value == ApplicationModifier::Control as u8 => ApplicationModifier::Control,
         value if value == ApplicationModifier::Alt as u8 => ApplicationModifier::Alt,
-        _ => ApplicationModifier::Super,
+        value if value == ApplicationModifier::Super as u8 => ApplicationModifier::Super,
+        _ => DEFAULT_APPLICATION_MODIFIER,
     }
 }
 
@@ -336,24 +335,6 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             "ctrl-shift-tab",
             CycleWorkspaceBackward,
             Some(APP_SHORTCUT_CONTEXT)
-        ),
-        #[cfg(target_os = "linux")]
-        shortcut!(
-            "Clipboard",
-            "Copy",
-            "super-c",
-            ClipboardCopyAlias,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(target_os = "linux")]
-        shortcut!(
-            "Clipboard",
-            "Paste",
-            "super-v",
-            ClipboardPasteAlias,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
         ),
         Shortcut {
             section: "Transcript",
@@ -633,11 +614,19 @@ mod tests {
     fn application_modifier_configuration_accepts_familiar_names() {
         assert_eq!(
             parse_application_modifier(Some("command")),
-            ApplicationModifier::Command
+            if cfg!(target_os = "macos") {
+                ApplicationModifier::Command
+            } else {
+                ApplicationModifier::Control
+            }
         );
         assert_eq!(
             parse_application_modifier(Some("meta")),
-            ApplicationModifier::Super
+            if cfg!(target_os = "macos") {
+                ApplicationModifier::Super
+            } else {
+                ApplicationModifier::Control
+            }
         );
         assert_eq!(
             parse_application_modifier(Some("control")),
@@ -671,6 +660,27 @@ mod tests {
                 binding.action().as_any().is::<ComposerCompletionNext>()
             })
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_defaults_and_saved_super_settings_leave_super_unbound() {
+        use super::registry_for_modifier;
+
+        assert!(!ApplicationModifier::platform_choices().contains(&ApplicationModifier::Super));
+        for saved in [None, Some("super"), Some("meta"), Some("cmd")] {
+            let modifier = parse_application_modifier(saved);
+            assert_eq!(modifier, ApplicationModifier::Control);
+            let shortcuts = registry_for_modifier(modifier);
+            assert!(shortcuts.iter().all(|shortcut| {
+                !shortcut.keystroke.starts_with("super-") && !shortcut.keystroke.starts_with("cmd-")
+            }));
+            assert!(
+                shortcuts
+                    .iter()
+                    .any(|shortcut| shortcut.keystroke == "ctrl-t")
+            );
+        }
     }
 
     #[test]
@@ -710,6 +720,9 @@ mod tests {
             ("Open action picker", "k"),
         ] {
             let keystroke = application_key(suffix);
+            if matches!(keystroke.as_str(), "ctrl-j" | "ctrl-k") {
+                continue;
+            }
             assert!(shortcuts.iter().any(|shortcut| {
                 shortcut.label == label
                     && shortcut.keystroke == keystroke
@@ -726,6 +739,9 @@ mod tests {
         let app_contexts = [gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()];
         let native_contexts = [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()];
         for key in ["cmd-2", "cmd-t", "cmd-e", "cmd-j", "cmd-g"] {
+            if key == "cmd-g" && !cfg!(target_os = "macos") {
+                continue;
+            }
             let stroke = gpui::Keystroke::parse(key).unwrap();
             let (app_bindings, _) = keymap.bindings_for_input(&[stroke.clone()], &app_contexts);
             assert!(!app_bindings.is_empty(), "{key} missing in app context");

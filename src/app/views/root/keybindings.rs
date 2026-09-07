@@ -121,12 +121,7 @@ mod tests {
         cx.update(gpui_component::init);
         let cx = cx.add_empty_window();
         for width in [240.0, 320.0, 488.0] {
-            for key in [
-                "ctrl-g ctrl-g",
-                "cmd-g cmd-g",
-                "ctrl-g space j",
-                "cmd-shift-n",
-            ] {
+            for key in ["ctrl-g ctrl-g", "cmd-g cmd-g", "ctrl-g j", "cmd-shift-n"] {
                 cx.draw(
                     point(px(0.0), px(0.0)),
                     size(px(width), px(300.0)),

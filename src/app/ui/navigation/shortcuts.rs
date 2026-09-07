@@ -11,14 +11,12 @@ pub(crate) enum Command {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Prefix {
-    Space,
     G,
 }
 
 impl Prefix {
     pub(super) fn from_key(key: &str) -> Option<Self> {
         match key {
-            "space" => Some(Self::Space),
             "g" => Some(Self::G),
             _ => None,
         }
@@ -26,7 +24,6 @@ impl Prefix {
 
     pub(crate) fn hint(self) -> &'static str {
         match self {
-            Self::Space => leader_hint(),
             Self::G => "g · g transcript top · Esc cancel",
         }
     }
@@ -36,7 +33,6 @@ impl Prefix {
 pub(super) enum Scroll {
     Start,
     End,
-    Lines(f32),
     Pages(f32),
 }
 
@@ -46,15 +42,13 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ("t", "Open terminal", Command::Terminal),
     ("n", "New session", Command::NewSession),
     ("w", "Close surface or session", Command::Close),
-    ("space j", "Next session", Command::RelativeSession(1)),
-    ("space k", "Previous session", Command::RelativeSession(-1)),
+    ("j", "Next session", Command::RelativeSession(1)),
+    ("k", "Previous session", Command::RelativeSession(-1)),
 ];
 
 const SCROLLS: &[(&str, &str, Scroll)] = &[
     ("g g", "Transcript top", Scroll::Start),
     ("G", "Transcript end (follow latest)", Scroll::End),
-    ("j", "Scroll down one line", Scroll::Lines(1.0)),
-    ("k", "Scroll up one line", Scroll::Lines(-1.0)),
     ("ctrl-f", "Page down", Scroll::Pages(1.0)),
     ("ctrl-b", "Page up", Scroll::Pages(-1.0)),
     ("ctrl-d", "Half-page down", Scroll::Pages(0.5)),
@@ -74,21 +68,6 @@ pub(crate) fn command_key(command: Command) -> &'static str {
         .find(|(_, _, candidate)| *candidate == command)
         .expect("command with a workspace hint")
         .0
-}
-
-pub(crate) fn leader_hint() -> &'static str {
-    static HINT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let commands = COMMANDS
-            .iter()
-            .filter_map(|(key, label, _)| {
-                key.strip_prefix("space ")
-                    .map(|key| format!("{key} {}", label.to_lowercase()))
-            })
-            .collect::<Vec<_>>()
-            .join(" · ");
-        format!("SPACE · {commands} · Esc cancel")
-    });
-    &HINT
 }
 
 pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
@@ -140,7 +119,6 @@ pub(super) fn activated_command(key: &str, prefix: Option<Prefix>) -> Option<Com
     }
     COMMANDS.iter().find_map(|(sequence, _, command)| {
         let suffix = match prefix {
-            Some(Prefix::Space) => sequence.strip_prefix("space "),
             Some(Prefix::G) => None,
             None => Some(*sequence),
         };

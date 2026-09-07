@@ -264,7 +264,6 @@ impl FarcasterApp {
                 self.jump_to_latest(cx);
                 return;
             }
-            Scroll::Lines(lines) => super::theme::THEME.type_scale.line_reading * lines,
             Scroll::Pages(pages) => list.viewport_height() * pages,
         };
         list.scroll_by(distance, window, self.transcript_view.entity_id());
@@ -360,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_routes_full_leader_sequences_and_refreshes_timeout() {
+    fn activation_routes_session_keys_without_space() {
         let now = Instant::now();
         for (key, command) in [
             ("j", Command::RelativeSession(1)),
@@ -369,11 +368,7 @@ mod tests {
             let mut state = Activation::default();
             assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
             assert_eq!(
-                activated(&mut state, "space", now + Duration::from_millis(900)),
-                ActivatedKey::Pending
-            );
-            assert_eq!(
-                activated(&mut state, key, now + Duration::from_millis(1500)),
+                activated(&mut state, key, now + Duration::from_millis(900)),
                 ActivatedKey::Command(command)
             );
             assert_eq!(
@@ -397,7 +392,7 @@ mod tests {
             activated(&mut state, "ctrl-g", now + ACTIVATION_TIMEOUT),
             ActivatedKey::Pending
         );
-        for key in ["escape", "ctrl-2", "z"] {
+        for key in ["escape", "ctrl-2", "z", "space"] {
             state.clear();
             activated(&mut state, "ctrl-g", now);
             assert_eq!(activated(&mut state, key, now), ActivatedKey::Cancel);
@@ -456,21 +451,17 @@ mod tests {
         for (key, prefix, expected) in [
             ("g", None, None),
             ("g", Some(Prefix::G), Some(Scroll::Start)),
-            ("g", Some(Prefix::Space), None),
             ("G", None, Some(Scroll::End)),
             ("G", Some(Prefix::G), Some(Scroll::End)),
             ("ctrl-g", Some(Prefix::G), None),
             ("alt-g", Some(Prefix::G), None),
             ("ctrl-shift-g", None, None),
-            ("j", None, Some(Scroll::Lines(1.0))),
-            ("k", None, Some(Scroll::Lines(-1.0))),
+            ("j", None, None),
+            ("k", None, None),
             ("ctrl-f", None, Some(Scroll::Pages(1.0))),
             ("ctrl-b", None, Some(Scroll::Pages(-1.0))),
             ("ctrl-d", None, Some(Scroll::Pages(0.5))),
             ("ctrl-u", None, Some(Scroll::Pages(-0.5))),
-            ("ctrl-f", Some(Prefix::Space), Some(Scroll::Pages(1.0))),
-            ("j", Some(Prefix::Space), None),
-            ("k", Some(Prefix::Space), None),
             ("ctrl-j", None, None),
             ("f", None, None),
             ("ctrl-shift-f", None, None),

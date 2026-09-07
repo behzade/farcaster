@@ -198,7 +198,7 @@ fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterA
         .gap(THEME.space.md)
         .child(setting_label(
             "Direct shortcut modifier",
-            "Direct shortcuts stay available alongside modal navigation (Cmd on macOS by default). This modifier does not change Ctrl+G activation or Space commands.",
+            "Direct shortcuts use Cmd on macOS and Ctrl on Linux by default. This modifier does not change Ctrl+G commands.",
         ))
         .child(
             dropdown_button(
@@ -209,7 +209,7 @@ fn modifier_setting(selected: ApplicationModifier, entity: WeakEntity<FarcasterA
             )
             .flex_none()
             .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
-                ApplicationModifier::platform_choices().into_iter().fold(
+                ApplicationModifier::platform_choices().iter().copied().fold(
                     menu.min_w(gpui::px(150.0)),
                     |menu, modifier| {
                         let entity = entity.clone();
