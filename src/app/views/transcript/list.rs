@@ -527,6 +527,10 @@ impl Element for TranscriptList {
             if had_selection || text_click {
                 cx.notify(current_view);
             }
+            if inside {
+                // Keep the app root from taking focus after selection handles the click.
+                window.prevent_default();
+            }
         });
 
         let selection_state = self.state.clone();

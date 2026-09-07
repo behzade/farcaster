@@ -73,6 +73,7 @@ pub struct TextViewState {
     bounds: Bounds<Pixels>,
 
     pub(super) selectable: bool,
+    pub(super) focusable: bool,
     pub(super) selection_format: SelectionFormat,
     pub(super) scrollable: bool,
     pub(super) text_view_style: TextViewStyle,
@@ -162,6 +163,7 @@ impl TextViewState {
             selected_text_override: None,
             select_all: false,
             selectable: false,
+            focusable: true,
             selection_format: SelectionFormat::default(),
             scrollable: false,
             // Measure all blocks (not just visible ones) so the scrollbar

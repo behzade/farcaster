@@ -158,9 +158,12 @@ impl TextViewSelectionAdapter {
                 let Some(view) = view.upgrade() else {
                     return;
                 };
-                let focus_handle = view.read(cx).focus_handle.clone();
-                view.update(cx, |state, _| state.is_selecting = true);
-                focus_handle.focus(window, cx);
+                view.update(cx, |state, cx| {
+                    state.is_selecting = true;
+                    if state.focusable {
+                        state.focus_handle.focus(window, cx);
+                    }
+                });
             },
             cx,
         );

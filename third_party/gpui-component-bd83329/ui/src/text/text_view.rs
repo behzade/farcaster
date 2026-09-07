@@ -67,6 +67,7 @@ pub struct TextView {
     text_view_style: TextViewStyle,
     style: StyleRefinement,
     selectable: bool,
+    focusable: bool,
     selection_format: SelectionFormat,
     scrollable: bool,
     code_block_actions: Option<Arc<CodeBlockActionsFn>>,
@@ -103,6 +104,7 @@ impl TextView {
         Self {
             id: ElementId::Name(state.entity_id().to_string().into()),
             state: Some(state.clone()),
+            focusable: true,
             format: None,
             text: None,
             text_view_style: TextViewStyle::default(),
@@ -120,6 +122,7 @@ impl TextView {
     pub fn markdown(id: impl Into<ElementId>, markdown: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            focusable: true,
             format: Some(TextViewFormat::Markdown),
             text: Some(markdown.into()),
             text_view_style: TextViewStyle::default(),
@@ -138,6 +141,7 @@ impl TextView {
     pub fn html(id: impl Into<ElementId>, html: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            focusable: true,
             format: Some(TextViewFormat::Html),
             text: Some(html.into()),
             text_view_style: TextViewStyle::default(),
@@ -155,6 +159,13 @@ impl TextView {
     /// Set [`TextViewStyle`].
     pub fn style(mut self, style: TextViewStyle) -> Self {
         self.text_view_style = style;
+        self
+    }
+
+    /// Whether clicks and selection take keyboard focus. Defaults to true.
+    /// Disabling focus does not disable mouse selection.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
         self
     }
 
@@ -333,6 +344,7 @@ impl Element for TextView {
             state.link_click_handler = self.link_click_handler.clone();
             state.set_markdown_extensions(self.markdown_extensions.clone(), cx);
             state.selectable = self.selectable;
+            state.focusable = self.focusable;
             state.selection_format = self.selection_format;
             state.scrollable = self.scrollable;
             if state.text_view_style != self.text_view_style {
@@ -350,7 +362,7 @@ impl Element for TextView {
 
         let mut el = div()
             .key_context("TextView")
-            .track_focus(&focus_handle)
+            .when(self.focusable, |this| this.track_focus(&focus_handle))
             .when(self.scrollable, |this| {
                 this.size_full().vertical_scrollbar(&list_state)
             })
@@ -811,6 +823,54 @@ mod tests {
         assert!(clicks[1].1.is_middle_click());
         assert!(clicks[2].1.is_right_click());
         assert_eq!(cx.opened_url(), None);
+    }
+
+    #[gpui::test]
+    fn non_focusable_text_preserves_focus_during_selection(cx: &mut TestAppContext) {
+        struct SelectionRoot {
+            owner: gpui::FocusHandle,
+        }
+
+        impl Render for SelectionRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .w(px(240.))
+                    .child(
+                        TextView::markdown("text", "select this text")
+                            .selectable(true)
+                            .focusable(false),
+                    )
+                    .child(div().track_focus(&self.owner).h(px(24.)))
+            }
+        }
+
+        cx.update(crate::init);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            let owner = cx.focus_handle();
+            owner.focus(window, cx);
+            SelectionRoot { owner }
+        });
+        let cx: &mut VisualTestContext = cx;
+        cx.simulate_mouse_down(
+            point(px(10.), px(10.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| assert!(view.read(cx).owner.is_focused(window)));
+        cx.simulate_mouse_move(
+            point(px(90.), px(10.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(90.), px(10.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| {
+            assert!(view.read(cx).owner.is_focused(window));
+            assert!(!gpui_base::TextSelection::selected_text(window, cx).is_empty());
+        });
     }
 
     #[gpui::test]

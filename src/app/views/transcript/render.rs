@@ -577,6 +577,7 @@ fn selectable_text_state(state: &Entity<TextViewState>) -> TextView {
 fn styled_selectable_text(text: TextView) -> TextView {
     text.style(transcript_markdown_style())
         .selectable(true)
+        .focusable(false)
         .w_full()
         .min_w_0()
         .text_size(THEME.type_scale.reading)
