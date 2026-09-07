@@ -22,6 +22,40 @@ use crate::{
 };
 
 #[test]
+fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().canonicalize()?;
+    let record = ComposerRecord {
+        target: "draft:startup".into(),
+        text: "Unsent work before quitting".into(),
+        cursor: 26,
+        selection_start: 26,
+        selection_end: 26,
+        history: Vec::new(),
+    };
+    {
+        let mut store = StateStore::open_at(&database)?;
+        let mut registry = store.load_registry()?;
+        registry.projects.push(project.clone());
+
+        // Match startup: register the allocated draft before saving the registry.
+        let mut draft = DraftSession::new("startup".into(), 0, project, 1);
+        draft.app_session_id = store.allocate_app_session_id(&draft)?;
+        registry.drafts.push(draft);
+        store.save_registry(&registry)?;
+
+        // Save synchronously without switching targets to exclude shutdown races.
+        store.save_composer_session(&record)?;
+    }
+
+    let reopened = StateStore::open_at(&database)?;
+    assert_eq!(reopened.load_composer_sessions()?, vec![record]);
+    assert_eq!(reopened.load_registry()?.drafts.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn window_placement_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");

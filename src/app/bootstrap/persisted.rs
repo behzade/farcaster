@@ -52,12 +52,13 @@ pub(super) fn load(project: &Path) -> PersistedState {
     drop(draft_timing);
 
     let selected_draft = initial_draft.id.clone();
-    let mut draft_session_ids = registry
+    // Registry saves delete omitted drafts, making their composer saves no-ops.
+    registry.drafts.push(initial_draft);
+    let draft_session_ids = registry
         .drafts
         .iter()
         .map(|draft| (draft.id.clone(), draft.app_session_id))
         .collect::<HashMap<_, _>>();
-    draft_session_ids.insert(initial_draft.id, initial_draft.app_session_id);
 
     let save_registry_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.save_registry");
