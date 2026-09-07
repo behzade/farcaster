@@ -346,6 +346,22 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         },
         shortcut!(
             "Application",
+            "Previous picker item",
+            "shift-tab",
+            SelectUp,
+            Some("PiPicker > Input"),
+            false
+        ),
+        shortcut!(
+            "Application",
+            "Next picker item",
+            "tab",
+            SelectDown,
+            Some("PiPicker > Input"),
+            false
+        ),
+        shortcut!(
+            "Application",
             "Back in action picker",
             "alt-left",
             crate::app::PickerNavigateBack,
@@ -558,6 +574,37 @@ mod tests {
                         .as_any()
                         .is::<crate::app::PickerNavigateBack>()),
                     expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tab_navigation_stays_in_picker_input() {
+        let keymap = gpui::Keymap::new(bindings());
+        for (key, action) in [
+            ("tab", &super::SelectDown as &dyn gpui::Action),
+            ("shift-tab", &super::SelectUp as &dyn gpui::Action),
+        ] {
+            for context in [
+                "PiPicker",
+                "FarcasterComposer",
+                crate::app::NATIVE_INPUT_CONTEXT,
+            ] {
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse(key).unwrap()],
+                    &[
+                        gpui::KeyContext::parse("Root").unwrap(),
+                        gpui::KeyContext::parse(context).unwrap(),
+                        gpui::KeyContext::parse("Input").unwrap(),
+                    ],
+                );
+                assert_eq!(
+                    bindings
+                        .first()
+                        .is_some_and(|binding| binding.action().name() == action.name()),
+                    context == "PiPicker",
+                    "{key} in {context}",
                 );
             }
         }

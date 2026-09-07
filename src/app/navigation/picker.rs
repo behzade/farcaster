@@ -349,7 +349,7 @@ impl FarcasterApp {
                                         .py(THEME.space.sm)
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(THEME.colors.subtle)
-                                        .child("↑ ↓ Move")
+                                        .child("↑ ↓ / Tab ⇧Tab Move")
                                         .child("Enter Choose")
                                         .child("Alt+← Back")
                                         .child("Esc Close"),
