@@ -244,7 +244,6 @@ fn command_actions_category(item: &Value) -> ToolCategory {
     }
 }
 
-/// Renders a Codex sleep duration as a short human-readable wait time.
 pub(super) fn wait_duration(item: &Value) -> String {
     let seconds = item
         .get("durationMs")

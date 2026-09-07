@@ -1,5 +1,3 @@
-//! Launch-time diagnostics inherited by Pi and its actions on macOS and Linux.
-//! These are labels, not credentials or authoritative live session state.
 use std::{ffi::OsStr, path::Path, process::Command};
 
 use super::SessionLaunch;
@@ -32,8 +30,6 @@ pub(super) fn apply(
         .env("FARCASTER_PROCESS_PROJECT", project)
         .env("FARCASTER_PROCESS_ROLE", role)
         .env("FARCASTER_PROCESS_LAUNCH", mode);
-    // Set or remove each optional field once, overriding stale labels from
-    // the captured login environment or an agent that launched the desktop.
     for (key, value) in [
         (
             "FARCASTER_PROCESS_WORKER_ID",

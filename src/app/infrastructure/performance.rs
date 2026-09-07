@@ -275,8 +275,6 @@ impl Drop for OperationTiming {
     }
 }
 
-/// Diagnostic wall-clock timing for startup work that happens before the
-/// performance monitor is installed. Enabled by `DEBUG=true`.
 #[must_use]
 pub(crate) struct StartupTiming {
     name: &'static str,

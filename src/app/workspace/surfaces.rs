@@ -1,4 +1,3 @@
-//! Focus restoration and dismissal policy for app-owned overlays.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -51,16 +50,12 @@ const fn should_capture_return_focus(flags: SheetFlags) -> bool {
     !flags.any()
 }
 
-/// Agent requests replace the composer slot. They never become a modal
-/// recovery target and only receive focus when that slot already owns input.
 #[cfg(test)]
 const fn arriving_request_takes_focus(composer_slot_owns: bool) -> bool {
     composer_slot_owns
 }
 
 impl FarcasterApp {
-    /// A captured control/menu can disappear during an async session update.
-    /// Restore the top surviving overlay, otherwise the active surface's owner.
     pub(in crate::app) fn recover_keyboard_focus(
         &mut self,
         window: &mut Window,
@@ -156,7 +151,6 @@ impl FarcasterApp {
             self.chat_navigation.activation.clear();
             self.chat_navigation.pending_key = None;
             self.chat_navigation.vim.clear();
-            // A completion from a previous editor visit must not affect this view.
             self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
             self.notify_session_rail_shell(cx);
             cx.notify();
@@ -258,8 +252,6 @@ impl FarcasterApp {
             .get(self.composer_sessions.current_target())
             .copied()
             .unwrap_or(AppSurface::Chat);
-        // If restoring a native process fails, keep this session's chat visible,
-        // not the previous session's editor or terminal.
         self.activate_chat_center(cx);
         match surface {
             AppSurface::Editor => self.activate_editor_for_project(project, window, cx),
@@ -834,8 +826,6 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Mirror visual stacking. A settings sheet above an agent request must
-        // close itself, never cancel the request hidden underneath it.
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         } else if self.repository.pending_jj_init.is_some() {

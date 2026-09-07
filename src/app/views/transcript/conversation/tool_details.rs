@@ -14,7 +14,6 @@ pub(crate) enum ToolExecutionState {
     Failed,
 }
 
-/// Retain structured data independently of the readable input/output preview.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ToolDetails {
     pub name: String,
@@ -35,8 +34,6 @@ impl ToolDetails {
             .cloned()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or_default();
-        // Legacy canonical histories can lack metadata. Only shared tool names
-        // are recognized here; native aliases and shell source belong to adapters.
         if metadata.category.is_none() {
             metadata.category = CommonTool::from_name(name).map(|tool| match tool {
                 CommonTool::Read => ToolCategory::Read,
@@ -94,7 +91,6 @@ impl ToolDetails {
         }
     }
 
-    /// Canonical command source, displayed verbatim rather than inferred from a title.
     pub(crate) fn command_preview(&self) -> Option<&str> {
         self.arguments
             .get("command")
@@ -119,7 +115,6 @@ impl ToolDetails {
 }
 
 impl TranscriptItem {
-    /// Resolve legacy row flags and structured lifecycle in one place.
     pub(crate) fn tool_execution_state(&self) -> Option<ToolExecutionState> {
         if self.is_error {
             Some(ToolExecutionState::Failed)

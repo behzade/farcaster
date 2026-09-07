@@ -43,8 +43,6 @@ fn emit_line(label: &str, line: &str) {
     if line.is_empty() {
         return;
     }
-    // Unit-test binaries do not initialize the application's file logger. Keep
-    // live harness startup diagnostics visible under --nocapture as well.
     #[cfg(test)]
     eprintln!("{label} stderr: {line}");
     let level = structured_level(line).unwrap_or(Level::Warn);

@@ -60,7 +60,6 @@ impl Keyboard {
         load: &mut impl FnMut(usize) -> TextRow,
     ) -> Position {
         let mut current = pos;
-        // b/e/ge first leave the current boundary; w starts by leaving its class.
         if forward && !end {
             let class = self.row(current.row, load).cells[current.cell].class(big);
             while let Some(next) = self.adjacent(current, true, count, load) {
@@ -75,7 +74,6 @@ impl Keyboard {
         } else if let Some(next) = self.adjacent(current, forward, count, load) {
             current = next;
             if !forward && end {
-                // ge skips the rest of the current word before seeking the previous end.
                 let class = self.row(pos.row, load).cells[pos.cell].class(big);
                 while current.row == pos.row
                     && class != 0
@@ -170,7 +168,6 @@ impl Keyboard {
         let row = self.row(pos.row, load);
         let line = row.motion_line(pos.cell, false);
         let mut cell = pos.cell;
-        // Repeating t/T must not find the same adjacent character again.
         let skip = if till && repeated { 2 } else { 1 };
         for _ in 0..skip {
             let Some(next) = (if forward {
@@ -379,7 +376,6 @@ impl Keyboard {
                 }
                 offset += value.text.len();
             }
-            // A document search must not retain every virtualized row.
             if row_index != pos.row && !self.anchor.is_some_and(|p| p.row == row_index) {
                 self.cache.remove(&row_index);
             }

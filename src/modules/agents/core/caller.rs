@@ -14,7 +14,6 @@ use super::{super::contract::PeerMessage, names, worker::WorkerActivityState};
 mod inputs;
 pub(crate) use inputs::is_child_input_id;
 
-/// Farcaster ancestry is independent of backend-native thread/session ancestry.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkerFamilyLink {
     pub(crate) project: PathBuf,
@@ -339,7 +338,6 @@ impl CallerRegistry {
             .and_then(|child| child.assignment.clone()))
     }
 
-    /// Backend-native ancestry must never receive a foreign session locator.
     pub(crate) fn native_parent_session(&self, worker_id: &str, backend: &str) -> Option<String> {
         self.callers
             .lock()
@@ -419,8 +417,6 @@ impl CallerIdentity {
         &self.token
     }
 
-    /// Public diagnostic identity, available before the native session binds.
-    /// Never expose the caller's authorization token in process metadata.
     pub(crate) fn worker_identity(&self) -> Option<(String, String)> {
         let callers = self.registry.callers.lock().ok()?;
         let caller = callers.get(&self.token)?;

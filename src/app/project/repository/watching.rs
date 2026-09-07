@@ -91,7 +91,6 @@ impl FarcasterApp {
                     RepositoryWatchEvent::Changed => (true, None),
                     RepositoryWatchEvent::Failed(error) => (false, Some(error)),
                 };
-                // One fixed window coalesces a burst without waiting for writes to stop.
                 cx.background_executor().timer(WATCH_DEBOUNCE).await;
                 let queued = events.len();
                 for _ in 0..queued {

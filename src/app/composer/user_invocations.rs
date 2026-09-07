@@ -14,7 +14,6 @@ pub(crate) fn contains_invocation(input: &str, commands: &[SlashCommand]) -> boo
     recognized_invocations(input, commands).next().is_some()
 }
 
-/// Exact catalog matches, sharing submission's aliases and punctuation rules.
 pub(crate) fn recognized_invocations(
     input: &str,
     commands: &[SlashCommand],

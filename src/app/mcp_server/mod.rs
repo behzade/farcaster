@@ -1,4 +1,3 @@
-//! Sessionless Streamable HTTP adapter for Farcaster-owned MCP capabilities.
 
 mod lifecycle;
 mod notices;

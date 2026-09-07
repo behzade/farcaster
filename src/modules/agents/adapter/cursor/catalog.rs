@@ -19,7 +19,6 @@ struct SessionMeta {
     extra: BTreeMap<String, serde_json::Value>,
 }
 
-// Match cursor-config/paths: an explicit override wins over XDG, then HOME.
 fn session_root() -> Result<PathBuf, String> {
     let env = |key| {
         std::env::var(key)
@@ -88,8 +87,6 @@ fn metadata(directory: &Path) -> Result<SessionMeta, String> {
     Ok(meta)
 }
 
-// A sidecar is allocated by session/new before Cursor has persisted any turns.
-// Only this known draft state may be restarted; missing/corrupt sessions are errors.
 fn session_data(directory: &Path) -> Result<(SessionMeta, bool), String> {
     let meta = metadata(directory)?;
     let unpersisted = match std::fs::symlink_metadata(directory.join("store.db")) {
@@ -213,7 +210,6 @@ fn read_session(locator_root: &Path, query: &str, directory: &Path) -> Option<Di
         first_user_message: String::new(),
         timestamp: String::new(),
         modified,
-        // ACP root blobs can be encrypted; history is replayed by Cursor, not decoded here.
         message_count: 0,
         usage: DiscoveredUsage::default(),
         archived: false,

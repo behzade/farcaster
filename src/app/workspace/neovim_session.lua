@@ -4,7 +4,6 @@
   if not state then
     state = { tabs = {} }
     _G.farcaster_session_views = state
-    -- The first session owns the startup tab, including the user's config.
     state.tabs[id] = vim.api.nvim_get_current_tabpage()
   end
 
@@ -21,7 +20,6 @@
   end
 
   if path ~= nil and path ~= vim.NIL then
-    -- Keep modified buffers even when 'hidden' is disabled in user config.
     vim.cmd('hide edit ' .. vim.fn.fnameescape(path))
     if line ~= nil and line ~= vim.NIL then
       vim.fn.cursor(line, 1)

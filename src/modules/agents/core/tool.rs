@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Backend-supplied facts, never inferred from shell source by the transcript.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ToolCategory {
@@ -25,7 +24,6 @@ pub(crate) struct ToolMetadata {
     pub(crate) title: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) targets: Vec<String>,
-    /// Native input/item retained for inspection, not interpreted above adapters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) native: Option<Value>,
 }

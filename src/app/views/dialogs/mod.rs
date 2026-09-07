@@ -1,4 +1,3 @@
-//! Modal and startup-gate views.
 
 pub(super) mod archive_confirmation;
 pub(super) mod delete_confirmation;

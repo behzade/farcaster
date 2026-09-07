@@ -14,7 +14,6 @@ pub(crate) fn draft_top_padding(height: Pixels) -> Pixels {
     gpui::px((f32::from(height) * 0.18).clamp(24.0, 160.0))
 }
 
-/// Leave breathing room without wasting transcript space in short windows.
 pub(crate) fn composer_bottom_clearance(height: Pixels) -> Pixels {
     gpui::px(((f32::from(height) - 400.0) * 0.06).clamp(12.0, 28.0))
 }

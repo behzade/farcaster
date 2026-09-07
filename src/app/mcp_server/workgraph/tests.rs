@@ -100,7 +100,6 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
         )
         .is_err()
     );
-    // The same catalog identity is used by the right sidebar.
     let selection = workgraph::load_plan(database.clone(), temp.path().to_owned(), Some("alice"))?;
     assert_eq!(
         selection.snapshot.unwrap().walk.unwrap().current_node,
@@ -130,7 +129,6 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
     assert_eq!(found["tasks"].as_array().unwrap().len(), 1);
     assert_eq!(found["tasks"][0]["task"], second);
     assert!(!found.to_string().contains("sessionPath"));
-    // Existing file-evidence tasks remain completable through the compact API.
     edit(
         &database,
         &alice,

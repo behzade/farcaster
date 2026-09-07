@@ -99,7 +99,6 @@ pub(super) fn decode_frame(frame: &[u8]) -> Result<AcpInbound, String> {
     }
 }
 
-// ACP agents often put the actionable explanation in JSON-RPC error.data.
 fn error_message(error: &Value) -> String {
     let message = error
         .get("message")

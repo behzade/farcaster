@@ -256,9 +256,6 @@ fn run_catalog_operation<T: Send + 'static>(
     }
 }
 
-// Bound the entire exchange, not individual reads: authentication, session creation,
-// and a stream of unrelated notifications must all share the same deadline.
-// The caller always kills/reaps the child, including on timeout or worker failure.
 #[cfg(test)]
 fn run_with_timeout<T: Send + 'static>(
     timeout: Duration,

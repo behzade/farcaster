@@ -171,8 +171,6 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
             )?;
         }
         if coverage.history && harness == "pi" {
-            // Pi serves its live JSONL entries directly. External bridges populate
-            // LoadHistory only when they are constructed for a resumed session.
             require_history_response(&mut *session, &marker)?;
         }
         if coverage.usage {

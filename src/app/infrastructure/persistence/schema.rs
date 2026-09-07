@@ -46,7 +46,6 @@ impl StateStore {
             let migration = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|error| format!("start GUI state schema migration: {error}"))?;
-            // Recheck under the write lock: another connection may have initialized it.
             match schema_version(&migration)? {
                 None => {
                     migration

@@ -24,9 +24,6 @@ const AGENT_SOURCE_KINDS: &[&str] = &[
     "subAgentThreadSpawn",
     "subAgentOther",
 ];
-/// Codex runs approval reviews and other ephemeral subsessions under dedicated
-/// models. They are not long-lived subagents and must not surface in the
-/// session rail.
 const EPHEMERAL_MODELS: &[&str] = &["codex-auto-review"];
 
 pub(in crate::modules::agents::adapter) fn discover(

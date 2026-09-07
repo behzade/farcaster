@@ -457,8 +457,6 @@ impl Drop for ComposerPersistence {
 }
 
 fn flush(store: &StateStore, pending: &mut Vec<PersistenceCommand>) {
-    // Different target strings may now refer to the same session row.
-    // Apply the last change for each target in send order, including deletions.
     let mut completed = 0;
     for command in pending.iter() {
         let result = match command {

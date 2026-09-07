@@ -69,8 +69,6 @@ impl RenderOnce for ComposerInput {
             .flex()
             .flex_col()
             .flex_1()
-            // The card owns the resting height; attachments share that space.
-            // Fill it so empty chrome is still an editor hitbox.
             .min_h(px(48.0))
             .font_family(UI_FONT_FAMILY)
             .text_size(THEME.type_scale.reading)

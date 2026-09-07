@@ -6,8 +6,6 @@ pub(crate) struct FileAttachment {
     pub path: PathBuf,
 }
 
-/// Decode the legacy paste envelope only when the entire trailing list is valid.
-/// Ordinary Markdown links in the user's prose are not attachments.
 pub(super) fn split_pasted_files(message: &str) -> (&str, Vec<FileAttachment>) {
     let summary = pasted_file_summary(message);
     let (body, links) = if let Some(links) = summary.strip_prefix("Pasted text files:\n") {

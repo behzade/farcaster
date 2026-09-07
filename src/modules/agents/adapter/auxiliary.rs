@@ -37,7 +37,6 @@ pub(crate) fn generate_session_title(
         .unwrap_or_else(|| "backend-default".into());
     zlog::info!("Generating {harness} session title with {selected}");
     let output = match harness {
-        // Pi title inference must never enter the transcript-oriented RPC worker path.
         "pi" => generate_pi_title(
             config,
             project,

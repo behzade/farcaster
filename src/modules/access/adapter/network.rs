@@ -1,4 +1,3 @@
-//! Harness-wide optional proxy configuration.
 
 use std::ffi::OsString;
 

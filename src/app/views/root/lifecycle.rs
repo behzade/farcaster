@@ -78,8 +78,6 @@ impl FarcasterApp {
                         state.set_value(prefill, window, cx);
                     });
                 }
-                // Requests replace the composer slot only. Never steal from the
-                // transcript, editor, terminal, or a later modal overlay.
                 if composer_slot_owns && this.keyboard_overlay_focus(window, cx).is_none() {
                     focus.focus(window, cx);
                 }

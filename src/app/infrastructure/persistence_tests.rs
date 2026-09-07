@@ -1096,7 +1096,6 @@ fn discovery_prunes_only_disposable_catalog_rows() -> Result<(), Box<dyn std::er
         &[],
     )?;
     store.set_session_archived(&sessions[3].path, true)?;
-    // A disposable row in another harness must not delete this archived row.
     let mut foreign = sessions[3].clone();
     foreign.harness = "codex-cli".into();
     foreign.id = "foreign-archive".into();
@@ -1446,7 +1445,6 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     );
     assert_eq!(cached[0].thinking_level, None);
 
-    // Records saved before execution metadata was added remain readable.
     let mut legacy = serde_json::to_value(&link).map_err(|error| error.to_string())?;
     legacy.as_object_mut().unwrap().remove("execution");
     let legacy: crate::agents::WorkerFamilyLink =

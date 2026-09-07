@@ -1,4 +1,3 @@
-//! Process, persistence, and application lifecycle adapters.
 
 use super::*;
 

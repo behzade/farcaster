@@ -55,7 +55,6 @@ fn child_interaction(input: agents::WorkerInput) -> ExtensionUiRequest {
             timeout: None,
         }
     } else {
-        // Two choices are not necessarily an approval. Preserve the exact values.
         ExtensionUiRequest::Select {
             id: input.id,
             title: input.prompt,

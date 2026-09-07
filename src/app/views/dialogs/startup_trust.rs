@@ -1,4 +1,3 @@
-//! Project trust gate shown before the application opens a project.
 
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 

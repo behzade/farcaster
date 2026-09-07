@@ -142,7 +142,6 @@ impl WorkerTaskEditor {
     }
 }
 
-/// Downstream choices must never survive a change to their provider or harness.
 fn apply_choice(route: &mut WorkerExecution, choice: WorkerRouteChoice) {
     match choice {
         WorkerRouteChoice::Harness(harness) if route.harness != harness => {
@@ -172,7 +171,6 @@ pub(in crate::app) fn model_efforts<'a>(
     catalog: &'a ConfigurationCatalog,
     model: Option<&'a crate::protocol::Model>,
 ) -> &'a [String] {
-    // Known-empty differs from unknown; non-reasoning models have no effort control.
     match model.filter(|model| model.reasoning) {
         Some(model) => model.efforts.as_deref().unwrap_or(&catalog.efforts),
         None => &[],

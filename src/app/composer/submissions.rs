@@ -286,8 +286,6 @@ fn rejected_attachment_target(
 }
 
 fn submission_delivery(value: &str, requested: PromptMode) -> (PromptMode, bool) {
-    // Slash commands belong to the selected backend. Send them as normal prompts even
-    // while a turn is active so the backend can apply its own command semantics.
     if value.trim_start().starts_with('/') {
         (PromptMode::Normal, true)
     } else {

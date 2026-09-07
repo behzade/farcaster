@@ -17,8 +17,6 @@ use crate::{
 
 type ButtonPress = dyn Fn(&mut Window, &mut App);
 
-/// Pointer activation is an action, not a request for keyboard ownership.
-/// Keep Tab focus and explicit focus changes in click handlers intact.
 pub(crate) fn preserve_pointer_focus(_: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
     window.prevent_default();
     gpui_base::GlobalState::suppress_text_selection(cx);

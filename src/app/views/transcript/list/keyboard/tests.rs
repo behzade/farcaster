@@ -123,10 +123,8 @@ fn click_places_the_nearest_cell_without_keeping_visual() {
         ..Default::default()
     };
     let mut load = |_| text_row("hello world");
-    // text_row places each grapheme at (cell * 10, 0) with size 10x20.
     keyboard.place_at(point(px(55.0), px(8.0)), 0, px(0.0), &mut load);
     assert_eq!(keyboard.cursor, Some(Position { row: 0, cell: 5 }));
-    // Right half of a glyph still belongs to that character, not the next one.
     keyboard.place_at(point(px(18.0), px(8.0)), 0, px(0.0), &mut load);
     assert_eq!(keyboard.cursor, Some(Position { row: 0, cell: 1 }));
     keyboard.place_at(point(px(18.0), px(24.0)), 0, px(0.0), &mut load);
@@ -313,7 +311,6 @@ fn caret_motion_at_viewport_end_does_not_resume_tail(cx: &mut TestAppContext) {
         assert_eq!(state.0.borrow().scroll_y, state.0.borrow().maximum_scroll());
         assert!(!state.is_following_tail());
 
-        // Idle repaint used to snap the caret back to the end.
         draw(cx, &state, &texts, 240.0, false);
         assert_eq!(state.0.borrow().keyboard.cursor, Some(moved));
         assert!(!state.is_following_tail());

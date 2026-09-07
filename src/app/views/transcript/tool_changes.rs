@@ -15,7 +15,6 @@ use crate::app::{
     views::transcript::conversation::ToolPresentation,
 };
 
-/// All tool types use the same row geometry, without an extra disclosure gutter.
 pub(super) fn title_row(
     id: impl Into<ElementId>,
     label: String,

@@ -11,8 +11,6 @@ pub(crate) struct PeerMessage {
 }
 
 impl PeerMessage {
-    // Encode the sender reversibly when a backend accepts worker messages
-    // through its user-input channel.
     const PROMPT_PREFIX: &'static str = "Message from Farcaster worker ";
     const LEGACY_PROMPT_PREFIX: &'static str = "Message from Farcaster peer ";
 

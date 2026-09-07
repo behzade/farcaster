@@ -266,8 +266,6 @@ impl TranscriptListState {
         self.0.borrow().viewport_height
     }
 
-    /// Positive distances move down, unlike wheel deltas. Use the same batched
-    /// frame path as the mouse so following/unseen state stays in sync.
     pub(crate) fn scroll_by(&self, distance: Pixels, window: &Window, view: EntityId) {
         if let Some(token) = self.queue_scroll(-distance) {
             request_scroll_frame(window, view, self.clone(), token);
@@ -476,7 +474,6 @@ impl Element for TranscriptList {
             }
 
             let mut state = self.state.0.borrow_mut();
-            // Being at the bottom after a caret motion is not a request to follow.
             if !state.keyboard.active || viewport_scrolled {
                 state.resume_tail_at_end();
             }

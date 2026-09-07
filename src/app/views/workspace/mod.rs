@@ -1,4 +1,3 @@
-//! Chat-adjacent native workspace views.
 
 mod editor;
 mod shell;

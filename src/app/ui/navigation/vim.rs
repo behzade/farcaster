@@ -1,4 +1,3 @@
-//! Stateful Vim motion input. App activation and its keys never pass through here.
 use super::shortcuts::keyboard_command;
 use crate::app::views::transcript::list::KeyboardCommand;
 

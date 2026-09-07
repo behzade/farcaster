@@ -401,9 +401,6 @@ fn model_variant_efforts(model: &Value) -> Vec<String> {
         .collect()
 }
 
-/// Per-model effort catalogs from main-session metadata. Only models that
-/// advertised their variants are inserted; known-empty catalogs are preserved
-/// because sending any variant to such a model bricks the session.
 fn effort_catalog(
     metadata: &crate::modules::agents::adapter::main_session::MainSessionMetadata,
 ) -> HashMap<(String, String), Vec<String>> {
@@ -425,10 +422,6 @@ fn effort_catalog(
         .collect()
 }
 
-/// The variant to send for a model, or None when the effort must not be sent.
-/// A stored effort is only forwarded when the target model is known to accept
-/// it; OpenCode persists unknown variants and then fails every prompt with
-/// "Variant unavailable", so an unvalidated effort must never be sent.
 fn variant_for_model(effort: Option<&str>, known: Option<&Vec<String>>) -> Option<String> {
     let effort = effort?;
     match known {
@@ -440,12 +433,6 @@ fn variant_for_model(effort: Option<&str>, known: Option<&Vec<String>>) -> Optio
     }
 }
 
-/// Token accounting for OpenCode usage events.
-///
-/// `session.step.ended` carries one step's provider usage, which is also the
-/// current context size. `session.usage.updated` carries session-cumulative
-/// totals that count every cache re-read, so they must be adopted as the
-/// session total and never used as the context metric.
 #[derive(Default)]
 struct OpenCodeUsageTracker {
     session: TokenUsage,
@@ -1053,8 +1040,6 @@ impl OpenCodeWorkerSession {
                         secret: false,
                     }));
                 }
-                // Admission and streamed-time markers carry no transcript payload; compaction
-                // progress is represented by its start and terminal events.
                 "session.next.prompt.admitted"
                 | "session.step.streamed"
                 | "session.next.compaction.delta" => {}
@@ -1435,8 +1420,6 @@ fn configure_opencode_server(
     if matches!(mode, crate::agents::HarnessAccessMode::Auto) {
         return Err("OpenCode does not support model-reviewed automatic approvals".into());
     }
-    // A Farcaster session owns this server process. Letting the server replace its global
-    // executable in the background makes concurrently starting sessions fail nondeterministically.
     command
         .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
         .args(["serve", "--stdio", "--print-logs"]);
@@ -1587,12 +1570,9 @@ mod tests {
     #[test]
     fn an_effort_unknown_to_the_target_model_is_never_sent_as_a_variant() {
         let efforts = vec!["low".to_owned(), "medium".to_owned()];
-        // A Pi-style display default must not leak into OpenCode model selection.
         assert_eq!(variant_for_model(Some("off"), Some(&efforts)), None);
         assert_eq!(variant_for_model(Some("off"), None), Some("off".into()));
         assert_eq!(variant_for_model(None, Some(&efforts)), None);
-        // A stale effort from a previous model is dropped when the new model
-        // publishes its variants; unknown catalogs keep current behavior.
         assert_eq!(variant_for_model(Some("high"), Some(&efforts)), None);
         assert_eq!(
             variant_for_model(Some("low"), Some(&efforts)),
@@ -1649,15 +1629,11 @@ mod tests {
             cache_write: 0,
         };
 
-        // Turn 1: fresh step, then the cumulative session update that follows.
         let (turn, session) = tracker.step_ended(tokens(3837, 3, 0));
         assert_eq!((turn.total(), session.total()), (3840, 3840));
         let (turn, session) = tracker.session_total(tokens(4356, 14, 0));
-        // The cumulative total must not become the context metric, and must
-        // not be added on top of the step usage again.
         assert_eq!((turn.total(), session.total()), (3840, 4370));
 
-        // Turn 2: context is mostly cached; cumulative totals keep growing.
         let (turn, session) = tracker.step_ended(tokens(72, 4, 3776));
         assert_eq!((turn.total(), session.total()), (3852, 8222));
         let (turn, session) = tracker.session_total(tokens(4428, 18, 3776));

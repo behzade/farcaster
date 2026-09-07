@@ -1,5 +1,3 @@
-# cargo-release prepares the version commit and immutable tag. GitHub Actions
-# builds and publishes the platform artifacts after the tag is pushed.
 publish = false
 push = true
 tag = true
@@ -10,7 +8,6 @@ tag-message = "Farcaster v{{version}}"
 pre-release-commit-message = "chore(release): prepare v{{version}}"
 allow-branch = ["main"]
 
-# The standalone Linux packager config cannot inherit Cargo's package version.
 pre-release-replacements = [
   { file = "packaging/linux.toml", exactly = 1, search = 'version = "{{prev_version}}"', replace = 'version = "{{version}}"' },
 ]

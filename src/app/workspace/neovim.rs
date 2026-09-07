@@ -1,4 +1,3 @@
-//! Session-scoped Neovim transport. Each session owns its process and buffers.
 
 use std::{
     io::{Read as _, Seek as _},
@@ -28,8 +27,6 @@ pub(in crate::app) struct NvimEditor {
     executable: PathBuf,
     socket_dir: Arc<tempfile::TempDir>,
     terminal: Entity<Terminal>,
-    // Each request awaits its predecessor, including while the server starts.
-    // Concurrent --remote-expr clients otherwise race to select different tabs.
     pending: Option<Task<()>>,
 }
 
@@ -46,7 +43,6 @@ impl NvimEditor {
                 .tempdir()
                 .map_err(|error| format!("create Neovim socket directory: {error}"))?,
         );
-        // Keep the user's config, with separate swap, backup, undo, and ShaDa files.
         let command = format!(
             "{} -i {} --cmd {} --listen {} -- {}",
             shell_quote(&executable),
@@ -148,8 +144,6 @@ fn vim_string(value: &str) -> String {
 }
 
 fn session_expression(tab: u64, path: Option<&Path>, line: Option<u64>) -> String {
-    // Data stays in luaeval's argument list; neither filenames nor session keys
-    // are interpolated into executable Lua or Ex commands.
     let path = path.map_or_else(
         || "v:null".to_owned(),
         |path| vim_string(&path.to_string_lossy()),
@@ -169,7 +163,6 @@ fn run_remote(
 ) -> Result<(), String> {
     let started = Instant::now();
     loop {
-        // A file avoids deadlocking on a full stderr pipe from user autocmds.
         let mut stderr = tempfile::tempfile().map_err(|error| error.to_string())?;
         let mut child = Command::new(executable)
             .current_dir(project)

@@ -237,8 +237,6 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        // Agent requests belong to their session, not the whole workspace.
-        // The runtime retains pending dialogs when selecting another session.
         if self.native_workspace_modal_active() {
             return;
         }

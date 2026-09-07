@@ -625,7 +625,6 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-// Keep draft and persisted rows on the same trailing metadata columns.
 pub(super) fn session_row_metadata(
     harness: &str,
     app_session_id: i64,

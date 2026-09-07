@@ -114,7 +114,6 @@ impl Supervisor {
                     persist_configurations(self.catalog_state.as_ref(), &self.configurations);
                 }
                 if snapshot.conversation.settled {
-                    // A settled parent can still have children waiting for the user.
                     if let Some(dialogs) = self.active_dialogs.get_mut(&key) {
                         dialogs.retain(|request| {
                             request.dialog_id().is_some_and(agents::is_child_input_id)

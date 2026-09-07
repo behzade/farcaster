@@ -45,7 +45,6 @@ fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), Stri
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
-    // Keep the application's ID and draft key; transfer catalog and dependent state.
     for sql in [
         "UPDATE sessions SET
            (backend_id, parent_backend_id, title, first_user_message, search_text,
@@ -200,7 +199,6 @@ impl StateStore {
         session_path: Option<&Path>,
         harness: Option<&str>,
     ) -> Result<Option<i64>, String> {
-        // A draft's stable application ID wins while discovery binds its locator.
         if let Some(key) = target.strip_prefix("draft:") {
             let id = self
                 .connection

@@ -1,4 +1,3 @@
-//! Shared attachment chrome for drafts and transcript history.
 use std::sync::Arc;
 
 use crate::app::{
@@ -79,7 +78,6 @@ pub(super) fn open_card(
     use gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
     let open = std::rc::Rc::new(open);
     let click = open.clone();
-    // Keep opening and removal as sibling controls, not nested buttons.
     card()
         .id(id)
         .hover(|card| card.border_color(THEME.colors.accent))
@@ -112,7 +110,6 @@ pub(super) fn open_card(
         )
 }
 
-/// Image labels and preview actions are identical in drafts and history.
 pub(super) fn image_card(
     id: impl Into<gpui::ElementId>,
     image: Arc<Image>,

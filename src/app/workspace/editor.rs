@@ -74,7 +74,6 @@ impl FarcasterApp {
             );
             return;
         }
-        // Hide the previous session's editor until this request completes.
         self.hide_editor(cx);
         self.editor = None;
         self.editor_ready = false;
@@ -83,8 +82,6 @@ impl FarcasterApp {
 
         let project = project.canonicalize().unwrap_or(project);
         let target = self.composer_sessions.current_target().to_owned();
-        // The view ID survives draft promotion and owns a separate process,
-        // even when another session edits the same project or file.
         let tab = *self
             .session_editor_tabs
             .entry(target.clone())
@@ -194,8 +191,6 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn close_editor(&mut self, cx: &mut Context<Self>) {
-        // Keep the session's process and unsaved buffers when leaving its view.
-        // The process stays alive until Neovim exits (or the app does).
         self.hide_editor(cx);
         self.editor = None;
         self.editor_ready = false;
@@ -208,8 +203,6 @@ impl FarcasterApp {
     }
 }
 
-// Returning to an editor does not establish ownership of an older delayed
-// request, and completions must never navigate back from another surface.
 fn editor_completion_is_current(
     generation: u64,
     current_generation: u64,
@@ -270,7 +263,6 @@ mod tests {
             Some(11),
             AppSurface::Editor
         ));
-        // A shared process is not enough: the request, tab, and view must match.
         for (generation, tab, surface) in [
             (2, Some(11), AppSurface::Editor),
             (1, Some(22), AppSurface::Editor),

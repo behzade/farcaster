@@ -41,10 +41,6 @@ fi
 
 mkdir -p "$target_dir/release"
 if [ "$platform" = "Linux" ]; then
-    # cargo-packager names Linux desktop entries after the main executable. Use
-    # a tiny launcher named after our canonical app ID so Wayland shells can
-    # resolve io.github.behzade.farcaster.desktop and its matching icon, while
-    # keeping the application process and command named `farcaster`.
     CARGO_TARGET_DIR="$target_dir" cargo build --release --locked --bin farcaster
     launcher="$target_dir/release/io.github.behzade.farcaster"
     cat >"$launcher" <<'EOF'
@@ -57,9 +53,6 @@ EOF
     packager_config="$root/packaging/linux.toml"
     case ",$formats," in
         *,appimage,*)
-            # linuxdeploy excludes libxcb as a host library and cannot detect
-            # the Wayland and graphics libraries GPUI loads at runtime. NixOS
-            # provides none of them in the global loader search path.
             libxcb=$(ldd "$target_dir/release/farcaster" | awk \
                 '$1 == "libxcb.so.1" && $2 == "=>" { print $3; exit }')
             wayland_libdir=$(pkg-config --variable=libdir wayland-client)
@@ -111,8 +104,6 @@ EOF
             ;;
     esac
 
-    # appimagetool passes explicit timestamp flags to mksquashfs. Recent
-    # mksquashfs rejects those flags when SOURCE_DATE_EPOCH is also inherited.
     unset SOURCE_DATE_EPOCH
     cargo packager --config "$packager_config" --formats "$formats" \
         --out-dir "$target_dir/release" --binaries-dir "$target_dir/release"
@@ -131,9 +122,6 @@ if [ "$platform" = "Darwin" ]; then
     fi
     identity=${CODESIGN_IDENTITY:--}
     if [ "$identity" = "-" ]; then
-        # The default designated requirement for an ad-hoc signature contains
-        # the binary hash. Give local builds a stable, separate identity so
-        # macOS privacy grants survive rebuilds.
         bundle_identifier=$bundle_identifier.dev
         /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_identifier" \
             "$bundle/Contents/Info.plist"

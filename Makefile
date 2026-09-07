@@ -14,7 +14,6 @@ run:
 test:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test
 
-# Runs live agent conformance. Set HARNESS to pi, codex-cli, cursor-cli, or opencode2.
 e2e:
 	$(if $(HARNESS),FARCASTER_E2E_HARNESS="$(HARNESS)" )CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" \
 		cargo test live_harnesses_conform_to_session_outcomes -- --ignored --nocapture
@@ -25,7 +24,6 @@ debug:
 release:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
 
-# Path overrides test unpublished crates without changing Cargo.toml or Cargo.lock.
 release-local:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo \
 		--config 'paths = ["$(GPUI_GHOSTTY_DIR)/crates/gpui-ghostty"]' \
@@ -44,7 +42,6 @@ package:
 	@test -n "$(FORMAT)" || (echo "usage: make package FORMAT=app|dmg|appimage|deb|pacman" >&2; exit 1)
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(FORMAT)" ./scripts/bundle.sh
 
-# Override LOG_LINES, TAIL_ARGS (for example, "-n 100 -f"), or LOG_FILE.
 logs:
 	@tail $(TAIL_ARGS) "$(LOG_FILE)"
 

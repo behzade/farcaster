@@ -59,7 +59,6 @@ impl StateStore {
         for session in sessions {
             upsert_bound_session(&transaction, session)?;
         }
-        // Resolve after all rows exist, including parents discovered after their children.
         transaction
             .execute_batch(
                 "UPDATE sessions AS child SET parent_id=COALESCE(
@@ -357,7 +356,6 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
         row.get(15)?,
     )
     .with_app_session_id(id);
-    // Stored references already use the same identity as the cached parent row.
     session.parent_session = row.get(6)?;
     if let (Some(provider), Some(model)) = (provider, model) {
         session.model = Some((provider, model));

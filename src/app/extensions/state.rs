@@ -2,8 +2,6 @@ use super::*;
 use crate::app::*;
 
 impl FarcasterApp {
-    // App-owned failures use the notification overlay, never transcript events or
-    // center-surface navigation. Callers must validate async ownership first.
     pub(in crate::app) fn notify_workspace_error(
         &mut self,
         source: &str,
@@ -65,7 +63,6 @@ impl FarcasterApp {
         self.pending_dialog_setup = false;
         self.pending_title = Some((generation, "Pi".into()));
         self.pending_editor_text = None;
-        // Async session loads must not steal whatever the user already focused.
         self.dialog_return_focus = None;
         self.overlays.sessions = false;
         self.overlays.run = false;

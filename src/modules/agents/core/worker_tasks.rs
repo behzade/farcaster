@@ -1,4 +1,3 @@
-//! User-owned worker routing. Task labels describe delegated work, not agent personas.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};

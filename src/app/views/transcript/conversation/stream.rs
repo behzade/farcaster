@@ -1,7 +1,7 @@
 use super::*;
 
 impl ConversationState {
-    #[allow(dead_code)] // Used by the standalone transcript benchmark.
+    #[allow(dead_code)]
     pub(crate) fn reduce(&mut self, event: &Value) -> Option<usize> {
         self.reduce_with_projection(event, true)
     }
@@ -41,8 +41,6 @@ impl ConversationState {
             .unwrap_or_default();
         let previous_len = self.items.len();
         let previous_live_start = self.live_message.map(|live| live.start);
-        // Completion removes the active lookup. Capture the actual row before
-        // reducing, including results/reviews arriving after other tool calls.
         let affected_tool = event
             .get("toolCallId")
             .or_else(|| event.pointer("/message/toolCallId"))

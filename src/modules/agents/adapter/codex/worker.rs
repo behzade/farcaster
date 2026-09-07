@@ -694,8 +694,6 @@ impl WorkerSession for CodexWorkerSession {
                     )));
                 }
                 Ok(CodexInbound::Notification { method, params }) => {
-                    // App-scoped telemetry does not carry a threadId, so it must be decoded
-                    // before applying the per-thread notification filter.
                     if let Some(activity) = codex_telemetry(&method, &params) {
                         return Some(WorkerEvent::Activity(activity));
                     }
@@ -876,8 +874,6 @@ impl WorkerSession for CodexWorkerSession {
                             }
                             return Some(WorkerEvent::Activity(review));
                         }
-                        // This repeats the completed automatic-review rationale and has no
-                        // target item to correlate safely.
                         "guardianWarning" => {}
                         "thread/tokenUsage/updated" => {
                             let Some(usage) = params.get("tokenUsage") else {
@@ -973,8 +969,6 @@ impl WorkerSession for CodexWorkerSession {
                                 self.turn_error = Some(message);
                             }
                         }
-                        // These notifications update state that the backend-neutral worker
-                        // contract does not expose independently.
                         "thread/status/changed"
                         | "turn/diff/updated"
                         | "turn/plan/updated"
@@ -1029,9 +1023,6 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn close(&mut self) -> Result<(), String> {
-        // Closing stdin lets app-server shut down normally and release its per-thread writer.
-        // Killing it first can leave a short-lived ownership record that rejects an immediate
-        // resume or delete from the next app-server process.
         self.writer.take();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -1097,8 +1088,6 @@ impl CodexWorkerSession {
             self.reasoning_started = false;
             self.turn_error = None;
             if !self.manual_compaction {
-                // The initial thinking block reserves slot 0 even if Codex sends
-                // answer text before any reasoning notification.
                 self.reasoning_started = true;
                 self.events
                     .push_back(WorkerEvent::Activity(WorkerActivity::ThinkingStarted {
@@ -1293,8 +1282,6 @@ fn codex_usage(value: &Value) -> TokenUsage {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     TokenUsage {
-        // Codex reports cached tokens as part of inputTokens. The shared
-        // contract keeps input, cache reads, and cache writes disjoint.
         input: input.saturating_sub(cache_read.saturating_add(cache_write)),
         output: value
             .get("outputTokens")
@@ -1333,8 +1320,6 @@ fn codex_notification_is_for_thread(method: &str, params: &Value, thread_id: &st
             zlog::warn!("Codex app-server {method}: {params}");
             false
         }
-        // `thread/started` carries the id inside the thread object and has no worker activity
-        // of its own; turn events establish the active state.
         None if method == "thread/started" => false,
         None => {
             log_bad_codex_notification(method, params, "notification is missing threadId");
@@ -1349,9 +1334,6 @@ fn log_bad_codex_notification(method: &str, params: &Value, reason: &str) {
     );
 }
 
-/// Records the Codex-reported error for the active turn so a failed turn can
-/// surface the real cause (for example a capacity-limited model) instead of a
-/// generic failure message.
 fn codex_error_message(params: &Value) -> Option<String> {
     let message = params.pointer("/error/message").and_then(Value::as_str)?;
     (!message.trim().is_empty()).then(|| message.to_owned())

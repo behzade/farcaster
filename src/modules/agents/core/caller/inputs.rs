@@ -15,7 +15,6 @@ pub(super) struct PendingInput {
     responses: mpsc::Sender<WorkerInputResponse>,
 }
 
-/// Removes unanswered requests when their worker settles or exits.
 pub(in crate::modules::agents::core) struct InputLease {
     registry: CallerRegistry,
     id: String,

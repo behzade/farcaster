@@ -1,4 +1,3 @@
-//! Focus policy shared by app overlays and keyboard-only traversal.
 use gpui::{App, FocusHandle, KeyDownEvent, Window};
 
 #[derive(PartialEq)]
@@ -8,8 +7,6 @@ pub(crate) enum Restoration {
     Fallback,
 }
 
-/// Restore a surviving return target only while the closing surface still owns
-/// input. A menu action may already have focused another dialog or an editor.
 pub(crate) fn restore(
     target: Option<FocusHandle>,
     closing: &FocusHandle,
@@ -35,8 +32,6 @@ pub(crate) fn restore(
     }
 }
 
-/// Called only for unhandled keys, after input/menu action bindings. In a modal
-/// the bubble phase lets the innermost dialog own traversal, not a global trap.
 pub(crate) fn traverse_tab(
     event: &KeyDownEvent,
     scope: Option<&FocusHandle>,
@@ -113,7 +108,6 @@ mod tests {
                     cx,
                 );
                 assert!(if owner_visible { &owner } else { &root }.is_focused(window));
-                // New dialog focus may precede its first render.
                 next.focus(window, cx);
                 restore(
                     Some(owner.clone()),

@@ -81,7 +81,6 @@ impl TranscriptRow {
         self.item_start()
     }
 
-    /// Groups and their first child must have independent disclosure state.
     pub(crate) fn disclosure_key(&self) -> usize {
         match self {
             Self::ActivityGroup { start, .. } => usize::MAX - start,
@@ -257,8 +256,6 @@ pub(crate) fn update_rows_incremental(
     let mut project_from = previous_rows
         .get(keep_rows)
         .map_or(unchanged_items, TranscriptRow::item_start);
-    // A newly completed call can join the previous group (or a standalone
-    // thinking/tool row). Reproject that boundary, not just the changed item.
     if items
         .get(project_from)
         .is_some_and(|item| is_groupable_activity(item))

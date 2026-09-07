@@ -70,7 +70,6 @@ fn parse(source: &'static str) -> (Option<String>, String) {
     (description, body.trim().into())
 }
 
-/// Sentence punctuation terminates an invocation without becoming part of its name.
 pub(crate) fn invocation_token(token: &str) -> &str {
     token.trim_end_matches(['.', ',', ';', ':', '!', '?'])
 }

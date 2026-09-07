@@ -228,8 +228,6 @@ impl HarnessConfigurationStore {
                     .cloned()
                     .unwrap_or_else(|| model.clone())
             });
-            // A display default such as "off" is not a selectable setting when
-            // the backend has no reasoning-effort control.
             let effort = session
                 .thinking_level
                 .clone()

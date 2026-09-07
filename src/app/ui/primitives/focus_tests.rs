@@ -71,13 +71,10 @@ fn pointer_controls_and_dropdowns_restore_the_keyboard_owner(cx: &mut gpui::Test
         cx.update(|window, cx| window.draw(cx).clear(cx));
         cx.update(|window, cx| assert!(view.read(cx).owner.is_focused(window)));
     }
-    // Pointer protection must not remove controls from deliberate Tab traversal.
     cx.simulate_keystrokes("tab");
     cx.update(|window, cx| assert!(!view.read(cx).owner.is_focused(window)));
 }
 
-/// Real GPUI dispatch with the same app keymap, input, modal, and Tab policy.
-/// Embedded processes themselves require a desktop smoke test.
 struct KeyboardHarness {
     normal: FocusHandle,
     composer: gpui::Entity<gpui_component::input::TextareaState>,
@@ -132,7 +129,6 @@ impl Render for KeyboardHarness {
                     .key_context("FarcasterComposer")
                     .child(Textarea::new(&self.composer)),
             )
-            // The same pointer-protected parent used by session action rows.
             .child(
                 div()
                     .debug_selector(|| "title-row".into())
@@ -219,7 +215,6 @@ fn modal_tab_cycles_and_nested_escape_restores_in_order(cx: &mut gpui::TestAppCo
         view.update(cx, |this, cx| this.open_dialog(window, cx));
         window.draw(cx).clear(cx);
     });
-    // Actual key dispatch, not window.focus_next called by the test.
     for key in ["tab", "tab", "tab", "shift-tab", "shift-tab", "shift-tab"] {
         cx.simulate_keystrokes(key);
         cx.update(|window, cx| {
@@ -269,7 +264,6 @@ fn composer_tab_keeps_its_action_and_title_accepts_pointer_focus(cx: &mut gpui::
                 .is_focused(window)
         );
     });
-    // Input-owned Shift-Tab must not be stolen by root traversal either.
     cx.simulate_keystrokes("shift-tab");
     cx.update(|_, cx| assert_eq!(view.read(cx).queued, 1));
     let bounds = cx.debug_bounds("title-row").expect("title row rendered");

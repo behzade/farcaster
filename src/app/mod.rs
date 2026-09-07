@@ -1,4 +1,3 @@
-//! Top-level GPUI composition for the active root session.
 
 mod bootstrap;
 mod change_detection;

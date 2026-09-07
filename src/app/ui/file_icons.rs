@@ -1,4 +1,3 @@
-//! Bundled Material Icon Theme SVGs; provenance is in assets/file-icons/README.md.
 use std::{borrow::Cow, path::Path};
 
 use gpui::{AnyElement, IntoElement as _, Styled as _, img};
@@ -55,7 +54,6 @@ pub(super) fn load(path: &str) -> Option<Cow<'static, [u8]>> {
 pub(crate) fn file_icon(path: &Path) -> AnyElement {
     let name = classify(path);
     let asset = format!("icons/files/{name}.svg");
-    // SVG elements are alpha masks. Render images to preserve native colors.
     img(asset)
         .size(THEME.icons.inline)
         .flex_none()

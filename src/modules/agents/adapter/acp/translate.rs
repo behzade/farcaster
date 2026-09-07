@@ -157,8 +157,6 @@ pub(super) fn normalize_tool_name(update: &Value, title: &str) -> String {
         "edit" | "delete" | "move" => CommonTool::Edit.name().into(),
         "search" => "grep".into(),
         "fetch" => "web_fetch".into(),
-        // ACP's `execute` kind is broader than a shell command. Keep the
-        // agent-provided title rather than manufacturing bash semantics.
         _ => title.to_owned(),
     }
 }

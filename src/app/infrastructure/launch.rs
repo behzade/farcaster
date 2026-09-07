@@ -1,4 +1,3 @@
-//! Argument validation and native window setup.
 
 use std::{
     cell::RefCell,

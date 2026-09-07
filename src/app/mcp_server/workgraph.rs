@@ -19,8 +19,6 @@ static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SearchParams {
-    /// Case-insensitive text matched against task titles and acceptance criteria.
-    /// Omit to list all tasks in your project.
     #[serde(default)]
     pub(super) query: String,
 }
@@ -35,32 +33,24 @@ pub(super) struct PatchNode {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PatchParams {
-    /// Ordered tasks to create. Creating tasks does not claim them.
     pub(super) nodes: Vec<PatchNode>,
-    /// Existing task before the inserted chain.
     pub(super) after: Option<u64>,
-    /// Existing task after the inserted chain.
     pub(super) before: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct TaskParams {
-    /// Project-local task number returned by workgraph_search or workgraph_patch.
     pub(super) task: u64,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CompleteParams {
-    /// Task you currently own.
     pub(super) task: u64,
-    /// Observable evidence that the task's acceptance criteria were met.
     pub(super) evidence: String,
 }
 
-/// Resolve the authenticated locator through the application's session catalog.
-/// Never interpret backend-specific session files at the MCP boundary.
 fn session_identity(database: &Path, caller: &CallerContext) -> Result<(String, String), String> {
     let store = crate::app::persistence::StateStore::open_at(database)?;
     let sessions = store.cached_sessions("")?;
@@ -74,8 +64,6 @@ fn session_identity(database: &Path, caller: &CallerContext) -> Result<(String, 
         .ok_or_else(|| {
             "authenticated session is not indexed yet; retry after session discovery".to_owned()
         })?;
-    // Legacy sidebar links are keyed by catalog ID. Fail closed if two backend
-    // sessions share that ID rather than granting one the other's ownership.
     if sessions.iter().any(|other| {
         other.project == session.project
             && other.id == session.id
@@ -236,7 +224,6 @@ pub(super) fn complete(
     params: CompleteParams,
 ) -> Result<Value, String> {
     let (session_id, _) = session_identity(database, caller)?;
-    // The compact tool accepts one evidence string; preserve legacy file tasks.
     let graph = project_graph(database, caller)?;
     let node = graph
         .nodes
@@ -282,7 +269,6 @@ pub(super) fn complete(
 fn edit(database: &Path, caller: &CallerContext, action: EditAction) -> Result<Value, String> {
     let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
     let mut graph = WorkGraph::new(adapter);
-    // Return task views rather than internal snapshots containing session paths.
     graph
         .edit(&EditRequest {
             project: project_key(caller)?,

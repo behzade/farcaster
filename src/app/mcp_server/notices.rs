@@ -40,11 +40,8 @@ pub(super) enum Action {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(super) struct Params {
-    /// Read the board or post a notice and then read matching entries.
     pub(super) action: Action,
-    /// Short coordination notice. Required only when action is `post`.
     pub(super) message: Option<String>,
-    /// Optional project-relative files or directories used for relevance filtering.
     #[serde(default)]
     pub(super) paths: Vec<String>,
 }

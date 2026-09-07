@@ -105,8 +105,6 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 model,
             )?;
         }
-        // A persisted route effort can outlive the agent's advertised options;
-        // skip it instead of failing the whole worker launch.
         if let Some(effort) = launch.effort.as_deref()
             && session.config_ids.effort.is_some()
         {
@@ -971,8 +969,6 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn compact(&mut self) -> Result<(), String> {
-        // A user-defined slash command named compact/compress does not establish
-        // protocol support for compaction or its lifecycle events.
         Err(format!(
             "{} does not expose ACP compaction",
             self.profile.name

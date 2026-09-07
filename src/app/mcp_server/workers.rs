@@ -6,13 +6,9 @@ use crate::agents::{CallerContext, CallerRegistry, StartWorker, WorkerContext, W
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct SendParams {
-    /// Direct child name. Required for top-level workers and omitted by children.
     pub(super) to: Option<String>,
-    /// Message or delegated task for the worker.
     pub(super) message: String,
-    /// Classification of already-delegated work. Required only when creating a child.
     pub(super) task: Option<String>,
-    /// Judgment delegated: specified procedure, guided local decisions, or independent approach. Defaults to guided on creation; omit on reuse.
     #[schemars(with = "Option<String>")]
     pub(super) judgment: Option<crate::agents::WorkerJudgment>,
 }
@@ -262,7 +258,6 @@ mod tests {
             )
             .is_err()
         );
-        // Deleting a task does not change a live child's assignment.
         tasks.tasks.clear();
         let result = send(&pool, params(None, None), token.clone(), &tasks)?;
         assert_eq!(result["created"], false);

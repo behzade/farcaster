@@ -105,7 +105,6 @@ impl FarcasterApp {
                 if event.keystroke.modifiers.modified() || !key_focus.contains_focused(window, cx) {
                     return;
                 }
-                // Require an explicit choice; a held key must not answer the next request.
                 if matches!(
                     keyboard_dialog,
                     ExtensionUiRequest::Select { .. } | ExtensionUiRequest::Confirm { .. }
