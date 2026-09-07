@@ -88,7 +88,14 @@ pub(super) fn resolved_expanded(
     disclosure_states
         .get(&row.disclosure_key())
         .copied()
-        .unwrap_or_else(|| expanded_by_default(row, items))
+        .unwrap_or_else(|| {
+            // A running call can join a completed group. Keep details the user
+            // already opened visible unless they explicitly closed the group.
+            (matches!(row, TranscriptRow::ActivityGroup { .. })
+                && (row.item_start()..row.item_end())
+                    .any(|index| disclosure_states.get(&index) == Some(&true)))
+                || expanded_by_default(row, items)
+        })
 }
 
 pub(super) fn message_follows_tool(
@@ -176,6 +183,7 @@ pub(crate) fn render(
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
     conversation: Arc<conversation::ConversationState>,
     disclosure_states: std::collections::HashMap<usize, bool>,
+    file_details: std::collections::HashMap<usize, String>,
     markdown_cache: TranscriptMarkdownCache,
     assistant_label: Arc<str>,
     entity: WeakEntity<FarcasterApp>,
@@ -222,6 +230,7 @@ pub(crate) fn render(
                             &conversation.items,
                             expanded,
                             &disclosure_states,
+                            file_details.get(&row.disclosure_key()).map(String::as_str),
                             &markdown_cache,
                             &assistant_label,
                             row_entity.clone(),
@@ -308,20 +317,27 @@ fn transcript_context_menu(
                     .separator();
             }
 
-            if !rows::is_read(&items[row.item_start()])
-                && (matches!(row, TranscriptRow::ActivityGroup { .. })
-                    || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool))
+            if matches!(row, TranscriptRow::ActivityGroup { .. })
+                    || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool)
             {
                 let entity = entity.clone();
                 menu = menu.item(PopupMenuItem::new(if expanded {
-                    "Hide raw tool input/output"
+                    "Hide activity details"
                 } else {
-                    "Show raw tool input/output"
+                    "Show activity details"
                 }).on_click(move |_, _, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.set_transcript_item_expanded(row.disclosure_key(), !expanded, cx);
                     });
                 })).separator();
+                let raw = items.iter_range(row.item_start()..row.item_end())
+                    .filter_map(|item| item.tool_details.as_ref().map(|details| details.inspection_text()))
+                    .collect::<Vec<_>>().join("\n\n");
+                if !raw.is_empty() {
+                    menu = menu.item(PopupMenuItem::new("Copy raw tool input/output").on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(raw.clone()));
+                    })).separator();
+                }
             }
 
             let row_text = copy_transcript_items(&items, row.item_start()..=row.item_end() - 1);
@@ -376,6 +392,7 @@ fn render_row(
     items: &PersistentVec<Arc<TranscriptItem>>,
     expanded: bool,
     disclosure_states: &std::collections::HashMap<usize, bool>,
+    selected_file: Option<&str>,
     markdown_cache: &TranscriptMarkdownCache,
     assistant_label: &str,
     entity: WeakEntity<FarcasterApp>,
@@ -391,6 +408,7 @@ fn render_row(
             len,
             expanded,
             disclosure_states,
+            selected_file,
             entity,
             cx,
         ),
@@ -528,7 +546,6 @@ fn transcript_title_row(
 ) -> Stateful<Div> {
     disclosure_title_row(
         id,
-        key,
         expanded,
         expandable,
         label,

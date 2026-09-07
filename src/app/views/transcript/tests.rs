@@ -180,7 +180,7 @@ fn mixed_completed_tools_collapse_into_one_activity_row() {
 }
 
 #[test]
-fn file_changes_split_routine_activity_groups() {
+fn file_changes_share_the_surrounding_work_interval() {
     for label in ["Edit", "Write"] {
         let rows = project_rows(&[
             item(TranscriptKind::Tool, "Read", "Path: a"),
@@ -192,26 +192,17 @@ fn file_changes_split_routine_activity_groups() {
         ]);
         assert!(matches!(
             rows.iter().collect::<Vec<_>>().as_slice(),
-            [
-                TranscriptRow::ActivityGroup {
-                    start: 0,
-                    len: 2,
-                    ..
-                },
-                TranscriptRow::Item { index: 2, .. },
-                TranscriptRow::Item { index: 3, .. },
-                TranscriptRow::ActivityGroup {
-                    start: 4,
-                    len: 2,
-                    ..
-                },
-            ]
+            [TranscriptRow::ActivityGroup {
+                start: 0,
+                len: 6,
+                ..
+            },]
         ));
     }
 }
 
 #[test]
-fn structured_file_changes_stay_outside_activity_groups() {
+fn structured_file_changes_share_activity_across_backends() {
     use serde_json::json;
 
     let mut conversation = conversation::ConversationState::default();
@@ -222,11 +213,11 @@ fn structured_file_changes_stay_outside_activity_groups() {
     let rows = project_rows(&conversation.items);
     assert!(matches!(
         rows.iter().collect::<Vec<_>>().as_slice(),
-        [
-            TranscriptRow::Item { index: 0, .. },
-            TranscriptRow::Item { index: 1, .. },
-            TranscriptRow::Item { index: 2, .. },
-        ]
+        [TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 3,
+            ..
+        },]
     ));
 }
 
@@ -478,7 +469,7 @@ fn appended_reads_merge_with_the_existing_read_group() {
 }
 
 #[test]
-fn consecutive_native_reads_group_without_absorbing_other_activity() {
+fn completed_native_reads_and_searches_share_activity() {
     let mut state = conversation::ConversationState::default();
     for (id, category) in [("a", "read"), ("b", "read"), ("c", "search"), ("d", "read")] {
         let previous = state.items.clone();
@@ -486,6 +477,10 @@ fn consecutive_native_reads_group_without_absorbing_other_activity() {
         state.reduce(&serde_json::json!({
             "type": "tool_execution_start", "toolCallId": id, "toolName": "native",
             "args": {}, "toolMetadata": {"category": category, "targets": [format!("{id}.rs")]}
+        }));
+        state.reduce(&serde_json::json!({
+            "type": "tool_execution_end", "toolCallId": id,
+            "isError": false, "result": {"content": []}
         }));
         assert_eq!(
             update_rows(&previous_rows, &previous, &state.items),
@@ -495,10 +490,37 @@ fn consecutive_native_reads_group_without_absorbing_other_activity() {
     let rows = project_rows(&state.items);
     assert!(matches!(
         rows[0],
-        TranscriptRow::ActivityGroup { start: 0, len: 2, .. }
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 4,
+            ..
+        }
     ));
-    assert!(matches!(rows[1], TranscriptRow::Item { index: 2, .. }));
-    assert!(matches!(rows[2], TranscriptRow::Item { index: 3, .. }));
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn failed_native_reads_remain_visible_with_details() {
+    let mut state = conversation::ConversationState::default();
+    for id in ["ok", "failed"] {
+        state.reduce(&serde_json::json!({"type":"tool_execution_start", "toolCallId":id,
+            "toolName":"native", "args":{}, "toolMetadata":{"category":"read", "targets":["file.rs"]}}));
+        state.reduce(
+            &serde_json::json!({"type":"tool_execution_end", "toolCallId":id,
+            "isError":id == "failed", "result":{"content":[]}}),
+        );
+    }
+    let rows = project_rows(&state.items);
+    assert_eq!(rows.len(), 2);
+    assert!(matches!(
+        rows[0],
+        TranscriptRow::ActivityGroup {
+            start: 0,
+            len: 1,
+            ..
+        }
+    ));
+    assert!(matches!(rows[1], TranscriptRow::Item { index: 1, .. }));
 }
 
 #[test]
@@ -742,8 +764,34 @@ fn activity_groups_keep_thinking_inside_and_attention_outside() {
             ..
         }
     ));
-    for (row, index) in rows.iter().skip(1).zip(3..8) {
+    for (row, index) in rows.iter().skip(1).take(4).zip(3..7) {
         assert!(matches!(row, TranscriptRow::Item { index: actual, .. } if *actual == index));
+    }
+    assert!(matches!(
+        rows[5],
+        TranscriptRow::ActivityGroup {
+            start: 7,
+            len: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn file_activity_never_crosses_a_message_or_session_notice() {
+    let items = vec![
+        item(TranscriptKind::Tool, "Edit", "Path: same.rs"),
+        item(TranscriptKind::Assistant, "", "Checking the change"),
+        item(TranscriptKind::Tool, "Edit", "Path: same.rs"),
+        item(TranscriptKind::Notice, "", "Session resumed"),
+        item(TranscriptKind::Tool, "Edit", "Path: same.rs"),
+    ];
+    let rows = project_rows(&items);
+    assert_eq!(rows.len(), 5);
+    for index in [0, 2, 4] {
+        assert!(
+            matches!(rows[index], TranscriptRow::ActivityGroup { start, len: 1, .. } if start == index)
+        );
     }
 }
 
@@ -765,6 +813,11 @@ fn completing_a_tool_merges_activity_without_losing_disclosure_identity() {
     let states = std::collections::HashMap::from([(rows[0].disclosure_key(), true), (0, false)]);
     assert!(resolved_expanded(rows[0], &items, &states));
     assert!(!states[&0]);
+    let opened_running_call = std::collections::HashMap::from([(1, true)]);
+    assert!(resolved_expanded(rows[0], &items, &opened_running_call));
+    let explicitly_closed =
+        std::collections::HashMap::from([(1, true), (rows[0].disclosure_key(), false)]);
+    assert!(!resolved_expanded(rows[0], &items, &explicitly_closed));
 }
 
 #[test]

@@ -410,14 +410,10 @@ fn project_rows_from(
             .get(index)
             .expect("projected transcript item should exist");
         if is_groupable_activity(item) {
-            let reads = is_read(item);
             let start = index;
             let mut end = start;
             let mut has_tool = false;
-            while let Some(next) = items
-                .get(end)
-                .filter(|next| is_read(next) == reads && is_groupable_activity(next))
-            {
+            while let Some(next) = items.get(end).filter(|next| is_groupable_activity(next)) {
                 has_tool |= next.kind == TranscriptKind::Tool;
                 end += 1;
             }
@@ -429,7 +425,7 @@ fn project_rows_from(
                 index = end;
                 continue;
             }
-            if has_tool && end - start > 1 {
+            if has_tool {
                 rows.push(TranscriptRow::ActivityGroup {
                     start,
                     len: end - start,
@@ -502,25 +498,9 @@ fn text_revision(text: &str) -> usize {
     hasher.finish() as usize
 }
 
-pub(super) fn is_read(item: &TranscriptItem) -> bool {
-    item.kind == TranscriptKind::Tool
-        && item.tool_details.as_ref().is_some_and(|details| {
-            details.metadata.category == Some(crate::agents::ToolCategory::Read)
-        })
-}
-
 fn is_groupable_activity(item: &TranscriptItem) -> bool {
-    is_read(item) || is_routine_activity(item)
-}
-
-fn is_routine_activity(item: &TranscriptItem) -> bool {
     use conversation::{ToolExecutionState, ToolReviewState};
-    let changes_files = item.tool_details.as_ref().is_some_and(|details| {
-        details.metadata.category == Some(crate::agents::ToolCategory::Change)
-    }) || item.label.eq_ignore_ascii_case("edit")
-        || item.label.eq_ignore_ascii_case("write");
     matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
-        && !changes_files
         && !item.tool_review.as_ref().is_some_and(|review| {
             matches!(
                 review.state,

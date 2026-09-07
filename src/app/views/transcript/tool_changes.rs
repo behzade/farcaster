@@ -68,16 +68,7 @@ pub(super) fn file_label(
     project: Option<&std::path::Path>,
     home: Option<&std::path::Path>,
 ) -> String {
-    use path_clean::PathClean;
-    use std::path::Path;
-
-    let path = Path::new(path);
-    let path = if path.is_relative() {
-        project.map_or_else(|| path.to_path_buf(), |project| project.join(path))
-    } else {
-        path.to_path_buf()
-    }
-    .clean();
+    let path = file_path(path, project);
     if let Some(relative) = project.and_then(|project| path.strip_prefix(project).ok()) {
         return relative.display().to_string();
     }
@@ -87,8 +78,18 @@ pub(super) fn file_label(
     path.display().to_string()
 }
 
+pub(super) fn file_path(path: &str, project: Option<&std::path::Path>) -> std::path::PathBuf {
+    use path_clean::PathClean as _;
+    let path = std::path::Path::new(path);
+    if path.is_relative() {
+        project.map_or_else(|| path.to_path_buf(), |project| project.join(path))
+    } else {
+        path.to_path_buf()
+    }
+    .clean()
+}
+
 pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Div {
-    let (additions, deletions) = presentation.counts();
     div()
         .min_w_0()
         .flex()
@@ -105,18 +106,22 @@ pub(super) fn file_summary(presentation: &ToolPresentation, label: String) -> Di
                 .text_color(THEME.colors.text)
                 .child(label),
         )
-        .child(
-            div()
-                .flex_none()
-                .text_color(THEME.colors.success)
-                .child(format!("+{additions}")),
-        )
-        .child(
-            div()
-                .flex_none()
-                .text_color(THEME.colors.error)
-                .child(format!("−{deletions}")),
-        )
+        .children(change_counts(presentation.counts()))
+}
+
+pub(super) fn change_counts((added, removed): (usize, usize)) -> impl Iterator<Item = Div> {
+    [
+        (added, "+", THEME.colors.success),
+        (removed, "−", THEME.colors.error),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, sign, color)| {
+        div()
+            .flex_none()
+            .text_color(color)
+            .child(format!("{sign}{count}"))
+    })
 }
 
 #[cfg(test)]

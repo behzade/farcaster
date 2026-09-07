@@ -6,6 +6,31 @@ use super::{
 use crate::app::FarcasterApp;
 
 impl FarcasterApp {
+    pub(in crate::app) fn set_transcript_file_details(
+        &mut self,
+        key: usize,
+        path: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.transcript_view.update(cx, |transcript, cx| {
+            if let Some(path) = path {
+                transcript.list.pause_following_tail();
+                transcript.file_details.insert(key, path);
+                transcript.disclosure_states.insert(key, false);
+            } else {
+                transcript.file_details.remove(&key);
+            }
+            if let Some(index) = transcript
+                .rows
+                .iter()
+                .position(|row| row.disclosure_key() == key)
+            {
+                transcript.list.remeasure_items(index..index + 1);
+            }
+            cx.notify();
+        });
+    }
+
     pub(in crate::app) fn transcript_selected_text(&self, cx: &Context<Self>) -> Option<String> {
         self.transcript_view.read(cx).list.selected_text()
     }

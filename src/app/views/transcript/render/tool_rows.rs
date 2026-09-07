@@ -24,6 +24,9 @@ use super::{
     toggle_transcript_item,
 };
 
+#[path = "tool_rows/changed_files.rs"]
+mod changed_files;
+
 pub(super) fn render_activity_group(
     key: usize,
     items: &PersistentVec<Arc<TranscriptItem>>,
@@ -31,24 +34,25 @@ pub(super) fn render_activity_group(
     len: usize,
     expanded: bool,
     disclosure_states: &std::collections::HashMap<usize, bool>,
+    selected_file: Option<&str>,
     entity: WeakEntity<FarcasterApp>,
     cx: &gpui::App,
 ) -> AnyElement {
     let group_items = || items.iter_range(start..start + len);
-    // Projection keeps consecutive reads separate from other activity.
-    if super::rows::is_read(&items[start]) {
-        return render_reads(key, group_items().map(AsRef::as_ref));
-    }
     let summary = activity_summary(group_items().map(AsRef::as_ref));
-    // Attention states are standalone rows, never members of this group.
-    let status = group_items()
-        .filter(|item| item.kind == TranscriptKind::Tool)
-        .all(|item| item_status(item) == Some(ToolStatus::Succeeded))
-        .then_some(ToolStatus::Succeeded);
     let disclosure_label = format!(
-        "{} activity details for {summary}. {}",
+        "{} activity details for {summary}",
         if expanded { "Collapse" } else { "Expand" },
-        status.map_or("No result", ToolStatus::label)
+    );
+    let files = changed_files::render(
+        key,
+        items,
+        start,
+        len,
+        !expanded,
+        selected_file,
+        entity.clone(),
+        cx,
     );
     div()
         .id(("activity-group", key))
@@ -58,29 +62,35 @@ pub(super) fn render_activity_group(
         .flex()
         .flex_col()
         .child(
-            tool_changes::title_row(
-                ("activity-title", key),
-                disclosure_label,
-                toggle_transcript_item(entity.clone(), key, expanded),
-            )
-            .aria_expanded(expanded)
-            .child(app_icon(
-                if expanded {
-                    AppIcon::CaretDown
-                } else {
-                    AppIcon::CaretRight
-                },
-                AppIconSize::Inline,
-            ))
-            .child(tool_changes::tool_label("Activity"))
-            .child(
-                technical_text(("activity-summary", key), summary)
-                    .flex_1()
-                    .min_w_0()
-                    .font_family(UI_FONT_FAMILY)
-                    .text_color(THEME.colors.muted),
-            ),
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(THEME.space.sm)
+                .child(
+                    technical_text(("activity-summary", key), summary)
+                        .flex_1()
+                        .min_w_0()
+                        .font_family(UI_FONT_FAMILY)
+                        .text_color(THEME.colors.muted),
+                )
+                .child(
+                    tool_changes::title_row(
+                        ("activity-title", key),
+                        disclosure_label,
+                        toggle_transcript_item(entity.clone(), key, expanded),
+                    )
+                    .w_auto()
+                    .flex_none()
+                    .aria_expanded(expanded)
+                    .child(tool_changes::tool_label(if expanded {
+                        "Hide activity"
+                    } else {
+                        "Activity"
+                    })),
+                ),
         )
+        .child(files)
         .when(expanded, |group| {
             group.child(
                 disclosure_detail()
@@ -109,9 +119,6 @@ pub(super) fn render_tool(
     entity: WeakEntity<FarcasterApp>,
     cx: &gpui::App,
 ) -> AnyElement {
-    if super::rows::is_read(item) {
-        return render_reads(key, std::iter::once(item));
-    }
     let status = item_status(item);
     let project = entity
         .upgrade()
@@ -134,22 +141,11 @@ pub(super) fn render_tool(
         },
         |details| details.summary(),
     );
-    let command = item
-        .tool_details
-        .as_ref()
-        .and_then(|details| details.command_preview());
-    let open_target = direct_change_target(item).map(|(path, line)| (path.to_owned(), line));
-    let opens_editor = open_target.is_some();
-    let expanded = expanded && !opens_editor;
-    let title_entity = entity.clone();
-    let title_label = match &open_target {
-        Some((path, _)) => format!("Open {path} in Neovim"),
-        None => format!(
-            "{} {summary} details. {}",
-            if expanded { "Collapse" } else { "Expand" },
-            status.map_or("No result", ToolStatus::label)
-        ),
-    };
+    let title_label = format!(
+        "{} {summary} details. {}",
+        if expanded { "Collapse" } else { "Expand" },
+        status.map_or("No result", ToolStatus::label)
+    );
     div()
         .id(("tool-row", key))
         .w_full()
@@ -158,36 +154,34 @@ pub(super) fn render_tool(
         .flex()
         .flex_col()
         .child(
-            tool_changes::title_row(("tool-title", key), title_label, move |window, cx| {
-                let _ = title_entity.update(cx, |this, cx| {
-                    if let Some((path, line)) = &open_target {
-                        this.open_file_editor_at_line(path.clone().into(), *line, window, cx);
-                    } else {
-                        this.set_transcript_item_expanded(key, !expanded, cx);
-                    }
-                });
-            })
-            .when(!opens_editor, |row| {
-                row.aria_expanded(expanded).child(app_icon(
-                    if expanded {
-                        AppIcon::CaretDown
-                    } else {
-                        AppIcon::CaretRight
-                    },
-                    AppIconSize::Inline,
-                ))
-            })
-            .child(status_slot(status))
+            tool_changes::title_row(
+                ("tool-title", key),
+                title_label,
+                toggle_transcript_item(entity.clone(), key, expanded),
+            )
+            .aria_expanded(expanded)
+            .when(
+                status.is_some_and(|status| status != ToolStatus::Succeeded),
+                |row| row.child(status_slot(status)),
+            )
             .when_some(presentation, |row, presentation| {
-                row.child(tool_changes::tool_label(item.label.clone()))
-                    .child(tool_changes::file_summary(
-                        presentation,
-                        tool_changes::file_label(
-                            presentation.path(),
-                            project.as_deref(),
-                            home.as_deref(),
-                        ),
-                    ))
+                let label = tool_changes::file_label(
+                    presentation.path(),
+                    project.as_deref(),
+                    home.as_deref(),
+                );
+                if status == Some(ToolStatus::Succeeded) {
+                    row.child(tool_changes::file_summary(presentation, label))
+                } else {
+                    row.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_family(MONO_FONT_FAMILY)
+                            .text_size(THEME.type_scale.body_small)
+                            .child(label),
+                    )
+                }
             })
             .when(presentation.is_none(), |row| {
                 row.child(
@@ -199,21 +193,23 @@ pub(super) fn render_tool(
                         .text_color(THEME.colors.muted)
                         .child(summary),
                 )
-            }),
-        )
-        .when_some(command, |tool, command| {
-            tool.child(
-                disclosure_detail().child(
-                    selectable_text(("tool-command", key), fenced_text(command))
-                        .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.text),
-                ),
+            })
+            .when(
+                status.is_some_and(|status| status != ToolStatus::Succeeded),
+                |row| row.child(tool_changes::tool_label(status.unwrap().label())),
             )
-        })
+            .child(tool_changes::tool_label(if expanded {
+                "Hide details"
+            } else {
+                "Details"
+            })),
+        )
         .when(expanded, |tool| {
             tool.child(
                 disclosure_detail()
+                    .id(("tool-detail-scroll", key))
+                    .max_h(THEME.layout.tool_max_height)
+                    .overflow_y_scroll()
                     .children(file_links(key, item, entity))
                     .child(expanded_tool_body(("tool-detail", key), item)),
             )
@@ -221,43 +217,11 @@ pub(super) fn render_tool(
         .into_any_element()
 }
 
-fn render_reads<'a>(key: usize, items: impl Iterator<Item = &'a TranscriptItem>) -> AnyElement {
-    let mut text = String::from("read");
-    for item in items {
-        if let Some(details) = &item.tool_details {
-            for path in &details.metadata.targets {
-                if !path.is_empty() {
-                    text.push(' ');
-                    text.push_str(path);
-                }
-            }
-        }
-        if let Some(status) = item_status(item)
-            && status != ToolStatus::Succeeded
-        {
-            text.push_str(" (");
-            text.push_str(status.label());
-            text.push(')');
-        }
-    }
-    div()
-        .id(("read-row", key))
-        .w_full()
-        .min_w_0()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .text_color(THEME.colors.muted)
-        .child(text)
-        .into_any_element()
-}
-
 fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
     use crate::agents::ToolCategory;
-    let mut counts = [0usize; 7];
+    let mut counts = [0usize; 8];
     let mut calls = 0;
-    let mut unknown = false;
+    let mut custom_title = None;
     for item in items.filter(|item| item.kind == TranscriptKind::Tool) {
         calls += 1;
         let category = item
@@ -273,27 +237,41 @@ fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> Stri
             Some(ToolCategory::Fetch) => 5,
             Some(ToolCategory::Delegate) => 6,
             Some(ToolCategory::Other) | None => {
-                unknown = true;
-                continue;
+                custom_title = Some(
+                    item.tool_details
+                        .as_ref()
+                        .map_or_else(|| item.label.clone(), |details| details.summary()),
+                );
+                7
             }
         };
         counts[slot] += 1;
     }
-    if unknown || counts.iter().filter(|count| **count > 0).count() > 3 {
-        return format!("{calls} {}", if calls == 1 { "call" } else { "calls" });
+    if calls == 1
+        && let Some(title) = custom_title
+    {
+        return title;
     }
-    counts
+    let mut categories = counts
         .into_iter()
         .zip([
             ("read", "reads"),
             ("search", "searches"),
             ("listing", "listings"),
-            ("change", "changes"),
+            ("edit", "edits"),
             ("command", "commands"),
             ("fetch", "fetches"),
             ("agent task", "agent tasks"),
+            ("other action", "other actions"),
         ])
         .filter(|(count, _)| *count > 0)
+        .collect::<Vec<_>>();
+    if categories.len() > 3 {
+        let remaining = categories.drain(2..).map(|(count, _)| count).sum();
+        categories.push((remaining, ("other action", "other actions")));
+    }
+    categories
+        .into_iter()
         .map(|(count, (singular, plural))| {
             format!("{count} {}", if count == 1 { singular } else { plural })
         })
@@ -311,7 +289,7 @@ fn file_links(
         .map(|(offset, path)| {
             let path = path.to_owned();
             let entity = entity.clone();
-            let label = format!("Open {path} in Neovim");
+            let label = format!("Open current file: {path}");
             let line = file_target_line(item, &path);
             tool_changes::title_row(
                 format!("tool-file-{key}-{offset}"),
@@ -380,24 +358,6 @@ fn item_status(item: &TranscriptItem) -> Option<ToolStatus> {
     }
 }
 
-fn direct_change_target(item: &TranscriptItem) -> Option<(&str, Option<u64>)> {
-    if item.tool_presentation.is_none()
-        && item
-            .tool_details
-            .as_ref()
-            .and_then(|details| details.metadata.category)
-            != Some(crate::agents::ToolCategory::Change)
-    {
-        return None;
-    }
-    let mut targets = file_targets(item);
-    let path = targets.next()?;
-    if targets.next().is_some() {
-        return None;
-    }
-    Some((path, file_target_line(item, path)))
-}
-
 fn file_target_line(item: &TranscriptItem, path: &str) -> Option<u64> {
     item.tool_presentation
         .as_ref()
@@ -444,15 +404,39 @@ fn status_slot(status: Option<ToolStatus>) -> AnyElement {
 }
 
 fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
-    let mut detail = item
+    selectable_text(id, fenced_text(&tool_body_text(item)))
+        .font_family(MONO_FONT_FAMILY)
+        .text_size(THEME.type_scale.body_small)
+        .text_color(if item.is_error {
+            THEME.colors.error
+        } else {
+            THEME.colors.muted
+        })
+        .into_any_element()
+}
+
+fn tool_body_text(item: &TranscriptItem) -> String {
+    let mut detail = item.text.clone();
+    if let Some(command) = item
         .tool_details
         .as_ref()
-        .map_or_else(|| item.text.clone(), |details| details.inspection_text());
-    if item.tool_details.is_none() && !item.tool_output.is_empty() {
+        .and_then(|details| details.command_preview())
+        && !detail.contains(command)
+    {
+        detail.push_str("\n\nCommand:\n");
+        detail.push_str(command);
+    }
+    if !item.tool_output.is_empty() {
         if !detail.is_empty() {
-            detail.push_str("\n\n");
+            detail.push_str("\n\nOutput:\n");
         }
         detail.push_str(&item.tool_output);
+    }
+    if detail.is_empty() {
+        detail = item.tool_details.as_ref().map_or_else(
+            || "No details available".into(),
+            |details| details.inspection_text(),
+        );
     }
     if let Some(review) = &item.tool_review {
         if !detail.is_empty() {
@@ -465,15 +449,7 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
             detail.push_str(review_detail);
         }
     }
-    selectable_text(id, fenced_text(&detail))
-        .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .text_color(if item.is_error {
-            THEME.colors.error
-        } else {
-            THEME.colors.muted
-        })
-        .into_any_element()
+    detail
 }
 
 #[cfg(test)]
@@ -482,7 +458,7 @@ mod tests {
     use crate::app::views::transcript::conversation::{ConversationState, ToolReview};
     use serde_json::json;
 
-    fn write_item() -> TranscriptItem {
+    pub(super) fn write_item() -> TranscriptItem {
         let mut state = ConversationState::default();
         state.reduce(&json!({
             "type": "tool_execution_start", "toolCallId": "write-1", "toolName": "write",
@@ -499,7 +475,6 @@ mod tests {
     fn only_successful_file_changes_open_editor() {
         let mut item = write_item();
         assert!(file_targets(&item).next().is_some());
-        assert_eq!(direct_change_target(&item), Some(("src/main.rs", None)));
         item.streaming = true;
         assert!(file_targets(&item).next().is_none());
         item.streaming = false;
@@ -518,7 +493,6 @@ mod tests {
             file_targets(&item).collect::<Vec<_>>(),
             ["other.rs", "last.rs"]
         );
-        assert!(direct_change_target(&item).is_none());
         Arc::make_mut(item.tool_details.as_mut().unwrap())
             .metadata
             .targets
@@ -579,7 +553,7 @@ mod tests {
         state.reduce(&json!({"type":"tool_execution_start", "toolCallId":"custom", "toolName":"mcp_database", "args":{"path":"not-a-file"}}));
         assert_eq!(
             activity_summary(state.items.iter().map(AsRef::as_ref)),
-            "4 calls"
+            "2 reads · 1 command · 1 other action"
         );
     }
 
@@ -591,6 +565,15 @@ mod tests {
         state.reduce(&json!({"type":"tool_execution_end", "toolCallId":"acp", "result":{"content":[]}, "isError":false}));
         assert!(state.items[0].tool_presentation.is_none());
         assert!(file_targets(&state.items[0]).next().is_some());
-        assert!(direct_change_target(&state.items[0]).is_none());
+    }
+
+    #[test]
+    fn details_preserve_readable_output_and_do_not_repeat_commands() {
+        let mut state = ConversationState::default();
+        state.reduce(&json!({"type":"tool_execution_start", "toolCallId":"shell", "toolName":"bash", "args":{"command":"cargo check"}}));
+        state.reduce(&json!({"type":"tool_execution_end", "toolCallId":"shell", "isError":true, "result":{"content":[{"type":"text","text":"error: missing trait\n  src/main.rs:5"}]}}));
+        let detail = tool_body_text(&state.items[0]);
+        assert_eq!(detail.matches("cargo check").count(), 1);
+        assert!(detail.contains("error: missing trait\n  src/main.rs:5"));
     }
 }

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, CursorStyle, Div, ElementId, InteractiveElement as _, IntoElement as _,
     MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, Window, div, prelude::FluentBuilder as _,
+    Styled as _, Window, div,
 };
 
 use super::{AppIconSize, activates_button, app_icon, icon_control};
@@ -45,22 +45,18 @@ type DisclosureHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
 pub(crate) fn disclosure_title_row(
     id: impl Into<ElementId>,
-    key: usize,
     expanded: bool,
     expandable: bool,
     label: impl Into<SharedString>,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
-    let group = SharedString::from(format!("disclosure-{key}"));
     let row = div()
         .id(id)
-        .group(group.clone())
         .w_full()
         .flex()
         .items_center()
         .gap(THEME.space.xs)
-        .rounded(THEME.radius)
-        .child(disclosure_gutter(expanded, expandable, group));
+        .rounded(THEME.radius);
     if !expandable {
         return row;
     }
@@ -69,6 +65,13 @@ pub(crate) fn disclosure_title_row(
     let on_press: DisclosureHandler = Rc::new(on_press);
     let click = Rc::clone(&on_press);
     row.role(Role::Button)
+        .child(
+            div()
+                .flex_none()
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.muted)
+                .child(if expanded { "Hide details" } else { "Details" }),
+        )
         .aria_label(disclosure_action_label(expanded, &label))
         .aria_expanded(expanded)
         .tab_index(0)
@@ -87,23 +90,4 @@ pub(crate) fn disclosure_title_row(
 
 fn disclosure_action_label(expanded: bool, label: &str) -> String {
     format!("{} {label}", if expanded { "Collapse" } else { "Expand" })
-}
-
-fn disclosure_gutter(expanded: bool, expandable: bool, group: SharedString) -> AnyElement {
-    div()
-        .w(THEME.icons.control)
-        .h(THEME.icons.control)
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_color(THEME.colors.subtle)
-        .when(expandable, |slot| {
-            slot.when(!expanded, |slot| {
-                slot.opacity(0.0)
-                    .group_hover(group, |slot| slot.opacity(1.0))
-            })
-            .child(app_icon(AppIcon::CaretDown, AppIconSize::Control))
-        })
-        .into_any_element()
 }
