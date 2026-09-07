@@ -14,45 +14,26 @@ impl Supervisor {
                         &mut self.configuration_catalogs,
                         harness.clone(),
                         project.clone(),
-                        catalog.clone(),
+                        catalog,
                     ) && let Some(state) = self.catalog_state.as_ref()
                     {
                         let _ = state.save_configuration_catalogs(&self.configuration_catalogs);
                     }
-                    if let Some(snapshot) = self.latest.get(&self.selected)
-                        && snapshot.harness == harness
-                        && snapshot.project == project
-                    {
-                        let mut updated = snapshot.clone();
-                        let snapshot = Arc::make_mut(&mut updated);
-                        snapshot.models.clone_from(&catalog.models);
-                        snapshot.thinking_levels.clone_from(&catalog.efforts);
-                        snapshot.configuration_status = ConfigurationStatus::Loaded;
-                        self.latest.insert(self.selected.clone(), updated.clone());
-                        let _ = self.event_tx.send(RuntimeEvent::Snapshot {
-                            generation: self.generation,
-                            snapshot: updated,
-                        });
-                    }
                 }
                 Err(error) => {
                     zlog::warn!("Failed to refresh {harness} catalog: {error}");
-                    self.configurations.set_catalog_error(
-                        harness.clone(),
-                        project.clone(),
-                        error.clone(),
-                    );
-                    if let Some(snapshot) = self.latest.get(&self.selected)
-                        && snapshot.harness == harness
-                        && snapshot.project == project
-                    {
-                        let mut updated = snapshot.clone();
-                        let snapshot = Arc::make_mut(&mut updated);
-                        snapshot.configuration_status = ConfigurationStatus::Failed(error);
-                        self.latest.insert(self.selected.clone(), updated.clone());
+                    self.configurations
+                        .set_catalog_error(harness.clone(), project.clone(), error);
+                }
+            }
+            for (key, snapshot) in &mut self.latest {
+                if snapshot.harness == harness && snapshot.project == project {
+                    self.configurations
+                        .refresh_snapshot_catalog(Arc::make_mut(snapshot));
+                    if key == &self.selected {
                         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
                             generation: self.generation,
-                            snapshot: updated,
+                            snapshot: snapshot.clone(),
                         });
                     }
                 }

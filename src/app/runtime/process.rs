@@ -111,6 +111,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reset_process_runtime(&mut self) {
+        self.pending_session_controls.reset_transport();
         self.invalidate_history_loads();
         self.process_generation = self.process_generation.saturating_add(1);
         if let Some(mut process) = self.process.take() {
@@ -239,9 +240,19 @@ impl RuntimeOwner {
     }
 
     pub(super) fn send(&mut self, request: SessionCommand) {
+        let selected_model = match &request {
+            SessionCommand::SelectModel { provider, model_id } => {
+                Some((provider.clone(), model_id.clone()))
+            }
+            _ => None,
+        };
         let operation = request.operation();
         match self.process.as_mut().map(|process| process.send(request)) {
-            Some(Ok(_)) => {}
+            Some(Ok(id)) => {
+                if let Some(model) = selected_model {
+                    self.pending_session_controls.model_sent(id, model);
+                }
+            }
             Some(Err(error)) => self.fail(error),
             None => self.fail(format!(
                 "Cannot {operation}: {} is not connected",

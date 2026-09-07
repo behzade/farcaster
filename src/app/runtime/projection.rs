@@ -123,6 +123,18 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
 impl RuntimeOwner {
     pub(super) fn apply_response(&mut self, response: crate::agents::SessionResponse) {
         let operation = response.operation;
+        if operation == SessionOperation::SelectModel {
+            self.pending_session_controls.model_response(&response);
+            if !response.success {
+                if self.deferred_prompt.take().is_some() {
+                    self.rollback_failed_prompt("The selected model could not be applied");
+                    if let Some(target) = self.pending_prompt_target.take() {
+                        self.emit_prompt_result(&target, false);
+                    }
+                }
+                self.send(SessionCommand::LoadState);
+            }
+        }
         let is_prompt_response = matches!(operation, SessionOperation::Prompt(_))
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
         if is_prompt_response {

@@ -76,6 +76,16 @@ impl Supervisor {
                 }
                 let next = command_target(&command);
                 if let Some((requested_key, project, harness)) = next {
+                    if let Some(sender) = &self.configuration_tx
+                        && self.configuration_projects.insert(project.clone())
+                    {
+                        refresh_configuration_catalogs(
+                            project.clone(),
+                            self.process_command.clone(),
+                            self.supervisor_thread.clone(),
+                            sender.clone(),
+                        );
+                    }
                     let _selection_timing = is_view_only_selection(&command).then(|| {
                         crate::app::infrastructure::performance::Timing::new("switch.runtime_route")
                     });
@@ -122,9 +132,12 @@ impl Supervisor {
                         send_configured_command(actor, command, &self.configurations);
                     }
                     if let Some(mut snapshot) = resident_snapshot {
+                        self.configurations
+                            .refresh_snapshot_catalog(Arc::make_mut(&mut snapshot));
                         if view_only {
                             Arc::make_mut(&mut snapshot).transcript_changed_from = None;
                         }
+                        self.latest.insert(key.clone(), snapshot.clone());
                         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
                             generation: self.generation,
                             snapshot,

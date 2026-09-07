@@ -171,6 +171,120 @@ fn owner_without_process(
     )
 }
 
+#[test]
+fn model_switch_gates_prompts_and_recovers_after_rejection() {
+    struct Recorder(std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>);
+    impl SessionTransport for Recorder {
+        fn send(&mut self, command: SessionCommand) -> Result<String, String> {
+            let mut commands = self.0.borrow_mut();
+            commands.push(command);
+            Ok(commands.len().to_string())
+        }
+        fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
+            Ok(())
+        }
+        fn poll(&mut self) -> Option<SessionEvent> {
+            None
+        }
+        fn close(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let temp = tempdir().unwrap();
+    let (mut owner, events, _) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap());
+    owner.snapshot.session = Some(
+        serde_json::from_value(json!({
+            "model": null, "thinkingLevel": "off", "sessionName": "Model test",
+            "isStreaming": false, "isCompacting": false, "sessionId": "test",
+            "autoCompactionEnabled": true, "messageCount": 0, "pendingMessageCount": 0
+        }))
+        .unwrap(),
+    );
+    let commands = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    owner.process = Some(Box::new(Recorder(commands.clone())));
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.active_session = Some(PathBuf::from("/model-test/session.jsonl"));
+    let model: Model = serde_json::from_value(json!({
+        "id": "astra", "name": "Astra", "provider": "openai-codex", "reasoning": false
+    }))
+    .unwrap();
+    owner.set_model(model.clone());
+    owner.send_prompt(
+        "draft:test".into(),
+        PromptMode::Normal,
+        "hello".into(),
+        vec![],
+        false,
+    );
+    owner.maybe_send_deferred_prompt();
+    assert!(owner.deferred_prompt.is_some());
+    assert!(
+        !commands
+            .borrow()
+            .iter()
+            .any(|command| matches!(command, SessionCommand::Prompt { .. }))
+    );
+    owner.apply_response(crate::agents::SessionResponse {
+        id: Some("1".into()),
+        operation: SessionOperation::SelectModel,
+        success: false,
+        data: Value::Null,
+        error: Some("Model not found".into()),
+    });
+    assert!(owner.deferred_prompt.is_none());
+    assert!(!owner.snapshot.conversation.running);
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            accepted: false,
+            ..
+        }
+    )));
+    owner.send_prompt(
+        "draft:test".into(),
+        PromptMode::Normal,
+        "retry".into(),
+        vec![],
+        false,
+    );
+    assert!(owner.pending_prompt_target.is_none());
+    assert!(
+        !commands
+            .borrow()
+            .iter()
+            .any(|command| matches!(command, SessionCommand::Prompt { .. }))
+    );
+
+    owner.set_model(model.clone());
+    let id = commands.borrow().len().to_string();
+    owner.send_prompt(
+        "draft:test".into(),
+        PromptMode::Normal,
+        "retry".into(),
+        vec![],
+        false,
+    );
+    owner.apply_response(crate::agents::SessionResponse {
+        id: Some(id),
+        operation: SessionOperation::SelectModel,
+        success: true,
+        data: serde_json::to_value(model).unwrap(),
+        error: None,
+    });
+    owner.maybe_send_deferred_prompt();
+    assert!(owner.deferred_prompt.is_none());
+    assert_eq!(
+        commands
+            .borrow()
+            .iter()
+            .filter(|command| matches!(command, SessionCommand::Prompt { .. }))
+            .count(),
+        1
+    );
+}
+
 fn preview_history(owner: &mut RuntimeOwner, session: PathBuf, message: &str) {
     owner.snapshot.history_preview = true;
     owner.snapshot.selected_session = Some(session);

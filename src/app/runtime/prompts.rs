@@ -49,6 +49,13 @@ impl RuntimeOwner {
         images: Vec<PromptImage>,
         allow_while_running: bool,
     ) {
+        if let Some(error) = self.pending_session_controls.model_error() {
+            self.reject_prompt(
+                &target,
+                format!("Select a working model before sending: {error}"),
+            );
+            return;
+        }
         if self.pending_prompt_id.is_some() || self.pending_prompt_target.is_some() {
             self.reject_prompt(&target, "Another message is still being sent".into());
             return;
@@ -170,8 +177,27 @@ impl RuntimeOwner {
         images: Vec<PromptImage>,
         outbox_id: Option<i64>,
     ) {
+        if let Some(error) = self
+            .pending_session_controls
+            .model_error()
+            .map(str::to_owned)
+        {
+            self.pending_outbox_id = outbox_id;
+            self.rollback_failed_prompt(&error);
+            if let Some(target) = self.pending_prompt_target.take() {
+                self.reject_prompt(
+                    &target,
+                    format!("Select a working model before sending: {error}"),
+                );
+            }
+            return;
+        }
         let start_process = self.snapshot.history_preview || self.process.is_none();
-        if start_process || !self.startup_state_loaded || !self.startup_history_loaded {
+        if start_process
+            || !self.startup_state_loaded
+            || !self.startup_history_loaded
+            || self.pending_session_controls.model_pending()
+        {
             self.pending_outbox_id = outbox_id;
             self.deferred_prompt = Some(DeferredPrompt {
                 mode,
@@ -256,6 +282,17 @@ impl RuntimeOwner {
         self.publish();
     }
 
+    pub(super) fn rollback_failed_prompt(&mut self, error: &str) {
+        self.mark_outbox_failed(error);
+        self.rollback_pending_prompt();
+        let running = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .is_some_and(|session| session.is_streaming);
+        conversation_mut(self.active_snapshot_mut()).running = running;
+    }
+
     pub(super) fn emit_prompt_result(&self, target: &str, accepted: bool) {
         let session = self.active_session.clone();
         let accepted = accepted && session.is_some();
@@ -268,7 +305,11 @@ impl RuntimeOwner {
     }
 
     pub(super) fn maybe_send_deferred_prompt(&mut self) {
-        if !self.startup_state_loaded || !self.startup_history_loaded {
+        if !self.startup_state_loaded
+            || !self.startup_history_loaded
+            || self.pending_session_controls.model_pending()
+            || self.pending_session_controls.model_error().is_some()
+        {
             return;
         }
         if let Some(prompt) = self.deferred_prompt.take() {

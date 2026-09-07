@@ -192,6 +192,17 @@ impl HarnessConfigurationStore {
             ConfigurationStatus::Failed(error);
     }
 
+    pub fn refresh_snapshot_catalog(&self, snapshot: &mut RuntimeSnapshot) {
+        if let Some(catalog) = self
+            .catalogs
+            .get(&(snapshot.harness.clone(), snapshot.project.clone()))
+        {
+            snapshot.models.clone_from(&catalog.models);
+            snapshot.thinking_levels.clone_from(&catalog.efforts);
+            snapshot.configuration_status.clone_from(&catalog.status);
+        }
+    }
+
     pub fn reconcile_snapshot(
         &mut self,
         snapshot: &mut RuntimeSnapshot,
@@ -201,12 +212,14 @@ impl HarnessConfigurationStore {
             .catalogs
             .entry((snapshot.harness.clone(), snapshot.project.clone()))
             .or_default();
-        if snapshot.models.is_empty() {
+        if snapshot.models.is_empty() || (!snapshot.connected && !catalog.models.is_empty()) {
             snapshot.models.clone_from(&catalog.models);
         } else {
             catalog.models.clone_from(&snapshot.models);
         }
-        if snapshot.thinking_levels.is_empty() {
+        if snapshot.thinking_levels.is_empty()
+            || (!snapshot.connected && !catalog.efforts.is_empty())
+        {
             snapshot.thinking_levels.clone_from(&catalog.efforts);
         } else {
             catalog.efforts.clone_from(&snapshot.thinking_levels);
@@ -308,6 +321,35 @@ mod tests {
         };
 
         assert_eq!(snapshot.available_thinking_levels(), ["minimal", "low"]);
+    }
+
+    #[test]
+    fn cached_catalog_replaces_a_resident_loading_or_stale_snapshot() {
+        let mut store = HarnessConfigurationStore::default();
+        let mut snapshot = RuntimeSnapshot {
+            harness: "cursor-cli".into(),
+            project: PathBuf::from("/project"),
+            ..RuntimeSnapshot::default()
+        };
+        let loaded = model("loaded", false, None);
+        store.set_catalog(
+            snapshot.harness.clone(),
+            snapshot.project.clone(),
+            crate::agents::ConfigurationCatalog {
+                models: vec![loaded.clone()],
+                efforts: vec![],
+            },
+        );
+        store.refresh_snapshot_catalog(&mut snapshot);
+        assert_eq!(snapshot.models, vec![loaded.clone()]);
+        assert_eq!(snapshot.configuration_status, ConfigurationStatus::Loaded);
+        snapshot.models = vec![model("stale", false, None)];
+        store.refresh_snapshot_catalog(&mut snapshot);
+        assert_eq!(snapshot.models, vec![loaded]);
+        snapshot.harness = "pi".into();
+        snapshot.models.clear();
+        store.refresh_snapshot_catalog(&mut snapshot);
+        assert!(snapshot.models.is_empty());
     }
 
     #[test]

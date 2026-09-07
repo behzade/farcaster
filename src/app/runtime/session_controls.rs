@@ -4,9 +4,51 @@ use super::*;
 pub(super) struct PendingSessionControls {
     model: Option<(String, String)>,
     thinking: Option<String>,
+    model_requests: std::collections::HashSet<String>,
+    sent_model: Option<(String, String)>,
+    model_error: Option<String>,
 }
 
 impl PendingSessionControls {
+    pub(super) fn model_pending(&self) -> bool {
+        self.model.is_some() || !self.model_requests.is_empty()
+    }
+
+    pub(super) fn model_error(&self) -> Option<&str> {
+        self.model_error.as_deref()
+    }
+
+    pub(super) fn model_sent(&mut self, id: String, model: (String, String)) {
+        self.model_requests.insert(id);
+        self.sent_model = Some(model);
+        self.model_error = None;
+    }
+
+    pub(super) fn reset_transport(&mut self) {
+        if !self.model_requests.is_empty() {
+            if self.model.is_none() {
+                self.model = self.sent_model.take();
+            }
+            self.model_requests.clear();
+        }
+    }
+
+    pub(super) fn model_response(&mut self, response: &crate::agents::SessionResponse) {
+        if let Some(id) = &response.id {
+            self.model_requests.remove(id);
+        }
+        self.model_error = if response.success {
+            None
+        } else {
+            Some(
+                response
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Model switch failed".into()),
+            )
+        };
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.model.is_none() && self.thinking.is_none()
     }
@@ -15,6 +57,7 @@ impl PendingSessionControls {
         match control {
             SessionControl::Model(provider, model_id) => {
                 self.model = Some((provider, model_id));
+                self.model_error = None;
             }
             SessionControl::Thinking(level) => self.thinking = Some(level),
         }

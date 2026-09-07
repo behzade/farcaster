@@ -334,15 +334,17 @@ fn send_configured_command(
     }
 }
 
+type ConfigurationUpdate = (
+    String,
+    PathBuf,
+    Result<crate::agents::ConfigurationCatalog, String>,
+);
+
 fn refresh_configuration_catalogs(
     project: PathBuf,
     process_command: AgentLaunchConfig,
     supervisor: thread::Thread,
-    sender: mpsc::Sender<(
-        String,
-        PathBuf,
-        Result<crate::agents::ConfigurationCatalog, String>,
-    )>,
+    sender: mpsc::Sender<ConfigurationUpdate>,
 ) {
     for backend in agents::backend_statuses()
         .into_iter()
@@ -389,11 +391,9 @@ struct Supervisor {
     catalog_state: Option<StateStore>,
     configuration_catalogs:
         Vec<crate::app::infrastructure::persistence::CachedConfigurationCatalog>,
-    configuration_rx: mpsc::Receiver<(
-        String,
-        PathBuf,
-        Result<crate::agents::ConfigurationCatalog, String>,
-    )>,
+    configuration_rx: mpsc::Receiver<ConfigurationUpdate>,
+    configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
+    configuration_projects: HashSet<PathBuf>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
 }
 
@@ -512,7 +512,7 @@ impl Supervisor {
                 initial_project.clone(),
                 process_command.clone(),
                 supervisor_thread.clone(),
-                configuration_tx,
+                configuration_tx.clone(),
             );
         }
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
@@ -558,6 +558,8 @@ impl Supervisor {
             catalog_state,
             configuration_catalogs,
             configuration_rx,
+            configuration_tx: refresh_configuration.then_some(configuration_tx),
+            configuration_projects: HashSet::from([initial_project]),
             published_statuses,
         }
     }

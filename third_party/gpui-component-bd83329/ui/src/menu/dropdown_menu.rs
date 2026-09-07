@@ -42,6 +42,7 @@ pub struct DropdownMenuPopover<T: Selectable + IntoElement + 'static> {
     mouse_button: MouseButton,
     anchor_to_cursor: bool,
     builder: Rc<dyn Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu>,
+    refresh_key: Option<SharedString>,
 }
 
 impl<T> DropdownMenuPopover<T>
@@ -62,6 +63,7 @@ where
             mouse_button: MouseButton::Left,
             anchor_to_cursor: false,
             builder: Rc::new(builder),
+            refresh_key: None,
         }
     }
 
@@ -74,6 +76,12 @@ where
     /// Set the mouse button that opens the menu.
     pub fn mouse_button(mut self, mouse_button: MouseButton) -> Self {
         self.mouse_button = mouse_button;
+        self
+    }
+
+    /// Rebuild an open menu when the data used by its builder changes.
+    pub fn refresh_key(mut self, key: impl Into<SharedString>) -> Self {
+        self.refresh_key = Some(key.into());
         self
     }
 
@@ -94,6 +102,7 @@ where
 #[derive(Default)]
 struct DropdownMenuState {
     menu: Option<Entity<PopupMenu>>,
+    refresh_key: Option<SharedString>,
 }
 
 impl<T> RenderOnce for DropdownMenuPopover<T>
@@ -114,6 +123,12 @@ where
             .trigger_style(self.style)
             .anchor(self.anchor)
             .content(move |_, window, cx| {
+                menu_state.update(cx, |state, _| {
+                    if state.refresh_key != self.refresh_key {
+                        state.menu = None;
+                        state.refresh_key = self.refresh_key.clone();
+                    }
+                });
                 // Here is special logic to only create the PopupMenu once and reuse it.
                 // Because this `content` will called in every time render, so we need to store the menu
                 // in state to avoid recreating at every render.

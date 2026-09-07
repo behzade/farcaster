@@ -68,7 +68,21 @@ pub(in crate::app::views) fn render(
     .flex_none()
     .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |menu, window, cx| {
         build_runtime_menu(menu, &runtime_entity, window, cx)
-    });
+    })
+    .refresh_key(format!(
+        "{:?}",
+        (
+            &app.snapshot.harness,
+            &app.snapshot.project,
+            &app.snapshot.models,
+            &app.snapshot.thinking_levels,
+            &app.snapshot.configuration_status,
+            app.snapshot.connected,
+            &app.snapshot.modes,
+            &app.snapshot.selected_mode,
+            app.snapshot.session_identity(),
+        )
+    ));
 
     div()
         .flex_none()
@@ -236,14 +250,8 @@ fn apply_runtime(
     cx: &mut App,
 ) {
     let _ = entity.update(cx, |this, cx| {
-        let same_model = this
-            .snapshot
-            .session_identity()
-            .model
-            .is_some_and(|selected| selected.id == model.id && selected.provider == model.provider);
-        if !same_model {
-            this.select_model(model, cx);
-        }
+        // Reapplying the current model also lets the user recover from a rejected switch.
+        this.select_model(model, cx);
         if let Some(effort) = effort {
             this.set_thinking_level(effort, cx);
         }
@@ -436,6 +444,65 @@ fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn open_model_menu_refreshes_only_when_its_catalog_changes(cx: &mut gpui::TestAppContext) {
+        use std::{cell::RefCell, rc::Rc};
+        struct Picker {
+            revision: usize,
+            builds: Rc<RefCell<Vec<usize>>>,
+        }
+        impl gpui::Render for Picker {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
+                let revision = self.revision;
+                let builds = self.builds.clone();
+                gpui_component::button::Button::new("picker-test")
+                    .label("Models")
+                    .w(px(100.0))
+                    .h(px(40.0))
+                    .dropdown_menu(move |menu, _, _| {
+                        builds.borrow_mut().push(revision);
+                        menu.item(PopupMenuItem::new(if revision == 0 {
+                            "Loading"
+                        } else {
+                            "Astra"
+                        }))
+                    })
+                    .refresh_key(revision.to_string())
+            }
+        }
+        cx.update(gpui_component::init);
+        let builds = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let builds = builds.clone();
+            move |_, _| Picker {
+                revision: 0,
+                builds,
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_click(gpui::point(px(20.0), px(20.0)), Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(*builds.borrow(), vec![0]);
+        cx.update(|window, cx| {
+            view.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(*builds.borrow(), vec![0]);
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                view.revision = 1;
+                cx.notify();
+            });
+            window.draw(cx).clear(cx);
+        });
+        assert_eq!(*builds.borrow(), vec![0, 1]);
+        cx.simulate_keystrokes("escape");
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.simulate_click(gpui::point(px(20.0), px(20.0)), Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(*builds.borrow(), vec![0, 1, 1]);
+    }
 
     fn model(
         provider: &str,
