@@ -10,7 +10,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
-    protocol::{AgentMode, Model},
+    protocol::Model,
     runtime::{ConfigurationStatus, HarnessAccessMode},
 };
 
@@ -78,8 +78,6 @@ pub(in crate::app::views) fn render(
             &app.snapshot.thinking_levels,
             &app.snapshot.configuration_status,
             app.snapshot.connected,
-            &app.snapshot.modes,
-            &app.snapshot.selected_mode,
             app.snapshot.session_identity(),
         )
     ));
@@ -115,8 +113,6 @@ fn build_runtime_menu(
             catalog_levels: app.snapshot.thinking_levels.clone(),
             selected_model: identity.model.cloned(),
             selected_effort: identity.effort.map(str::to_owned),
-            modes: app.snapshot.modes.clone(),
-            selected_mode: app.snapshot.selected_mode.clone(),
             feedback: catalog_feedback(app),
         }
     };
@@ -150,31 +146,6 @@ fn build_runtime_menu(
                 cx,
             )
         });
-    }
-    if !data.modes.is_empty() {
-        let entity = entity.clone();
-        let modes = data.modes;
-        let selected_mode = data.selected_mode;
-        menu = menu
-            .separator()
-            .submenu("Mode", window, cx, move |menu, _, _| {
-                let mut menu = menu.min_w(px(140.0));
-                for mode in &modes {
-                    let entity = entity.clone();
-                    let target = mode.id.clone();
-                    let checked = selected_mode.as_deref() == Some(mode.id.as_str());
-                    menu = menu.item(
-                        PopupMenuItem::new(mode.name.clone())
-                            .checked(checked)
-                            .on_click(move |_, _, cx| {
-                                let _ = entity.update(cx, |this, cx| {
-                                    this.set_agent_mode(target.clone(), cx);
-                                });
-                            }),
-                    );
-                }
-                menu
-            });
     }
     if let Some(reveal) = reveal {
         menu = menu.with_selected_index(reveal.provider);
@@ -276,8 +247,6 @@ struct RuntimeMenuData {
     catalog_levels: Vec<String>,
     selected_model: Option<Model>,
     selected_effort: Option<String>,
-    modes: Vec<AgentMode>,
-    selected_mode: Option<String>,
     feedback: Option<String>,
 }
 

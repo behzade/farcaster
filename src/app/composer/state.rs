@@ -70,11 +70,6 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn set_agent_mode(&mut self, mode: String, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::SetMode(mode), cx);
-        cx.notify();
-    }
-
     pub(in crate::app) fn set_access_mode(
         &mut self,
         level: crate::runtime::HarnessAccessMode,

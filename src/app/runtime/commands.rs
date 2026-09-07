@@ -121,7 +121,6 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetModel(model) => self.set_model(model),
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
-            RuntimeCommand::SetMode(mode) => self.send(SessionCommand::SelectMode { mode }),
             RuntimeCommand::SetAccessMode(mode) => self.set_access_mode(mode),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ExtensionResponse(response) => {

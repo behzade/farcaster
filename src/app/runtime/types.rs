@@ -73,7 +73,6 @@ pub(crate) enum RuntimeCommand {
     },
     SetModel(Model),
     SetThinking(String),
-    SetMode(String),
     SetAccessMode(HarnessAccessMode),
     SetAppProxy(Option<String>),
     ExtensionResponse(ExtensionUiResponse),
