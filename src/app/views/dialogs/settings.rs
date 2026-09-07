@@ -41,9 +41,13 @@ pub(in crate::app::views) fn render(
                 .overflow_hidden()
                 .child(
                     div()
-                        .px(THEME.space.md)
-                        .py(THEME.space.sm)
+                        .flex_none()
+                        .px(gpui::px(24.0))
+                        .py(THEME.space.md)
+                        .border_b_1()
+                        .border_color(THEME.colors.surface)
                         .text_size(THEME.type_scale.display)
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
                         .child("Settings"),
                 )
                 .child(
@@ -54,12 +58,18 @@ pub(in crate::app::views) fn render(
                         .overflow_y_scroll()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.md)
-                        .p(THEME.space.md)
-                        .child(setting_label(
-                            "Keyboard focus",
-                            "Ctrl+G activates app keys for 2 seconds without moving focus. Double Ctrl+G returns to the chat composer. In chat, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page without moving focus. On macOS, Cmd+G also focuses the composer. Ctrl+G e/t open the editor/terminal, 0–9 switch sessions, and / searches. Composer Escape applies queued steer or double-Escape abort while a run is active.",
-                        ))
+                        .gap(gpui::px(24.0))
+                        .p(gpui::px(24.0))
+                        .child(worker_tasks::render(app, entity.clone()))
+                        .child(
+                            div()
+                                .pt(THEME.space.md)
+                                .border_t_1()
+                                .border_color(THEME.colors.surface)
+                                .text_size(THEME.type_scale.reading)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("Connections"),
+                        )
                         .child(builtin_mcp_setting(
                             crate::builtin_mcp::enabled(),
                             entity.clone(),
@@ -68,7 +78,7 @@ pub(in crate::app::views) fn render(
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap(THEME.space.xs)
+                                .gap(THEME.space.sm)
                                 .child(setting_label(
                                     "Network proxy",
                                     "Used when the project environment has no HTTP or HTTPS proxy.",
@@ -95,8 +105,7 @@ pub(in crate::app::views) fn render(
                                             },
                                         )),
                                 ),
-                        )
-                        .child(worker_tasks::render(app, entity.clone())),
+                        ),
                 )
                 .when_some(app.network_proxy_error.clone(), |content, error| {
                     content.child(div().px(THEME.space.md).child(feedback(
@@ -107,12 +116,14 @@ pub(in crate::app::views) fn render(
                 })
                 .child(
                     div()
+                        .flex_none()
                         .flex()
                         .justify_end()
                         .gap(THEME.space.sm)
-                        .p(THEME.space.md)
+                        .px(gpui::px(24.0))
+                        .py(THEME.space.md)
                         .border_t_1()
-                        .border_color(THEME.colors.border)
+                        .border_color(THEME.colors.surface)
                         .child(button(
                             "cancel-settings",
                             "Cancel",
@@ -124,7 +135,7 @@ pub(in crate::app::views) fn render(
                         ))
                         .child(button(
                             "save-settings",
-                            "Save",
+                            "Save changes",
                             ButtonTone::Accent,
                             app.worker_task_editor.edit.is_none(),
                             move |window, cx| {
@@ -145,7 +156,7 @@ fn builtin_mcp_setting(enabled: bool, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .gap(THEME.space.md)
         .child(setting_label(
             "Built-in MCP",
-            "Runs the local MCP server and adds tools to new sessions. Turning it off disconnects existing MCP clients.",
+            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
         ))
         .child(
             Button::new("builtin-mcp-toggle")
@@ -171,13 +182,14 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
         .child(
             div()
                 .text_size(THEME.type_scale.body)
+                .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(THEME.colors.text)
                 .child(title),
         )
         .child(
             div()
                 .text_size(THEME.type_scale.body_small)
-                .text_color(THEME.colors.subtle)
+                .text_color(THEME.colors.muted)
                 .child(description),
         )
         .into_any_element()

@@ -72,7 +72,7 @@ fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
 }
 
 fn render_scoped_paths(node: &workgraph::Node) -> impl IntoElement {
-    detail_section("Scoped paths").children(node.files.iter().map(|path| {
+    detail_section("Files").children(node.files.iter().map(|path| {
         div()
             .text_size(THEME.type_scale.body_small)
             .font_family(MONO_FONT_FAMILY)
@@ -131,7 +131,7 @@ fn render_successors(
 ) -> impl IntoElement {
     let add_successor = entity.clone();
     let leaf = successors.is_empty();
-    detail_section("Next")
+    detail_section("Next steps")
         .when(leaf, |section| {
             section.child(detail_empty("Completing this node ends the branch."))
         })
@@ -183,12 +183,12 @@ impl WorkGraphBoardView {
             .h_full()
             .overflow_y_scroll()
             .px(THEME.space.md)
-            .py(THEME.space.sm)
+            .py(THEME.space.md)
             .bg(THEME.colors.panel)
             .when(!external && !narrow, |detail| {
                 detail
                     .border_l(THEME.border)
-                    .border_color(THEME.colors.border)
+                    .border_color(THEME.colors.surface)
             })
             .child(match (snapshot, node) {
                 (Some(snapshot), Some(node)) => {

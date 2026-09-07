@@ -8,7 +8,10 @@ use crate::{
         },
     },
 };
-use gpui_component::Disableable as _;
+use gpui_component::{
+    Disableable as _,
+    menu::{DropdownMenu as _, PopupMenuItem},
+};
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let editor = &app.worker_task_editor;
@@ -18,19 +21,32 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .flex()
         .flex_col()
         .gap(THEME.space.md)
-        .border_t_1()
-        .border_color(THEME.colors.border)
-        .pt(THEME.space.md)
         .child(
             div()
                 .flex()
                 .items_center()
                 .justify_between()
                 .gap(THEME.space.md)
-                .child(setting_label(
-                    "Worker tasks",
-                    "Choose what runs each delegated task. Changes apply to new workers.",
-                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(THEME.space.xs)
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.reading)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("Worker tasks"),
+                        )
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.body_small)
+                                .text_color(THEME.colors.muted)
+                                .child(
+                                    "Choose the models used for each task and level of autonomy.",
+                                ),
+                        ),
+                )
                 .child(button(
                     "worker-reload-choices",
                     "Reload choices",
@@ -46,7 +62,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 .flex()
                 .gap(THEME.space.md)
                 .child(task_rail(app, entity.clone()))
-                .child(div().w(gpui::px(1.0)).bg(THEME.colors.border).flex_none())
+                .child(div().w(gpui::px(1.0)).bg(THEME.colors.surface).flex_none())
                 .child(task_detail(app, entity)),
         )
         .into_any_element()
@@ -146,20 +162,6 @@ fn task_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                             )
                         }),
                 ),
-        );
-        detail = detail.child(
-            div().flex().gap(THEME.space.sm).children(
-                ["Harness", "Provider", "Model", "Effort"]
-                    .into_iter()
-                    .map(|label| {
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.muted)
-                            .child(label)
-                    }),
-            ),
         );
         for judgment in WorkerJudgment::ALL {
             let target = WorkerRouteTarget {
@@ -274,10 +276,10 @@ fn route(
     let mut row = div()
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
-        .pt(THEME.space.sm)
+        .gap(THEME.space.sm)
+        .py(THEME.space.sm)
         .border_t_1()
-        .border_color(THEME.colors.border)
+        .border_color(THEME.colors.surface)
         .child(
             div()
                 .flex()
@@ -286,14 +288,20 @@ fn route(
                 .gap(THEME.space.sm)
                 .child(
                     div()
+                        .min_w_0()
                         .flex()
-                        .items_baseline()
-                        .gap(THEME.space.sm)
-                        .child(div().text_color(THEME.colors.text).child(label))
+                        .flex_col()
+                        .gap(THEME.space.xs)
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(THEME.colors.text)
+                                .child(label),
+                        )
                         .child(
                             div()
                                 .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.subtle)
+                                .text_color(THEME.colors.muted)
                                 .child(explanation),
                         ),
                 )
@@ -383,9 +391,25 @@ fn route_menu(
     enabled: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
+    let field = match id {
+        "worker-harness" => "Harness",
+        "worker-provider" => "Provider",
+        "worker-model" => "Model",
+        _ => "Effort",
+    };
     div()
         .flex_1()
+        .when(id == "worker-model", |field| field.flex_grow(2.0))
         .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(THEME.space.xs)
+        .child(
+            div()
+                .text_size(THEME.type_scale.caption)
+                .text_color(THEME.colors.muted)
+                .child(field),
+        )
         .child(
             dropdown_content_button(
                 (id, target.judgment as usize),

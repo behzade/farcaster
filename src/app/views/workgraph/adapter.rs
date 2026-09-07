@@ -6,13 +6,14 @@ pub(super) use create::CreateStage;
 use std::path::PathBuf;
 
 use super::{
-    components::{render_create_step, render_plan_list, render_session_goal},
+    components::{render_create_form, render_plan_list, render_session_goal},
     contract::{PlanData, PlanLoadState},
     core::{adjacent_node_number, create_form_valid, plan_rows},
-    layout::BoardLayoutMode,
+    layout::{BoardLayoutMode, board_layout},
 };
 use crate::{
-    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback},
+    app::ui::assets::AppIcon,
+    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button},
     app::ui::theme::THEME,
 };
 use gpui::{
@@ -207,16 +208,9 @@ impl WorkGraphBoardView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        match self.create_stage {
-            CreateStage::Outcome => {
-                self.previous_create_step(window, cx);
-                return true;
-            }
-            CreateStage::Node | CreateStage::CurrentState => {
-                self.cancel_create(window, cx);
-                return true;
-            }
-            CreateStage::Closed => {}
+        if self.create_stage.is_open() {
+            self.cancel_create(window, cx);
+            return true;
         }
         if !self.search.read(cx).value().is_empty() {
             self.search.update(cx, |input, cx| {
@@ -256,37 +250,41 @@ impl WorkGraphBoardView {
 }
 
 impl WorkGraphBoardView {
-    fn render_state(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_state(&self, layout: BoardLayoutMode, cx: &mut Context<Self>) -> gpui::AnyElement {
         let entity = cx.entity();
-        match &self.state {
+        let notice = match &self.state {
+            PlanLoadState::Ready(data) => return self.render_ready(data, entity, layout, cx),
             PlanLoadState::Loading => {
                 feedback("workgraph-loading", "Loading plan…", FeedbackTone::Info)
                     .into_any_element()
             }
             PlanLoadState::Failed(error) => render_load_error(error, entity),
-            PlanLoadState::Ready(data) => self.render_ready(data, entity, cx),
-        }
+        };
+        div()
+            .p(THEME.space.md)
+            .pr(px(56.0))
+            .child(notice)
+            .into_any_element()
     }
 
     fn render_ready(
         &self,
         data: &PlanData,
         entity: Entity<Self>,
+        layout: BoardLayoutMode,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let has_plan = data.snapshot.is_some();
-        let current_state_complete = !self.create_detail.read(cx).value().trim().is_empty();
-        let can_submit = create_form_valid(
-            has_plan,
-            self.create_title.read(cx).value().as_ref(),
-            self.create_detail.read(cx).value().as_ref(),
-        );
         if self.create_stage.is_open() {
-            return render_create_step(
+            let can_submit = create_form_valid(
+                has_plan,
+                self.create_title.read(cx).value().as_ref(),
+                self.create_detail.read(cx).value().as_ref(),
+            );
+            return render_create_form(
                 &self.create_title,
                 &self.create_detail,
                 self.create_stage,
-                current_state_complete,
                 can_submit,
                 entity,
             )
@@ -302,7 +300,7 @@ impl WorkGraphBoardView {
         let plan_title = data
             .snapshot
             .as_ref()
-            .map_or("Plans", |snapshot| snapshot.plan.title.as_str());
+            .map_or("Project plan", |snapshot| snapshot.plan.title.as_str());
         div()
             .size_full()
             .min_h_0()
@@ -311,14 +309,14 @@ impl WorkGraphBoardView {
             .child(render_board_header(
                 plan_title,
                 has_plan,
-                self.selected.is_none(),
+                layout == BoardLayoutMode::Wide || self.selected.is_none(),
                 &self.search,
                 entity.clone(),
             ))
             .when_some(self.session_goal.as_ref(), |board, goal| {
                 board.child(render_session_goal(goal, false))
             })
-            .child(self.render_board_body(data, rows, has_plan, entity))
+            .child(self.render_board_body(data, rows, has_plan, entity, layout))
             .into_any_element()
     }
 
@@ -328,19 +326,22 @@ impl WorkGraphBoardView {
         rows: Vec<super::contract::PlanRow>,
         has_plan: bool,
         entity: Entity<Self>,
+        layout: BoardLayoutMode,
     ) -> impl IntoElement {
+        let split = layout == BoardLayoutMode::Wide && has_plan;
         div()
             .flex_1()
             .min_h_0()
-            .when_some(self.selected, |body, _| {
-                body.child(self.render_detail(entity.clone(), data, BoardLayoutMode::Narrow, false))
-            })
-            .when(self.selected.is_none(), |body| {
+            .flex()
+            .when(split || self.selected.is_none(), |body| {
                 body.child(if has_plan {
-                    render_plan_list(rows, None, entity.clone()).into_any_element()
+                    render_plan_list(rows, self.selected, entity.clone()).into_any_element()
                 } else {
-                    render_empty_plan(entity).into_any_element()
+                    render_empty_plan(entity.clone()).into_any_element()
                 })
+            })
+            .when(split || self.selected.is_some(), |body| {
+                body.child(self.render_detail(entity, data, layout, false))
             })
     }
 }
@@ -368,25 +369,29 @@ fn render_load_error(error: &str, entity: Entity<WorkGraphBoardView>) -> gpui::A
 fn render_board_header(
     plan_title: &str,
     has_plan: bool,
-    show_create: bool,
+    show_list: bool,
     search: &Entity<InputState>,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let refresh = entity.clone();
     let back = entity.clone();
     div()
-        .h(px(40.0))
+        .h(px(56.0))
         .flex_none()
-        .px(THEME.space.md)
+        .pl(THEME.space.md)
+        .pr(px(56.0))
+        .gap(THEME.space.sm)
         .flex()
         .items_center()
         .justify_between()
         .border_b(THEME.border)
-        .border_color(THEME.colors.border)
-        .child(if show_create {
+        .border_color(THEME.colors.surface)
+        .child(if show_list {
             div()
                 .min_w_0()
-                .text_size(THEME.type_scale.body)
+                .flex_1()
+                .truncate()
+                .text_size(THEME.type_scale.reading)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(plan_title.to_owned())
                 .into_any_element()
@@ -405,20 +410,20 @@ fn render_board_header(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
-                .when(has_plan && show_create, |actions| {
-                    actions.child(Input::new(search).w(px(190.0)))
+                .when(has_plan && show_list, |actions| {
+                    actions.child(Input::new(search).w(px(140.0)))
                 })
-                .child(button(
+                .child(icon_button(
                     "workgraph-refresh",
-                    "Refresh",
+                    AppIcon::ArrowsClockwise,
+                    "Refresh plan",
                     ButtonTone::Quiet,
-                    true,
                     move |_, cx| refresh.update(cx, |this, cx| this.refresh(cx)),
                 ))
-                .when(show_create, |actions| {
+                .when(show_list && has_plan, |actions| {
                     actions.child(button(
                         "workgraph-create-open",
-                        if has_plan { "Add node" } else { "New plan" },
+                        "Add node",
                         ButtonTone::Neutral,
                         true,
                         move |window, cx| {
@@ -456,13 +461,14 @@ fn render_empty_plan(entity: Entity<WorkGraphBoardView>) -> impl IntoElement {
 }
 
 impl Render for WorkGraphBoardView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let layout = board_layout(f32::from(window.viewport_size().width));
         div()
             .size_full()
             .track_focus(&self.focus)
             .key_context(WORKGRAPH_KEY_CONTEXT)
             .min_h_0()
             .bg(THEME.colors.panel)
-            .child(self.render_state(cx))
+            .child(self.render_state(layout, cx))
     }
 }

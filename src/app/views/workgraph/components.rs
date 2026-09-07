@@ -107,6 +107,9 @@ pub(super) fn render_plan_list(
         .flex()
         .flex_col()
         .p(THEME.space.md)
+        .when(rows.is_empty(), |list| {
+            list.child(detail_empty("No nodes match your search."))
+        })
         .children(
             rows.into_iter()
                 .map(|row| render_plan_row(row, selected, entity.clone())),
@@ -135,15 +138,16 @@ fn render_plan_row(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .cursor_pointer()
+        .flex_none()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
-        .border_l(px(if row.current { 3.0 } else { 1.0 }))
-        .border_color(if row.current {
+        .border_l(px(2.0))
+        .border_color(if is_selected {
             THEME.colors.accent
         } else {
-            THEME.colors.border
+            THEME.colors.panel
         })
         .bg(if is_selected {
-            THEME.colors.surface
+            THEME.colors.selection
         } else {
             THEME.colors.panel
         })
@@ -215,19 +219,15 @@ fn render_plan_row(
         )
 }
 
-pub(super) fn render_create_step(
+pub(super) fn render_create_form(
     title: &Entity<InputState>,
     detail: &Entity<TextareaState>,
     stage: CreateStage,
-    current_state_complete: bool,
     can_submit: bool,
     entity: Entity<WorkGraphBoardView>,
 ) -> impl IntoElement {
     let add_node = stage == CreateStage::Node;
-    let show_outcome = stage == CreateStage::Outcome;
     let cancel = entity.clone();
-    let back = entity.clone();
-    let next = entity.clone();
     let submit = entity;
 
     div()
@@ -237,31 +237,21 @@ pub(super) fn render_create_step(
         .flex_col()
         .child(
             div()
-                .h(px(52.0))
+                .h(px(56.0))
                 .flex_none()
-                .px(THEME.space.md)
+                .pl(px(24.0))
+                .pr(px(56.0))
                 .flex()
                 .items_center()
                 .justify_between()
                 .border_b(THEME.border)
-                .border_color(THEME.colors.border)
+                .border_color(THEME.colors.surface)
                 .child(
                     div()
-                        .text_size(THEME.type_scale.body)
+                        .text_size(THEME.type_scale.display)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(if add_node { "Add node" } else { "New plan" }),
-                )
-                .when(!add_node, |header| {
-                    header.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(THEME.space.xs)
-                            .child(step_marker("Current state", !show_outcome))
-                            .child(app_icon(AppIcon::CaretRight, AppIconSize::Inline))
-                            .child(step_marker("Outcome", show_outcome)),
-                    )
-                }),
+                ),
         )
         .child(
             div()
@@ -269,8 +259,7 @@ pub(super) fn render_create_step(
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .px(THEME.space.md)
-                .py(THEME.space.md)
+                .p(px(24.0))
                 .flex()
                 .justify_center()
                 .child(
@@ -278,20 +267,28 @@ pub(super) fn render_create_step(
                         .w_full()
                         .max_w(px(520.0))
                         .when(add_node, |form| {
-                            form.child(compact_field("Node", Input::new(title).w_full()))
+                            form.child(compact_field("Node title", Input::new(title).w_full()))
                                 .child(div().mt(THEME.space.md).child(compact_field(
-                                    "Paths (optional)",
+                                    "Paths (optional, one per line)",
                                     Textarea::new(detail).w_full().appearance(true),
                                 )))
                         })
-                        .when(stage == CreateStage::CurrentState, |form| {
-                            form.child(compact_field(
+                        .when(!add_node, |form| {
+                            form.child(
+                                div()
+                                    .mb(THEME.space.md)
+                                    .text_size(THEME.type_scale.body_small)
+                                    .text_color(THEME.colors.muted)
+                                    .child("Describe where the project is now and what should be true when this plan is complete."),
+                            )
+                            .child(compact_field(
                                 "Current state",
                                 Textarea::new(detail).w_full().appearance(true),
                             ))
-                        })
-                        .when(show_outcome, |form| {
-                            form.child(compact_field("Outcome", Input::new(title).w_full()))
+                            .child(div().mt(THEME.space.md).child(compact_field(
+                                "Desired outcome",
+                                Input::new(title).w_full(),
+                            )))
                         }),
                 ),
         )
@@ -299,26 +296,14 @@ pub(super) fn render_create_step(
             div()
                 .h(px(56.0))
                 .flex_none()
-                .px(THEME.space.md)
+                .px(px(24.0))
                 .flex()
                 .items_center()
-                .justify_between()
+                .justify_end()
+                .gap(THEME.space.sm)
                 .border_t(THEME.border)
-                .border_color(THEME.colors.border)
-                .child(if show_outcome {
-                    button(
-                        "workgraph-create-back",
-                        "Back",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            back.update(cx, |this, cx| {
-                                this.previous_create_step(window, cx);
-                            });
-                        },
-                    )
-                } else {
-                    button(
+                .border_color(THEME.colors.surface)
+                .child(button(
                         "workgraph-create-cancel",
                         "Cancel",
                         ButtonTone::Quiet,
@@ -328,22 +313,8 @@ pub(super) fn render_create_step(
                                 this.cancel_create(window, cx);
                             });
                         },
-                    )
-                })
-                .child(if stage == CreateStage::CurrentState {
-                    button(
-                        "workgraph-create-next",
-                        "Next",
-                        ButtonTone::Accent,
-                        current_state_complete,
-                        move |window, cx| {
-                            next.update(cx, |this, cx| {
-                                this.next_create_step(window, cx);
-                            });
-                        },
-                    )
-                } else {
-                    button(
+                    ))
+                .child(button(
                         "workgraph-create-submit",
                         if add_node { "Add node" } else { "Create plan" },
                         ButtonTone::Accent,
@@ -353,24 +324,8 @@ pub(super) fn render_create_step(
                                 this.submit_create_inputs(window, cx);
                             });
                         },
-                    )
-                }),
+                    )),
         )
-}
-
-fn step_marker(label: &'static str, active: bool) -> impl IntoElement {
-    div()
-        .px(THEME.space.xs)
-        .py(px(2.0))
-        .rounded(THEME.radius)
-        .text_size(THEME.type_scale.caption)
-        .text_color(if active {
-            THEME.colors.text
-        } else {
-            THEME.colors.subtle
-        })
-        .when(active, |marker| marker.bg(THEME.colors.surface))
-        .child(label)
 }
 
 fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoElement {
@@ -398,7 +353,7 @@ pub(super) fn detail_section(label: &'static str) -> Div {
 }
 
 pub(super) fn detail_rule() -> Div {
-    div().h(THEME.border).w_full().bg(THEME.colors.border)
+    div().h(THEME.border).w_full().bg(THEME.colors.surface)
 }
 
 pub(super) fn detail_empty(text: &'static str) -> Div {

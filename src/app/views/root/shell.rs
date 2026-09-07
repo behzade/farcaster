@@ -10,7 +10,7 @@ use crate::app::{
     ui::{
         layout::{
             LayoutMode, composer_bottom_clearance, draft_top_padding, shows_left_inline,
-            shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
+            shows_right_inline,
         },
         theme::THEME,
     },
@@ -20,7 +20,6 @@ impl FarcasterApp {
     pub(super) fn render_chat_main(
         &self,
         entity: WeakEntity<Self>,
-        mode: LayoutMode,
         viewport_height: gpui::Pixels,
     ) -> AnyElement {
         let has_conversation = !self.selected_draft_is_empty_and_unsubmitted();
@@ -35,11 +34,6 @@ impl FarcasterApp {
             .h_full()
             .flex()
             .flex_col()
-            .when(shows_run_sheet_button(mode) && has_conversation, |main| {
-                main.child(
-                    self.render_chat_navigation(shows_session_sheet_button(mode), entity.clone()),
-                )
-            })
             .child(
                 div()
                     .id("chat-body")
@@ -110,7 +104,7 @@ impl FarcasterApp {
             match self.surface {
                 AppSurface::Editor if self.editor.is_some() => self.render_editor_surface(),
                 AppSurface::Terminal if self.terminal.is_some() => self.render_terminal_workspace(),
-                _ => self.render_chat_main(entity.clone(), mode, viewport_height),
+                _ => self.render_chat_main(entity.clone(), viewport_height),
             }
         };
 

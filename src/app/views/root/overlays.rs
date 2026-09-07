@@ -63,7 +63,7 @@ impl FarcasterApp {
                 let close = entity.clone();
                 root.child(modal(
                     "project-work",
-                    "Plans",
+                    "Project plan",
                     &workgraph_focus,
                     crate::app::views::workgraph::WORKGRAPH_KEY_CONTEXT,
                     move |window, cx| {
@@ -74,43 +74,29 @@ impl FarcasterApp {
                     |surface| {
                         let close = entity.clone();
                         surface
-                            .w(gpui::px(820.0))
+                            .relative()
+                            .w(gpui::px(crate::app::views::workgraph::BOARD_WIDTH))
                             .max_w_full()
                             .h(gpui::px(620.0))
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
+                            .child(self.workgraph_view.clone())
                             .child(
                                 div()
-                                    .size_full()
-                                    .min_h_0()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div()
-                                            .h(gpui::px(48.0))
-                                            .flex_none()
-                                            .px(THEME.space.md)
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .border_b(THEME.border)
-                                            .border_color(THEME.colors.border)
-                                            .child("Plans")
-                                            .child(icon_button(
-                                                "close-project-work",
-                                                AppIcon::X,
-                                                "Close plans",
-                                                ButtonTone::Quiet,
-                                                move |window, cx| {
-                                                    let _ = close.update(cx, |this, cx| {
-                                                        this.show_chat_surface(window, cx);
-                                                    });
-                                                },
-                                            )),
-                                    )
-                                    .child(
-                                        div().flex_1().min_h_0().child(self.workgraph_view.clone()),
-                                    ),
+                                    .absolute()
+                                    .top(gpui::px(12.0))
+                                    .right(THEME.space.md)
+                                    .child(icon_button(
+                                        "close-project-work",
+                                        AppIcon::X,
+                                        "Close project plan",
+                                        ButtonTone::Quiet,
+                                        move |window, cx| {
+                                            let _ = close.update(cx, |this, cx| {
+                                                this.show_chat_surface(window, cx);
+                                            });
+                                        },
+                                    )),
                             )
                     },
                 ))

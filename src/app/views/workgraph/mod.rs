@@ -6,4 +6,5 @@ mod layout;
 mod sidebar;
 
 pub(crate) use adapter::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT, WorkGraphBoardView};
+pub(crate) use layout::BOARD_WIDTH;
 pub(crate) use sidebar::WorkGraphSidebarView;

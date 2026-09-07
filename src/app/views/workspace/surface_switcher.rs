@@ -6,7 +6,7 @@ use gpui::{
 
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button, icon_control},
+    app::ui::primitives::{AppIconSize, app_icon, icon_control},
     app::ui::theme::THEME,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
     sessions::root_session_for_path,
@@ -80,55 +80,12 @@ impl FarcasterApp {
                             )
                     }),
             )
-            .when(
-                self.surface == AppSurface::Chat && self.selected_draft_is_empty_and_unsubmitted(),
-                |bar| {
-                    let sessions = entity.clone();
-                    let work = entity.clone();
-                    let details = entity.clone();
-                    bar.when(
-                        crate::app::ui::layout::shows_session_sheet_button(mode),
-                        |bar| {
-                            bar.child(button(
-                                "draft-sessions",
-                                "Sessions",
-                                ButtonTone::Quiet,
-                                true,
-                                move |window, cx| {
-                                    let _ = sessions.update(cx, |this, cx| {
-                                        this.open_sessions_sheet(window, cx)
-                                    });
-                                },
-                            ))
-                        },
-                    )
-                    .when(
-                        crate::app::ui::layout::shows_run_sheet_button(mode),
-                        |bar| {
-                            bar.child(button(
-                                "draft-details",
-                                "Session details",
-                                ButtonTone::Quiet,
-                                true,
-                                move |window, cx| {
-                                    let _ = details.update(cx, |this, cx| {
-                                        this.open_run_sheet(window, cx);
-                                    });
-                                },
-                            ))
-                        },
-                    )
-                    .child(button(
-                        "draft-project-work",
-                        "Project work",
-                        ButtonTone::Quiet,
-                        true,
-                        move |window, cx| {
-                            let _ =
-                                work.update(cx, |this, cx| this.open_workgraph_surface(window, cx));
-                        },
-                    ))
-                },
+            .child(self.render_workspace_panels(mode, entity.clone()))
+            .child(
+                div()
+                    .w(gpui::px(1.0))
+                    .h(THEME.space.md)
+                    .bg(THEME.colors.surface),
             )
             .child(self.render_surface_switcher(entity, harness_icon))
     }

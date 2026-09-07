@@ -8,8 +8,7 @@ use workgraph::{add_node, create_plan};
 pub(in crate::app::views::workgraph) enum CreateStage {
     Closed,
     Node,
-    CurrentState,
-    Outcome,
+    Plan,
 }
 
 impl CreateStage {
@@ -31,46 +30,15 @@ impl WorkGraphBoardView {
         {
             CreateStage::Node
         } else {
-            CreateStage::CurrentState
+            CreateStage::Plan
         };
         let focus = match self.create_stage {
             CreateStage::Node => self.create_title.read(cx).focus_handle(cx),
-            CreateStage::CurrentState => self.create_detail.read(cx).focus_handle(cx),
-            CreateStage::Closed | CreateStage::Outcome => unreachable!("create stage just opened"),
+            CreateStage::Plan => self.create_detail.read(cx).focus_handle(cx),
+            CreateStage::Closed => unreachable!("create stage just opened"),
         };
         cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         cx.notify();
-    }
-
-    pub(in crate::app::views::workgraph) fn next_create_step(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let has_current_state = !self.create_detail.read(cx).value().trim().is_empty();
-        if self.create_stage == CreateStage::CurrentState && has_current_state {
-            self.create_stage = CreateStage::Outcome;
-            self.create_title
-                .read(cx)
-                .focus_handle(cx)
-                .focus(window, cx);
-            cx.notify();
-        }
-    }
-
-    pub(in crate::app::views::workgraph) fn previous_create_step(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.create_stage == CreateStage::Outcome {
-            self.create_stage = CreateStage::CurrentState;
-            self.create_detail
-                .read(cx)
-                .focus_handle(cx)
-                .focus(window, cx);
-            cx.notify();
-        }
     }
 
     pub(in crate::app::views::workgraph) fn cancel_create(
