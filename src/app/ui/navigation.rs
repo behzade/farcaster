@@ -15,7 +15,7 @@ mod shortcuts;
 pub(crate) use shortcuts::{Command, command_key, help_shortcuts};
 use shortcuts::{Prefix, Scroll, transcript_scroll};
 
-const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
+const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(crate) struct Activation {
@@ -276,6 +276,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         match command {
+            Command::Actions => window.dispatch_action(Box::new(crate::app::ShowActionPicker), cx),
             Command::AddProject => window.dispatch_action(Box::new(crate::app::AddProject), cx),
             Command::Sandbox => window.dispatch_action(Box::new(crate::app::SetSandbox), cx),
             Command::Runtime => window.dispatch_action(Box::new(crate::app::SetRuntime), cx),
@@ -374,11 +375,11 @@ mod tests {
             let mut state = Activation::default();
             assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
             assert_eq!(
-                activated(&mut state, key, now + Duration::from_millis(900)),
+                activated(&mut state, key, now + Duration::from_millis(1900)),
                 ActivatedKey::Command(command)
             );
             assert_eq!(
-                activated(&mut state, key, now + Duration::from_millis(1600)),
+                activated(&mut state, key, now + Duration::from_millis(1950)),
                 ActivatedKey::Pass
             );
         }
@@ -398,7 +399,7 @@ mod tests {
             activated(&mut state, "ctrl-g", now + ACTIVATION_TIMEOUT),
             ActivatedKey::Pending
         );
-        for key in ["escape", "ctrl-2", "z", "space"] {
+        for key in ["escape", "ctrl-2", "z"] {
             state.clear();
             activated(&mut state, "ctrl-g", now);
             assert_eq!(activated(&mut state, key, now), ActivatedKey::Cancel);
@@ -419,6 +420,7 @@ mod tests {
         let now = Instant::now();
         let mut state = Activation::default();
         for (key, command) in [
+            ("space", Command::Actions),
             ("e", Command::Editor),
             ("t", Command::Terminal),
             ("p", Command::AddProject),

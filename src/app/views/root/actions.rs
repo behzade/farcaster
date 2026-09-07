@@ -53,7 +53,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         this.open_picker(PickerScope::Sandbox, window, cx);
     }))
     .on_action(cx.listener(|this, _: &crate::app::SetRuntime, window, cx| {
-        this.open_picker(PickerScope::Providers, window, cx);
+        this.open_runtime_picker(window, cx);
     }))
     .on_action(
         cx.listener(|this, _: &crate::app::RestoreSession, window, cx| {
@@ -66,6 +66,11 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &PickerBack, window, cx| {
         this.picker_back(window, cx);
     }))
+    .on_action(
+        cx.listener(|this, _: &crate::app::PickerNavigateBack, window, cx| {
+            this.picker_navigate_back(window, cx);
+        }),
+    )
     .on_action(cx.listener(|this, action: &RemoveProject, window, cx| {
         this.remove_project_from_picker(&action.path, window, cx);
     }))

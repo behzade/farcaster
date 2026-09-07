@@ -20,7 +20,7 @@ use super::FarcasterApp;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::keybindings::application_key,
-    app::ui::primitives::{PickerDelegate, PickerRow, modal},
+    app::ui::primitives::{ButtonTone, PickerDelegate, PickerRow, button, modal},
     app::ui::theme::THEME,
     sessions::SessionSummary,
 };
@@ -117,6 +117,18 @@ pub(in crate::app) struct PickerState {
     commands: HashMap<String, PickerCommand>,
     query: Rc<RefCell<String>>,
     _subscription: Subscription,
+    previous: Option<Box<PickerState>>,
+}
+
+impl PickerState {
+    fn pop_previous(&mut self) -> Option<Self> {
+        self.previous.take().map(|previous| *previous)
+    }
+
+    fn has_ancestor(&self, scope: &PickerScope) -> bool {
+        std::iter::successors(self.previous.as_deref(), |page| page.previous.as_deref())
+            .any(|page| &page.scope == scope)
+    }
 }
 
 impl FarcasterApp {
@@ -132,6 +144,20 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.scope != scope && picker.has_ancestor(&scope))
+        {
+            let mut page = self.picker.take().expect("picker has history");
+            while page.scope != scope {
+                page = page.pop_previous().expect("requested ancestor exists");
+            }
+            page.list.update(cx, |list, cx| list.focus(window, cx));
+            self.picker = Some(page);
+            cx.notify();
+            return;
+        }
         self.cover_native_workspace_surface(cx);
         if self.picker.is_none() {
             let sheet_open = self.overlays.sessions
@@ -155,6 +181,11 @@ impl FarcasterApp {
             }
         }
         let (rows, commands) = self.picker_rows(scope.clone());
+        let selected =
+            configuration::selected_row(&rows, &commands, &self.snapshot).map(|row| IndexPath {
+                row,
+                ..Default::default()
+            });
         let (delegate, handles) = PickerDelegate::new(rows);
         let confirmed_id = handles.confirmed_id;
         let query = handles.query;
@@ -182,15 +213,31 @@ impl FarcasterApp {
                 },
             );
         list.update(cx, |list, cx| {
-            list.set_selected_index(Some(IndexPath::default()), window, cx);
+            list.set_selected_index(selected, window, cx);
+            if let Some(selected) = selected {
+                list.scroll_handle()
+                    .scroll_to_item(selected.row, gpui::ScrollStrategy::Center);
+            }
             list.focus(window, cx);
         });
+        let previous = self
+            .picker
+            .take()
+            .filter(|_| scope != PickerScope::Actions)
+            .and_then(|page| {
+                if page.scope == scope {
+                    page.previous
+                } else {
+                    Some(Box::new(page))
+                }
+            });
         self.picker = Some(PickerState {
             scope,
             list,
             commands,
             query,
             _subscription: subscription,
+            previous,
         });
         cx.notify();
     }
@@ -215,14 +262,28 @@ impl FarcasterApp {
             cx.stop_propagation();
             return;
         }
-        match &picker.scope {
-            PickerScope::Actions => self.close_picker(window, cx),
-            PickerScope::Models(_) => self.open_picker(PickerScope::Providers, window, cx),
-            PickerScope::Efforts(model) => {
-                let provider = model.provider.clone();
-                self.open_picker(PickerScope::Models(provider), window, cx);
-            }
-            _ => self.open_picker(PickerScope::Actions, window, cx),
+        self.picker_navigate_back(window, cx);
+    }
+
+    pub(in crate::app) fn picker_navigate_back(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.picker.is_none() {
+            return;
+        }
+        if let Some(previous) = self.picker.as_mut().and_then(PickerState::pop_previous) {
+            previous.list.update(cx, |list, cx| list.focus(window, cx));
+            self.picker = Some(previous);
+            cx.notify();
+        } else if matches!(
+            self.picker.as_ref().map(|picker| &picker.scope),
+            Some(PickerScope::Actions)
+        ) {
+            self.close_picker(window, cx);
+        } else {
+            self.open_picker(PickerScope::Actions, window, cx);
         }
         cx.stop_propagation();
     }
@@ -235,6 +296,13 @@ impl FarcasterApp {
         let picker = self.picker.as_ref()?;
         let list = picker.list.clone();
         let focus = list.read(cx).focus_handle(cx);
+        let back_label = match picker.previous.as_ref().map(|page| &page.scope) {
+            Some(PickerScope::Models(_)) => "Back to models",
+            Some(PickerScope::Providers) => "Back to providers",
+            _ if picker.scope == PickerScope::Actions => "Close",
+            _ => "Back to actions",
+        };
+        let back = entity.clone();
         let close = entity;
         Some(
             modal(
@@ -254,6 +322,17 @@ impl FarcasterApp {
                             div()
                                 .flex()
                                 .flex_col()
+                                .child(div().px(THEME.space.md).py(THEME.space.sm).child(button(
+                                    "picker-back",
+                                    back_label,
+                                    ButtonTone::Quiet,
+                                    true,
+                                    move |window, cx| {
+                                        let _ = back.update(cx, |this, cx| {
+                                            this.picker_navigate_back(window, cx)
+                                        });
+                                    },
+                                )))
                                 .child(
                                     List::new(&list)
                                         .search_placeholder(picker.scope.placeholder())
@@ -262,6 +341,7 @@ impl FarcasterApp {
                                 .child(
                                     div()
                                         .flex()
+                                        .flex_wrap()
                                         .gap(THEME.space.md)
                                         .border_t(THEME.border)
                                         .border_color(THEME.colors.border)
@@ -269,11 +349,26 @@ impl FarcasterApp {
                                         .py(THEME.space.sm)
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(THEME.colors.subtle)
-                                        .child("Up/Down Navigate")
-                                        .child("Enter Select")
-                                        .child("Backspace Back")
+                                        .child("↑ ↓ Move")
+                                        .child("Enter Choose")
+                                        .child("Alt+← Back")
                                         .child("Esc Close"),
-                                ),
+                                )
+                                .children((picker.scope == PickerScope::Actions).then(|| {
+                                    div()
+                                        .px(THEME.space.md)
+                                        .pb(THEME.space.sm)
+                                        .text_size(THEME.type_scale.caption)
+                                        .text_color(THEME.colors.subtle)
+                                        .child(format!(
+                                            "Open actions: Ctrl+G then Space, or {}",
+                                            if cfg!(target_os = "macos") {
+                                                "Cmd+Shift+P"
+                                            } else {
+                                                "Ctrl+Shift+P"
+                                            }
+                                        ))
+                                })),
                         )
                 },
             )
@@ -671,6 +766,79 @@ fn project_label(project: &std::path::Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn back_restores_search_selection_scroll_and_parent_history(cx: &mut gpui::TestAppContext) {
+        cx.update(gpui_component::init);
+        let cx = cx.add_empty_window();
+        let make_page = |scope, window: &mut Window, cx: &mut gpui::App| {
+            let rows = (0..30)
+                .map(|index| {
+                    PickerRow::new(
+                        format!("row:{index}"),
+                        AppIcon::List,
+                        format!("Model {index}"),
+                        None,
+                        None,
+                        "",
+                    )
+                })
+                .collect();
+            let (delegate, handles) = PickerDelegate::new(rows);
+            let list = cx.new(|cx| ComponentListState::new(delegate, window, cx).searchable(true));
+            let subscription = cx.subscribe(&list, |_, _: &ListEvent, _| {});
+            PickerState {
+                scope,
+                list,
+                commands: HashMap::new(),
+                query: handles.query,
+                _subscription: subscription,
+                previous: None,
+            }
+        };
+        let mut page =
+            cx.update(|window, cx| make_page(PickerScope::Models("provider".into()), window, cx));
+        cx.update(|window, cx| {
+            page.list
+                .update(cx, |list, cx| list.set_query("Model", window, cx))
+        });
+        cx.run_until_parked();
+        let selected = IndexPath {
+            row: 17,
+            ..Default::default()
+        };
+        let offset = gpui::point(gpui::px(0.0), gpui::px(-280.0));
+        cx.update(|window, cx| {
+            page.list.update(cx, |list, cx| {
+                list.set_selected_index(Some(selected), window, cx);
+                list.scroll_handle().base_handle().set_offset(offset);
+            });
+            page.previous = Some(Box::new(make_page(PickerScope::Providers, window, cx)));
+            let list_id = page.list.entity_id();
+            let mut child = make_page(PickerScope::Sandbox, window, cx);
+            child.previous = Some(Box::new(page));
+            assert!(child.has_ancestor(&PickerScope::Providers));
+            assert!(!child.has_ancestor(&PickerScope::Actions));
+            let mut restored = child.pop_previous().unwrap();
+            assert_eq!(restored.list.entity_id(), list_id);
+            assert_eq!(&*restored.query.borrow(), "Model");
+            assert_eq!(restored.list.read(cx).selected_index(), Some(selected));
+            assert_eq!(
+                restored
+                    .list
+                    .read(cx)
+                    .scroll_handle()
+                    .base_handle()
+                    .offset(),
+                offset
+            );
+            assert_eq!(
+                restored.pop_previous().unwrap().scope,
+                PickerScope::Providers
+            );
+            assert!(restored.pop_previous().is_none());
+        });
+    }
 
     #[test]
     fn move_project_choices_exclude_the_source_project() {

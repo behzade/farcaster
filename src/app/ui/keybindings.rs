@@ -304,6 +304,12 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             ShowWorkGraph
         ),
         application_shortcut!("Application", "Open action picker", "k", ShowActionPicker),
+        application_shortcut!(
+            "Application",
+            "Open action picker",
+            "shift-p",
+            ShowActionPicker
+        ),
         shortcut!(
             "Application",
             "Open action picker",
@@ -341,9 +347,16 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             show_in_help: false,
             binding: KeyBinding::new("ctrl-n", SelectDown, Some("PiPicker > Input")),
         },
+        shortcut!(
+            "Application",
+            "Back in action picker",
+            "alt-left",
+            crate::app::PickerNavigateBack,
+            Some(PICKER_KEY_CONTEXT)
+        ),
         Shortcut {
             section: "Application",
-            label: "Back in action picker",
+            label: "Back in action picker when search is empty",
             keystroke: "backspace".into(),
             show_in_help: false,
             binding: KeyBinding::new("backspace", PickerBack, Some("PiPicker > Input")),
@@ -497,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn configuration_shortcuts_route_to_actions_only_in_app_views() {
+    fn picker_shortcuts_route_only_in_their_owned_contexts() {
         use super::registry_for_platform;
         use crate::app::{
             APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
@@ -514,6 +527,10 @@ mod tests {
                 ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
                 ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
                 ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
+                (
+                    "shift-p",
+                    Box::new(crate::app::ShowActionPicker) as Box<dyn gpui::Action>,
+                ),
             ] {
                 let stroke = gpui::Keystroke::parse(&format!("{prefix}-{suffix}")).unwrap();
                 let (bindings, _) = keymap.bindings_for_input(
@@ -532,6 +549,26 @@ mod tests {
                 &[gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()],
             );
             assert!(bindings.is_empty(), "unshifted M must remain unbound");
+            for (context, expected) in [
+                ("PiPicker", true),
+                (APP_INPUT_CONTEXT, false),
+                (NATIVE_INPUT_CONTEXT, false),
+            ] {
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse("alt-left").unwrap()],
+                    &[
+                        gpui::KeyContext::parse(context).unwrap(),
+                        gpui::KeyContext::parse("Input").unwrap(),
+                    ],
+                );
+                assert_eq!(
+                    bindings.first().is_some_and(|binding| binding
+                        .action()
+                        .as_any()
+                        .is::<crate::app::PickerNavigateBack>()),
+                    expected
+                );
+            }
         }
     }
 

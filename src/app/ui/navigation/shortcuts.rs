@@ -5,6 +5,7 @@ pub(crate) enum Command {
     RelativeSession(isize),
     Session(usize),
     SearchSessions,
+    Actions,
     NewSession,
     AddProject,
     Sandbox,
@@ -41,6 +42,7 @@ pub(super) enum Scroll {
 }
 
 const COMMANDS: &[(&str, &str, Command)] = &[
+    ("space", "Open action picker", Command::Actions),
     ("/", "Search sessions", Command::SearchSessions),
     ("e", "Open editor", Command::Editor),
     ("t", "Open terminal", Command::Terminal),
@@ -82,7 +84,7 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     let mut rows = vec![(
         "From anywhere",
         "ctrl-g".into(),
-        "Activate app keys for 1 second (no focus change)",
+        "Activate app keys for 2 seconds (no focus change)",
     )];
     if cfg!(target_os = "macos") {
         rows.push(("App-owned contexts", "cmd-g".into(), "Focus chat composer"));

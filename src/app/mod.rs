@@ -100,6 +100,7 @@ actions!(
         RestoreSession,
         ShowActionPicker,
         PickerBack,
+        PickerNavigateBack,
         FocusSessionSearch,
         FocusComposer,
         ShowEditor,

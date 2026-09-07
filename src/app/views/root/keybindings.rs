@@ -42,7 +42,7 @@ pub(super) fn render_help() -> impl IntoElement {
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
-                        .child("Ctrl+G activates app keys for 1 second; double Ctrl+G returns to the chat composer. In chat, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page without moving focus."),
+                        .child("Ctrl+G activates app keys for 2 seconds; double Ctrl+G returns to the chat composer. In chat, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page without moving focus."),
                 ),
         );
     let mut current_section = String::new();
