@@ -61,10 +61,15 @@ impl RenderOnce for ComposerInput {
         let focus_entity = self.app;
         let composer_for_paste = self.composer.clone();
         let suggestion_count = self.suggestion_count;
+        let mut key_context = gpui::KeyContext::default();
+        key_context.add(COMPOSER_KEY_CONTEXT);
+        if suggestion_count > 0 {
+            key_context.add("Completions");
+        }
 
         div()
             .id("composer-input")
-            .key_context(COMPOSER_KEY_CONTEXT)
+            .key_context(key_context)
             .relative()
             .flex()
             .flex_col()

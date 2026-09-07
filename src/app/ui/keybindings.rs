@@ -14,6 +14,8 @@ use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
+const COMPOSER_COMPLETION_CONTEXT: &str = "(FarcasterComposer && Completions) > Input";
+
 pub(crate) fn application_key(suffix: &str) -> String {
     format!("{}-{suffix}", platform_key("cmd", "ctrl"))
 }
@@ -153,28 +155,22 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
                 Some("FarcasterComposer > Input"),
             ),
         },
-        Shortcut {
-            section: "Composer",
-            label: "Previous completion",
-            keystroke: "ctrl-p".into(),
-            show_in_help: false,
-            binding: KeyBinding::new(
-                "ctrl-p",
-                ComposerCompletionPrevious,
-                Some("FarcasterComposer > Input"),
-            ),
-        },
-        Shortcut {
-            section: "Composer",
-            label: "Next completion",
-            keystroke: "ctrl-n".into(),
-            show_in_help: false,
-            binding: KeyBinding::new(
-                "ctrl-n",
-                ComposerCompletionNext,
-                Some("FarcasterComposer > Input"),
-            ),
-        },
+        shortcut!(
+            "Composer",
+            "Previous completion",
+            "ctrl-p",
+            ComposerCompletionPrevious,
+            Some(COMPOSER_COMPLETION_CONTEXT),
+            false
+        ),
+        shortcut!(
+            "Composer",
+            "Next completion",
+            "ctrl-n",
+            ComposerCompletionNext,
+            Some(COMPOSER_COMPLETION_CONTEXT),
+            false
+        ),
         #[cfg(target_os = "macos")]
         shortcut!(
             "Workspace",
@@ -249,7 +245,23 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Queue follow-up",
             "tab",
             SubmitFollowUp,
-            Some("FarcasterComposer > Input")
+            Some("(FarcasterComposer && !Completions) > Input")
+        ),
+        shortcut!(
+            "Composer",
+            "Next completion",
+            "tab",
+            ComposerCompletionNext,
+            Some(COMPOSER_COMPLETION_CONTEXT),
+            false
+        ),
+        shortcut!(
+            "Composer",
+            "Previous completion",
+            "shift-tab",
+            ComposerCompletionPrevious,
+            Some(COMPOSER_COMPLETION_CONTEXT),
+            false
         ),
         application_shortcut!("Run", "Abort current run", ".", AbortRun),
         shortcut!(
@@ -492,8 +504,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
 mod tests {
     use super::{bindings, platform_key, registry};
 
-    use crate::app::ComposerCompletionNext;
-
     #[test]
     fn root_focus_traversal_is_unbound() {
         let bindings = bindings();
@@ -611,27 +621,44 @@ mod tests {
     }
 
     #[test]
-    fn composer_ctrl_n_remains_completion_navigation() {
-        let keymap = gpui::Keymap::new(
-            registry()
-                .into_iter()
-                .map(|shortcut| shortcut.binding)
-                .collect(),
-        );
-        let contexts = [
-            gpui::KeyContext::parse("FarcasterComposer").expect("composer context"),
-            gpui::KeyContext::parse("Input").expect("input context"),
-        ];
-        let (bindings, _) = keymap.bindings_for_input(
-            &[gpui::Keystroke::parse("ctrl-n").expect("shortcut keystroke")],
-            &contexts,
-        );
+    fn composer_completion_keys_require_visible_suggestions() {
+        use crate::app::{ComposerCompletionNext, ComposerCompletionPrevious, SubmitFollowUp};
+        use gpui::Action as _;
 
-        assert!(
-            bindings.first().is_some_and(|binding| {
-                binding.action().as_any().is::<ComposerCompletionNext>()
-            })
-        );
+        let keymap = gpui::Keymap::new(bindings());
+        for open in [false, true] {
+            let contexts = [
+                gpui::KeyContext::parse("Root").unwrap(),
+                gpui::KeyContext::parse(if open {
+                    "FarcasterComposer Completions"
+                } else {
+                    "FarcasterComposer"
+                })
+                .unwrap(),
+                gpui::KeyContext::parse("Input").unwrap(),
+            ];
+            for (key, completion) in [
+                ("ctrl-n", ComposerCompletionNext.name()),
+                ("ctrl-p", ComposerCompletionPrevious.name()),
+                ("tab", ComposerCompletionNext.name()),
+                ("shift-tab", ComposerCompletionPrevious.name()),
+            ] {
+                let (bindings, _) =
+                    keymap.bindings_for_input(&[gpui::Keystroke::parse(key).unwrap()], &contexts);
+                let expected = if open {
+                    Some(completion)
+                } else if key == "tab" {
+                    Some(SubmitFollowUp.name())
+                } else {
+                    None
+                };
+                assert_eq!(
+                    bindings.first().map(|binding| binding.action().name()),
+                    expected,
+                    "{key}, suggestions open: {open}"
+                );
+            }
+        }
     }
 
     #[test]
