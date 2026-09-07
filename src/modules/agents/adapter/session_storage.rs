@@ -76,6 +76,7 @@ pub(crate) fn move_session_family(
             pi::transfer::move_to_project(&members, &root.id, target_project, &root.path)
         }
         "opencode2" => opencode::move_family(family, target_project),
+        "codex-cli" => codex::move_family(family, target_project),
         _ => Err(format!(
             "unsupported session move harness: {}",
             root.harness
@@ -243,7 +244,7 @@ mod tests {
         let contents = r#"{"type":"session","id":"root","cwd":"/project"}"#;
         std::fs::write(&source, contents).expect("test fixture");
         let destination = temp.path().join("destination");
-        for harness in ["codex-cli", "cursor-cli", "unknown", ""] {
+        for harness in ["cursor-cli", "unknown", ""] {
             let session = summary(harness, source.clone(), "root");
             assert!(move_session_family(&[session], &destination).is_err());
             assert_eq!(
