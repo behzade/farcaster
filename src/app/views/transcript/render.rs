@@ -36,6 +36,8 @@ use crate::{
 mod chunking;
 #[path = "render/detail_rows.rs"]
 mod detail_rows;
+#[path = "render/links.rs"]
+mod links;
 #[path = "render/message_rows.rs"]
 mod message_rows;
 #[path = "render/rows.rs"]
@@ -52,6 +54,7 @@ pub(super) use chunking::{
 use detail_rows::{render_agent_message, render_error, render_thinking};
 #[allow(unused_imports)]
 pub(super) use detail_rows::{thinking_has_details, thinking_preview, thinking_preview_emphasis};
+use links::with_file_links;
 #[allow(unused_imports)]
 pub(super) use message_rows::{
     highlighted_invocation_markdown, invocation_kind, is_mixed_invocation_message,

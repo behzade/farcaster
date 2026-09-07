@@ -19,7 +19,7 @@ use crate::app::{
 
 use super::{
     TRANSCRIPT_HORIZONTAL_PADDING, item_color, selectable_text, selectable_text_state,
-    technical_text,
+    technical_text, with_file_links,
 };
 
 pub(super) fn render_invocation(
@@ -37,17 +37,20 @@ pub(super) fn render_invocation(
         .flex()
         .flex_col()
         .when(item.has_attachments(), |row| {
-            row.child(render_attachments(key, item, entity))
+            row.child(render_attachments(key, item, entity.clone()))
         })
         .child(
-            technical_text(("invocation-name", key), item.text.clone())
-                .min_w_0()
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(if skill {
-                    THEME.colors.skill
-                } else {
-                    THEME.colors.accent
-                }),
+            with_file_links(
+                technical_text(("invocation-name", key), item.text.clone()),
+                entity,
+            )
+            .min_w_0()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(if skill {
+                THEME.colors.skill
+            } else {
+                THEME.colors.accent
+            }),
         )
         .when_some(tooltip, |row, tooltip| {
             row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
@@ -211,7 +214,7 @@ pub(super) fn render_message(
         })
         .children(role.map(|role| message_role(role, user)))
         .when(user && item.has_attachments(), |row| {
-            row.child(render_attachments(key, item, entity))
+            row.child(render_attachments(key, item, entity.clone()))
         })
         .child({
             let text = markdown_state.map_or_else(
@@ -222,7 +225,8 @@ pub(super) fn render_message(
                 Some(style) => text.style(style),
                 None => text,
             };
-            text.text_color(item_color(item))
+            with_file_links(text, entity)
+                .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM))
         })
         .into_any_element()
@@ -261,10 +265,10 @@ pub(super) fn render_message_chunk(
             )
         })
         .when(first && user && item.has_attachments(), |row| {
-            row.child(render_attachments(key, item, entity))
+            row.child(render_attachments(key, item, entity.clone()))
         })
         .child(
-            selectable_text_state(&markdown_state)
+            with_file_links(selectable_text_state(&markdown_state), entity)
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )

@@ -12,7 +12,7 @@ use crate::app::{
 
 use super::{
     TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
-    selectable_text_state, technical_text, transcript_title_row,
+    selectable_text_state, technical_text, transcript_title_row, with_file_links,
 };
 
 pub(super) fn render_agent_message(
@@ -49,7 +49,7 @@ pub(super) fn render_agent_message(
                 true,
                 format!("{details} details for {}: {summary}", item.label),
                 key,
-                entity,
+                entity.clone(),
             )
             .child(
                 div()
@@ -77,7 +77,10 @@ pub(super) fn render_agent_message(
                     .border_color(THEME.colors.accent)
                     .pl(THEME.space.sm)
                     .py(THEME.space.xs)
-                    .child(selectable_text_state(&state).text_color(THEME.colors.muted)),
+                    .child(
+                        with_file_links(selectable_text_state(&state), entity)
+                            .text_color(THEME.colors.muted),
+                    ),
             )
         })
         .into_any_element()
@@ -104,7 +107,7 @@ pub(super) fn render_error(
                 has_details,
                 format!("technical details for {}", item.label),
                 key,
-                entity,
+                entity.clone(),
             )
             .child(
                 div()
@@ -121,7 +124,7 @@ pub(super) fn render_error(
                             .child(item.label.clone()),
                     )
                     .child(
-                        selectable_text(("error-text", key), &item.text)
+                        with_file_links(selectable_text(("error-text", key), &item.text), entity)
                             .text_color(THEME.colors.error),
                     ),
             ),
@@ -199,7 +202,7 @@ pub(super) fn render_thinking(
                 has_details,
                 "thinking details".into(),
                 key,
-                entity,
+                entity.clone(),
             )
             .child(
                 div()
@@ -221,9 +224,12 @@ pub(super) fn render_thinking(
             );
             row.child(
                 disclosure_detail().child(
-                    selectable_text(("thinking-text", key), item.complete_text())
-                        .italic()
-                        .text_color(THEME.colors.subtle),
+                    with_file_links(
+                        selectable_text(("thinking-text", key), item.complete_text()),
+                        entity,
+                    )
+                    .italic()
+                    .text_color(THEME.colors.subtle),
                 ),
             )
         })
