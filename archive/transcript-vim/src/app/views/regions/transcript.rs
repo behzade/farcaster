@@ -81,6 +81,9 @@ impl Render for TranscriptView {
         if !empty {
             self.list.set_text_focus(transcript.clone());
         }
+        self.list.set_keyboard_active(
+            !empty && transcript.is_focused(window) && window.is_window_active(),
+        );
         let viewport = window.viewport_size();
         let content = transcript::render(
             &self.list,

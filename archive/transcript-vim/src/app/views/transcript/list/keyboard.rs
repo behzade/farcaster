@@ -1,5 +1,3 @@
-//! Cursor coordinates are rendered-row / grapheme indices, never UTF-8 offsets
-//! into Markdown source. Geometry is disposable; anchors survive line wrapping.
 use super::*;
 use unicode_segmentation::UnicodeSegmentation as _;
 
@@ -86,8 +84,6 @@ impl TextRow {
         mut runs: Vec<(gpui::SharedString, gpui::TextLayout)>,
         origin: gpui::Point<Pixels>,
     ) -> Self {
-        // Preserve each run's logical (including RTL) text order. Order sibling
-        // runs by their layout, not their entity IDs or paint registration order.
         runs.sort_by(|a, b| {
             a.1.bounds()
                 .top()
@@ -174,12 +170,17 @@ impl TextRow {
         {
             return index;
         }
-        let Some((index, _)) = self.cells.iter().enumerate().min_by(|(_, left), (_, right)| {
-            (left.bounds.center().y - point.y)
-                .abs()
-                .partial_cmp(&(right.bounds.center().y - point.y).abs())
-                .unwrap()
-        }) else {
+        let Some((index, _)) = self
+            .cells
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                (left.bounds.center().y - point.y)
+                    .abs()
+                    .partial_cmp(&(right.bounds.center().y - point.y).abs())
+                    .unwrap()
+            })
+        else {
             return 0;
         };
         self.nearest_column(self.line_range(index), point.x)
@@ -270,8 +271,6 @@ impl Keyboard {
         self.pending_click = Some(point);
     }
 
-    /// Action buttons call `prevent_default`. Those clicks must not move the
-    /// caret, drop visual selection, or consume a pending motion.
     pub(super) fn apply_pointer_down(
         &mut self,
         inside: bool,
@@ -469,8 +468,6 @@ impl Keyboard {
         self.word_motion(pos, forward, false, false, count, load)
     }
 
-    /// Resolve queued commands against lazily measured rows. Clipboard and
-    /// viewport effects are applied by the list after releasing the loader.
     fn apply_pending(
         &mut self,
         count: usize,
@@ -695,8 +692,6 @@ impl TranscriptList {
             .height
             .max(px(1.0));
         self.state.0.borrow_mut().heights.set_height(index, height);
-        // Measuring a virtualized destination must not install offscreen focus
-        // targets, hitboxes, tooltips, or deferred draws into the real frame.
         let result: Result<(), TextRow> = window.transact(|window| {
             let (_, runs) =
                 gpui::TextLayout::capture(cx, |cx| row.prepaint_at(bounds.origin, window, cx));
@@ -750,8 +745,7 @@ impl TranscriptList {
         let has_commands = !keyboard.pending.is_empty();
         let placed_click = keyboard.pending_click.take().zip(click_row).zip(click_top);
         let click_placed = placed_click.is_some();
-        let changed =
-            std::mem::take(&mut keyboard.geometry_dirty) || has_commands || click_placed;
+        let changed = std::mem::take(&mut keyboard.geometry_dirty) || has_commands || click_placed;
         let initializing = keyboard.cursor.is_none() && placed_click.is_none();
         let resume_tail = !has_commands && following && placed_click.is_none();
         let (copied, resume_tail, moved) = {
@@ -792,18 +786,9 @@ impl TranscriptList {
                     ..pos
                 });
             }
-            let pending = keyboard.apply_pending(
-                count,
-                bounds.size.height,
-                resume_tail,
-                viewport,
-                &mut load,
-            );
-            (
-                pending.0,
-                pending.1,
-                pending.2 || click_placed,
-            )
+            let pending =
+                keyboard.apply_pending(count, bounds.size.height, resume_tail, viewport, &mut load);
+            (pending.0, pending.1, pending.2 || click_placed)
         };
         if let Some(text) = copied {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));

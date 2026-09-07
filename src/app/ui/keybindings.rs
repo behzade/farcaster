@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
+use crate::app::ui::keyboard::CopySelection;
 #[cfg(target_os = "linux")]
 use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias};
-use crate::app::ui::keyboard::CopySelection;
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
@@ -79,7 +79,6 @@ const DEFAULT_APPLICATION_MODIFIER: ApplicationModifier = if cfg!(target_os = "m
 
 static APPLICATION_MODIFIER: AtomicU8 = AtomicU8::new(DEFAULT_APPLICATION_MODIFIER as u8);
 
-/// A saved choice takes priority over the legacy environment override.
 pub(crate) fn initialize_application_modifier(saved: Option<&str>) {
     let environment = std::env::var("FARCASTER_APP_MODIFIER")
         .ok()
@@ -358,7 +357,7 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
         ),
         Shortcut {
             section: "Transcript",
-            label: "Copy visual selection",
+            label: "Copy transcript selection",
             keystroke: platform!("c").into(),
             show_in_help: false,
             binding: KeyBinding::new(
@@ -596,8 +595,6 @@ fn registry_for_modifier(modifier: ApplicationModifier) -> Vec<Shortcut> {
             false
         ),
     ];
-    // Reserved chat chords. A configured Control modifier must not alias them
-    // to terminal / action-picker in app-owned chat.
     if modifier == ApplicationModifier::Control {
         shortcuts.retain(|shortcut| !matches!(shortcut.keystroke.as_str(), "ctrl-j" | "ctrl-k"));
     }
@@ -687,10 +684,7 @@ mod tests {
                 .iter()
                 .filter(|shortcut| shortcut.keystroke == keystroke)
                 .collect::<Vec<_>>();
-            assert!(
-                !matches.is_empty(),
-                "{keystroke} must remain registered"
-            );
+            assert!(!matches.is_empty(), "{keystroke} must remain registered");
             for shortcut in matches {
                 assert_eq!(
                     shortcut.binding.predicate().as_deref(),
@@ -741,14 +735,9 @@ mod tests {
                 "{key} must not reach embedded views"
             );
         }
-        let (ctrl_j, _) = keymap.bindings_for_input(
-            &[gpui::Keystroke::parse("ctrl-j").unwrap()],
-            &app_contexts,
-        );
-        assert!(
-            ctrl_j.is_empty(),
-            "Ctrl+J must remain chat focus, not a Mac terminal alias"
-        );
+        let (ctrl_j, _) =
+            keymap.bindings_for_input(&[gpui::Keystroke::parse("ctrl-j").unwrap()], &app_contexts);
+        assert!(ctrl_j.is_empty(), "Ctrl+J must not open the terminal");
         for key in ["f1", "f2", "f3", "f4", "ctrl-tab", "ctrl-shift-tab"] {
             let stroke = gpui::Keystroke::parse(key).unwrap();
             let (native_bindings, _) =
@@ -768,13 +757,11 @@ mod tests {
                 .collect(),
         );
         for key in ["ctrl-j", "ctrl-k"] {
-            let (bindings, _) = control_map.bindings_for_input(
-                &[gpui::Keystroke::parse(key).unwrap()],
-                &app_contexts,
-            );
+            let (bindings, _) = control_map
+                .bindings_for_input(&[gpui::Keystroke::parse(key).unwrap()], &app_contexts);
             assert!(
                 bindings.is_empty(),
-                "{key} must stay a chat focus chord when Control is the modifier"
+                "{key} must stay available to chat input when Control is the modifier"
             );
         }
     }
@@ -783,7 +770,7 @@ mod tests {
     fn copy_shortcuts_route_through_the_application_command() {
         let shortcuts = registry();
         assert!(shortcuts.iter().any(|shortcut| {
-            shortcut.label == "Copy visual selection" && shortcut.keystroke == platform!("c")
+            shortcut.label == "Copy transcript selection" && shortcut.keystroke == platform!("c")
         }));
         assert!(shortcuts.iter().any(|shortcut| {
             shortcut.label == "Copy selection" && shortcut.keystroke == platform!("c")

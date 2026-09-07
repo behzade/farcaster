@@ -6,6 +6,8 @@ use crate::app::{AppSurface, FarcasterApp, PickerScope};
 pub(crate) struct ChatNavigation {
     pub focus: FocusHandle,
     pub transcript: FocusHandle,
+    pub pending_key: Option<Prefix>,
+    pub vim: vim::VimInput,
     pub activation: Activation,
     pub activation_focus: Option<FocusHandle>,
     pub activation_blur: Option<gpui::Subscription>,
@@ -13,8 +15,12 @@ pub(crate) struct ChatNavigation {
 }
 
 mod shortcuts;
-pub(crate) use shortcuts::{Command, command_key, help_shortcuts};
-use shortcuts::{Prefix, Scroll, transcript_scroll};
+mod vim;
+use crate::app::views::transcript::list::KeyboardCommand;
+#[cfg(test)]
+use shortcuts::keyboard_command;
+pub(crate) use shortcuts::{Command, Prefix, command_key, help_shortcuts};
+use shortcuts::{Scroll, normal_command, transcript_scroll};
 
 const ACTIVATION_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -106,6 +112,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.transcript_view
+            .read(cx)
+            .list
+            .watch_keyboard_mode(self.composer_view.entity_id());
         let entity = cx.entity().downgrade();
         let window_id = window.window_handle().window_id();
         self.chat_navigation.return_shortcut =
@@ -125,9 +135,11 @@ impl FarcasterApp {
                         );
                         match result {
                             ActivatedKey::Pass => {
-                                return this.handle_chat_scroll(&event.keystroke, window, cx);
+                                return this.focus_chat_region(&event.keystroke, window, cx);
                             }
                             ActivatedKey::Pending => {
+                                this.chat_navigation.pending_key = None;
+                                this.chat_navigation.vim.clear();
                                 this.chat_navigation.activation_focus = window.focused(cx);
                                 this.chat_navigation.activation_blur =
                                     this.chat_navigation.activation_focus.clone().map(|focus| {
@@ -167,8 +179,14 @@ impl FarcasterApp {
                 }
             }));
         cx.observe_window_activation(window, |this, window, cx| {
+            this.transcript_view.read(cx).list.set_keyboard_active(
+                window.is_window_active() && this.transcript_owns_keys(window),
+            );
+            this.notify_transcript(cx);
             if !window.is_window_active() {
                 this.chat_navigation.activation.clear();
+                this.chat_navigation.pending_key = None;
+                this.chat_navigation.vim.clear();
                 this.notify_composer(cx);
             }
         })
@@ -179,10 +197,38 @@ impl FarcasterApp {
             }
         })
         .detach();
+        cx.on_focus(
+            &self.chat_navigation.transcript,
+            window,
+            |this, window, cx| {
+                this.transcript_view
+                    .read(cx)
+                    .list
+                    .set_keyboard_active(window.is_window_active());
+                this.notify_transcript(cx);
+                this.notify_composer(cx);
+            },
+        )
+        .detach();
+        cx.on_blur(&self.chat_navigation.transcript, window, |this, _, cx| {
+            this.transcript_view
+                .read(cx)
+                .list
+                .set_keyboard_active(false);
+            this.notify_transcript(cx);
+            this.chat_navigation.pending_key = None;
+            this.chat_navigation.vim.clear();
+            this.notify_composer(cx);
+        })
+        .detach();
         cx.on_focus(&self.composer_focus, window, |this, _, cx| {
             this.notify_composer(cx);
         })
         .detach();
+    }
+
+    pub(in crate::app) fn transcript_owns_keys(&self, window: &Window) -> bool {
+        self.chat_navigation.transcript.is_focused(window)
     }
 
     pub(in crate::app) fn return_to_chat_composer(
@@ -191,6 +237,8 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.chat_navigation.activation.clear();
+        self.chat_navigation.pending_key = None;
+        self.chat_navigation.vim.clear();
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }
@@ -220,23 +268,35 @@ impl FarcasterApp {
         self.notify_composer(cx);
     }
 
-    fn handle_chat_scroll(
+    fn focus_chat_region(
         &mut self,
         keystroke: &gpui::Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.surface != AppSurface::Chat
-            || self.native_workspace_covered_by_overlay()
+            || self.native_workspace_modal_active()
             || !(self.composer_region_focus(cx).is_focused(window)
-                || self.chat_navigation.transcript.is_focused(window))
+                || self.dialog_focus.contains_focused(window, cx)
+                || self.transcript_owns_keys(window))
         {
             return false;
         }
-        let Some(scroll) = shortcuts::chat_scroll(&keystroke.key, keystroke.modifiers) else {
+        let Some(transcript) = shortcuts::chat_focus_key(&keystroke.key, keystroke.modifiers)
+        else {
             return false;
         };
-        self.scroll_transcript(scroll, window, cx);
+        self.chat_navigation.pending_key = None;
+        self.chat_navigation.vim.clear();
+        let focus = if transcript && !self.snapshot.conversation.items.is_empty() {
+            self.chat_navigation.transcript.clone()
+        } else {
+            self.composer_region_focus(cx)
+        };
+        if !focus.is_focused(window) {
+            focus.focus(window, cx);
+        }
+        self.notify_composer(cx);
         true
     }
 
@@ -246,12 +306,106 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.surface == AppSurface::Chat && !self.native_workspace_covered_by_overlay() {
-            super::focus::traverse_tab(event, None, window, cx);
+        let key = event.keystroke.key.as_str();
+        let modifiers = event.keystroke.modifiers;
+        if self.surface == AppSurface::Chat
+            && !self.native_workspace_covered_by_overlay()
+            && self.chat_navigation.pending_key.is_none()
+            && super::focus::traverse_tab(event, None, window, cx)
+        {
+            return;
         }
+        if self.surface != AppSurface::Chat || !self.transcript_owns_keys(window) {
+            self.chat_navigation.pending_key = None;
+            self.chat_navigation.vim.clear();
+            return;
+        }
+        if self.chat_navigation.pending_key.is_none() {
+            match self.chat_navigation.vim.key(key, modifiers, event.is_held) {
+                vim::Input::Command(command) => {
+                    if command == KeyboardCommand::Copy
+                        && !self.transcript_view.read(cx).list.has_keyboard_selection()
+                    {
+                        return;
+                    }
+                    gpui_base::TextSelection::clear(window, cx);
+                    self.transcript_view.read(cx).list.keyboard_command(command);
+                    self.notify_transcript(cx);
+                }
+                vim::Input::Pending => {}
+                vim::Input::Pass if event.is_held => {}
+                vim::Input::Pass => {
+                    if !modifiers.modified()
+                        && let Some(prefix) = Prefix::from_key(key)
+                    {
+                        self.chat_navigation.pending_key = Some(prefix);
+                    } else if !modifiers.modified()
+                        && let Some(command) = normal_command(key, None)
+                    {
+                        self.execute_navigation_command(command, window, cx);
+                    } else {
+                        if modifiers.modified() {
+                            return;
+                        }
+                    }
+                }
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            self.notify_composer(cx);
+            return;
+        }
+        if modifiers.modified() {
+            self.chat_navigation.pending_key = None;
+            self.chat_navigation.vim.clear();
+            self.notify_composer(cx);
+            return;
+        }
+        let pending = std::mem::take(&mut self.chat_navigation.pending_key);
+        if pending.is_none()
+            && let Some(prefix) = Prefix::from_key(key)
+        {
+            self.chat_navigation.pending_key = Some(prefix);
+        } else if let Some(command) = normal_command(key, pending) {
+            self.execute_navigation_command(command, window, cx);
+        }
+        if key != "tab" || pending.is_some() {
+            window.prevent_default();
+            cx.stop_propagation();
+        }
+        self.notify_composer(cx);
+    }
+
+    pub(in crate::app) fn copy_keyboard_selection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.transcript_owns_keys(window)
+            || !self.transcript_view.read(cx).list.has_keyboard_selection()
+        {
+            return false;
+        }
+        self.move_transcript_cursor(KeyboardCommand::Copy, window, cx);
+        true
+    }
+
+    fn move_transcript_cursor(
+        &mut self,
+        command: KeyboardCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        gpui_base::TextSelection::clear(window, cx);
+        self.transcript_view.read(cx).list.keyboard_command(command);
+        self.notify_transcript(cx);
     }
 
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
+        if self.transcript_owns_keys(window) {
+            self.move_transcript_cursor(scroll.cursor(), window, cx);
+            return;
+        }
         let list = &self.transcript_view.read(cx).list;
         let distance = match scroll {
             Scroll::Start => {
@@ -312,31 +466,23 @@ mod tests {
     }
 
     #[test]
-    fn direct_chat_scroll_accepts_only_the_four_control_chords() {
-        for (key, expected) in [
-            ("ctrl-f", Some(Scroll::Pages(1.0))),
-            ("ctrl-b", Some(Scroll::Pages(-1.0))),
-            ("ctrl-u", Some(Scroll::Pages(-0.5))),
-            ("ctrl-d", Some(Scroll::Pages(0.5))),
-            ("f", None),
-            ("b", None),
-            ("u", None),
-            ("d", None),
-            ("j", None),
+    fn chat_focus_chords_require_exact_control_modifier() {
+        for (key, target) in [
+            ("ctrl-k", Some(true)),
+            ("ctrl-j", Some(false)),
             ("k", None),
-            ("v", None),
-            ("ctrl-j", None),
-            ("ctrl-k", None),
-            ("ctrl-shift-f", None),
-            ("ctrl-alt-b", None),
-            ("cmd-u", None),
-            ("cmd-ctrl-d", None),
+            ("j", None),
+            ("ctrl-shift-k", None),
+            ("ctrl-alt-j", None),
+            ("cmd-k", None),
+            ("cmd-ctrl-j", None),
+            ("ctrl-g", None),
         ] {
             let stroke = gpui::Keystroke::parse(key).unwrap();
             assert_eq!(
-                shortcuts::chat_scroll(&stroke.key, stroke.modifiers),
-                expected,
-                "{key}"
+                shortcuts::chat_focus_key(&stroke.key, stroke.modifiers),
+                target,
+                "{key}",
             );
         }
     }
@@ -450,7 +596,7 @@ mod tests {
             activated(&mut state, "g", now + ACTIVATION_TIMEOUT),
             ActivatedKey::Pass
         );
-        assert_eq!(shortcuts::activated_command("e", Some(Prefix::G)), None);
+        assert_eq!(normal_command("e", Some(Prefix::G)), None);
     }
 
     #[test]
@@ -488,6 +634,46 @@ mod tests {
     }
 
     #[test]
+    fn transcript_session_commands_are_not_insert_aliases() {
+        for key in ["i", "a"] {
+            assert_eq!(normal_command(key, None), None);
+            assert_eq!(shortcuts::activated_command(key, None), None);
+        }
+        for (key, prefix, command) in [
+            ("j", Some(Prefix::Space), Command::RelativeSession(1)),
+            ("k", Some(Prefix::Space), Command::RelativeSession(-1)),
+        ] {
+            assert_eq!(normal_command(key, prefix), Some(command));
+            assert_eq!(normal_command(key, None), None);
+        }
+        assert_eq!(normal_command("escape", Some(Prefix::Space)), None);
+        assert_eq!(
+            shortcuts::activated_command("n", None),
+            Some(Command::NewSession)
+        );
+        assert_eq!(
+            shortcuts::activated_command("w", None),
+            Some(Command::Close)
+        );
+        assert_eq!(normal_command("n", None), None);
+        assert_eq!(normal_command("w", None), None);
+    }
+
+    #[test]
+    fn session_numbers_are_bare_not_leader_commands() {
+        assert_eq!(normal_command("0", None), None);
+        assert_eq!(
+            shortcuts::activated_command("0", None),
+            Some(Command::Session(0))
+        );
+        for number in 1..=9 {
+            let key = number.to_string();
+            assert_eq!(normal_command(&key, None), Some(Command::Session(number)));
+            assert_eq!(normal_command(&key, Some(Prefix::Space)), None);
+        }
+    }
+
+    #[test]
     fn prefix_chord_is_ctrl_g_only() {
         let ctrl = gpui::Modifiers {
             control: true,
@@ -511,14 +697,40 @@ mod tests {
     }
 
     #[test]
-    fn help_lists_ctrl_g_prefix_and_direct_composer_return() {
-        let rows = shortcuts::help_shortcuts();
-        for key in ["ctrl-f", "ctrl-b", "ctrl-u", "ctrl-d"] {
-            assert!(
-                rows.iter()
-                    .any(|(section, chord, _)| *section == "Chat" && chord == key)
+    fn visual_keys_respect_prefixes_and_modifiers() {
+        for (key, expected) in [
+            ("h", KeyboardCommand::Left),
+            ("l", KeyboardCommand::Right),
+            ("j", KeyboardCommand::Down),
+            ("k", KeyboardCommand::Up),
+            ("w", KeyboardCommand::WordForward),
+            ("b", KeyboardCommand::WordBackward),
+            ("v", KeyboardCommand::Visual(false)),
+            ("V", KeyboardCommand::Visual(true)),
+            ("y", KeyboardCommand::Yank),
+            ("escape", KeyboardCommand::Cancel),
+        ] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            assert_eq!(
+                keyboard_command(&stroke.key, stroke.modifiers, None),
+                Some(expected),
+                "{key}"
+            );
+            assert_eq!(
+                keyboard_command(&stroke.key, stroke.modifiers, Some(Prefix::Space)),
+                (key == "escape").then_some(KeyboardCommand::Cancel),
+                "{key}"
             );
         }
+        for key in ["ctrl-v", "alt-h", "cmd-j", "ctrl-shift-y"] {
+            let stroke = gpui::Keystroke::parse(key).unwrap();
+            assert_eq!(keyboard_command(&stroke.key, stroke.modifiers, None), None);
+        }
+    }
+
+    #[test]
+    fn help_lists_ctrl_g_prefix_and_direct_composer_return() {
+        let rows = shortcuts::help_shortcuts();
         assert!(
             rows.iter()
                 .any(|(section, key, label)| *section == "From anywhere"

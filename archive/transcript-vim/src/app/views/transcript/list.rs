@@ -10,6 +10,8 @@ use gpui::{
 #[path = "list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
+mod keyboard;
+pub(crate) use keyboard::KeyboardCommand;
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type ScrollHandler = dyn FnMut(bool, &mut Window, &mut App) + 'static;
@@ -20,6 +22,8 @@ pub(crate) const TRANSCRIPT_SELECTION_KEY_CONTEXT: &str = "PiTranscriptSelection
 #[derive(Default)]
 struct StateInner {
     heights: HeightIndex,
+    keyboard: keyboard::Keyboard,
+    keyboard_observer: Option<EntityId>,
     scroll_y: Pixels,
     viewport_height: Pixels,
     width: Option<Pixels>,
@@ -85,6 +89,7 @@ impl StateInner {
         {
             self.width = Some(size.width);
             self.heights.invalidate_all();
+            self.keyboard.clear_geometry();
         }
 
         let pending = std::mem::replace(&mut self.pending_scroll, px(0.0));
@@ -104,7 +109,10 @@ impl StateInner {
     }
 
     fn resume_tail_at_end(&mut self) {
-        if !self.following_tail && self.scroll_y >= self.maximum_scroll() - px(1.0) {
+        if !self.following_tail
+            && !self.keyboard.has_selection()
+            && self.scroll_y >= self.maximum_scroll() - px(1.0)
+        {
             self.following_tail = true;
             self.scroll_y = self.maximum_scroll();
         }
@@ -207,6 +215,7 @@ impl TranscriptListState {
     pub(crate) fn reset(&self) {
         let mut state = self.0.borrow_mut();
         state.heights = HeightIndex::default();
+        state.keyboard = keyboard::Keyboard::default();
         state.scroll_y = px(0.0);
         state.pending_scroll = px(0.0);
         state.following_tail = false;
@@ -223,6 +232,9 @@ impl TranscriptListState {
         let anchor = state.logical_scroll_top();
         let old_len = old_range.len();
         let replacement_len = state.heights.splice(old_range.clone(), size_hints);
+        state
+            .keyboard
+            .invalidate(old_range.clone(), old_len != replacement_len);
 
         let (anchor_index, anchor_offset) = if was_empty {
             (0, px(0.0))
@@ -246,6 +258,7 @@ impl TranscriptListState {
 
     pub(crate) fn remeasure_items(&self, range: Range<usize>) {
         let mut state = self.0.borrow_mut();
+        state.keyboard.invalidate(range.clone(), false);
         state.heights.invalidate(range);
     }
 
@@ -395,6 +408,7 @@ impl Element for TranscriptList {
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         let (_, viewport_scrolled) = self.state.0.borrow_mut().begin_frame(bounds.size);
+        let keyboard_changed = self.prepare_keyboard(bounds, window, cx);
         let (anchor, handler, scrolled) = {
             let mut state = self.state.0.borrow_mut();
             let anchor = state.logical_scroll_top();
@@ -405,7 +419,11 @@ impl Element for TranscriptList {
             {
                 state.selection_cursor = Some((self.selection_key)(row));
             }
-            (anchor, state.scroll_handler.clone(), viewport_scrolled)
+            (
+                anchor,
+                state.scroll_handler.clone(),
+                viewport_scrolled || keyboard_changed,
+            )
         };
 
         let available = gpui::size(bounds.size.width.into(), AvailableSpace::MinContent);
@@ -456,7 +474,9 @@ impl Element for TranscriptList {
             }
 
             let mut state = self.state.0.borrow_mut();
-            state.resume_tail_at_end();
+            if !state.keyboard.active || viewport_scrolled {
+                state.resume_tail_at_end();
+            }
             let visible = state.layout_range(px(0.0));
             if visible.clone().all(|index| frame_rows.contains_key(&index)) {
                 break (state.scroll_y, state.following_tail, visible);
@@ -472,12 +492,28 @@ impl Element for TranscriptList {
                     .remove(&index)
                     .expect("visible transcript rows must be laid out");
                 let origin = point(bounds.left(), row_y);
-                row.element.prepaint_at(origin, window, cx);
+                if self.state.0.borrow().keyboard.active {
+                    let (_, runs) = gpui::TextLayout::capture(cx, |cx| {
+                        row.element.prepaint_at(origin, window, cx)
+                    });
+                    self.state
+                        .0
+                        .borrow_mut()
+                        .keyboard
+                        .update_row(index, runs, origin);
+                } else {
+                    row.element.prepaint_at(origin, window, cx);
+                }
                 row_y += row.height;
                 rows.push(row.element);
             }
         });
 
+        {
+            let mut state = self.state.0.borrow_mut();
+            let visible = state.layout_range(px(0.0));
+            state.keyboard.retain_visible(visible);
+        }
         if scrolled && let Some(handler) = handler {
             handler.borrow_mut()(following_tail, window, cx);
         }
@@ -516,7 +552,11 @@ impl Element for TranscriptList {
             let mut state = selection_state.0.borrow_mut();
             let had_selection = state.selection_anchor.is_some();
             let inside = selection_hitbox_id.is_hovered(window);
-            let text_click = inside && !window.default_prevented();
+            let text_click = state.keyboard.apply_pointer_down(
+                inside,
+                window.default_prevented(),
+                event.position - bounds.origin,
+            );
             if text_click {
                 if let Some(focus) = state.text_focus.clone() {
                     focus.focus(window, cx);
@@ -535,6 +575,9 @@ impl Element for TranscriptList {
             state.selection_text = None;
             state.selection_drag_position = inside.then_some(event.position);
             if had_selection || text_click {
+                if let Some(view) = state.keyboard_observer {
+                    cx.notify(view);
+                }
                 cx.notify(current_view);
             }
         });
@@ -602,6 +645,7 @@ impl Element for TranscriptList {
             for row in &mut prepaint.rows {
                 row.paint(window, cx);
             }
+            self.paint_keyboard(bounds, window);
         });
 
         if let Some(token) = self.state.0.borrow_mut().continue_selection_scroll() {

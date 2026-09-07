@@ -1,4 +1,3 @@
-
 use std::{path::PathBuf, sync::Arc};
 
 use gpui::{Context, FocusHandle, Focusable as _, Image, Window, actions};
@@ -149,8 +148,6 @@ impl FarcasterApp {
         self.surface = surface;
         if changed {
             self.chat_navigation.activation.clear();
-            self.chat_navigation.pending_key = None;
-            self.chat_navigation.vim.clear();
             self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
             self.notify_session_rail_shell(cx);
             cx.notify();

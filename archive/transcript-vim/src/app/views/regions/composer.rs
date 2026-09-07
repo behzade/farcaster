@@ -64,12 +64,23 @@ impl Render for ComposerView {
             return gpui::div().into_any_element();
         };
         let app = app.read(cx);
+        let vim_hint = app.chat_navigation.vim.hint();
+        let mode = if let Some(hint) = app.chat_navigation.activation.hint() {
+            Some(hint)
+        } else if app.transcript_owns_keys(window) {
+            app.chat_navigation
+                .pending_key
+                .map(|prefix| prefix.hint())
+                .or(vim_hint.as_deref())
+        } else {
+            None
+        };
         app.render_composer(
             self.app.clone(),
             self.suggestion_selection,
             &self.footer_scroll,
             &self.status_scroll,
-            app.chat_navigation.activation.hint(),
+            mode,
             app.composer_region_focused(window, cx),
             cx,
         )

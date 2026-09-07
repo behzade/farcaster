@@ -22,9 +22,6 @@ impl FarcasterApp {
     ) {
         let native = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
         if !paste && !native {
-            if self.copy_keyboard_selection(window, cx) {
-                return;
-            }
             copy_selection(
                 self.transcript_selected_text(cx),
                 self.composer.read(cx).selected_value().to_string(),
@@ -58,7 +55,7 @@ mod tests {
     use super::copy_text;
 
     #[test]
-    fn transcript_visual_selection_takes_copy_precedence() {
+    fn transcript_mouse_selection_takes_copy_precedence() {
         assert_eq!(
             copy_text(Some("transcript".to_owned()), "composer".to_owned()),
             Some("transcript".to_owned())

@@ -60,7 +60,7 @@ pub(in crate::app::views) fn render(
                         .p(THEME.space.md)
                         .child(setting_label(
                             "Keyboard focus",
-                            "Ctrl+G activates app keys for 1 second without moving focus. Double Ctrl+G returns to the chat composer. In chat, Ctrl+K focuses the transcript and Ctrl+J focuses the composer. On macOS, Cmd+G also focuses the composer. Ctrl+G e/t open the editor/terminal, 0–9 switch sessions, and / searches. Composer Escape applies queued steer or double-Escape abort while a run is active.",
+                            "Ctrl+G activates app keys for 1 second without moving focus. Double Ctrl+G returns to the chat composer. In chat, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page without moving focus. On macOS, Cmd+G also focuses the composer. Ctrl+G e/t open the editor/terminal, 0–9 switch sessions, and / searches. Composer Escape applies queued steer or double-Escape abort while a run is active.",
                         ))
                         .child(modifier_setting(
                             app.settings_application_modifier,

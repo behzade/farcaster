@@ -19,10 +19,7 @@ pub(super) fn bind(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div
 }
 
 fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
-    root.on_action(cx.listener(|this, _: &CopySelection, window, cx| {
-        if this.copy_keyboard_selection(window, cx) {
-            return;
-        }
+    root.on_action(cx.listener(|this, _: &CopySelection, _window, cx| {
         crate::app::ui::keyboard::copy_selection(
             this.transcript_selected_text(cx),
             this.composer.read(cx).selected_value().to_string(),
