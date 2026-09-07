@@ -9,5 +9,5 @@ pre-release-commit-message = "chore(release): prepare v{{version}}"
 allow-branch = ["main"]
 
 pre-release-replacements = [
-  { file = "packaging/linux.toml", exactly = 1, search = 'version = "{{prev_version}}"', replace = 'version = "{{version}}"' },
+  { file = "packaging/linux.toml", exactly = 1, search = '^version = "[^"]+"$', replace = 'version = "{{version}}"' },
 ]
