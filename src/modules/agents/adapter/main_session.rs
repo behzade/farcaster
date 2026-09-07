@@ -48,6 +48,8 @@ pub(super) struct WorkerSessionTransport {
     effort: Option<String>,
     metadata: MainSessionMetadata,
     history: Option<Vec<Value>>,
+    message_count: usize,
+    session_name: Option<String>,
     selected_mode: Option<String>,
     usage: WorkerUsage,
 }
@@ -106,6 +108,8 @@ impl WorkerSessionTransport {
                 .filter(|level| !level.is_empty())
                 .or_else(|| metadata.efforts.first().cloned()),
             metadata,
+            message_count: history.as_ref().map_or(0, |history| history.messages.len()),
+            session_name: None,
             history: history.map(|history| history.messages),
             selected_mode,
             usage: WorkerUsage {
@@ -181,9 +185,9 @@ impl WorkerSessionTransport {
             "isCompacting": false,
             "sessionFile": self.path.to_string_lossy(),
             "sessionId": self.locator,
-            "sessionName": null,
+            "sessionName": self.session_name,
             "autoCompactionEnabled": true,
-            "messageCount": self.history.as_ref().map_or(0, Vec::len),
+            "messageCount": self.message_count,
             "pendingMessageCount": 0,
         })
     }
@@ -438,6 +442,7 @@ impl WorkerSessionTransport {
         if !self.assistant_message.started {
             return;
         }
+        self.message_count = self.message_count.saturating_add(1);
         let mut message = json!({
             "role": "assistant",
             "content": self.assistant_message.content(),
@@ -557,6 +562,9 @@ impl SessionTransport for WorkerSessionTransport {
                 };
                 let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
                 self.worker.send_with_images(message, worker_mode, images)?;
+                // Count accepted input before the next state request, even if
+                // the worker has not emitted InputDelivered yet.
+                self.message_count = self.message_count.saturating_add(1);
                 if let Some(message) = queued_message {
                     self.enqueue_message(mode, message);
                 }
@@ -592,6 +600,7 @@ impl SessionTransport for WorkerSessionTransport {
             }
             SessionCommand::Rename { name } => {
                 self.worker.rename(&name)?;
+                self.session_name = Some(name);
                 self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::ExportHtml { .. } | SessionCommand::ForkAt { .. } => {
@@ -822,6 +831,10 @@ mod tests {
             Ok(())
         }
 
+        fn rename(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+
         fn poll(&mut self) -> Option<WorkerEvent> {
             None
         }
@@ -990,6 +1003,57 @@ mod tests {
     }
 
     #[test]
+    fn worker_session_state_retains_titles_and_counts_new_messages() {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "session-1".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        assert_eq!(transport.state()["messageCount"], 0);
+        assert_eq!(transport.state()["sessionName"], Value::Null);
+
+        for turn in 0..2 {
+            let prompt = format!("Request {turn}");
+            transport
+                .send(SessionCommand::Prompt {
+                    mode: PromptMode::Normal,
+                    message: prompt.clone(),
+                    images: Vec::new(),
+                })
+                .expect("send prompt");
+            assert_eq!(transport.state()["messageCount"], turn * 2 + 1);
+            transport.enqueue_worker_event(WorkerEvent::Started);
+            transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                mode: WorkerSendMode::Prompt,
+                message: prompt,
+            }));
+            transport.enqueue_worker_event(WorkerEvent::Settled {
+                output: "Done".into(),
+            });
+            if turn == 0 {
+                transport
+                    .send(SessionCommand::Rename {
+                        name: "Generated title".into(),
+                    })
+                    .expect("rename");
+            }
+            transport.pending.clear();
+            transport
+                .send(SessionCommand::LoadState)
+                .expect("load state");
+            let Some(SessionEvent::Response(response)) = transport.poll() else {
+                panic!("expected state response");
+            };
+            assert_eq!(response.data["sessionName"], "Generated title");
+            assert_eq!(response.data["messageCount"], (turn + 1) * 2);
+        }
+    }
+
+    #[test]
     fn resumed_transport_returns_persisted_history() {
         let history = crate::agents::DiscoveredHistory {
             messages: vec![json!({"role": "user", "content": "persisted"})],
@@ -1028,6 +1092,15 @@ mod tests {
         assert_eq!(response.data["messageCount"], 1);
         assert_eq!(response.data["model"]["id"], "gpt-test");
         assert_eq!(response.data["thinkingLevel"], "high");
+
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: "New request".into(),
+                images: Vec::new(),
+            })
+            .expect("send prompt");
+        assert_eq!(transport.state()["messageCount"], 2);
     }
 
     #[test]
