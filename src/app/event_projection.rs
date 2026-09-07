@@ -369,7 +369,7 @@ impl FarcasterApp {
     }
     fn project_session_moved(
         &mut self,
-        target_root: PathBuf,
+        target: crate::sessions::SessionTarget,
         target_project: PathBuf,
         paths: Arc<HashMap<PathBuf, PathBuf>>,
         cx: &mut Context<Self>,
@@ -377,8 +377,10 @@ impl FarcasterApp {
         for (source, target) in paths.iter() {
             let source_target = session_target(source);
             let target_target = session_target(target);
-            self.composer_sessions
-                .promote(&source_target, target_target.clone());
+            if source_target != target_target {
+                self.composer_sessions
+                    .promote(&source_target, target_target.clone());
+            }
             self.promote_center_surface(&source_target, &target_target);
             if let Some(images) = self.composer_images.remove(&source_target) {
                 self.composer_images.insert(target_target.clone(), images);
@@ -423,9 +425,9 @@ impl FarcasterApp {
             self.select_project(target_project.clone(), cx);
             self.send(
                 RuntimeCommand::SelectSession {
-                    session_id: target_root.to_string_lossy().into_owned(),
-                    path: target_root,
-                    harness: "pi".into(),
+                    session_id: target.id,
+                    path: target.path,
+                    harness: target.harness,
                     project: target_project,
                 },
                 cx,
@@ -509,10 +511,10 @@ impl FarcasterApp {
                 self.project_session_deleted(generation, paths, cx);
             }
             RuntimeEvent::SessionMoved {
-                target_root,
+                target,
                 target_project,
                 paths,
-            } => self.project_session_moved(target_root, target_project, paths, cx),
+            } => self.project_session_moved(target, target_project, paths, cx),
             RuntimeEvent::SessionsFailed {
                 generation,
                 message,

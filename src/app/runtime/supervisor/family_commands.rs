@@ -230,12 +230,14 @@ impl Supervisor {
                     .collect::<Vec<_>>();
                 let state_warning =
                     sessions::relocate_state(&mut state, &path_updates, target_project).err();
-                Ok((moved, state_warning))
+                let mut target = owned_family[0].target();
+                target.path = moved.root.clone();
+                Ok((moved, target, state_warning))
             })();
             match result {
-                Ok((moved, state_warning)) => {
+                Ok((moved, target, state_warning)) => {
                     let _ = self.event_tx.send(RuntimeEvent::SessionMoved {
-                        target_root: moved.root,
+                        target,
                         target_project: target_project.clone(),
                         paths: Arc::new(moved.paths),
                     });
@@ -256,6 +258,10 @@ impl Supervisor {
                         generation: self.catalog_generation,
                         message,
                     });
+                    // A backend may have completed part of a move before reporting an error.
+                    if let Some(catalog) = self.actors.get(&self.catalog_key) {
+                        catalog.send(RuntimeCommand::RefreshSessions);
+                    }
                 }
             }
             return true;

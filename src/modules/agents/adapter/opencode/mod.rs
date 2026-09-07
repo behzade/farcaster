@@ -6,10 +6,12 @@ mod contract;
 mod event;
 mod server;
 mod tool;
+mod transfer;
 mod transport;
 mod worker;
 
 pub(super) use catalog::{delete_session, discover, load_history, rename_session};
+pub(super) use transfer::move_family;
 pub(crate) use worker::OpenCodeWorkerFactory;
 pub(super) use worker::{load_configuration, spawn_main};
 
@@ -32,7 +34,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 resume: Available,
                 fork: Available,
                 rename: Available,
-                move_project: CapabilitySupport::Unsupported,
+                move_project: Available,
                 close: Available,
                 delete: Available,
             },

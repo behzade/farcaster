@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[derive(Clone)]
@@ -120,7 +119,7 @@ pub(crate) enum RuntimeEvent {
         message: String,
     },
     SessionMoved {
-        target_root: PathBuf,
+        target: crate::sessions::SessionTarget,
         target_project: PathBuf,
         paths: Arc<HashMap<PathBuf, PathBuf>>,
     },

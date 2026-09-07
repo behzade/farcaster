@@ -80,7 +80,7 @@ fn latest_identity(
     })
 }
 
-fn with_server<T>(
+pub(super) fn with_server<T>(
     operation: impl FnOnce(&OpenCodeServerProcess) -> Result<T, String>,
 ) -> Result<T, String> {
     let program = std::env::var_os("FARCASTER_OPENCODE_PATH")

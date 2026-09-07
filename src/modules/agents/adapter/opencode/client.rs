@@ -3,8 +3,8 @@ use serde_json::{Value, json};
 
 use super::contract::{
     DataEnvelope, ErrorEnvelope, OpenCodeDelivery, OpenCodeFileInput, OpenCodeHttpMethod,
-    OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport, OpenCodePromptAdmission,
-    OpenCodeSession,
+    OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport, OpenCodeLocation,
+    OpenCodePromptAdmission, OpenCodeSession,
 };
 
 pub(crate) struct OpenCodeClient<T> {
@@ -246,6 +246,27 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             None,
         )?;
         decode_empty(response)
+    }
+
+    pub(crate) fn move_session(
+        &mut self,
+        session_id: &str,
+        location: &OpenCodeLocation,
+    ) -> Result<(), String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!("/api/session/{}/move", path_segment(session_id)),
+            Some(json!(location)),
+        )?;
+        decode_empty(response)
+    }
+
+    pub(crate) fn session_inbox(&mut self, session_id: &str) -> Result<Vec<Value>, String> {
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/session/{}/inbox", path_segment(session_id)),
+            None,
+        )
     }
 
     pub(crate) fn into_transport(self) -> T {

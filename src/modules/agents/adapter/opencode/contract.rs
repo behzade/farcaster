@@ -26,9 +26,15 @@ pub(crate) trait OpenCodeHttpTransport {
     fn execute(&mut self, request: OpenCodeHttpRequest) -> Result<OpenCodeHttpResponse, String>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct OpenCodeLocation {
     pub directory: String,
+    #[serde(
+        default,
+        rename = "workspaceID",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
