@@ -119,9 +119,7 @@ impl FarcasterApp {
                         &active_live_status,
                         active_waiting_roots.contains(&item.session.id),
                     );
-                    let shortcut = session_shortcuts
-                        .get(&item.session.app_session_id)
-                        .copied();
+                    let shortcut = session_shortcuts.get(&item.session.app_session_id).copied();
                     let editing =
                         active_editing_path.as_deref() == Some(item.session.path.as_path());
                     let drop_position = active_drop_target
