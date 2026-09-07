@@ -2,9 +2,9 @@ use std::{cell::RefCell, collections::BTreeMap, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element, ElementId,
-    EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    IntoElement, LayoutId, ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, ScrollWheelEvent, Size, Style, Window, point, px, relative,
+    EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+    ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    ScrollWheelEvent, Size, Style, Window, point, px, relative,
 };
 
 #[path = "list/height_index.rs"]
@@ -35,7 +35,6 @@ struct StateInner {
     selection_scroll_delta: Option<Pixels>,
     selection_text: Option<String>,
     scroll_handler: Option<Rc<RefCell<Box<ScrollHandler>>>>,
-    text_focus: Option<FocusHandle>,
 }
 
 impl StateInner {
@@ -302,10 +301,6 @@ impl TranscriptListState {
         self.0.borrow_mut().scroll_handler = Some(Rc::new(RefCell::new(Box::new(handler))));
     }
 
-    pub(crate) fn set_text_focus(&self, focus: FocusHandle) {
-        self.0.borrow_mut().text_focus = Some(focus);
-    }
-
     pub(crate) fn selection_contains(&self, key: usize) -> bool {
         self.0.borrow().selection_contains(key)
     }
@@ -517,11 +512,6 @@ impl Element for TranscriptList {
             let had_selection = state.selection_anchor.is_some();
             let inside = selection_hitbox_id.is_hovered(window);
             let text_click = inside && !window.default_prevented();
-            if text_click {
-                if let Some(focus) = state.text_focus.clone() {
-                    focus.focus(window, cx);
-                }
-            }
             if window.default_prevented() {
                 return;
             }

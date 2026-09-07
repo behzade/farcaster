@@ -124,7 +124,6 @@ impl FarcasterApp {
             composer_focus: inputs.composer_focus,
             chat_navigation: ui::navigation::ChatNavigation {
                 focus: cx.focus_handle(),
-                transcript: cx.focus_handle(),
                 activation: Default::default(),
                 activation_focus: None,
                 activation_blur: None,

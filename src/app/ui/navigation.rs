@@ -5,7 +5,6 @@ use crate::app::{AppSurface, FarcasterApp, PickerScope};
 
 pub(crate) struct ChatNavigation {
     pub focus: FocusHandle,
-    pub transcript: FocusHandle,
     pub activation: Activation,
     pub activation_focus: Option<FocusHandle>,
     pub activation_blur: Option<gpui::Subscription>,
@@ -228,8 +227,7 @@ impl FarcasterApp {
     ) -> bool {
         if self.surface != AppSurface::Chat
             || self.native_workspace_covered_by_overlay()
-            || !(self.composer_region_focus(cx).is_focused(window)
-                || self.chat_navigation.transcript.is_focused(window))
+            || !self.composer_region_focus(cx).is_focused(window)
         {
             return false;
         }
