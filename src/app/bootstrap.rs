@@ -100,6 +100,7 @@ impl FarcasterApp {
             editor_return_focus: None,
             terminal: None,
             terminal_project: None,
+            project_terminals: HashMap::new(),
             native_surface_snapshot: None,
             native_surface_covered: false,
             surface: AppSurface::Chat,

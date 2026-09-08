@@ -122,7 +122,8 @@ actions!(
         WorkNextIssue,
         WorkFocusSearch,
         WorkCreateIssue,
-        WorkDismiss
+        WorkDismiss,
+        WorkBack
     ]
 );
 
@@ -209,6 +210,7 @@ pub(crate) struct FarcasterApp {
     editor_return_focus: Option<FocusHandle>,
     terminal: Option<Entity<Terminal>>,
     terminal_project: Option<PathBuf>,
+    project_terminals: HashMap<PathBuf, Entity<Terminal>>,
     native_surface_snapshot: Option<Arc<RenderImage>>,
     native_surface_covered: bool,
     surface: AppSurface,
