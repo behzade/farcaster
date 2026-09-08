@@ -754,13 +754,6 @@ fn interaction(input: WorkerInput) -> ExtensionUiRequest {
             placeholder: None,
             timeout: None,
         }
-    } else if input.options.len() == 2 {
-        ExtensionUiRequest::Confirm {
-            id: input.id,
-            title: input.prompt.clone(),
-            message: input.prompt,
-            timeout: None,
-        }
     } else {
         ExtensionUiRequest::Select {
             id: input.id,

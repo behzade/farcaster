@@ -176,3 +176,9 @@ fn available_commands_update_becomes_prompt_commands() {
     );
     assert_eq!(commands_from_update(&message, "other"), None);
 }
+
+#[test]
+fn cursor_multi_select_accepts_include_but_not_skip() {
+    assert!(is_acceptance("Include"));
+    assert!(!is_acceptance("Skip"));
+}

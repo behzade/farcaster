@@ -3,6 +3,25 @@ use super::*;
 struct IdleWorker;
 
 #[test]
+fn two_choice_questions_preserve_their_options() {
+    let options = vec!["TypeScript".into(), "Rust".into()];
+    assert_eq!(
+        interaction(WorkerInput {
+            id: "question".into(),
+            prompt: "Choose a language".into(),
+            options: options.clone(),
+            secret: false,
+        }),
+        ExtensionUiRequest::Select {
+            id: "question".into(),
+            title: "Choose a language".into(),
+            options,
+            timeout: None,
+        }
+    );
+}
+
+#[test]
 fn native_child_activity_carries_a_backend_locator_without_discovery() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),

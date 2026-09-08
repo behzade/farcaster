@@ -527,7 +527,14 @@ pub(super) fn find_permission_option(options: &[Value], allow: bool) -> Option<S
 pub(super) fn is_acceptance(value: &str) -> bool {
     matches!(
         value.trim().to_ascii_lowercase().as_str(),
-        "yes" | "true" | "allow" | "accept" | "accepted" | "allow once" | "allow always"
+        "yes"
+            | "true"
+            | "allow"
+            | "accept"
+            | "accepted"
+            | "allow once"
+            | "allow always"
+            | "include"
     )
 }
 
