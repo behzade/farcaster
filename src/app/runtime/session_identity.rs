@@ -41,6 +41,18 @@ fn effort_rank(effort: &str) -> Option<u8> {
 }
 
 impl RuntimeSnapshot {
+    pub(crate) fn session_target(&self) -> Option<crate::sessions::SessionTarget> {
+        let state = self.session.as_ref()?;
+        if self.harness.is_empty() || state.session_id.is_empty() {
+            return None;
+        }
+        Some(crate::sessions::SessionTarget {
+            harness: self.harness.clone(),
+            id: state.session_id.clone(),
+            path: crate::sessions::normalize_session_path(self.selected_session.as_deref()?),
+        })
+    }
+
     pub(crate) fn session_identity(&self) -> SessionIdentity<'_> {
         let model = self
             .session

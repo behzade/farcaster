@@ -54,21 +54,17 @@ impl FarcasterApp {
         path: &Path,
         cx: &mut Context<Self>,
     ) -> Option<SessionTarget> {
+        let path = crate::sessions::normalize_session_path(path);
         let target = self
             .all_sessions
             .iter()
             .find(|session| session.path == path)
             .map(SessionSummary::target)
+            .or_else(|| self.runtime.session_targets.get(&path).cloned())
             .or_else(|| {
-                if self.snapshot.selected_session.as_deref() != Some(path) {
-                    return None;
-                }
-                let state = self.snapshot.session.as_ref()?;
-                Some(SessionTarget {
-                    harness: self.snapshot.harness.clone(),
-                    id: state.session_id.clone(),
-                    path: path.to_owned(),
-                })
+                self.snapshot
+                    .session_target()
+                    .filter(|target| target.path == path)
             });
         if target.is_none() {
             self.sessions_error = Some(

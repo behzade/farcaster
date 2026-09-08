@@ -28,6 +28,7 @@ impl DirtyRegions {
                 self.workgraph_goal |= app.snapshot.session_goal != snapshot.session_goal;
             }
             RuntimeEvent::Sessions { .. }
+            | RuntimeEvent::SessionTarget(_)
             | RuntimeEvent::SystemNotification { .. }
             | RuntimeEvent::SessionsFailed { .. }
             | RuntimeEvent::ImportPreview { .. }
@@ -251,6 +252,9 @@ impl FarcasterApp {
         paths: Arc<HashSet<PathBuf>>,
         cx: &mut Context<Self>,
     ) {
+        self.runtime
+            .session_targets
+            .retain(|path, _| !paths.contains(path));
         let selected_was_deleted = self
             .snapshot
             .selected_session
@@ -371,6 +375,12 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         for (source, target) in paths.iter() {
+            if let Some(mut identity) = self.runtime.session_targets.remove(source) {
+                identity.path = target.clone();
+                self.runtime
+                    .session_targets
+                    .insert(target.clone(), identity);
+            }
             let source_target = session_target(source);
             let target_target = session_target(target);
             if source_target != target_target {
@@ -471,6 +481,11 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         match event {
+            RuntimeEvent::SessionTarget(target) => {
+                self.runtime
+                    .session_targets
+                    .insert(target.path.clone(), target);
+            }
             RuntimeEvent::Snapshot {
                 generation,
                 snapshot,

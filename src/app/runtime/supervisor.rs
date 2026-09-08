@@ -5,6 +5,7 @@ mod events;
 mod family_commands;
 
 pub(crate) struct RuntimeHandle {
+    pub(crate) session_targets: HashMap<PathBuf, crate::sessions::SessionTarget>,
     commands: mpsc::Sender<RuntimeCommand>,
     events: mpsc::Receiver<RuntimeEvent>,
     wake: async_channel::Receiver<()>,
@@ -88,6 +89,7 @@ impl RuntimeHandle {
             })
             .expect("start session supervisor");
         Self {
+            session_targets: HashMap::new(),
             commands,
             events,
             wake,

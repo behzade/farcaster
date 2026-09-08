@@ -75,6 +75,16 @@ impl Supervisor {
             }
             RuntimeEvent::Snapshot { snapshot, .. } => {
                 let mut snapshot = snapshot;
+                // Publish identity even when the actor finishes starting in the background.
+                if let Some(target) = snapshot.session_target()
+                    && self
+                        .latest
+                        .get(&key)
+                        .and_then(|previous| previous.session_target())
+                        != Some(target.clone())
+                {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionTarget(target));
+                }
                 if !snapshot.models.is_empty()
                     && cache_configuration_catalog(
                         &mut self.configuration_catalogs,
@@ -277,6 +287,7 @@ impl Supervisor {
                 }
             }
             RuntimeEvent::Stopped
+            | RuntimeEvent::SessionTarget(_)
             | RuntimeEvent::SessionMoved { .. }
             | RuntimeEvent::SessionDeleted { .. }
             | RuntimeEvent::SessionStatus { .. }

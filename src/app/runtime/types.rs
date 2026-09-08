@@ -96,6 +96,7 @@ pub(crate) enum RuntimeCommand {
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeEvent {
+    SessionTarget(crate::sessions::SessionTarget),
     SystemNotification {
         title: String,
         body: String,
