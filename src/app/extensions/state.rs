@@ -61,7 +61,7 @@ impl FarcasterApp {
         self.dismissed_restored_dialog_id = None;
         self.notification_expiries.clear();
         self.pending_dialog_setup = false;
-        self.pending_title = Some((generation, "Pi".into()));
+        self.pending_title = Some((generation, "Farcaster".into()));
         self.pending_editor_text = None;
         self.dialog_return_focus = None;
         self.overlays.sessions = false;
