@@ -194,28 +194,8 @@ pub(super) fn notification(method: &str, params: &Value) -> Option<(WorkerEvent,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn synthetic_image_has_change_metadata_and_target() {
-        let (started, _) = notification(
-            "cursor/generate_image",
-            &json!({
-                "toolCallId":"image-1",
-                "description":"Create cover art",
-                "filePath":"art/cover.png"
-            }),
-        )
-        .unwrap();
-        let WorkerEvent::Activity(WorkerActivity::ToolStarted { metadata, .. }) = started else {
-            panic!("expected tool start");
-        };
-        assert_eq!(metadata.category, Some(ToolCategory::Change));
-        assert_eq!(metadata.title.as_deref(), Some("Create cover art"));
-        assert_eq!(metadata.targets, ["art/cover.png"]);
-    }
-}
+#[path = "cursor_extension_tests.rs"]
+mod tests;
 
 fn request_id(id: &AcpRequestId) -> String {
     match id {

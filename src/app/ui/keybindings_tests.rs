@@ -118,7 +118,10 @@ fn tab_navigation_stays_in_picker_input() {
 
 #[test]
 fn composer_completion_keys_require_visible_suggestions() {
-    use crate::app::{ComposerCompletionNext, ComposerCompletionPrevious, SubmitFollowUp};
+    use super::registry_for_platform;
+    use crate::app::{
+        ComposerCompletionNext, ComposerCompletionPrevious, NewSession, SubmitFollowUp,
+    };
     use gpui::Action as _;
 
     let keymap = gpui::Keymap::new(
