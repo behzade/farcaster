@@ -13,6 +13,7 @@ use std::{
 use std::fs;
 
 use crate::{
+    app::FarcasterApp,
     app::infrastructure::persistence::{StateStore, WindowPlacement, WindowState},
     app::ui::theme::{THEME, install_component_theme},
     app::ui::{
@@ -22,7 +23,6 @@ use crate::{
     },
     app::views::dialogs::startup_trust::ProjectTrustView,
     app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward},
-    app::{FarcasterApp, QuitApplication},
 };
 use gpui::{
     App, AppContext as _, Bounds, Context, DisplayId, Subscription, TitlebarOptions, WeakEntity,
@@ -108,21 +108,11 @@ pub(crate) fn run(
             install_component_theme(cx);
             let notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>> =
                 Rc::new(RefCell::new(None));
-            let quit_app = notification_app.clone();
-            cx.on_action(move |_: &QuitApplication, cx| {
-                let Some(app) = quit_app.borrow().clone() else {
-                    cx.quit();
-                    return;
-                };
-                if app
-                    .update_in(cx, |app, window, cx| {
-                        app.request_application_quit(window, cx)
-                    })
-                    .is_err()
-                {
-                    cx.quit();
-                }
-            });
+            super::quit::install(
+                notification_app.clone(),
+                FarcasterApp::request_application_quit,
+                cx,
+            );
             let cycle_forward_app = notification_app.clone();
             cx.on_action(move |_: &CycleWorkspaceForward, cx| {
                 update_app(&cycle_forward_app, cx, |app, window, cx| {
@@ -210,6 +200,7 @@ pub(crate) fn run(
             let open_window_timing =
                 crate::app::infrastructure::performance::StartupTiming::new("launch.open_window");
             let result = cx.open_window(window_options, move |window, cx| {
+                super::quit::install_window(window, cx);
                 let launch = cx.new(|cx| {
                     ProjectTrustView::new(
                         project.clone(),
