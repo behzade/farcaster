@@ -59,7 +59,20 @@ impl RuntimeOwner {
                     &session_id,
                     &name,
                 ) {
-                    Ok(()) => self.load_sessions(self.session_query.clone()),
+                    Ok(()) => self.update_session_metadata(agents::SessionMetadata {
+                        harness,
+                        id: session_id,
+                        path,
+                        project,
+                        title: Some(name),
+                        first_user_message: None,
+                        parent_session: None,
+                        message_count: None,
+                        model: None,
+                        thinking_level: None,
+                        usage: None,
+                        is_running: false,
+                    }),
                     Err(message) => {
                         let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                             generation: self.session_generation,
@@ -147,6 +160,9 @@ impl RuntimeOwner {
             }
             RuntimeCommand::LoadSessions(query) => self.load_sessions(query),
             RuntimeCommand::RefreshSessions => self.refresh_sessions(),
+            RuntimeCommand::UpdateSessionMetadata(metadata) => {
+                self.update_session_metadata(metadata)
+            }
             RuntimeCommand::ScheduleSessionRefresh => self.schedule_session_refresh(),
             RuntimeCommand::PreviewImport {
                 harness,

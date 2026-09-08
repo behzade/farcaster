@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn native_child_events_refresh_catalog_and_emit_one_finished_activity() {
+fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
     let mut session = test_session();
     session.thread_id = "native-parent".into();
     for kind in ["started", "interacted", "interrupted", "completed"] {
@@ -22,7 +22,13 @@ fn native_child_events_refresh_catalog_and_emit_one_finished_activity() {
         }
         assert_eq!(
             session.poll(),
-            Some(WorkerEvent::Activity(WorkerActivity::ChildSessionsChanged))
+            Some(WorkerEvent::Activity(
+                WorkerActivity::ChildSessionsChanged {
+                    id: "native-event-child".into(),
+                    title: Some("/root/reviewer".into()),
+                    is_running: matches!(kind, "started" | "interacted"),
+                }
+            ))
         );
         assert!(
             matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::ToolStarted { args, .. }))

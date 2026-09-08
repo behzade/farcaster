@@ -834,7 +834,19 @@ impl WorkerSession for CodexWorkerSession {
                                 let event = if item_type == Some("subAgentActivity") {
                                     super::subagents::observe(&self.thread_id, &params["item"]);
                                     self.events.push_back(WorkerEvent::Activity(started));
-                                    WorkerActivity::ChildSessionsChanged
+                                    WorkerActivity::ChildSessionsChanged {
+                                        id: params["item"]["agentThreadId"]
+                                            .as_str()
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                        title: params["item"]["agentPath"]
+                                            .as_str()
+                                            .map(str::to_owned),
+                                        is_running: matches!(
+                                            params["item"]["kind"].as_str(),
+                                            Some("started" | "interacted")
+                                        ),
+                                    }
                                 } else {
                                     started
                                 };

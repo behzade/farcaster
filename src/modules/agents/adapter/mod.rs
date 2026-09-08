@@ -15,8 +15,8 @@ mod process_command;
 mod session_storage;
 mod shell_environment;
 pub(crate) use session_storage::{
-    delete_session_family, discover_sessions, discover_sessions_for, load_session_history,
-    move_session_family, supports_session_move, validate_session_move,
+    delete_session_family, discover_sessions_for, load_session_history, move_session_family,
+    supports_session_move, validate_session_move,
 };
 mod trust;
 pub(crate) use trust::{
@@ -363,46 +363,6 @@ pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(
         "opencode2" => opencode::delete_session(&locator),
         _ => unreachable!("external session identity returned an unknown backend"),
     })
-}
-
-pub(crate) fn discover_external_sessions(
-    locator_root: Option<&std::path::Path>,
-    query: &str,
-) -> (Vec<crate::agents::DiscoveredSession>, bool) {
-    let Some(locator_root) = locator_root else {
-        return (Vec::new(), false);
-    };
-    let statuses = backend_statuses();
-    let mut sessions = Vec::new();
-    let mut exhaustive = true;
-    if statuses
-        .iter()
-        .any(|backend| backend.id == "codex-cli" && backend.available)
-    {
-        match codex::discover(locator_root, query) {
-            Ok(mut discovered) => sessions.append(&mut discovered),
-            Err(_) => exhaustive = false,
-        }
-    }
-    if statuses
-        .iter()
-        .any(|backend| backend.id == "cursor-cli" && backend.available)
-    {
-        match cursor::discover(locator_root, query) {
-            Ok(mut discovered) => sessions.append(&mut discovered),
-            Err(_) => exhaustive = false,
-        }
-    }
-    if statuses
-        .iter()
-        .any(|backend| backend.id == "opencode2" && backend.available)
-    {
-        match opencode::discover(locator_root, query) {
-            Ok(mut discovered) => sessions.append(&mut discovered),
-            Err(_) => exhaustive = false,
-        }
-    }
-    (sessions, exhaustive)
 }
 
 pub(crate) fn discover_external_sessions_for(

@@ -22,18 +22,6 @@ fn summary(harness: &str, path: PathBuf, id: &str) -> SessionSummary {
 }
 
 #[test]
-fn pi_discovery_failure_keeps_other_harnesses_and_prevents_pruning() {
-    let other = summary(
-        "codex-cli",
-        PathBuf::from("/locators/codex-cli/thread"),
-        "thread",
-    );
-    let discovery = merge_discovery(Err("unreadable Pi root".into()), vec![other.clone()], true);
-    assert_eq!(discovery.sessions, vec![other]);
-    assert!(!discovery.exhaustive);
-}
-
-#[test]
 fn unsupported_moves_never_touch_files_or_create_destination() {
     let temp = tempfile::tempdir().expect("test fixture");
     let source = temp.path().join("session.jsonl");

@@ -306,7 +306,21 @@ impl WorkerSessionTransport {
                     "toolMetadata": metadata,
                 })
             }
-            WorkerActivity::ChildSessionsChanged => json!({"type": "child_sessions_changed"}),
+            WorkerActivity::ChildSessionsChanged {
+                id,
+                title,
+                is_running,
+            } => {
+                let path = self
+                    .path
+                    .parent()
+                    .and_then(|path| path.parent())
+                    .map(|root| external_session_path(root, &self.harness, &id));
+                json!({"type": "child_sessions_changed", "child": {
+                    "id": id, "path": path, "title": title,
+                    "parent_session": self.locator, "is_running": is_running,
+                }})
+            }
             WorkerActivity::ToolMetadataChanged { id, args, metadata } => {
                 let mut event = json!({
                     "type": "tool_metadata_changed",

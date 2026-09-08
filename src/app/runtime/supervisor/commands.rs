@@ -174,12 +174,7 @@ impl Supervisor {
                 true
             }
             Err(mpsc::TryRecvError::Empty) => {
-                match self.activity_tracker.next_deadline() {
-                    Some(deadline) => {
-                        thread::park_timeout(deadline.saturating_duration_since(Instant::now()))
-                    }
-                    None => thread::park(),
-                }
+                thread::park();
                 true
             }
             Err(mpsc::TryRecvError::Disconnected) => false,

@@ -2,11 +2,18 @@ use super::*;
 
 impl StateStore {
     pub(crate) fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
+        Ok(crate::sessions::filter_session_tree(
+            self.read_cached_sessions(None)?,
+            query,
+        ))
+    }
+
+    fn read_cached_sessions(&self, id: Option<i64>) -> Result<Vec<SessionSummary>, String> {
         let _startup_timing =
             crate::app::infrastructure::performance::StartupTiming::new("db.cached_sessions");
         let mut statement = self
             .connection
-            .prepare(
+            .prepare(&format!(
                 "SELECT s.id, s.locator, p.path, s.title, s.first_user_message, s.timestamp,
                         COALESCE(parent.backend_id, parent.locator, s.parent_backend_id),
                         s.modified_ms, s.message_count, s.input_tokens,
@@ -18,17 +25,104 @@ impl StateStore {
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
                    LEFT JOIN session_models m ON m.session_id = s.id
-                  WHERE s.locator IS NOT NULL
+                  WHERE s.locator IS NOT NULL AND {}
                   ORDER BY s.modified_ms DESC, s.timestamp DESC",
-            )
+                if id.is_some() {
+                    "s.id=?1"
+                } else {
+                    "?1 IS NULL"
+                }
+            ))
             .map_err(|error| format!("prepare cached sessions: {error}"))?;
         let rows = statement
-            .query_map([], row_to_session)
+            .query_map([id], row_to_session)
             .map_err(|error| format!("query cached sessions: {error}"))?;
         let sessions = rows
             .map(|row| row.map_err(|error| format!("decode cached session: {error}")))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(crate::sessions::filter_session_tree(sessions, query))
+        Ok(sessions)
+    }
+
+    pub(crate) fn update_session_metadata(
+        &mut self,
+        update: &crate::agents::SessionMetadata,
+    ) -> Result<SessionSummary, String> {
+        let path = crate::sessions::normalize_session_path(&update.path);
+        let tx = self
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        let now = u64_to_i64(now_ms());
+        let project = ensure_project(&tx, &update.project, now)?;
+        tx.execute(
+            "INSERT INTO sessions(project_id,harness,locator,backend_id,modified_ms,created_ms)
+             VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(harness,locator) DO NOTHING",
+            params![
+                project,
+                update.harness,
+                path.to_string_lossy(),
+                update.id,
+                now
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        let id: i64 = tx
+            .query_row(
+                "SELECT id FROM sessions WHERE harness=?1 AND locator=?2",
+                params![update.harness, path.to_string_lossy()],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        tx.execute(
+            "UPDATE sessions SET backend_id=?2,
+               search_text=CASE WHEN ?3 IS NOT NULL AND ?3 != title
+                   THEN search_text || ' ' || LOWER(?3) ELSE search_text END,
+               title=COALESCE(?3,NULLIF(title,''),?4,''),
+               first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?4,'') ELSE first_user_message END,
+               parent_backend_id=COALESCE(?5,parent_backend_id),
+               parent_id=COALESCE((SELECT id FROM sessions WHERE harness=?6 AND backend_id=?5 LIMIT 1),parent_id),
+               message_count=COALESCE(?7,message_count), modified_ms=?8
+             WHERE id=?1",
+            params![id, update.id, update.title, update.first_user_message,
+                update.parent_session, update.harness, update.message_count.map(|n| n as i64), now],
+        ).map_err(|error| format!("update live session metadata: {error}"))?;
+        tx.execute(
+            "UPDATE sessions SET search_text=LOWER(title || ' ' || first_user_message)
+             WHERE id=?1 AND search_text=''",
+            [id],
+        )
+        .map_err(|error| error.to_string())?;
+        if let Some((provider, model)) = &update.model {
+            tx.execute(
+                "INSERT INTO session_models(session_id,provider,model,effort) VALUES(?1,?2,?3,?4)
+                 ON CONFLICT(session_id) DO UPDATE SET provider=excluded.provider,model=excluded.model,effort=excluded.effort",
+                params![id, provider, model, update.thinking_level],
+            ).map_err(|error| error.to_string())?;
+        }
+        if let Some(usage) = update.usage {
+            tx.execute(
+                "UPDATE sessions SET input_tokens=?2,output_tokens=?3,cache_read_tokens=?4,
+                 cache_write_tokens=?5,total_tokens=?6,cost_micros=MAX(cost_micros,?7) WHERE id=?1",
+                params![
+                    id,
+                    usage.input,
+                    usage.output,
+                    usage.cache_read,
+                    usage.cache_write,
+                    usage.total,
+                    usage.cost_micros
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
+        let mut session = self
+            .read_cached_sessions(Some(id))?
+            .into_iter()
+            .next()
+            .ok_or("Updated session is missing")?;
+        session.is_running = update.is_running;
+        Ok(session)
     }
 
     #[cfg(test)]
@@ -363,3 +457,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     }
     Ok(session)
 }
+
+#[cfg(test)]
+#[path = "sessions_tests.rs"]
+mod tests;

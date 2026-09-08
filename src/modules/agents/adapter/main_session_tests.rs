@@ -2,6 +2,32 @@ use super::*;
 
 struct IdleWorker;
 
+#[test]
+fn native_child_activity_carries_a_backend_locator_without_discovery() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "parent".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .unwrap();
+    transport.enqueue_worker_event(WorkerEvent::Activity(
+        WorkerActivity::ChildSessionsChanged {
+            id: "child".into(),
+            title: Some("Reviewer".into()),
+            is_running: true,
+        },
+    ));
+    let Some(SessionEvent::Activity(event)) = transport.poll() else {
+        panic!("child activity")
+    };
+    assert_eq!(event.value()["child"]["path"], "/locators/codex-cli/child");
+    assert_eq!(event.value()["child"]["parent_session"], "parent");
+    assert_eq!(event.value()["child"]["is_running"], true);
+}
+
 struct SteeringWorker(WorkerSendMode);
 
 impl WorkerSession for SteeringWorker {

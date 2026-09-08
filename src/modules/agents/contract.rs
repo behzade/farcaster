@@ -29,7 +29,7 @@ pub(crate) struct DiscoveredSession {
     pub(crate) search: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DiscoveredUsage {
     pub(crate) input: u64,
     pub(crate) output: u64,
@@ -37,6 +37,23 @@ pub(crate) struct DiscoveredUsage {
     pub(crate) cache_write: u64,
     pub(crate) total: u64,
     pub(crate) cost_micros: u64,
+}
+
+/// Metadata supplied by a live session, never by a global history scan.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SessionMetadata {
+    pub harness: String,
+    pub id: String,
+    pub path: PathBuf,
+    pub project: PathBuf,
+    pub title: Option<String>,
+    pub first_user_message: Option<String>,
+    pub parent_session: Option<String>,
+    pub message_count: Option<usize>,
+    pub model: Option<(String, String)>,
+    pub thinking_level: Option<String>,
+    pub usage: Option<DiscoveredUsage>,
+    pub is_running: bool,
 }
 
 #[derive(Clone, Debug)]

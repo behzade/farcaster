@@ -28,7 +28,7 @@ use prompts::DeferredPrompt;
 use session_loop::run;
 use status::{
     failure_details, failure_summary, notification_target, run_status, semantic_status,
-    session_badge_status, tool_starts_worker,
+    session_badge_status,
 };
 
 use std::{
@@ -58,8 +58,7 @@ use crate::{
         SessionState, SlashCommand,
     },
     sessions::{
-        self, ExternalActivityTracker, LoadedHistory, SessionDiscovery, SessionSummary,
-        archived_root_family_for_path, session_family_for_path,
+        self, LoadedHistory, SessionSummary, archived_root_family_for_path, session_family_for_path,
     },
 };
 use session_controls::PendingSessionControls;
@@ -82,8 +81,7 @@ use supervisor::{SessionEventSender, SessionRuntimeHandle};
 use supervisor::{
     SupervisorSessionAction, UiEventSender, actor_key_for_command, changed_external_documents,
     command_targets_catalog, initial_draft_command, is_view_only_selection,
-    publish_session_status_if_changed, route_session_discovery, rpc_owned_session_paths,
-    target_command_needs_actor_message,
+    publish_session_status_if_changed, route_session_discovery, target_command_needs_actor_message,
 };
 pub(crate) use types::{ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
 
@@ -103,8 +101,6 @@ struct RuntimeOwner {
     snapshot: RuntimeSnapshot,
     owns_session_catalog: bool,
     session_generation: u64,
-    session_discovery_in_flight: bool,
-    session_refresh_pending: bool,
     session_refresh_due: Option<Instant>,
     process_generation: u64,
     pending_prompt_id: Option<String>,
@@ -114,7 +110,6 @@ struct RuntimeOwner {
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,
-    discovery_tx: mpsc::Sender<DiscoveryResult>,
     history_tx: mpsc::Sender<HistoryResult>,
     history_generation: u64,
     history_selection_generation: Option<u64>,
@@ -129,11 +124,6 @@ struct RuntimeOwner {
     startup_history_loaded: bool,
     state: Option<StateStore>,
     session_query: String,
-}
-
-struct DiscoveryResult {
-    generation: u64,
-    result: Result<SessionDiscovery, String>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

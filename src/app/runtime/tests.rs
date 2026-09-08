@@ -43,32 +43,6 @@ fn runtime_failure_details_remove_controls_and_bound_output() {
 }
 
 #[test]
-fn rpc_owned_paths_exclude_history_only_documents() {
-    let active = PathBuf::from("/sessions/active.jsonl");
-    let background = PathBuf::from("/sessions/background.jsonl");
-    let history = PathBuf::from("/sessions/history.jsonl");
-    let snapshot = |live: &PathBuf, selected: &PathBuf, history_preview| {
-        Arc::new(RuntimeSnapshot {
-            connected: true,
-            live_session: Some(live.clone()),
-            selected_session: Some(selected.clone()),
-            history_preview,
-            ..RuntimeSnapshot::default()
-        })
-    };
-    let latest = HashMap::from([
-        ("active".into(), snapshot(&active, &active, false)),
-        ("preview".into(), snapshot(&background, &history, true)),
-        ("history".into(), snapshot(&history, &history, true)),
-    ]);
-
-    assert_eq!(
-        rpc_owned_session_paths(&latest),
-        HashSet::from([active, background])
-    );
-}
-
-#[test]
 fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
@@ -108,15 +82,8 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
     Ok(())
 }
 
-fn owner_without_process(
-    project: PathBuf,
-) -> (
-    RuntimeOwner,
-    mpsc::Receiver<RuntimeEvent>,
-    mpsc::Receiver<DiscoveryResult>,
-) {
+fn owner_without_process(project: PathBuf) -> (RuntimeOwner, mpsc::Receiver<RuntimeEvent>) {
     let (event_tx, event_rx) = test_event_channel();
-    let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, _history_rx) = mpsc::channel();
     (
         RuntimeOwner {
@@ -139,8 +106,6 @@ fn owner_without_process(
             },
             owns_session_catalog: true,
             session_generation: 0,
-            session_discovery_in_flight: false,
-            session_refresh_pending: false,
             session_refresh_due: None,
             process_generation: 1,
             pending_prompt_id: None,
@@ -150,7 +115,6 @@ fn owner_without_process(
             title_generation: SessionTitleGeneration::default(),
             transcript_changed_from: None,
             event_tx,
-            discovery_tx,
             history_tx,
             history_generation: 0,
             history_selection_generation: None,
@@ -167,7 +131,6 @@ fn owner_without_process(
             session_query: String::new(),
         },
         event_rx,
-        discovery_rx,
     )
 }
 
@@ -191,7 +154,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         }
     }
     let temp = tempdir().unwrap();
-    let (mut owner, events, _) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.state = Some(StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap());
     owner.snapshot.session = Some(
         serde_json::from_value(json!({
@@ -315,7 +278,7 @@ fn access_mode_before_connection_configures_the_first_process() -> Result<(), St
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
     let target = HarnessAccessMode::Full;
 
@@ -341,7 +304,7 @@ fn access_mode_before_connection_configures_the_first_process() -> Result<(), St
 
 #[test]
 fn app_proxy_change_waits_for_a_running_turn() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     conversation_mut(owner.active_snapshot_mut()).running = true;
     let proxy = Some("http://proxy.example:8080".to_owned());
 
@@ -356,7 +319,7 @@ fn app_proxy_change_waits_for_a_running_turn() {
 
 #[test]
 fn runtime_failure_releases_the_running_flag() {
-    let (mut owner, events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, events) = owner_without_process(std::env::temp_dir());
     conversation_mut(owner.active_snapshot_mut()).running = true;
 
     owner.fail("Codex worker turn failed".into());
@@ -375,7 +338,7 @@ fn runtime_failure_releases_the_running_flag() {
 
 #[test]
 fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     conversation_mut(owner.active_snapshot_mut()).running = true;
     let full = HarnessAccessMode::Full;
 
@@ -398,7 +361,7 @@ fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), Stri
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
     let session = temp.path().join("session.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     owner.start_process(Some(session));
     drive_process_until(&mut owner, |owner| {
@@ -710,7 +673,7 @@ fn completed_message_usage_updates_context_when_streaming_usage_is_unavailable()
 #[test]
 fn no_op_working_events_do_not_request_a_snapshot_publish() {
     let project = PathBuf::from("/project");
-    let (mut owner, events, _discovery) = owner_without_process(project);
+    let (mut owner, events) = owner_without_process(project);
     owner.snapshot.status = "Working".into();
     conversation_mut(&mut owner.snapshot).running = true;
 
@@ -722,17 +685,14 @@ fn no_op_working_events_do_not_request_a_snapshot_publish() {
 }
 
 #[test]
-fn first_agent_action_refreshes_catalog_for_draft_promotion() {
-    let (mut owner, events, _discovery) = owner_without_process(PathBuf::from("/project"));
+fn first_agent_action_waits_for_session_state_without_discovery() {
+    let (mut owner, events) = owner_without_process(PathBuf::from("/project"));
     owner.owns_session_catalog = false;
     owner.active_session = Some(PathBuf::from("/sessions/new.jsonl"));
 
     owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_start"}).into()));
 
-    assert!(matches!(
-        events.try_recv(),
-        Ok(RuntimeEvent::RefreshCatalog)
-    ));
+    assert!(events.try_recv().is_err());
 }
 
 #[test]
@@ -765,7 +725,7 @@ fn notification_target_comes_from_the_emitting_runtime() {
 
 #[test]
 fn completion_notification_waits_for_settlement_and_is_not_repeated() {
-    let (mut owner, events, _discovery) = owner_without_process(PathBuf::from("/project"));
+    let (mut owner, events) = owner_without_process(PathBuf::from("/project"));
     owner.active_session = Some(PathBuf::from("/sessions/live"));
     owner.snapshot.selected_session = Some(PathBuf::from("/sessions/history"));
     owner.parked_snapshot = Some(owner.snapshot.clone());
@@ -810,7 +770,7 @@ fn completion_notification_waits_for_settlement_and_is_not_repeated() {
 #[test]
 fn idle_and_compaction_settlement_do_not_send_completion_notification() {
     for compacting in [false, true] {
-        let (mut owner, events, _discovery) = owner_without_process(PathBuf::from("/project"));
+        let (mut owner, events) = owner_without_process(PathBuf::from("/project"));
         let conversation = conversation_mut(owner.active_snapshot_mut());
         conversation.running = compacting;
         conversation.compacting = compacting;
@@ -1046,7 +1006,7 @@ fn non_catalog_discovery_failures_also_refresh_instead_of_publishing() {
 
 #[test]
 fn non_catalog_actors_request_one_authoritative_refresh_without_scanning() {
-    let (mut owner, events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, events) = owner_without_process(std::env::temp_dir());
     owner.owns_session_catalog = false;
 
     owner.refresh_sessions();
@@ -1069,7 +1029,7 @@ fn streaming_accepts_queued_messages_and_exact_extension_commands() {
 
 #[test]
 fn reload_is_rejected_while_the_session_is_running() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     conversation_mut(&mut owner.snapshot).reduce(&json!({"type":"agent_start"}));
     let generation = owner.process_generation;
 
@@ -1093,7 +1053,7 @@ fn reload_restarts_the_idle_session_process() -> Result<(), Box<dyn std::error::
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
     let session = temp.path().join("session.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
     owner.active_session = Some(session.clone());
     owner.snapshot.selected_session = Some(session.clone());
@@ -1117,7 +1077,7 @@ fn initial_prompt_is_not_duplicated_when_starting_its_process()
     let temp = tempdir()?;
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
     owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
 
@@ -1166,7 +1126,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
             wake: None,
         },
     )?;
-    let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.process = Some(process);
     owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
 
@@ -1220,7 +1180,7 @@ fn accepted_prompt_result_has_the_normalized_active_session_path()
     let link = temp.path().join("link.jsonl");
     fs::write(&session, "{}")?;
     symlink(&session, &link)?;
-    let (mut owner, events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.active_session = Some(crate::sessions::normalize_session_path(&link));
 
     owner.emit_prompt_result("draft:a", true);
@@ -1242,7 +1202,7 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
     let new_project = tempdir()?;
     let script = old_project.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
-    let (mut owner, _events, _discovery) = owner_without_process(old_project.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(old_project.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
     owner.state = Some(StateStore::open_at(
         &old_project.path().join("state.sqlite3"),
@@ -1277,7 +1237,7 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
 
 #[test]
 fn unsupported_reasoning_does_not_queue_a_cursor_startup_command() {
-    let (mut owner, _events, _discovery) = owner_without_process(PathBuf::from("/cursor-project"));
+    let (mut owner, _events) = owner_without_process(PathBuf::from("/cursor-project"));
     owner.harness = "cursor-cli".into();
     owner.snapshot.harness = "cursor-cli".into();
 
@@ -1292,7 +1252,7 @@ fn unsupported_reasoning_does_not_queue_a_cursor_startup_command() {
 #[test]
 fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
     let project = std::env::temp_dir().join("cold-model-project");
-    let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+    let (mut owner, _events) = owner_without_process(project.clone());
     let model = Model {
         id: "model".into(),
         name: "Model".into(),
@@ -1316,7 +1276,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
 
 #[test]
 fn cold_model_selection_replaces_an_unsupported_effort() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     owner.snapshot.prefill_thinking_level = Some("high".into());
 
     owner.apply_command(RuntimeCommand::SetModel(Model {
@@ -1366,7 +1326,7 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
         summary("alpha", alpha_path.canonicalize()?, "alpha"),
         summary("beta", beta_path.canonicalize()?, "beta"),
     ];
-    let (mut owner, events, _discovery) = owner_without_process(project);
+    let (mut owner, events) = owner_without_process(project);
     owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
     owner
         .state
@@ -1383,16 +1343,7 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
     )));
 
     owner.refresh_sessions();
-    let refresh_generation = owner.session_generation;
     assert_eq!(owner.session_query, "alpha");
-    owner.apply_discovery(DiscoveryResult {
-        generation: refresh_generation,
-        result: Ok(SessionDiscovery {
-            sessions,
-            activities: HashMap::new(),
-            exhaustive: true,
-        }),
-    });
     let refreshed = events.try_iter().collect::<Vec<_>>();
     assert!(refreshed.iter().any(|event| matches!(
         event,
@@ -1412,8 +1363,8 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
 }
 
 #[test]
-fn refresh_commands_coalesce_into_one_delayed_scan() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+fn refresh_commands_coalesce_into_one_cached_catalog_read() {
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     let command = RuntimeCommand::ScheduleSessionRefresh;
     assert!(command_targets_catalog(&command));
     owner.apply_command(command.clone());
@@ -1425,74 +1376,25 @@ fn refresh_commands_coalesce_into_one_delayed_scan() {
     assert_eq!(owner.session_generation, 0);
     owner.poll_deferred_session_refresh(due);
     assert_eq!(owner.session_generation, 1);
-    assert!(owner.session_discovery_in_flight);
+    assert!(owner.session_refresh_due.is_none());
 }
 
 #[test]
-fn worker_start_tools_request_catalog_refresh() {
-    for name in ["collaboration.spawn_agent", "spawnAgent", "worker_start"] {
-        assert!(tool_starts_worker(
-            &SessionActivityKind::ToolStarted,
-            &json!({"toolName": name, "args": {}}),
-        ));
-    }
-    assert!(tool_starts_worker(
-        &SessionActivityKind::ToolStarted,
-        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "diff-review"}}),
-    ));
-    assert!(tool_starts_worker(
-        &SessionActivityKind::ToolStarted,
-        &json!({"toolName": "mcp__farcaster__worker_send", "args": {"to": "ignored-by-child"}}),
-    ));
-    assert!(!tool_starts_worker(
-        &SessionActivityKind::ToolStarted,
-        &json!({"toolName": "read", "args": {}}),
-    ));
-    assert!(!tool_starts_worker(
-        &SessionActivityKind::ToolStarted,
-        &json!({"toolName": "todoist.create_task", "args": {}}),
-    ));
-}
-
-#[test]
-fn child_session_changes_schedule_catalog_refresh_without_ending_parent_turn() {
-    let (mut owner, _events, _discovery) = owner_without_process(PathBuf::from("/project"));
+fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
+    let (mut owner, events) = owner_without_process(PathBuf::from("/project"));
     Arc::make_mut(&mut owner.snapshot.conversation).running = true;
     owner.apply_process_item(SessionEvent::Activity(
-        json!({"type": "child_sessions_changed"}).into(),
+        json!({"type": "child_sessions_changed", "child": {
+            "id": "child", "path": "/sessions/child", "parent_session": "parent",
+            "title": "Reviewer", "is_running": true
+        }})
+        .into(),
     ));
-    assert!(owner.session_refresh_due.is_some());
+    assert!(owner.session_refresh_due.is_none());
+    assert!(
+        matches!(events.try_recv(), Ok(RuntimeEvent::SessionMetadata(child)) if child.id == "child" && child.is_running)
+    );
     assert!(owner.snapshot.conversation.running);
-}
-
-#[test]
-fn in_flight_catalog_refreshes_coalesce_into_one_delayed_scan() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
-    owner.session_discovery_in_flight = true;
-    owner.refresh_sessions();
-    owner.refresh_sessions();
-    assert!(owner.session_refresh_pending);
-
-    owner.apply_discovery(DiscoveryResult {
-        generation: 0,
-        result: Ok(SessionDiscovery {
-            sessions: Vec::new(),
-            activities: HashMap::new(),
-            exhaustive: true,
-        }),
-    });
-    let due = owner.session_refresh_due.expect("deferred refresh");
-    assert!(!owner.session_refresh_pending);
-    owner.refresh_sessions();
-    assert_eq!(owner.session_generation, 0);
-    owner.poll_deferred_session_refresh(due - Duration::from_millis(1));
-    assert_eq!(owner.session_generation, 0);
-
-    owner.poll_deferred_session_refresh(due);
-    assert_eq!(owner.session_generation, 1);
-    assert!(owner.session_discovery_in_flight);
-    owner.poll_deferred_session_refresh(due + Duration::from_secs(1));
-    assert_eq!(owner.session_generation, 1);
 }
 
 #[test]
@@ -1535,7 +1437,7 @@ fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
         true,
         "needle assignment".into(),
     );
-    let (mut owner, events, _) = owner_without_process(project);
+    let (mut owner, events) = owner_without_process(project);
     owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
     owner
         .state
@@ -1556,108 +1458,10 @@ fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
 }
 
 #[test]
-fn importing_during_discovery_releases_the_stale_scan() -> Result<(), Box<dyn std::error::Error>> {
-    let temp = tempdir()?;
-    let (mut owner, events, _) = owner_without_process(temp.path().to_path_buf());
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui.sqlite3"))?);
-    owner.session_generation = 1;
-    owner.session_discovery_in_flight = true;
-    owner.session_refresh_pending = true;
-    let session = SessionSummary::from_cached(
-        "imported".into(),
-        temp.path().join("imported.jsonl"),
-        temp.path().to_path_buf(),
-        "Imported".into(),
-        String::new(),
-        String::new(),
-        None,
-        SystemTime::now(),
-        0,
-        crate::sessions::UsageSummary::default(),
-        false,
-        false,
-        String::new(),
-    );
-    owner.commit_import(vec![session]);
-    events.try_iter().for_each(drop);
-    owner.apply_discovery(DiscoveryResult {
-        generation: 1,
-        result: Ok(SessionDiscovery {
-            sessions: vec![],
-            activities: HashMap::new(),
-            exhaustive: true,
-        }),
-    });
-    assert!(!owner.session_discovery_in_flight);
-    assert!(!owner.session_refresh_pending);
-    assert!(owner.session_refresh_due.is_some());
-    assert!(events.try_iter().next().is_none());
-    assert_eq!(
-        owner.state.as_ref().unwrap().cached_sessions("")?[0].id,
-        "imported"
-    );
-    Ok(())
-}
-
-#[test]
-fn partial_catalog_refresh_keeps_omitted_running_children_in_the_catalog()
--> Result<(), Box<dyn std::error::Error>> {
-    let temp = tempdir()?;
-    let project = temp.path().join("project");
-    fs::create_dir(&project)?;
-    let root_path = temp.path().join("root.jsonl");
-    let child_path = temp.path().join("child.jsonl");
-    fs::write(&root_path, "{}")?;
-    fs::write(&child_path, "{}")?;
-    let summary = |id: &str, path: PathBuf, parent: Option<&str>, is_running: bool| {
-        SessionSummary::from_cached(
-            id.into(),
-            path,
-            project.clone(),
-            id.into(),
-            String::new(),
-            String::new(),
-            parent.map(str::to_owned),
-            SystemTime::now(),
-            0,
-            crate::sessions::UsageSummary::default(),
-            false,
-            is_running,
-            id.into(),
-        )
-    };
-    let root = summary("root", root_path.canonicalize()?, None, false);
-    let child = summary("child", child_path.canonicalize()?, Some("root"), true);
-    let (mut owner, events, _discovery) = owner_without_process(project);
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
-    owner
-        .state
-        .as_mut()
-        .expect("state")
-        .replace_sessions(&[root.clone(), child])?;
-
-    owner.apply_discovery(DiscoveryResult {
-        generation: 0,
-        result: Ok(SessionDiscovery {
-            sessions: vec![root],
-            activities: HashMap::new(),
-            exhaustive: false,
-        }),
-    });
-
-    assert!(events.try_iter().any(|event| matches!(
-        event,
-        RuntimeEvent::Sessions { all_sessions, .. }
-            if all_sessions.iter().any(|session| session.id == "child")
-    )));
-    Ok(())
-}
-
-#[test]
-fn first_session_path_triggers_a_sidebar_refresh() {
+fn first_session_path_publishes_metadata_without_a_catalog_refresh() {
     let project = std::env::temp_dir();
     let session = project.join("new-session.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(project);
+    let (mut owner, events) = owner_without_process(project);
 
     owner.apply_response(crate::agents::SessionResponse {
         id: Some("state".into()),
@@ -1679,7 +1483,10 @@ fn first_session_path_triggers_a_sidebar_refresh() {
     });
 
     assert_eq!(owner.active_session, Some(session));
-    assert_eq!(owner.session_generation, 1);
+    assert_eq!(owner.session_generation, 0);
+    assert!(
+        matches!(events.try_recv(), Ok(RuntimeEvent::SessionMetadata(metadata)) if metadata.id == "new-session")
+    );
 }
 
 #[test]
@@ -1689,7 +1496,7 @@ fn get_state_canonicalizes_a_symlinked_session_path() -> Result<(), Box<dyn std:
     let link = temp.path().join("linked.jsonl");
     fs::write(&session, "{}")?;
     symlink(&session, &link)?;
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
 
     owner.apply_response(crate::agents::SessionResponse {
         id: Some("state".into()),
@@ -2005,7 +1812,7 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
     let session = temp.path().join("history.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     preview_history(&mut owner, session.clone(), "preserved history");
 
@@ -2069,7 +1876,7 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
 fn failed_model_reconnect_keeps_the_loaded_history() {
     let project = std::env::temp_dir();
     let session = project.join("history.jsonl");
-    let (mut owner, _events, _discovery) = owner_without_process(project);
+    let (mut owner, _events) = owner_without_process(project);
     owner.process_command = AgentLaunchConfig {
         program: PathBuf::from("/definitely/missing/farcaster-test-command"),
         prefix_args: Vec::new(),
@@ -2105,7 +1912,6 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
 #[test]
 fn failed_resume_publishes_no_state_from_the_previous_process() {
     let (event_tx, event_rx) = test_event_channel();
-    let (discovery_tx, _discovery_rx) = mpsc::channel();
     let (history_tx, _history_rx) = mpsc::channel();
     let mut owner = RuntimeOwner {
         project: std::env::temp_dir(),
@@ -2144,8 +1950,6 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         },
         owns_session_catalog: false,
         session_generation: 0,
-        session_discovery_in_flight: false,
-        session_refresh_pending: false,
         session_refresh_due: None,
         process_generation: 4,
         pending_prompt_id: None,
@@ -2155,7 +1959,6 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,
-        discovery_tx,
         history_tx,
         history_generation: 1,
         history_selection_generation: None,
@@ -2238,7 +2041,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
 fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui-state.sqlite3");
-    let (mut owner, _events, _discovery) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig {
         program: PathBuf::from("/definitely/missing/farcaster-test-command"),
         prefix_args: Vec::new(),
@@ -2281,7 +2084,7 @@ fn prompt_before_history_loads_resumes_the_selected_session() -> Result<(), Stri
     let temp = tempdir().map_err(|error| error.to_string())?;
     let session = PathBuf::from("/sessions/cursor-historical");
     let project = temp.path().to_path_buf();
-    let (mut owner, events, _discovery) = owner_without_process(project.clone());
+    let (mut owner, events) = owner_without_process(project.clone());
     owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
 
     owner.apply_command(RuntimeCommand::SelectSession {
@@ -2324,7 +2127,7 @@ fn selecting_from_an_idle_session_does_not_start_pi() {
     let new_project = PathBuf::from("/new-project");
     let old_path = PathBuf::from("/old-session.jsonl");
     let new_path = PathBuf::from("/new-session.jsonl");
-    let (mut owner, events, _discovery) = owner_without_process(old_project);
+    let (mut owner, events) = owner_without_process(old_project);
     owner.active_session = Some(old_path.clone());
     owner.snapshot.selected_session = Some(old_path.clone());
     owner.process_generation = 4;
@@ -2359,7 +2162,6 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         },
     )?;
     let (event_tx, event_rx) = test_event_channel();
-    let (discovery_tx, _discovery_rx) = mpsc::channel();
     let (history_tx, _history_rx) = mpsc::channel();
     let old_path = PathBuf::from("/old");
     let new_path = PathBuf::from("/new");
@@ -2381,8 +2183,6 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         },
         owns_session_catalog: false,
         session_generation: 0,
-        session_discovery_in_flight: false,
-        session_refresh_pending: false,
         session_refresh_due: None,
         process_generation: 3,
         pending_prompt_id: None,
@@ -2392,7 +2192,6 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,
-        discovery_tx,
         history_tx,
         history_generation: 1,
         history_selection_generation: None,
@@ -2545,7 +2344,6 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         .map_err(|error| error.to_string())?;
 
     let (event_tx, event_rx) = test_event_channel();
-    let (discovery_tx, _discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
     let mut owner = RuntimeOwner {
         project: temp.path().to_path_buf(),
@@ -2562,8 +2360,6 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         },
         owns_session_catalog: false,
         session_generation: 0,
-        session_discovery_in_flight: false,
-        session_refresh_pending: false,
         session_refresh_due: None,
         process_generation: 7,
         pending_prompt_id: Some("pending-prompt".into()),
@@ -2573,7 +2369,6 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,
-        discovery_tx,
         history_tx,
         history_generation: 0,
         history_selection_generation: None,
@@ -2685,7 +2480,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
 fn refreshing_visible_external_history_preserves_transcript_ui_state() {
     let path = PathBuf::from("/sessions/external.jsonl");
     let project = PathBuf::from("/project");
-    let (mut owner, events, _discovery) = owner_without_process(project.clone());
+    let (mut owner, events) = owner_without_process(project.clone());
     owner.history_generation = 1;
     preview_history(&mut owner, path.clone(), "before");
 
@@ -2757,7 +2552,7 @@ fn external_writes_refresh_only_resident_history_documents() {
 fn external_write_during_selection_refreshes_the_newly_loaded_document() {
     let path = PathBuf::from("/sessions/external.jsonl");
     let project = PathBuf::from("/project");
-    let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+    let (mut owner, _events) = owner_without_process(project.clone());
     owner.history_generation = 1;
     owner.history_selection_generation = Some(1);
 
@@ -2784,7 +2579,7 @@ fn external_write_during_selection_refreshes_the_newly_loaded_document() {
 fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
     let path = PathBuf::from("/sessions/external.jsonl");
     let project = PathBuf::from("/project");
-    let (mut owner, _events, _discovery) = owner_without_process(project.clone());
+    let (mut owner, _events) = owner_without_process(project.clone());
     owner.history_generation = 1;
     owner.document_refresh_generation = Some(1);
     preview_history(&mut owner, path.clone(), "before");

@@ -176,7 +176,11 @@ pub(crate) enum WorkerActivity {
         limits: Value,
     },
     SessionGoalChanged(Option<SessionGoal>),
-    ChildSessionsChanged,
+    ChildSessionsChanged {
+        id: String,
+        title: Option<String>,
+        is_running: bool,
+    },
     CompactionStarted,
     CompactionFinished {
         aborted: bool,

@@ -1,5 +1,20 @@
 use super::*;
 
+fn update_session_row(sessions: &mut Vec<SessionSummary>, session: SessionSummary) {
+    if let Some(index) = sessions
+        .iter()
+        .position(|previous| previous.path == session.path)
+    {
+        sessions.remove(index);
+    }
+    let index = sessions.partition_point(|previous| previous.modified > session.modified);
+    sessions.insert(index, session);
+}
+
+#[cfg(test)]
+#[path = "event_projection_tests.rs"]
+mod tests;
+
 #[derive(Default)]
 struct DirtyRegions {
     root: bool,
@@ -28,6 +43,8 @@ impl DirtyRegions {
                 self.workgraph_goal |= app.snapshot.session_goal != snapshot.session_goal;
             }
             RuntimeEvent::Sessions { .. }
+            | RuntimeEvent::SessionUpdated(_)
+            | RuntimeEvent::SessionMetadata(_)
             | RuntimeEvent::SessionTarget(_)
             | RuntimeEvent::SystemNotification { .. }
             | RuntimeEvent::SessionsFailed { .. }
@@ -509,6 +526,56 @@ impl FarcasterApp {
             } if generation >= self.session_generation => {
                 self.project_sessions(generation, sessions, all_sessions, activities, dirty, cx);
             }
+            RuntimeEvent::SessionUpdated(mut session) => {
+                self.reconcile_pending_session_titles(&mut [], std::slice::from_mut(&mut session));
+                dirty.archived_rail |= archive::session_event_affects_archived_rail(
+                    &self.all_sessions,
+                    "",
+                    Some(&session.path),
+                );
+                let previous_workgraph_session = self.active_workgraph_session();
+                let activity = crate::sessions::activity::ActivityBuilder::default().finish(
+                    session.id.clone(),
+                    session.path.clone(),
+                    &session.title,
+                    &session.first_user_message,
+                    session.usage,
+                    session.modified,
+                    session.modified,
+                    session.is_running,
+                    true,
+                );
+                self.agent_activities.insert(session.id.clone(), activity);
+                self.agent_row_focus
+                    .entry(session.id.clone())
+                    .or_insert_with(|| cx.focus_handle());
+                projects::add_visible(
+                    &mut self.projects,
+                    &self.excluded_projects,
+                    session.project.clone(),
+                );
+                dirty.composer |= self.snapshot.selected_session.as_ref() == Some(&session.path);
+                update_session_row(&mut self.all_sessions, session.clone());
+                dirty.archived_rail |= archive::session_event_affects_archived_rail(
+                    &self.all_sessions,
+                    "",
+                    Some(&session.path),
+                );
+                let query = self.search.read(cx).value();
+                if query.trim().is_empty() {
+                    update_session_row(&mut self.sessions, session);
+                } else {
+                    self.sessions = crate::sessions::filter_session_tree(
+                        self.all_sessions.clone(),
+                        query.trim(),
+                    );
+                }
+                dirty.rail = true;
+                dirty.run = true;
+                dirty.workgraph_session |=
+                    previous_workgraph_session != self.active_workgraph_session();
+                dirty.rail |= self.reconcile_submitted_drafts(cx);
+            }
             RuntimeEvent::SessionDeleted { generation, paths } => {
                 self.project_session_deleted(generation, paths, cx);
             }
@@ -576,6 +643,7 @@ impl FarcasterApp {
             RuntimeEvent::Stopped => Arc::make_mut(&mut self.snapshot).status = "Stopped".into(),
             RuntimeEvent::Snapshot { .. }
             | RuntimeEvent::RefreshCatalog
+            | RuntimeEvent::SessionMetadata(_)
             | RuntimeEvent::SessionReset { .. }
             | RuntimeEvent::HistoryReset { .. }
             | RuntimeEvent::ExtensionUi { .. }

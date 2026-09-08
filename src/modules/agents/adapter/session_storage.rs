@@ -139,40 +139,6 @@ pub(crate) fn discover_sessions_for(
         .map(|sessions| sessions.into_iter().map(import_session).collect())
 }
 
-pub(crate) fn discover_sessions(
-    locator_root: Option<&Path>,
-    query: &str,
-) -> crate::sessions::SessionDiscovery {
-    let pi = pi::session_files::discover(query);
-    let (external, exhaustive) = super::discover_external_sessions(locator_root, query);
-    merge_discovery(
-        pi,
-        external.into_iter().map(import_session).collect(),
-        exhaustive,
-    )
-}
-
-fn merge_discovery(
-    pi: Result<crate::sessions::SessionDiscovery, String>,
-    external: Vec<SessionSummary>,
-    exhaustive: bool,
-) -> crate::sessions::SessionDiscovery {
-    let mut discovery = pi.unwrap_or_else(|error| {
-        zlog::warn!("Pi session discovery failed: {error}");
-        crate::sessions::SessionDiscovery {
-            sessions: Vec::new(),
-            activities: Default::default(),
-            exhaustive: false,
-        }
-    });
-    discovery.sessions.extend(external);
-    discovery.exhaustive &= exhaustive;
-    discovery
-        .sessions
-        .sort_by_key(|session| std::cmp::Reverse(session.modified));
-    discovery
-}
-
 fn import_session(session: crate::agents::DiscoveredSession) -> SessionSummary {
     SessionSummary::import(crate::sessions::SessionImport {
         id: session.id,

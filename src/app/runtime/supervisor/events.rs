@@ -41,16 +41,6 @@ impl Supervisor {
         }
     }
 
-    pub(super) fn maintain_external_activity(&mut self) {
-        let owned_sessions = rpc_owned_session_paths(&self.latest);
-        self.activity_tracker.remove_owned(&owned_sessions);
-        if self.activity_tracker.take_expired(Instant::now())
-            && let Some(catalog) = self.actors.get(&self.catalog_key)
-        {
-            catalog.send(RuntimeCommand::RefreshSessions);
-        }
-    }
-
     pub(super) fn drain_actor_events(&mut self) {
         let keys = self.actors.keys().cloned().collect::<Vec<_>>();
         for key in keys {
@@ -70,6 +60,23 @@ impl Supervisor {
 
     fn handle_actor_event(&mut self, key: String, event: RuntimeEvent) {
         match event {
+            RuntimeEvent::SessionMetadata(metadata) => {
+                if let Some(catalog) = self.actors.get(&self.catalog_key) {
+                    catalog.send(RuntimeCommand::UpdateSessionMetadata(metadata));
+                }
+            }
+            RuntimeEvent::SessionUpdated(session) => {
+                if let Some(previous) = self
+                    .catalog_sessions
+                    .iter_mut()
+                    .find(|s| s.path == session.path)
+                {
+                    *previous = session.clone();
+                } else {
+                    self.catalog_sessions.push(session.clone());
+                }
+                let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
+            }
             event @ RuntimeEvent::SystemNotification { .. } => {
                 let _ = self.event_tx.send(event);
             }
@@ -242,25 +249,26 @@ impl Supervisor {
             | RuntimeEvent::ImportPreviewFailed { .. }) => {
                 let _ = self.event_tx.send(event);
             }
-            event @ (RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. }) => {
+            mut event @ (RuntimeEvent::Sessions { .. } | RuntimeEvent::SessionsFailed { .. }) => {
                 if key == self.catalog_key
                     && let RuntimeEvent::Sessions {
                         generation: next_generation,
                         all_sessions,
-                        activities,
+                        sessions,
                         ..
-                    } = &event
+                    } = &mut event
                 {
-                    self.catalog_generation = *next_generation;
-                    if let Some((_, exhaustive)) = activities {
-                        self.activity_tracker.sync_catalog(
-                            all_sessions,
-                            *exhaustive,
-                            &rpc_owned_session_paths(&self.latest),
-                            Instant::now(),
-                            SystemTime::now(),
-                        );
+                    // SQLite stores archive and metadata, while app events own live status.
+                    let running: HashSet<_> = self
+                        .catalog_sessions
+                        .iter()
+                        .filter(|session| session.is_running)
+                        .map(|session| &session.path)
+                        .collect();
+                    for session in all_sessions.iter_mut().chain(sessions.iter_mut()) {
+                        session.is_running = running.contains(&session.path);
                     }
+                    self.catalog_generation = *next_generation;
                     self.catalog_sessions.clone_from(all_sessions);
                     reconcile_live_session_documents(
                         all_sessions,

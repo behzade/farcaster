@@ -213,20 +213,6 @@ pub(super) fn publish_session_status_if_changed(
     });
 }
 
-pub(super) fn rpc_owned_session_paths(
-    latest: &HashMap<String, Arc<RuntimeSnapshot>>,
-) -> HashSet<PathBuf> {
-    latest
-        .values()
-        .filter(|snapshot| snapshot.connected)
-        .filter_map(|snapshot| {
-            let live = snapshot.live_session.as_ref()?;
-            (!snapshot.history_preview || snapshot.selected_session.as_ref() != Some(live))
-                .then(|| live.clone())
-        })
-        .collect()
-}
-
 pub(super) fn changed_external_documents(
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
     paths: &[PathBuf],
@@ -380,7 +366,6 @@ struct Supervisor {
     latest: HashMap<String, Arc<RuntimeSnapshot>>,
     catalog_sessions: Vec<SessionSummary>,
     catalog_generation: u64,
-    activity_tracker: ExternalActivityTracker,
     actor_paths: HashMap<PathBuf, String>,
     interacted: HashSet<String>,
     document_revisions: HashMap<PathBuf, (SystemTime, usize)>,
@@ -464,7 +449,6 @@ impl Supervisor {
         let mut latest = HashMap::<String, Arc<RuntimeSnapshot>>::new();
         let catalog_sessions = Vec::<SessionSummary>::new();
         let catalog_generation = 0_u64;
-        let activity_tracker = ExternalActivityTracker::default();
         if let Some(target) = initial_session.clone() {
             latest.insert(
                 initial_key.clone(),
@@ -547,7 +531,6 @@ impl Supervisor {
             latest,
             catalog_sessions,
             catalog_generation,
-            activity_tracker,
             actor_paths,
             interacted,
             document_revisions,
@@ -570,7 +553,6 @@ impl Supervisor {
         let mut running = true;
         while running {
             self.drain_configuration_updates();
-            self.maintain_external_activity();
             self.drain_actor_events();
             running = self.process_next_command();
         }
@@ -615,6 +597,7 @@ pub(super) fn command_targets_catalog(command: &RuntimeCommand) -> bool {
         command,
         RuntimeCommand::LoadSessions(_)
             | RuntimeCommand::RefreshSessions
+            | RuntimeCommand::UpdateSessionMetadata(_)
             | RuntimeCommand::ScheduleSessionRefresh
             | RuntimeCommand::SetSessionArchived { .. }
             | RuntimeCommand::RenameSession { .. }

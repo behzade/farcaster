@@ -34,6 +34,11 @@ impl Supervisor {
                 if family_actor_keys.contains(&self.selected) {
                     self.selected = self.catalog_key.clone();
                 }
+                for session in &mut self.catalog_sessions {
+                    if family_paths.contains(&session.path) {
+                        session.is_running = false;
+                    }
+                }
                 if let Some(catalog) = self.actors.get(&self.catalog_key) {
                     catalog.send(RuntimeCommand::RefreshSessions);
                 }

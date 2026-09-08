@@ -209,7 +209,6 @@ impl RuntimeOwner {
             SessionOperation::LoadState => {
                 match serde_json::from_value::<SessionState>(response.data) {
                     Ok(state) => {
-                        let previous_session = self.active_session.clone();
                         let selected_session = state
                             .session_file
                             .as_ref()
@@ -223,10 +222,7 @@ impl RuntimeOwner {
                         snapshot.session = Some(state);
                         snapshot.status = "Ready".into();
                         self.startup_state_loaded = true;
-                        if self.active_session.is_some() && self.active_session != previous_session
-                        {
-                            self.refresh_sessions();
-                        }
+                        self.publish_session_metadata();
                     }
                     Err(error) => {
                         self.fail(format!("decode get_state: {error}"));
@@ -253,6 +249,7 @@ impl RuntimeOwner {
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                 }
                 self.startup_history_loaded = true;
+                self.publish_session_metadata();
             }
             SessionOperation::ListModels => {
                 self.active_snapshot_mut().models = response
@@ -296,6 +293,7 @@ impl RuntimeOwner {
                 let previous = self.active_snapshot().stats.clone();
                 self.active_snapshot_mut().stats =
                     stable_session_stats(&previous, response.data, running);
+                self.publish_session_metadata();
             }
             SessionOperation::ListCommands => {
                 self.active_snapshot_mut().commands = response
@@ -332,7 +330,7 @@ impl RuntimeOwner {
             SessionOperation::Rename => {
                 self.active_snapshot_mut().status = "Session named".into();
                 self.send(SessionCommand::LoadState);
-                self.refresh_sessions();
+                self.publish_session_metadata();
             }
             SessionOperation::ExportHtml => {
                 self.active_snapshot_mut().status = response

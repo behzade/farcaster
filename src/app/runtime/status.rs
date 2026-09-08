@@ -11,31 +11,6 @@ pub(super) fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
     session_badge_status(&snapshot.conversation)
 }
 
-pub(super) fn tool_starts_worker(kind: &SessionActivityKind, event: &Value) -> bool {
-    if kind != &SessionActivityKind::ToolStarted {
-        return false;
-    }
-    let Some(name) = event.get("toolName").and_then(Value::as_str) else {
-        return false;
-    };
-    let normalized = name
-        .trim()
-        .rsplit(['.', ':', '/'])
-        .next()
-        .unwrap_or_default()
-        .rsplit("__")
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if normalized == "worker_send" {
-        return true;
-    }
-    matches!(
-        normalized.as_str(),
-        "spawn_agent" | "spawnagent" | "worker_start"
-    )
-}
-
 pub(super) fn failure_details(error: &str) -> String {
     let cleaned = error
         .chars()

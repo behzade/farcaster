@@ -8,7 +8,6 @@ pub(super) fn run(
     load_catalog: bool,
     harness: String,
 ) {
-    let (discovery_tx, discovery_rx) = mpsc::channel();
     let (history_tx, history_rx) = mpsc::channel();
     let (state, state_error) = match StateStore::open() {
         Ok(state) => (Some(state), None),
@@ -29,8 +28,6 @@ pub(super) fn run(
         },
         owns_session_catalog: load_catalog,
         session_generation: 0,
-        session_discovery_in_flight: false,
-        session_refresh_pending: false,
         session_refresh_due: None,
         process_generation: 0,
         pending_prompt_id: None,
@@ -40,7 +37,6 @@ pub(super) fn run(
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: Some(0),
         event_tx,
-        discovery_tx,
         history_tx,
         history_generation: 0,
         history_selection_generation: None,
@@ -66,9 +62,6 @@ pub(super) fn run(
     let mut running = true;
     let mut stream_publish_due = None;
     while running {
-        while let Ok(result) = discovery_rx.try_recv() {
-            owner.apply_discovery(result);
-        }
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
         }

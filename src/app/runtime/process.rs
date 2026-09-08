@@ -79,7 +79,7 @@ impl RuntimeOwner {
                 state.session_name = Some(title.clone());
             }
             self.send(SessionCommand::Rename { name: title });
-            self.refresh_sessions();
+            self.publish_session_metadata();
         }
     }
 
@@ -326,16 +326,13 @@ impl RuntimeOwner {
                     self.send(SessionCommand::LoadState);
                 }
                 if event.kind() == &SessionActivityKind::AgentStarted {
-                    self.refresh_sessions();
+                    self.publish_session_metadata();
                 }
                 if event.kind() == &SessionActivityKind::SessionChanged {
                     self.send(SessionCommand::LoadState);
-                    self.refresh_sessions();
                 }
-                if event.kind() == &SessionActivityKind::ChildSessionsChanged
-                    || tool_starts_worker(event.kind(), event.value())
-                {
-                    self.schedule_session_refresh();
+                if event.kind() == &SessionActivityKind::ChildSessionsChanged {
+                    self.publish_child_session_metadata(event.value());
                 }
                 if settled {
                     if notify_completion {
@@ -349,7 +346,7 @@ impl RuntimeOwner {
                     }
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
-                    self.refresh_sessions();
+                    self.publish_session_metadata();
                 }
                 if !should_publish {
                     SnapshotChange::None
@@ -410,6 +407,7 @@ impl RuntimeOwner {
         self.pending_prompt_id = None;
         self.deferred_prompt = None;
         conversation_mut(self.active_snapshot_mut()).running = false;
+        self.publish_session_metadata();
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);

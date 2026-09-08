@@ -84,6 +84,7 @@ pub(crate) enum RuntimeCommand {
     },
     LoadSessions(String),
     RefreshSessions,
+    UpdateSessionMetadata(agents::SessionMetadata),
     ScheduleSessionRefresh,
     PreviewImport {
         harness: String,
@@ -134,6 +135,8 @@ pub(crate) enum RuntimeEvent {
         paths: Arc<HashSet<PathBuf>>,
     },
     RefreshCatalog,
+    SessionMetadata(agents::SessionMetadata),
+    SessionUpdated(SessionSummary),
     ExtensionUi {
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
