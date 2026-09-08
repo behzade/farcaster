@@ -4,6 +4,10 @@ Farcaster is a native desktop app for controlling different AI agent harnesses t
 
 I wanted to use all my agent subscriptions in the same app, with the same keybindings, and review them in Neovim.
 
+## How I use it
+
+I spawn many concurrent sessions, mostly as I notice/remember issues or tasks; because of the concurrency, I don't care too much about model speed, and I make use of cheaper models as workers for more intelligent top-level agents to save costs. I try to stay in the app as agents are working, notice issues in their implementation by the files they are touching, occasionally dropping into Neovim to audit/change things.
+
 ## What you can do
 
 ### Use one UI across harnesses
@@ -58,10 +62,6 @@ The repository includes a Nix development shell. To build and run from a local c
 nix develop
 cargo run --locked --bin farcaster
 ```
-
-## How I use it
-
-I spawn many concurrent sessions, mostly as I notice/remember issues or tasks; because of the concurrency, I don't care too much about model speed, and I make use of cheaper models as workers for more intelligent top-level agents to save costs. I try to stay in the app as agents are working, notice issues in their implementation by the files they are touching, occasionally dropping into Neovim to audit/change things.
 
 ## Why build around harnesses?
 
