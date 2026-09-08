@@ -18,11 +18,15 @@ use crate::{
 };
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
-    Task, Window, div, prelude::FluentBuilder as _, px,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
+    prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::{Input, InputEvent, InputState, TextareaState};
-use workgraph::{link_session, load_plan};
+use gpui_component::{
+    input::{Input, InputEvent, InputState, TextareaState},
+    kbd::Kbd,
+};
+use workgraph::{link_session, load_selected_plan};
 
 pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
 pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";
@@ -33,6 +37,8 @@ pub(crate) struct WorkGraphBoardView {
     pub(super) state: PlanLoadState,
     focus: FocusHandle,
     pub(super) selected: Option<u64>,
+    plan: Option<u64>,
+    all_plans: bool,
     create_stage: CreateStage,
     pub(super) active_session: Option<(String, String)>,
     session_goal: Option<crate::agents::SessionGoal>,
@@ -54,7 +60,7 @@ impl WorkGraphBoardView {
             Ok(database) => (database, PlanLoadState::Loading),
             Err(error) => (PathBuf::new(), PlanLoadState::Failed(error)),
         };
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search plan"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let create_title =
             cx.new(|cx| InputState::new(window, cx).placeholder("What should be true?"));
         let create_detail = cx.new(|cx| {
@@ -90,6 +96,8 @@ impl WorkGraphBoardView {
             state,
             focus: cx.focus_handle(),
             selected: None,
+            plan: None,
+            all_plans: false,
             create_stage: CreateStage::Closed,
             active_session: None,
             session_goal: None,
@@ -112,6 +120,12 @@ impl WorkGraphBoardView {
         session_goal: Option<crate::agents::SessionGoal>,
         cx: &mut Context<Self>,
     ) {
+        if self.project != project || self.active_session != active_session {
+            self.plan = None;
+            self.all_plans = false;
+            self.selected = None;
+            self.state = PlanLoadState::Loading;
+        }
         self.project = project;
         self.active_session = active_session;
         self.session_goal = session_goal;
@@ -129,13 +143,14 @@ impl WorkGraphBoardView {
         }
     }
 
-    fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.state = PlanLoadState::Loading;
+    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         let database = self.database.clone();
         let project = self.project.clone();
         let session_id = self.active_session.as_ref().map(|(id, _)| id.clone());
-        let load =
-            cx.background_spawn(async move { load_plan(database, project, session_id.as_deref()) });
+        let plan = self.plan;
+        let load = cx.background_spawn(async move {
+            load_selected_plan(database, project, session_id.as_deref(), plan)
+        });
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let state = match load.await {
                 Ok(data) => PlanLoadState::Ready(Box::new(data)),
@@ -176,6 +191,13 @@ impl WorkGraphBoardView {
     }
 
     pub(crate) fn prepare_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.plan = None;
+        self.all_plans = false;
+        self.refresh(cx);
+        self.reset_navigation(window, cx);
+    }
+
+    fn reset_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = None;
         self.create_stage = CreateStage::Closed;
         self.search.update(cx, |input, cx| {
@@ -183,6 +205,27 @@ impl WorkGraphBoardView {
         });
         self.focus.focus(window, cx);
         cx.notify();
+    }
+
+    pub(crate) fn back_to_plans(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(&self.state, PlanLoadState::Ready(data) if self.showing_plans(data)) {
+            return;
+        }
+        self.all_plans = true;
+        self.plan = None;
+        self.reset_navigation(window, cx);
+    }
+
+    fn showing_plans(&self, data: &PlanData) -> bool {
+        self.all_plans || (self.plan.is_none() && data.session_link.is_none())
+    }
+
+    fn open_plan(&mut self, plan: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.plan = Some(plan);
+        self.all_plans = false;
+        self.reset_navigation(window, cx);
+        self.state = PlanLoadState::Loading;
+        self.refresh(cx);
     }
 
     pub(crate) fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -193,6 +236,9 @@ impl WorkGraphBoardView {
         let PlanLoadState::Ready(data) = &self.state else {
             return;
         };
+        if self.showing_plans(data) {
+            return;
+        }
         let Some(snapshot) = &data.snapshot else {
             return;
         };
@@ -274,7 +320,7 @@ impl WorkGraphBoardView {
         layout: BoardLayoutMode,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let has_plan = data.snapshot.is_some();
+        let has_plan = !self.showing_plans(data) && data.snapshot.is_some();
         if self.create_stage.is_open() {
             let can_submit = create_form_valid(
                 has_plan,
@@ -292,6 +338,56 @@ impl WorkGraphBoardView {
         }
 
         let search = self.search.read(cx).value().to_string();
+        if self.showing_plans(data) {
+            let query = search.trim().to_lowercase();
+            let plans = data
+                .plans
+                .iter()
+                .filter(|plan| plan.title.to_lowercase().contains(&query))
+                .collect::<Vec<_>>();
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(render_board_header(
+                    "All plans",
+                    false,
+                    true,
+                    &self.search,
+                    entity.clone(),
+                ))
+                .child(
+                    div()
+                        .id("workgraph-all-plans")
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .p(THEME.space.md)
+                        .gap(THEME.space.sm)
+                        .when(data.plans.is_empty(), |list| {
+                            list.child(render_empty_plan(entity.clone()))
+                        })
+                        .when(!data.plans.is_empty() && plans.is_empty(), |list| {
+                            list.child("No plans match your search.")
+                        })
+                        .children(plans.into_iter().map(|plan| {
+                            let entity = entity.clone();
+                            let number = plan.number;
+                            button(
+                                format!("workgraph-plan-{number}"),
+                                plan.title.clone(),
+                                ButtonTone::Quiet,
+                                true,
+                                move |window, cx| {
+                                    entity.update(cx, |this, cx| this.open_plan(number, window, cx))
+                                },
+                            )
+                        })),
+                )
+                .into_any_element();
+        }
         let rows = data
             .snapshot
             .as_ref()
@@ -375,6 +471,7 @@ fn render_board_header(
 ) -> impl IntoElement {
     let refresh = entity.clone();
     let back = entity.clone();
+    let plans = entity.clone();
     div()
         .h(px(56.0))
         .flex_none()
@@ -386,6 +483,22 @@ fn render_board_header(
         .justify_between()
         .border_b(THEME.border)
         .border_color(THEME.colors.surface)
+        .when(has_plan, |header| {
+            header.child(
+                button(
+                    "workgraph-all-plans-back",
+                    "Back",
+                    ButtonTone::Quiet,
+                    true,
+                    move |window, cx| plans.update(cx, |this, cx| this.back_to_plans(window, cx)),
+                )
+                .tooltip("Back to all plans")
+                .child(
+                    Kbd::new(gpui::Keystroke::parse("backspace").expect("static shortcut"))
+                        .outline(),
+                ),
+            )
+        })
         .child(if show_list {
             div()
                 .min_w_0()
@@ -410,7 +523,7 @@ fn render_board_header(
                 .flex()
                 .items_center()
                 .gap(THEME.space.xs)
-                .when(has_plan && show_list, |actions| {
+                .when(show_list, |actions| {
                     actions.child(Input::new(search).w(px(140.0)))
                 })
                 .child(icon_button(
@@ -420,10 +533,10 @@ fn render_board_header(
                     ButtonTone::Quiet,
                     move |_, cx| refresh.update(cx, |this, cx| this.refresh(cx)),
                 ))
-                .when(show_list && has_plan, |actions| {
+                .when(show_list, |actions| {
                     actions.child(button(
                         "workgraph-create-open",
-                        "Add node",
+                        if has_plan { "Add node" } else { "New plan" },
                         ButtonTone::Neutral,
                         true,
                         move |window, cx| {

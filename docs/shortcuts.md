@@ -13,6 +13,7 @@ The first group works in the app's own views, outside the terminal/Neovim.
 These mimic common browser keybindings:
 
 ```text
+mod+n -> new session
 mod+number -> jump to session
 mod+w -> close surface or draft; archive session
 mod+shift+n -> add project
@@ -21,6 +22,8 @@ mod+shift+m -> set provider/model/effort
 mod+shift+a -> restore session
 mod+shift+p -> open action picker
 ```
+
+When composer suggestions are visible, Ctrl+N selects the next suggestion instead.
 
 ## Leader shortcuts
 

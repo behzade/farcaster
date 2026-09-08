@@ -4,7 +4,7 @@ mod contract;
 mod core;
 
 pub use adapter::{SqliteAdapter, SqliteTransaction};
-pub use application::{add_node, create_plan, link_session, load_plan};
+pub use application::{add_node, create_plan, link_session, load_plan, load_selected_plan};
 pub use contract::{
     CompletionRequirement, Edge, EditAction, EditRequest, EditResult, Evidence, EvidenceKind,
     IdempotencyReceipt, Node, NodeDraft, Outcome, Plan, PlanSnapshot, ProjectGraph,

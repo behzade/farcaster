@@ -1,6 +1,75 @@
 use crate::{add_node, create_plan, link_session, load_plan};
 
 #[test]
+fn browsing_other_plans_preserves_the_session_plan() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("state.sqlite3");
+    let project = directory.path().to_path_buf();
+    let (first, _) = create_plan(
+        database.clone(),
+        project.clone(),
+        "First".into(),
+        "First task".into(),
+    )
+    .unwrap();
+    let first = first.snapshot.unwrap();
+    let (second, _) = create_plan(
+        database.clone(),
+        project.clone(),
+        "Second".into(),
+        "Second task".into(),
+    )
+    .unwrap();
+    let second = second.snapshot.unwrap();
+    link_session(
+        database.clone(),
+        project.clone(),
+        first.walk.as_ref().unwrap().number,
+        "session".into(),
+        "/session".into(),
+    )
+    .unwrap();
+    let browse = crate::load_selected_plan(
+        database.clone(),
+        project.clone(),
+        Some("session"),
+        Some(second.plan.number),
+    )
+    .unwrap();
+    assert_eq!(browse.plans.len(), 2);
+    assert_eq!(
+        browse.snapshot.as_ref().unwrap().plan.number,
+        second.plan.number
+    );
+    assert_eq!(browse.snapshot.as_ref().unwrap().walk, second.walk);
+    assert_eq!(browse.session_link.unwrap().plan_number, first.plan.number);
+    let (edited, node) = add_node(
+        database.clone(),
+        project.clone(),
+        second.plan.number,
+        "Another task".into(),
+        vec![],
+        None,
+        Some("session".into()),
+    )
+    .unwrap();
+    assert_eq!(
+        edited.snapshot.as_ref().unwrap().plan.number,
+        second.plan.number
+    );
+    assert!(
+        edited
+            .snapshot
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|item| item.number == node)
+    );
+    let reopened = load_plan(database, project, Some("session")).unwrap();
+    assert_eq!(reopened.snapshot.unwrap().plan.number, first.plan.number);
+}
+
+#[test]
 fn application_round_trips_nodes_walk_and_session() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("gui-state.sqlite3");

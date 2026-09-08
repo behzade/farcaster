@@ -30,7 +30,10 @@ pub fn create_plan(
         return Err("work graph returned an unexpected plan result".into());
     };
     let number = snapshot.plan.root_node;
-    Ok((load_plan(database, project, None)?, number))
+    Ok((
+        load_selected_plan(database, project, None, Some(snapshot.plan.number))?,
+        number,
+    ))
 }
 
 pub fn add_node(
@@ -62,7 +65,7 @@ pub fn add_node(
         return Err("work graph returned an unexpected node result".into());
     };
     Ok((
-        load_plan(database, project, session_id.as_deref())?,
+        load_selected_plan(database, project, session_id.as_deref(), Some(plan))?,
         node.number,
     ))
 }
@@ -96,6 +99,15 @@ pub fn load_plan(
     project: PathBuf,
     session_id: Option<&str>,
 ) -> Result<ProjectSelection, String> {
+    load_selected_plan(database, project, session_id, None)
+}
+
+pub fn load_selected_plan(
+    database: PathBuf,
+    project: PathBuf,
+    session_id: Option<&str>,
+    plan: Option<u64>,
+) -> Result<ProjectSelection, String> {
     let project_key = canonical_project(&project)?;
     let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
     let mut graph = WorkGraph::new(adapter);
@@ -122,23 +134,29 @@ pub fn load_plan(
             SearchResult::Session(link) => link,
             _ => None,
         });
-    let selected = session_link
-        .as_ref()
-        .map(|link| (link.plan_number, Some(link.walk_number)))
+    let selected = plan
+        .or_else(|| session_link.as_ref().map(|link| link.plan_number))
         .or_else(|| {
             project_graph
                 .plans
                 .iter()
                 .max_by_key(|plan| plan.number)
-                .map(|plan| {
-                    let walk = project_graph
+                .map(|plan| plan.number)
+        })
+        .map(|number| {
+            let walk = session_link
+                .as_ref()
+                .filter(|link| link.plan_number == number)
+                .map(|link| link.walk_number)
+                .or_else(|| {
+                    project_graph
                         .walks
                         .iter()
-                        .filter(|walk| walk.plan_number == plan.number)
+                        .filter(|walk| walk.plan_number == number)
                         .max_by_key(|walk| walk.number)
-                        .map(|walk| walk.number);
-                    (plan.number, walk)
-                })
+                        .map(|walk| walk.number)
+                });
+            (number, walk)
         });
     let snapshot = selected
         .map(|(plan, walk)| {

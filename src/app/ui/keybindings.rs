@@ -4,10 +4,10 @@ use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
     AbortRun, AddProject, CloseCurrent, ComposerCompletionNext, ComposerCompletionPrevious,
     ComposerEscape, ComposerHistoryNext, ComposerHistoryPrevious, DismissSurface, FocusComposer,
-    NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
+    NewSession, NextSession, OVERLAY_KEY_CONTEXT, PICKER_KEY_CONTEXT, PickerBack, PreviousSession,
     QuitApplication, ShowActionPicker, ShowEditor, ShowKeybindings, ShowTerminal, ShowWorkGraph,
     SubmitFollowUp, SwitchSession0, SwitchSession1, SwitchSession2, SwitchSession3, SwitchSession4,
-    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9,
+    SwitchSession5, SwitchSession6, SwitchSession7, SwitchSession8, SwitchSession9, WorkBack,
     WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
@@ -91,6 +91,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         };
     }
     let mut shortcuts = vec![
+        application_shortcut!("Sessions", "New session", "n", NewSession),
         application_shortcut!(
             "Sessions",
             "Open first unsubmitted draft",
@@ -266,7 +267,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         application_shortcut!("Run", "Abort current run", ".", AbortRun),
         shortcut!(
             "Run",
-            "Normal when idle; apply steer, double-Esc aborts",
+            "Apply queued steer; double-Esc aborts",
             "escape",
             ComposerEscape,
             Some("FarcasterComposer > Input")
@@ -297,6 +298,13 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Add plan node",
             "c",
             WorkCreateIssue,
+            Some(WORKGRAPH_NAV_KEY_CONTEXT)
+        ),
+        shortcut!(
+            "Work",
+            "Back to all plans",
+            "backspace",
+            WorkBack,
             Some(WORKGRAPH_NAV_KEY_CONTEXT)
         ),
         shortcut!(
@@ -625,10 +633,15 @@ mod tests {
         use crate::app::{ComposerCompletionNext, ComposerCompletionPrevious, SubmitFollowUp};
         use gpui::Action as _;
 
-        let keymap = gpui::Keymap::new(bindings());
+        let keymap = gpui::Keymap::new(
+            registry_for_platform("ctrl")
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
+        );
         for open in [false, true] {
             let contexts = [
-                gpui::KeyContext::parse("Root").unwrap(),
+                gpui::KeyContext::parse(crate::app::APP_INPUT_CONTEXT).unwrap(),
                 gpui::KeyContext::parse(if open {
                     "FarcasterComposer Completions"
                 } else {
@@ -647,6 +660,8 @@ mod tests {
                     keymap.bindings_for_input(&[gpui::Keystroke::parse(key).unwrap()], &contexts);
                 let expected = if open {
                     Some(completion)
+                } else if key == "ctrl-n" {
+                    Some(NewSession.name())
                 } else if key == "tab" {
                     Some(SubmitFollowUp.name())
                 } else {
@@ -696,7 +711,7 @@ mod tests {
         );
         let app_contexts = [gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()];
         let native_contexts = [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()];
-        for key in ["cmd-2", "cmd-j", "cmd-k", "cmd-g"] {
+        for key in ["cmd-n", "cmd-2", "cmd-j", "cmd-k", "cmd-g"] {
             if key == "cmd-g" && !cfg!(target_os = "macos") {
                 continue;
             }
@@ -738,6 +753,20 @@ mod tests {
                 "{key} must stay available to chat input when Control is the modifier"
             );
         }
+    }
+
+    #[test]
+    fn workgraph_backspace_does_not_navigate_from_inputs() {
+        let keymap = gpui::Keymap::new(bindings());
+        let stroke = gpui::Keystroke::parse("backspace").unwrap();
+        let board = gpui::KeyContext::parse(crate::app::WORKGRAPH_KEY_CONTEXT).unwrap();
+        let (matches, _) = keymap.bindings_for_input(&[stroke.clone()], &[board.clone()]);
+        assert!(!matches.is_empty());
+        let (matches, _) = keymap.bindings_for_input(
+            &[stroke],
+            &[board, gpui::KeyContext::parse("Input").unwrap()],
+        );
+        assert!(matches.is_empty());
     }
 
     #[test]

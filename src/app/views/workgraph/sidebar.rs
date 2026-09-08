@@ -15,8 +15,7 @@ use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, icon_button,
-        section_heading,
+        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, section_heading,
     },
     app::ui::theme::THEME,
 };
@@ -128,41 +127,7 @@ impl Render for WorkGraphSidebarView {
             .flex()
             .items_center()
             .justify_between()
-            .child(section_heading("Current plan"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(THEME.space.xs)
-                    .child(icon_button(
-                        "refresh-workgraph-sidebar",
-                        AppIcon::ArrowsClockwise,
-                        "Refresh plan",
-                        ButtonTone::Quiet,
-                        {
-                            let entity = cx.entity().downgrade();
-                            move |_, cx| {
-                                if let Some(entity) = entity.upgrade() {
-                                    entity.update(cx, |this, cx| this.refresh(cx));
-                                }
-                            }
-                        },
-                    ))
-                    .child(icon_button(
-                        "open-workgraph-from-sidebar",
-                        AppIcon::ArrowsOut,
-                        "View project plan",
-                        ButtonTone::Quiet,
-                        {
-                            let app = self.app.clone();
-                            move |window, cx| {
-                                let _ = app.update(cx, |app, cx| {
-                                    app.open_workgraph_surface(window, cx);
-                                });
-                            }
-                        },
-                    )),
-            );
+            .child(section_heading("Current plan"));
         let visible = sidebar_visible(&self.state, self.session_id.is_some());
         div()
             .when(!visible, |sidebar| sidebar.hidden())

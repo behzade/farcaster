@@ -26,7 +26,7 @@ impl WorkGraphBoardView {
             .update(cx, |input, cx| input.set_value(String::new(), window, cx));
         self.create_detail
             .update(cx, |input, cx| input.set_value(String::new(), window, cx));
-        self.create_stage = if matches!(&self.state, PlanLoadState::Ready(data) if data.snapshot.is_some())
+        self.create_stage = if matches!(&self.state, PlanLoadState::Ready(data) if !self.showing_plans(data) && data.snapshot.is_some())
         {
             CreateStage::Node
         } else {
@@ -60,7 +60,7 @@ impl WorkGraphBoardView {
     ) {
         let title = self.create_title.read(cx).value().trim().to_owned();
         let detail = self.create_detail.read(cx).value().trim().to_owned();
-        let has_plan = matches!(&self.state, PlanLoadState::Ready(data) if data.snapshot.is_some());
+        let has_plan = matches!(&self.state, PlanLoadState::Ready(data) if !self.showing_plans(data) && data.snapshot.is_some());
         if !create_form_valid(has_plan, &title, &detail) {
             return;
         }
@@ -79,19 +79,23 @@ impl WorkGraphBoardView {
         let project = self.project.clone();
         let session_id = self.active_session.as_ref().map(|(id, _)| id.clone());
         let operation = match &self.state {
-            PlanLoadState::Ready(data) => data.snapshot.as_ref().map(|snapshot| {
-                let plan = snapshot.plan.number;
-                let after = self
-                    .selected
-                    .or_else(|| snapshot.walk.as_ref().and_then(|walk| walk.current_node));
-                let files = detail
-                    .lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>();
-                (plan, after, files)
-            }),
+            PlanLoadState::Ready(data) => data
+                .snapshot
+                .as_ref()
+                .filter(|_| !self.showing_plans(data))
+                .map(|snapshot| {
+                    let plan = snapshot.plan.number;
+                    let after = self
+                        .selected
+                        .or_else(|| snapshot.walk.as_ref().and_then(|walk| walk.current_node));
+                    let files = detail
+                        .lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    (plan, after, files)
+                }),
             PlanLoadState::Loading | PlanLoadState::Failed(_) => return,
         };
         let edit = cx.background_spawn(async move {
@@ -108,6 +112,8 @@ impl WorkGraphBoardView {
                 this.create_stage = CreateStage::Closed;
                 match result {
                     Ok((data, number)) => {
+                        this.plan = data.snapshot.as_ref().map(|snapshot| snapshot.plan.number);
+                        this.all_plans = false;
                         this.state = PlanLoadState::Ready(Box::new(data));
                         this.selected = Some(number);
                     }

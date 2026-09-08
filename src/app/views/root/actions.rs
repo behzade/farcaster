@@ -139,6 +139,10 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         this.workgraph_view
             .update(cx, |view, cx| view.start_create(window, cx));
     }))
+    .on_action(cx.listener(|this, _: &crate::app::WorkBack, window, cx| {
+        this.workgraph_view
+            .update(cx, |view, cx| view.back_to_plans(window, cx));
+    }))
     .on_action(cx.listener(|this, _: &WorkDismiss, window, cx| {
         let handled = this
             .workgraph_view

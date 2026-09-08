@@ -28,7 +28,10 @@ pub(super) fn spawn(
     let workgraph_updates = cx.spawn(async move |weak, cx| {
         while workgraph_updates.recv().await.is_ok() {
             if weak
-                .update(cx, |this, cx| this.refresh_workgraph_sidebar(cx))
+                .update(cx, |this, cx| {
+                    this.refresh_workgraph_sidebar(cx);
+                    this.workgraph_view.update(cx, |view, cx| view.refresh(cx));
+                })
                 .is_err()
             {
                 break;
