@@ -95,6 +95,7 @@ pub(crate) fn run(
     gpui_platform::application()
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
+            cx.set_app_identity("io.github.behzade.farcaster", "Farcaster");
             gpui_component::init(cx);
             let fonts_timing =
                 crate::app::infrastructure::performance::StartupTiming::new("launch.load_fonts");

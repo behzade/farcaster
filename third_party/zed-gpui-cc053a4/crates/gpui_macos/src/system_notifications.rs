@@ -5,7 +5,7 @@
 //! not-in-a-bundle abort) until the application posts a notification or
 //! registers a response callback.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -111,7 +111,6 @@ struct NotificationCenter {
     categories: RefCell<
         HashMap<Vec<SystemNotificationAction>, (SharedString, Retained<UNNotificationCategory>)>,
     >,
-    authorization_requested: Cell<bool>,
 }
 
 impl NotificationCenter {
@@ -134,15 +133,12 @@ impl NotificationCenter {
             center,
             _delegate: delegate,
             categories: RefCell::new(HashMap::new()),
-            authorization_requested: Cell::new(false),
         })
     }
 
-    fn request_authorization(&self) {
-        if self.authorization_requested.replace(true) {
-            return;
-        }
-        let completion = RcBlock::new(|granted: Bool, error: *mut NSError| {
+    fn request_authorization(&self, request: Retained<UNNotificationRequest>) {
+        let center = self.center.clone();
+        let completion = RcBlock::new(move |granted: Bool, error: *mut NSError| {
             // SAFETY: when non-null, `error` is a valid `NSError` for the
             // duration of the callback.
             if let Some(error) = unsafe { error.as_ref() } {
@@ -152,6 +148,8 @@ impl NotificationCenter {
                 );
             } else if !granted.as_bool() {
                 log::info!("system notification authorization denied");
+            } else {
+                Self::deliver(&center, &request);
             }
         });
         self.center
@@ -162,8 +160,6 @@ impl NotificationCenter {
     }
 
     fn show(&self, notification: SystemNotification) {
-        self.request_authorization();
-
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&notification.title));
         content.setBody(&NSString::from_str(&notification.body));
@@ -180,6 +176,12 @@ impl NotificationCenter {
             &content,
             None,
         );
+        // Keep the request until permission is resolved, including the first
+        // notification that opens the authorization prompt.
+        self.request_authorization(request);
+    }
+
+    fn deliver(center: &UNUserNotificationCenter, request: &UNNotificationRequest) {
         let completion = RcBlock::new(|error: *mut NSError| {
             // SAFETY: when non-null, `error` is a valid `NSError` for the
             // duration of the callback.
@@ -190,8 +192,7 @@ impl NotificationCenter {
                 );
             }
         });
-        self.center
-            .addNotificationRequest_withCompletionHandler(&request, Some(&completion));
+        center.addNotificationRequest_withCompletionHandler(request, Some(&completion));
     }
 
     fn register_category(&self, actions: &[SystemNotificationAction]) -> SharedString {

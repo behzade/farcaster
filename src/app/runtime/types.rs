@@ -96,6 +96,11 @@ pub(crate) enum RuntimeCommand {
 
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeEvent {
+    SystemNotification {
+        title: String,
+        body: String,
+        target: Option<(PathBuf, PathBuf)>,
+    },
     Snapshot {
         generation: u64,
         snapshot: Arc<RuntimeSnapshot>,

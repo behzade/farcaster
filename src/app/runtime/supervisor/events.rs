@@ -70,6 +70,9 @@ impl Supervisor {
 
     fn handle_actor_event(&mut self, key: String, event: RuntimeEvent) {
         match event {
+            event @ RuntimeEvent::SystemNotification { .. } => {
+                let _ = self.event_tx.send(event);
+            }
             RuntimeEvent::Snapshot { snapshot, .. } => {
                 let mut snapshot = snapshot;
                 if !snapshot.models.is_empty()
@@ -137,17 +140,27 @@ impl Supervisor {
                     });
                 }
             }
-            RuntimeEvent::ExtensionUi { request, .. } => {
-                if request.gpui_system_notification().is_some() {
-                    let system_notification_target = self
-                        .latest
+            RuntimeEvent::ExtensionUi {
+                request,
+                system_notification_target,
+                ..
+            } => {
+                let system_notification_target = system_notification_target.or_else(|| {
+                    self.latest
                         .get(&key)
-                        .and_then(|snapshot| notification_target(snapshot));
-                    let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
-                        generation: self.generation,
-                        request,
-                        system_notification_target,
-                    });
+                        .and_then(|snapshot| notification_target(snapshot))
+                });
+                if let Some(notification) = interaction_notification(
+                    &request,
+                    self.active_dialogs
+                        .get(&key)
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    system_notification_target,
+                ) {
+                    let _ = self.event_tx.send(notification);
+                }
+                if request.gpui_system_notification().is_some() {
                     return;
                 }
                 if request.dialog_id().is_some() {

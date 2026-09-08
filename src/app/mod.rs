@@ -175,7 +175,7 @@ pub(crate) struct FarcasterApp {
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
     recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
-    system_notification_target: Option<(PathBuf, PathBuf)>,
+    system_notification_targets: HashMap<String, (PathBuf, PathBuf)>,
     projects: Vec<PathBuf>,
     excluded_projects: Vec<PathBuf>,
     drafts: Vec<projects::DraftSession>,

@@ -271,12 +271,17 @@ impl RuntimeOwner {
                 let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                     generation: self.process_generation,
                     request,
-                    system_notification_target: None,
+                    system_notification_target: self.attention_target(),
                 });
                 SnapshotChange::None
             }
             SessionEvent::Activity(event) => {
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
+                let conversation = &self.active_snapshot().conversation;
+                let notify_completion = settled
+                    && conversation.running
+                    && !conversation.settled
+                    && !conversation.compacting;
                 let session_starting = event.kind() == &SessionActivityKind::AgentStarted
                     && self.active_session.is_none()
                     && self.parked_snapshot.is_none();
@@ -331,6 +336,14 @@ impl RuntimeOwner {
                     self.schedule_session_refresh();
                 }
                 if settled {
+                    if notify_completion {
+                        let failed = self.active_snapshot().conversation.ended_in_error();
+                        self.notify_attention(if failed {
+                            "Turn failed"
+                        } else {
+                            "Turn completed"
+                        });
+                    }
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
                     self.refresh_sessions();
@@ -381,6 +394,9 @@ impl RuntimeOwner {
     }
 
     pub(super) fn fail(&mut self, error: String) {
+        if self.active_snapshot().status != "Failed" {
+            self.notify_attention("Agent failed");
+        }
         let starting = !self.startup_state_loaded || !self.startup_history_loaded;
         let preserve_history = !self.pending_session_controls.is_empty()
             && self.snapshot.history_preview

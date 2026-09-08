@@ -356,13 +356,21 @@ fn app_proxy_change_waits_for_a_running_turn() {
 
 #[test]
 fn runtime_failure_releases_the_running_flag() {
-    let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
+    let (mut owner, events, _discovery) = owner_without_process(std::env::temp_dir());
     conversation_mut(owner.active_snapshot_mut()).running = true;
 
     owner.fail("Codex worker turn failed".into());
 
     assert!(!owner.active_snapshot().conversation.running);
     assert_eq!(owner.snapshot.status, "Failed");
+    owner.fail("Codex worker turn failed".into());
+    assert_eq!(
+        events
+            .try_iter()
+            .filter(|event| matches!(event, RuntimeEvent::SystemNotification { .. }))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -741,6 +749,64 @@ fn notification_target_comes_from_the_emitting_runtime() {
             PathBuf::from("/background-project"),
         ))
     );
+}
+
+#[test]
+fn completion_notification_waits_for_settlement_and_is_not_repeated() {
+    let (mut owner, events, _discovery) = owner_without_process(PathBuf::from("/project"));
+    owner.active_session = Some(PathBuf::from("/sessions/live"));
+    owner.snapshot.selected_session = Some(PathBuf::from("/sessions/history"));
+    owner.parked_snapshot = Some(owner.snapshot.clone());
+    conversation_mut(owner.active_snapshot_mut()).reduce(&json!({"type":"agent_start"}));
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_end","willRetry":true}).into(),
+    ));
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::SystemNotification { .. }))
+    );
+
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
+    let completed = events
+        .try_iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::SystemNotification { title, target, .. }
+                if title == "Farcaster: Turn completed" =>
+            {
+                Some(target)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        completed,
+        vec![Some((
+            PathBuf::from("/sessions/live"),
+            PathBuf::from("/project")
+        ))]
+    );
+
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
+    assert!(!events.try_iter().any(|event| matches!(event, RuntimeEvent::SystemNotification { title, .. } if title == "Farcaster: Turn completed")));
+}
+
+#[test]
+fn idle_and_compaction_settlement_do_not_send_completion_notification() {
+    for compacting in [false, true] {
+        let (mut owner, events, _discovery) = owner_without_process(PathBuf::from("/project"));
+        let conversation = conversation_mut(owner.active_snapshot_mut());
+        conversation.running = compacting;
+        conversation.compacting = compacting;
+        owner.apply_process_item(SessionEvent::Activity(
+            json!({"type":"agent_settled"}).into(),
+        ));
+        assert!(!events.try_iter().any(|event| matches!(event, RuntimeEvent::SystemNotification { title, .. } if title == "Farcaster: Turn completed")));
+    }
 }
 
 #[test]

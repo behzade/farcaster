@@ -16,7 +16,7 @@ impl RuntimeOwner {
             let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
                 generation: self.process_generation,
                 request: child_interaction(input),
-                system_notification_target: None,
+                system_notification_target: self.attention_target(),
             });
         }
     }

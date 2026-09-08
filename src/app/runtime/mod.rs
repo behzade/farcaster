@@ -3,6 +3,7 @@ mod catalog;
 mod commands;
 mod documents;
 mod history;
+mod notifications;
 mod process;
 mod projection;
 mod prompts;
@@ -14,6 +15,7 @@ mod status;
 pub(crate) use crate::agents::HarnessAccessMode;
 use access_mode::AccessModeChangeState;
 use history::annotate_history_presentations;
+use notifications::interaction_notification;
 #[cfg(test)]
 use process::startup_commands;
 use process::{can_send_prompt, conversation_mut, reset_snapshot_for_process};

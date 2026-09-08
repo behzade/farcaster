@@ -138,11 +138,30 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if tag != SYSTEM_NOTIFICATION_TAG {
-            return;
-        }
-        if let Some((path, project)) = self.system_notification_target.clone() {
+        if let Some((path, project)) = self.system_notification_targets.get(tag).cloned() {
             self.select_session(path, project, window, cx);
         }
+    }
+
+    pub(in crate::app) fn show_attention_notification(
+        &mut self,
+        title: &str,
+        body: &str,
+        target: Option<(PathBuf, PathBuf)>,
+        cx: &mut Context<Self>,
+    ) {
+        let tag = target.as_ref().map_or_else(
+            || SYSTEM_NOTIFICATION_TAG.to_owned(),
+            |(path, _)| format!("{SYSTEM_NOTIFICATION_TAG}:{}", path.display()),
+        );
+        if let Some(target) = target {
+            self.system_notification_targets.insert(tag.clone(), target);
+        }
+        cx.show_system_notification(SystemNotification {
+            tag: tag.into(),
+            title: title.to_owned().into(),
+            body: body.to_owned().into(),
+            actions: Vec::new(),
+        });
     }
 }

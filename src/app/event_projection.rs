@@ -28,6 +28,7 @@ impl DirtyRegions {
                 self.workgraph_goal |= app.snapshot.session_goal != snapshot.session_goal;
             }
             RuntimeEvent::Sessions { .. }
+            | RuntimeEvent::SystemNotification { .. }
             | RuntimeEvent::SessionsFailed { .. }
             | RuntimeEvent::ImportPreview { .. }
             | RuntimeEvent::ImportPreviewFailed { .. }
@@ -310,13 +311,8 @@ impl FarcasterApp {
             }
             self.save_project_registry();
         }
-        if self
-            .system_notification_target
-            .as_ref()
-            .is_some_and(|(path, _)| paths.contains(path))
-        {
-            self.system_notification_target = None;
-        }
+        self.system_notification_targets
+            .retain(|_, (path, _)| !paths.contains(path));
         if self
             .pending_session_switch
             .as_ref()
@@ -409,11 +405,11 @@ impl FarcasterApp {
                 }
             }
         }
-        if let Some((session, project)) = self.system_notification_target.as_mut()
-            && let Some(target) = paths.get(session)
-        {
-            *session = target.clone();
-            *project = target_project.clone();
+        for (session, project) in self.system_notification_targets.values_mut() {
+            if let Some(target) = paths.get(session) {
+                *session = target.clone();
+                *project = target_project.clone();
+            }
         }
         let selected_was_moved = self
             .snapshot
@@ -439,19 +435,10 @@ impl FarcasterApp {
         &mut self,
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
-        system_notification_target: Option<(PathBuf, PathBuf)>,
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
-        if let Some((title, body)) = request.gpui_system_notification() {
-            self.system_notification_target = system_notification_target;
-            cx.show_system_notification(SystemNotification {
-                tag: SYSTEM_NOTIFICATION_TAG.into(),
-                title: title.into(),
-                body: body.into(),
-                actions: Vec::new(),
-            });
-        } else if let Some(extension) = self.parked_extension.as_mut() {
+        if let Some(extension) = self.parked_extension.as_mut() {
             let _ = extension.apply(request);
         } else {
             self.apply_extension_request(request, generation, cx);
@@ -528,15 +515,16 @@ impl FarcasterApp {
             RuntimeEvent::ExtensionUi {
                 generation,
                 request,
-                system_notification_target,
+                ..
             } if generation == self.runtime_generation => {
-                self.project_extension_ui(
-                    generation,
-                    request,
-                    system_notification_target,
-                    dirty,
-                    cx,
-                );
+                self.project_extension_ui(generation, request, dirty, cx);
+            }
+            RuntimeEvent::SystemNotification {
+                title,
+                body,
+                target,
+            } => {
+                self.show_attention_notification(&title, &body, target, cx);
             }
             RuntimeEvent::PromptResult {
                 generation,

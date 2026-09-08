@@ -66,7 +66,7 @@ impl FarcasterApp {
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),
             recent_completion_expiries: HashMap::new(),
-            system_notification_target: None,
+            system_notification_targets: HashMap::new(),
             projects: persisted.registry.projects,
             excluded_projects: persisted.registry.excluded_projects,
             drafts: persisted.registry.drafts,
