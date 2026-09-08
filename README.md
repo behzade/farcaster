@@ -4,6 +4,8 @@ Farcaster is a native desktop app for controlling different AI agent harnesses t
 
 I wanted to use all my agent subscriptions in the same app, with the same keybindings, and review them in Neovim.
 
+![Farcaster showing concurrent agent sessions, a conversation, and changed files](https://github.com/user-attachments/assets/a5bdec61-38ca-4aba-aaa3-c4ef2c6f9328)
+
 ## How I use it
 
 I spawn many concurrent sessions, mostly as I notice/remember issues or tasks; because of the concurrency, I don't care too much about model speed, and I make use of cheaper models as workers for more intelligent top-level agents to save costs. I try to stay in the app as agents are working, notice issues in their implementation by the files they are touching, occasionally dropping into Neovim to audit/change things.
@@ -22,6 +24,8 @@ This app is designed to make most actions comfortable without reaching for the m
 
 The app embeds a full terminal emulator using libghostty. Neovim is the default configured editor in the app using the same terminal. Clicking on changed files in the transcript or the Git change list opens them in Neovim instead of a limited diff viewer.
 
+![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/9bab86dc-8c6a-42d9-9692-bd8e17cc223e)
+
 ### Coordinate agents across harnesses
 
 An optional MCP server gives supported harnesses access to shared tools:
@@ -30,6 +34,8 @@ An optional MCP server gives supported harnesses access to shared tools:
 - **Worker tools:** Tools for creating and communicating with agent sessions across harnesses, providers, and models.
 
 This allows harnesses like Pi that don't have built-in subagents to offload implementation or review to separate workers.
+
+![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/cb22413a-f144-4026-bd0b-030252c20045)
 
 ### Better visibility to agent actions
 
