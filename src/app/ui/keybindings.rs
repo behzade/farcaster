@@ -100,24 +100,39 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             .in_picker($show)
         };
     }
+    let session_prefix = if prefix == "cmd" { "cmd" } else { "super" };
+    let mut session_aliases = Vec::new();
+    macro_rules! session_shortcut {
+        ($label:literal, $key:literal, $action:expr) => {{
+            session_aliases.push(shortcut!(
+                "Sessions",
+                $label,
+                concat!("ctrl-", $key),
+                $action,
+                Some(APP_SHORTCUT_CONTEXT),
+                false
+            ));
+            shortcut!(
+                "Sessions",
+                $label,
+                format!("{session_prefix}-{}", $key),
+                $action,
+                Some("FarcasterApp")
+            )
+        }};
+    }
     let mut shortcuts = vec![
         application_shortcut!("Sessions", "New session", "n", NewSession),
-        application_shortcut!(
-            "Sessions",
-            "Open first unsubmitted draft",
-            "0",
-            SwitchSession0
-        )
-        .in_picker(false),
-        application_shortcut!("Sessions", "Open session 1", "1", SwitchSession1).in_picker(false),
-        application_shortcut!("Sessions", "Open session 2", "2", SwitchSession2).in_picker(false),
-        application_shortcut!("Sessions", "Open session 3", "3", SwitchSession3).in_picker(false),
-        application_shortcut!("Sessions", "Open session 4", "4", SwitchSession4).in_picker(false),
-        application_shortcut!("Sessions", "Open session 5", "5", SwitchSession5).in_picker(false),
-        application_shortcut!("Sessions", "Open session 6", "6", SwitchSession6).in_picker(false),
-        application_shortcut!("Sessions", "Open session 7", "7", SwitchSession7).in_picker(false),
-        application_shortcut!("Sessions", "Open session 8", "8", SwitchSession8).in_picker(false),
-        application_shortcut!("Sessions", "Open session 9", "9", SwitchSession9).in_picker(false),
+        session_shortcut!("Open first unsubmitted draft", "0", SwitchSession0),
+        session_shortcut!("Open session 1", "1", SwitchSession1),
+        session_shortcut!("Open session 2", "2", SwitchSession2),
+        session_shortcut!("Open session 3", "3", SwitchSession3),
+        session_shortcut!("Open session 4", "4", SwitchSession4),
+        session_shortcut!("Open session 5", "5", SwitchSession5),
+        session_shortcut!("Open session 6", "6", SwitchSession6),
+        session_shortcut!("Open session 7", "7", SwitchSession7),
+        session_shortcut!("Open session 8", "8", SwitchSession8),
+        session_shortcut!("Open session 9", "9", SwitchSession9),
         application_shortcut!("Sessions", "Add project", "shift-n", AddProject),
         application_shortcut!(
             "Configuration",
@@ -433,97 +448,8 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(APP_SHORTCUT_CONTEXT),
             false
         ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open first unsubmitted draft",
-            "ctrl-0",
-            SwitchSession0,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 1",
-            "ctrl-1",
-            SwitchSession1,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 2",
-            "ctrl-2",
-            SwitchSession2,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 3",
-            "ctrl-3",
-            SwitchSession3,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 4",
-            "ctrl-4",
-            SwitchSession4,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 5",
-            "ctrl-5",
-            SwitchSession5,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 6",
-            "ctrl-6",
-            SwitchSession6,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 7",
-            "ctrl-7",
-            SwitchSession7,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 8",
-            "ctrl-8",
-            SwitchSession8,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Open session 9",
-            "ctrl-9",
-            SwitchSession9,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
     ];
+    shortcuts.extend(session_aliases);
     if prefix == "ctrl" {
         shortcuts.retain(|shortcut| !matches!(shortcut.keystroke.as_str(), "ctrl-j" | "ctrl-k"));
     }

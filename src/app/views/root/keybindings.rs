@@ -76,7 +76,7 @@ pub(super) fn render_help() -> impl IntoElement {
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
-                        .child("App-view shortcuts work outside Neovim and the terminal. Composer keys require composer focus; completion keys require visible suggestions. Tab and Shift+Tab move focus elsewhere or select picker items. Esc dismisses dialogs. Project work navigation keys require focus outside search; Esc also works in search. Use the action picker to find app commands."),
+                        .child("Cmd+0–9 on macOS and Super+0–9 on Linux switch sessions from any view, including Neovim and the terminal. Ctrl+0–9 also works in app views on both platforms. Other app-view shortcuts work outside Neovim and the terminal. Composer keys require composer focus; completion keys require visible suggestions. Tab and Shift+Tab move focus elsewhere or select picker items. Esc dismisses dialogs. Project work navigation keys require focus outside search; Esc also works in search. Use the action picker to find app commands."),
                 ),
         );
     let mut sections: Vec<(String, gpui::Div)> = Vec::new();

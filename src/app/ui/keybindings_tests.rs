@@ -1,6 +1,42 @@
 use super::{bindings, platform_key, registry};
 
 #[test]
+fn session_numbers_work_in_embedded_views_without_claiming_control_keys() {
+    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
+
+    for (prefix, platform) in [("cmd", "cmd"), ("ctrl", "super")] {
+        let keymap = gpui::Keymap::new(
+            super::registry_for_platform(prefix)
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
+        );
+        for number in 0..=9 {
+            for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT] {
+                let contexts = [gpui::KeyContext::parse(context).unwrap()];
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse(&format!("{platform}-{number}")).unwrap()],
+                    &contexts,
+                );
+                assert_eq!(bindings.len(), 1, "{platform}-{number} in {context}");
+                let action = bindings[0].action().name();
+                assert!(action.ends_with(&format!("SwitchSession{number}")));
+                let (aliases, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse(&format!("ctrl-{number}")).unwrap()],
+                    &contexts,
+                );
+                if context == APP_INPUT_CONTEXT {
+                    assert_eq!(aliases.len(), 1);
+                    assert_eq!(aliases[0].action().name(), action);
+                } else {
+                    assert!(aliases.is_empty(), "ctrl-{number} in {context}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn root_focus_traversal_is_unbound() {
     let bindings = bindings();
     let root_context = gpui::KeyBindingContextPredicate::parse("Root").expect("root context");
@@ -202,7 +238,7 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
     );
     let app_contexts = [gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()];
     let native_contexts = [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()];
-    for key in ["cmd-n", "cmd-2", "cmd-e", "cmd-t", "cmd-k", "cmd-g"] {
+    for key in ["cmd-n", "cmd-e", "cmd-t", "cmd-k", "cmd-g"] {
         if key == "cmd-g" && !cfg!(target_os = "macos") {
             continue;
         }
