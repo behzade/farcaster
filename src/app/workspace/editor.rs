@@ -97,14 +97,17 @@ impl FarcasterApp {
         };
         self.editor = Some(editor.clone());
         self.hide_terminal(cx);
-        self.set_surface(AppSurface::Editor, cx);
+        // Startup prompts can block remote requests until the user responds.
+        // Show the terminal before waiting so those prompts remain accessible.
+        self.editor_ready = true;
+        self.reveal_native_center_surface(AppSurface::Editor, window, cx);
         let generation = self.editor_request_generation;
         let opened = editor.update(cx, |editor, cx| editor.activate_tab(tab, path, line, cx));
         cx.spawn_in(window, async move |weak, cx| {
-            let result = opened.await;
-            if let Err(error) = &result {
-                zlog::warn!("Neovim session-view request failed for {target}: {error}");
-            }
+            let Err(error) = opened.await else {
+                return;
+            };
+            zlog::warn!("Neovim session-view request failed for {target}: {error}");
             let _ = weak.update_in(cx, |this, window, cx| {
                 if this.editor.as_ref() != Some(&editor)
                     || !editor_completion_is_current(
@@ -119,13 +122,10 @@ impl FarcasterApp {
                 {
                     return;
                 }
-                match result {
-                    Ok(()) => {
-                        this.editor_ready = true;
-                        this.reveal_native_center_surface(AppSurface::Editor, window, cx);
-                    }
-                    Err(error) => this.notify_workspace_error("Neovim", error, cx),
+                if !editor.read(cx).is_alive(cx) {
+                    this.close_editor(cx);
                 }
+                this.notify_workspace_error("Neovim", error, cx);
             });
         })
         .detach();

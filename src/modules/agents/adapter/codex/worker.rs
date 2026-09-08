@@ -991,6 +991,8 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         }
                         "thread/status/changed"
+                        | "thread/settings/updated"
+                        | "thread/name/updated"
                         | "turn/diff/updated"
                         | "turn/plan/updated"
                         | "serverRequest/resolved"
@@ -1337,11 +1339,13 @@ fn codex_telemetry(method: &str, params: &Value) -> Option<WorkerActivity> {
 
 fn codex_notification_is_for_thread(method: &str, params: &Value, thread_id: &str) -> bool {
     match params.get("threadId").and_then(Value::as_str) {
-        Some(reported) => reported == thread_id,
-        None if matches!(method, "warning" | "configWarning") => {
+        Some(reported) if reported != thread_id => false,
+        _ if matches!(method, "warning" | "configWarning") => {
             zlog::warn!("Codex app-server {method}: {params}");
             false
         }
+        _ if method == "remoteControl/status/changed" => false,
+        Some(_) => true,
         None if method == "thread/started" => false,
         None => {
             log_bad_codex_notification(method, params, "notification is missing threadId");
