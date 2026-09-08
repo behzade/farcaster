@@ -138,7 +138,7 @@ impl FarcasterApp {
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()
-                                        .child(execution),
+                                        .child(format!("{state} · {execution}")),
                                 ),
                         ),
                 )
@@ -152,11 +152,16 @@ pub(super) fn execution_label(
     model: Option<&(String, String)>,
     effort: Option<&str>,
 ) -> String {
-    let effort_fallback = if profile.is_some() || model.is_some() {
-        "default"
-    } else {
-        "—"
-    };
+    let profile = profile.filter(|profile| {
+        profile
+            .model
+            .as_deref()
+            .is_some_and(|model| !model.is_empty())
+    });
+    let model = model.filter(|(_, model)| !model.is_empty());
+    if profile.is_none() && model.is_none() {
+        return "Model unavailable".into();
+    }
     let (provider, model, effort) = match profile {
         Some(profile) => (
             profile.provider.as_deref(),
@@ -172,10 +177,10 @@ pub(super) fn execution_label(
     format!(
         "{} · {} · {}",
         provider.filter(|value| !value.is_empty()).unwrap_or("—"),
-        model.filter(|value| !value.is_empty()).unwrap_or("—"),
+        model.unwrap_or("—"),
         effort
             .filter(|value| !value.is_empty())
-            .unwrap_or(effort_fallback),
+            .unwrap_or("default"),
     )
 }
 

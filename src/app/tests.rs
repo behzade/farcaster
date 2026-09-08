@@ -122,6 +122,16 @@ fn session_catalog_changes_invalidate_only_the_regions_that_render_them() {
 
     let selected = Some(std::path::Path::new("/root.jsonl"));
     assert!(!run_panel_sessions_changed(&current, &touched, selected));
+    let mut identified = current.clone();
+    identified[0].model = Some(("openai".into(), "gpt-5.6-terra".into()));
+    assert!(run_panel_sessions_changed(&current, &identified, selected));
+    let mut effort_changed = identified.clone();
+    effort_changed[0].thinking_level = Some("xhigh".into());
+    assert!(run_panel_sessions_changed(
+        &identified,
+        &effort_changed,
+        selected
+    ));
     assert!(!composer_usage_sessions_changed(
         &current, &touched, selected,
     ));

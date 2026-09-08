@@ -91,5 +91,13 @@ fn worker_subtitle_uses_live_profile_then_catalog_identity() {
         execution_label(None, Some(&cached_model), Some("low")),
         "cached-provider · cached-model · low"
     );
-    assert_eq!(execution_label(None, None, None), "— · — · —");
+    assert_eq!(execution_label(None, None, None), "Model unavailable");
+    let profile = crate::agents::CallerProfile {
+        model: None,
+        ..profile
+    };
+    assert_eq!(
+        execution_label(Some(&profile), Some(&cached_model), Some("low")),
+        "cached-provider · cached-model · low"
+    );
 }

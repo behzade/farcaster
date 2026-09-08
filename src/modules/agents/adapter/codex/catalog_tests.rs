@@ -3,6 +3,13 @@ use super::*;
 #[test]
 fn discovers_previewless_descendants_across_pages_without_duplicates() -> Result<(), String> {
     let home = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database =
+        Connection::open(home.path().join("state_5.sqlite")).map_err(|error| error.to_string())?;
+    database.execute_batch(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, model TEXT, reasoning_effort TEXT);
+         INSERT INTO threads VALUES ('child', 'openai', 'gpt-5.6-terra', 'xhigh');
+         INSERT INTO threads VALUES ('nested', 'openai', NULL, NULL);",
+    ).map_err(|error| error.to_string())?;
     let project = std::env::current_dir().map_err(|error| error.to_string())?;
     let root = json!({"id": "root", "cwd": project, "preview": "Review"});
     let child = json!({"id": "child", "cwd": project, "preview": "",
@@ -29,6 +36,13 @@ fn discovers_previewless_descendants_across_pages_without_duplicates() -> Result
     assert_eq!(sessions.len(), 3);
     assert_eq!(sessions[1].parent_session.as_deref(), Some("root"));
     assert!(sessions[1].is_running);
+    assert_eq!(
+        sessions[1].model,
+        Some(("openai".into(), "gpt-5.6-terra".into()))
+    );
+    assert_eq!(sessions[1].thinking_level.as_deref(), Some("xhigh"));
+    assert!(sessions[0].model.is_none());
+    assert!(sessions[2].model.is_none());
     assert_eq!(sessions[2].parent_session.as_deref(), Some("child"));
     let requests = String::from_utf8(requests)
         .unwrap()

@@ -140,7 +140,7 @@ pub(crate) fn discover_sessions_for(
 }
 
 fn import_session(session: crate::agents::DiscoveredSession) -> SessionSummary {
-    SessionSummary::import(crate::sessions::SessionImport {
+    let mut summary = SessionSummary::import(crate::sessions::SessionImport {
         id: session.id,
         harness: session.harness,
         path: session.path,
@@ -162,7 +162,10 @@ fn import_session(session: crate::agents::DiscoveredSession) -> SessionSummary {
         archived: session.archived,
         is_running: session.is_running,
         search: session.search,
-    })
+    });
+    summary.model = session.model;
+    summary.thinking_level = session.thinking_level;
+    summary
 }
 
 #[cfg(test)]

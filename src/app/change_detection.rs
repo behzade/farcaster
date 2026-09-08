@@ -112,6 +112,8 @@ pub(in crate::app) fn run_panel_sessions_changed(
             && left.timestamp == right.timestamp
             && left.parent_session == right.parent_session
             && left.is_running == right.is_running
+            && left.model == right.model
+            && left.thinking_level == right.thinking_level
     })
 }
 

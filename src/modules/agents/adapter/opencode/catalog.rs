@@ -166,6 +166,8 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
         usage: opencode_usage(value),
         archived,
         is_running,
+        model: None,
+        thinking_level: None,
         search,
     }))
 }

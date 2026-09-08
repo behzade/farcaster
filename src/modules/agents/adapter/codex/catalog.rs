@@ -1,11 +1,12 @@
 use std::{
+    collections::HashMap,
     io::BufReader,
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, params};
 use serde_json::{Value, json};
 
 use super::{connection::CodexConnection, contract::CodexClientInfo, tool};
@@ -100,6 +101,21 @@ pub(super) fn discover_with_client<R: std::io::BufRead, W: std::io::Write>(
             }
         }
     }
+    let ids = sessions
+        .iter()
+        .map(|session| session.id.as_str())
+        .collect::<Vec<_>>();
+    match stored_identities(home, &ids) {
+        Ok(mut identities) => {
+            for session in &mut sessions {
+                if let Some(identity) = identities.remove(&session.id) {
+                    session.model = Some((identity.provider, identity.model));
+                    session.thinking_level = identity.effort;
+                }
+            }
+        }
+        Err(error) => zlog::warn!("Codex catalog identity unavailable: {error}"),
+    }
     Ok(sessions)
 }
 
@@ -185,7 +201,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 messages.extend(history_messages(item));
             }
         }
-        let identity = stored_identity(codex_home, &locator)?;
+        let identity = stored_identities(codex_home, &[&locator])?.remove(&locator);
         let (model, thinking_level) = identity.map_or((None, None), |identity| {
             (Some((identity.provider, identity.model)), identity.effort)
         });
@@ -251,31 +267,35 @@ struct CodexIdentity {
     effort: Option<String>,
 }
 
-fn stored_identity(codex_home: &Path, thread_id: &str) -> Result<Option<CodexIdentity>, String> {
+fn stored_identities(
+    codex_home: &Path,
+    thread_ids: &[&str],
+) -> Result<HashMap<String, CodexIdentity>, String> {
     let database = codex_home.join("state_5.sqlite");
-    if !database.is_file() {
-        return Ok(None);
+    if thread_ids.is_empty() || !database.is_file() {
+        return Ok(HashMap::new());
     }
     let connection = Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|error| format!("open Codex state database {}: {error}", database.display()))?;
-    connection
-        .query_row(
-            "SELECT model_provider, model, reasoning_effort FROM threads WHERE id = ?1",
-            params![thread_id],
-            |row| {
-                let provider = row.get(0)?;
-                let model = row.get::<_, Option<String>>(1)?;
-                let effort = row.get(2)?;
-                Ok(model.map(|model| CodexIdentity {
-                    provider,
-                    model,
-                    effort,
-                }))
-            },
+    let mut statement = connection
+        .prepare(
+            "SELECT id, model_provider, model, reasoning_effort FROM threads
+         WHERE id IN (SELECT value FROM json_each(?1)) AND model IS NOT NULL",
         )
-        .optional()
-        .map(|identity| identity.flatten())
-        .map_err(|error| format!("read Codex session identity for {thread_id}: {error}"))
+        .map_err(|error| format!("prepare Codex identity query: {error}"))?;
+    statement
+        .query_map(params![json!(thread_ids).to_string()], |row| {
+            Ok((
+                row.get(0)?,
+                CodexIdentity {
+                    provider: row.get(1)?,
+                    model: row.get(2)?,
+                    effort: row.get(3)?,
+                },
+            ))
+        })
+        .and_then(|rows| rows.collect())
+        .map_err(|error| format!("read Codex session identities: {error}"))
 }
 
 fn summary(
@@ -348,6 +368,8 @@ fn summary(
         usage: codex_usage(thread),
         archived,
         is_running,
+        model: None,
+        thinking_level: None,
         search,
     }))
 }

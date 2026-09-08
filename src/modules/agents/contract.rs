@@ -26,6 +26,8 @@ pub(crate) struct DiscoveredSession {
     pub(crate) usage: DiscoveredUsage,
     pub(crate) archived: bool,
     pub(crate) is_running: bool,
+    pub(crate) model: Option<(String, String)>,
+    pub(crate) thinking_level: Option<String>,
     pub(crate) search: String,
 }
 

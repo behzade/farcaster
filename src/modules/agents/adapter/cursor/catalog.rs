@@ -214,6 +214,8 @@ fn read_session(locator_root: &Path, query: &str, directory: &Path) -> Option<Di
         usage: DiscoveredUsage::default(),
         archived: false,
         is_running: false,
+        model: None,
+        thinking_level: None,
         search,
     })
 }
