@@ -9,7 +9,6 @@ use crate::{
     app::ui::primitives::{AppIconSize, app_icon, icon_control},
     app::ui::theme::THEME,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
-    sessions::root_session_for_path,
 };
 
 impl FarcasterApp {
@@ -20,10 +19,12 @@ impl FarcasterApp {
     ) -> impl IntoElement {
         let project = project_label(&self.workspace_project());
         let selected_path = self.snapshot.selected_session.as_deref();
-        let session = root_session_for_path(&self.sessions, selected_path);
-        let harness_icon = selected_path
-            .and_then(|path| self.sessions.iter().find(|session| session.path == path))
-            .or(session)
+        let session = selected_path.and_then(|path| {
+            self.all_sessions
+                .iter()
+                .find(|session| session.path == path)
+        });
+        let harness_icon = session
             .map(|session| AppIcon::for_harness(&session.harness))
             .or_else(|| {
                 let selected = self.selected_draft.as_deref()?;
