@@ -1,5 +1,7 @@
 mod app;
 mod builtin_mcp;
+#[cfg(target_os = "linux")]
+mod linux_graphics;
 mod modules;
 
 pub(crate) use app::runtime;
@@ -9,7 +11,7 @@ pub(crate) use modules::{access, agents, projects, repository, sessions};
 
 fn main() -> std::process::ExitCode {
     #[cfg(target_os = "linux")]
-    if let Err(error) = relaunch_with_linux_vulkan_driver_policy() {
+    if let Err(error) = linux_graphics::relaunch() {
         return fail(error);
     }
 
@@ -57,55 +59,6 @@ fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }
-}
-
-#[cfg(target_os = "linux")]
-const VULKAN_DRIVER_CONFIGURATION: [&str; 5] = [
-    "VK_DRIVER_FILES",
-    "VK_ICD_FILENAMES",
-    "VK_ADD_DRIVER_FILES",
-    "VK_LOADER_DRIVERS_SELECT",
-    "VK_LOADER_DRIVERS_DISABLE",
-];
-
-#[cfg(target_os = "linux")]
-fn relaunch_with_linux_vulkan_driver_policy() -> Result<(), String> {
-    use std::os::unix::process::CommandExt as _;
-
-    let is_wsl = std::env::var_os("WSL_INTEROP").is_some()
-        || std::env::var_os("WSL_DISTRO_NAME").is_some()
-        || ["/proc/sys/kernel/osrelease", "/proc/version"]
-            .into_iter()
-            .any(|path| {
-                std::fs::read_to_string(path)
-                    .is_ok_and(|version| kernel_version_reports_wsl(&version))
-            });
-    if !should_disable_dzn(is_wsl, |name| std::env::var_os(name).is_some()) {
-        return Ok(());
-    }
-
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("resolve farcaster executable for Vulkan setup: {error}"))?;
-    let error = std::process::Command::new(executable)
-        .args(std::env::args_os().skip(1))
-        .env("VK_LOADER_DRIVERS_DISABLE", "*dzn*")
-        .exec();
-    Err(format!(
-        "relaunch farcaster with the Mesa DZN Vulkan ICD disabled: {error}"
-    ))
-}
-
-#[cfg(target_os = "linux")]
-fn should_disable_dzn(is_wsl: bool, mut environment_is_set: impl FnMut(&str) -> bool) -> bool {
-    !is_wsl
-        && !VULKAN_DRIVER_CONFIGURATION
-            .into_iter()
-            .any(&mut environment_is_set)
-}
-
-#[cfg(target_os = "linux")]
-fn kernel_version_reports_wsl(version: &str) -> bool {
-    version.to_ascii_lowercase().contains("microsoft")
 }
 
 fn init_log_file() -> Result<(), String> {

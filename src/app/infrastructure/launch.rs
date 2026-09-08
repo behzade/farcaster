@@ -1,13 +1,4 @@
-use std::{
-    cell::RefCell,
-    path::PathBuf,
-    rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicU8, Ordering},
-    },
-    time::Duration,
-};
+use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 #[cfg(target_os = "linux")]
 use std::fs;
@@ -42,8 +33,8 @@ pub(crate) enum LaunchError {
     ProjectTrust(String),
     #[error("the bundled fonts could not be loaded")]
     BundledFonts,
-    #[error("the Farcaster window could not open")]
-    NativeWindow,
+    #[error("the Farcaster window could not open: {0}")]
+    NativeWindow(String),
 }
 
 pub(crate) fn resolve_project(path: Option<PathBuf>) -> Result<PathBuf, LaunchError> {
@@ -79,9 +70,6 @@ pub(crate) fn run(
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
 ) -> Result<(), LaunchError> {
-    const FONT_FAILURE: u8 = 1;
-    const WINDOW_FAILURE: u8 = 2;
-
     #[cfg(target_os = "linux")]
     install_linux_desktop_identity();
 
@@ -90,7 +78,7 @@ pub(crate) fn run(
     let startup_trust =
         crate::app::project::trust::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
     drop(trust_timing);
-    let failure = Arc::new(AtomicU8::new(0));
+    let failure = Rc::new(RefCell::new(None));
     let failure_in_app = failure.clone();
     gpui_platform::application()
         .with_assets(AppAssets)
@@ -100,8 +88,8 @@ pub(crate) fn run(
             let fonts_timing =
                 crate::app::infrastructure::performance::StartupTiming::new("launch.load_fonts");
             if AppAssets.load_fonts(cx).is_err() {
-                failure_in_app.store(FONT_FAILURE, Ordering::Release);
-                cx.quit();
+                *failure_in_app.borrow_mut() = Some(LaunchError::BundledFonts);
+                quit_after_start(cx);
                 return;
             }
             drop(fonts_timing);
@@ -215,18 +203,27 @@ pub(crate) fn run(
                 cx.new(|cx| gpui_component::Root::new(launch, window, cx))
             });
             drop(open_window_timing);
-            if result.is_err() {
-                failure_in_app.store(WINDOW_FAILURE, Ordering::Release);
-                cx.quit();
+            if let Err(error) = result {
+                *failure_in_app.borrow_mut() =
+                    Some(LaunchError::NativeWindow(format!("{error:#}")));
+                quit_after_start(cx);
                 return;
             }
             cx.activate(true);
         });
-    match failure.load(Ordering::Acquire) {
-        FONT_FAILURE => Err(LaunchError::BundledFonts),
-        WINDOW_FAILURE => Err(LaunchError::NativeWindow),
-        _ => Ok(()),
+    match failure.borrow_mut().take() {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
+}
+
+fn quit_after_start(cx: &mut App) {
+    // Linux invokes the launch callback before calloop::run, which resets its
+    // stop signal. Queue shutdown on the foreground executor so it is not lost.
+    cx.spawn(async |cx| {
+        let _ = cx.update(|cx| cx.quit());
+    })
+    .detach();
 }
 
 #[cfg(target_os = "linux")]
