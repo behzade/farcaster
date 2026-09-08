@@ -143,7 +143,6 @@ pub(crate) enum RuntimeEvent {
         system_notification_target: Option<(PathBuf, PathBuf)>,
     },
     PromptResult {
-        generation: u64,
         target: String,
         accepted: bool,
         session: Option<PathBuf>,

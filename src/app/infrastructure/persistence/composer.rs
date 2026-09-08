@@ -1,12 +1,19 @@
 use super::*;
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum StoredAttachment {
+    Image { image: super::images::StoredImage },
+    TextFile { path: PathBuf },
+}
+
 impl StateStore {
     pub(crate) fn load_composer_sessions(&self) -> Result<Vec<ComposerRecord>, String> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT s.id, s.client_key, s.locator, c.text, c.cursor, c.selection_start,
-                        c.selection_end, c.history_json
+                        c.selection_end, c.history_json, c.attachments_json
                    FROM composer_sessions c
                    JOIN sessions s ON s.id = c.session_id",
             )
@@ -30,6 +37,15 @@ impl StateStore {
                     selection_start: row.get::<_, u64>(5)?.try_into().unwrap_or(usize::MAX),
                     selection_end: row.get::<_, u64>(6)?.try_into().unwrap_or(usize::MAX),
                     history,
+                    attachments: self
+                        .decode_composer_attachments(&row.get::<_, String>(8)?)
+                        .map_err(|error| {
+                            rusqlite::Error::FromSqlConversionFailure(
+                                8,
+                                rusqlite::types::Type::Text,
+                                Box::new(std::io::Error::other(error)),
+                            )
+                        })?,
                 })
             })
             .map_err(|error| format!("query composer sessions: {error}"))?
@@ -43,17 +59,19 @@ impl StateStore {
         };
         let history_json = serde_json::to_string(&record.history)
             .map_err(|error| format!("encode composer history: {error}"))?;
+        let attachments_json = self.encode_composer_attachments(&record.attachments)?;
         self.connection
             .execute(
                 "INSERT INTO composer_sessions(
-                   session_id, text, cursor, selection_start, selection_end, history_json, updated_ms
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                   session_id, text, cursor, selection_start, selection_end, history_json, updated_ms, attachments_json
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(session_id) DO UPDATE SET
                    text=excluded.text,
                    cursor=excluded.cursor,
                    selection_start=excluded.selection_start,
                    selection_end=excluded.selection_end,
                    history_json=excluded.history_json,
+                   attachments_json=excluded.attachments_json,
                    updated_ms=excluded.updated_ms",
                 params![
                     session_id,
@@ -63,6 +81,7 @@ impl StateStore {
                     usize_to_i64(record.selection_end),
                     history_json,
                     u64_to_i64(now_ms()),
+                    attachments_json,
                 ],
             )
             .map(|_| ())
@@ -80,5 +99,42 @@ impl StateStore {
             )
             .map(|_| ())
             .map_err(|error| format!("delete composer session {target}: {error}"))
+    }
+
+    fn encode_composer_attachments(
+        &self,
+        attachments: &[ComposerAttachment],
+    ) -> Result<String, String> {
+        let stored = attachments
+            .iter()
+            .map(|attachment| {
+                Ok(match attachment {
+                    ComposerAttachment::Image(image) => StoredAttachment::Image {
+                        image: self.encode_prompt_image(image)?,
+                    },
+                    ComposerAttachment::TextFile { path } => {
+                        StoredAttachment::TextFile { path: path.clone() }
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        serde_json::to_string(&stored)
+            .map_err(|error| format!("encode composer attachments: {error}"))
+    }
+
+    fn decode_composer_attachments(&self, json: &str) -> Result<Vec<ComposerAttachment>, String> {
+        let stored: Vec<StoredAttachment> = serde_json::from_str(json)
+            .map_err(|error| format!("decode composer attachments: {error}"))?;
+        stored
+            .into_iter()
+            .map(|attachment| {
+                Ok(match attachment {
+                    StoredAttachment::Image { image } => {
+                        ComposerAttachment::Image(self.decode_prompt_image(image)?)
+                    }
+                    StoredAttachment::TextFile { path } => ComposerAttachment::TextFile { path },
+                })
+            })
+            .collect()
     }
 }

@@ -57,12 +57,13 @@ fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), Stri
             total_tokens, cost_micros FROM sessions WHERE id=?2),
            parent_id=COALESCE(parent_id, (SELECT parent_id FROM sessions WHERE id=?2))
          WHERE id=?1",
-        "INSERT INTO composer_sessions
-         SELECT ?1, text, cursor, selection_start, selection_end, history_json, updated_ms
+        "INSERT INTO composer_sessions(session_id, text, cursor, selection_start, selection_end, history_json, updated_ms, attachments_json)
+         SELECT ?1, text, cursor, selection_start, selection_end, history_json, updated_ms, attachments_json
            FROM composer_sessions WHERE session_id=?2
          ON CONFLICT(session_id) DO UPDATE SET
            text=excluded.text, cursor=excluded.cursor, selection_start=excluded.selection_start,
            selection_end=excluded.selection_end, history_json=excluded.history_json,
+           attachments_json=excluded.attachments_json,
            updated_ms=excluded.updated_ms
          WHERE excluded.updated_ms > composer_sessions.updated_ms",
         "INSERT INTO session_models SELECT ?1, provider, model, effort, service_tier

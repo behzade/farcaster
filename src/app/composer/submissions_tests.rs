@@ -23,6 +23,7 @@ fn session(path: &str, archived: bool) -> SessionSummary {
 
 fn pending() -> PendingSubmission {
     PendingSubmission {
+        submitted_target: "session:compacting".into(),
         text: "submitted".into(),
         images: Vec::new(),
         pastes: Vec::new(),

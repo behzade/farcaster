@@ -1,5 +1,7 @@
 use super::*;
 
+pub(in crate::app) mod attachments;
+
 pub(in crate::app) mod completion;
 pub(in crate::app) mod file_mentions;
 pub(in crate::app) mod highlighting;

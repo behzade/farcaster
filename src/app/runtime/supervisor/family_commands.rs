@@ -19,6 +19,17 @@ impl Supervisor {
                         actor.send(RuntimeCommand::Shutdown);
                         actor.join();
                     }
+                    let session = self.latest.get(key).and_then(|snapshot| {
+                        snapshot
+                            .live_session
+                            .clone()
+                            .or_else(|| snapshot.selected_session.clone())
+                    });
+                    let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
+                        target: key.clone(),
+                        session,
+                        status: "Stopped".into(),
+                    });
                     self.latest.remove(key);
                     self.last_touch.remove(key);
                     self.pending_extensions.remove(key);
@@ -37,6 +48,11 @@ impl Supervisor {
                 for session in &mut self.catalog_sessions {
                     if family_paths.contains(&session.path) {
                         session.is_running = false;
+                        let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
+                            target: crate::app::composer::sessions::session_target(&session.path),
+                            session: Some(session.path.clone()),
+                            status: "Stopped".into(),
+                        });
                     }
                 }
                 if let Some(catalog) = self.actors.get(&self.catalog_key) {

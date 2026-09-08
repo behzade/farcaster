@@ -411,7 +411,7 @@ pub(super) fn import_legacy_pi_gpui(tx: &Transaction<'_>) -> Result<(), String> 
             "UPDATE sessions AS s SET archived_at=COALESCE(archived_at,
                 (SELECT l.archived_at FROM legacy_pi_gpui.sessions l
                   WHERE l.harness=s.harness AND l.locator=s.locator))",
-            "INSERT INTO composer_sessions
+            "INSERT INTO composer_sessions(session_id, text, cursor, selection_start, selection_end, history_json, updated_ms)
              SELECT s.id, c.text, c.cursor, c.selection_start, c.selection_end, c.history_json, c.updated_ms
              FROM legacy_pi_gpui.composer_sessions c
              JOIN legacy_pi_gpui.sessions l ON l.id=c.session_id
@@ -439,7 +439,7 @@ pub(super) fn import_legacy_pi_gpui(tx: &Transaction<'_>) -> Result<(), String> 
             "UPDATE sessions AS s SET archived_at=COALESCE(archived_at,
                 (SELECT l.settled_ms FROM legacy_pi_gpui.sessions l
                   WHERE s.harness='pi' AND l.path=s.locator))",
-            "INSERT INTO composer_sessions
+            "INSERT INTO composer_sessions(session_id, text, cursor, selection_start, selection_end, history_json, updated_ms)
              SELECT s.id, c.text, c.cursor, c.selection_start, c.selection_end, c.history_json, c.updated_ms
              FROM legacy_pi_gpui.composer_sessions c
              JOIN sessions s ON c.target='session:' || s.locator AND s.harness='pi' WHERE true

@@ -114,7 +114,9 @@ pub(super) fn discover_with_client<R: std::io::BufRead, W: std::io::Write>(
                 }
             }
         }
-        Err(error) => zlog::warn!("Codex catalog identity unavailable: {error}"),
+        Err(error) => {
+            zlog::warn!("Codex catalog identity unavailable: {error}");
+        }
     }
     Ok(sessions)
 }

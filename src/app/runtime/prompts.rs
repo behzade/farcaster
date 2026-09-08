@@ -302,7 +302,6 @@ impl RuntimeOwner {
         let session = self.active_session.clone();
         let accepted = accepted && session.is_some();
         let _ = self.event_tx.send(RuntimeEvent::PromptResult {
-            generation: self.process_generation,
             target: target.to_owned(),
             accepted,
             session,

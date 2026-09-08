@@ -227,18 +227,8 @@ impl Supervisor {
                     generation: self.generation,
                 });
             }
-            RuntimeEvent::PromptResult {
-                target,
-                accepted,
-                session,
-                ..
-            } => {
-                let _ = self.event_tx.send(RuntimeEvent::PromptResult {
-                    generation: self.generation,
-                    target,
-                    accepted,
-                    session,
-                });
+            event @ RuntimeEvent::PromptResult { .. } => {
+                let _ = self.event_tx.send(event);
             }
             RuntimeEvent::RefreshCatalog => {
                 if let Some(catalog) = self.actors.get(&self.catalog_key) {

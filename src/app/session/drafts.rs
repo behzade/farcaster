@@ -180,7 +180,15 @@ impl FarcasterApp {
         if target != draft_target(id) || self.submitted_drafts.contains_key(id) {
             return false;
         }
-        let has_content = draft_has_content(composer);
+        let has_content = draft_has_content(composer)
+            || self
+                .composer_images
+                .get(target)
+                .is_some_and(|images| !images.is_empty())
+            || self
+                .composer_pastes
+                .get(target)
+                .is_some_and(|pastes| !pastes.is_empty());
         let app_session_id = self
             .draft_session_ids
             .get(id)

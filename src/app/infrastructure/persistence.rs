@@ -31,7 +31,7 @@ mod traits;
 
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 14;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
@@ -78,6 +78,13 @@ pub(crate) struct ComposerRecord {
     pub selection_start: usize,
     pub selection_end: usize,
     pub history: Vec<String>,
+    pub attachments: Vec<ComposerAttachment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ComposerAttachment {
+    Image(PromptImage),
+    TextFile { path: PathBuf },
 }
 
 pub(crate) fn state_path() -> Result<PathBuf, String> {

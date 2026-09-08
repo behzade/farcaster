@@ -22,6 +22,17 @@ pub(crate) struct ComposerPaste {
 }
 
 impl ComposerPaste {
+    pub(in crate::app) fn from_path(path: PathBuf) -> Result<Self, String> {
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read pasted text {}: {error}", path.display()))?;
+        let line_count = content.lines().count().max(1);
+        Ok(Self {
+            path,
+            content,
+            line_count,
+        })
+    }
+
     pub(crate) fn file_name(&self) -> String {
         self.path
             .file_name()
@@ -53,7 +64,11 @@ impl FarcasterApp {
             return false;
         };
         let target = self.composer_sessions.current_target().to_owned();
-        self.composer_pastes.entry(target).or_default().push(paste);
+        self.composer_pastes
+            .entry(target.clone())
+            .or_default()
+            .push(paste);
+        self.save_composer_attachments(&target);
         self.notify_composer(cx);
         true
     }
@@ -68,6 +83,7 @@ impl FarcasterApp {
             if pastes.is_empty() {
                 self.composer_pastes.remove(&target);
             }
+            self.save_composer_attachments(&target);
             self.notify_composer(cx);
         }
     }

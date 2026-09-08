@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::app::infrastructure::persistence::{ComposerRecord, StateStore};
+use crate::app::infrastructure::persistence::{ComposerAttachment, ComposerRecord, StateStore};
 
 const MAX_HISTORY: usize = 100;
 const WRITE_DELAY: Duration = Duration::from_millis(250);
@@ -47,6 +47,7 @@ impl ComposerSnapshot {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct SessionComposer {
     composer: ComposerSnapshot,
+    attachments: Vec<ComposerAttachment>,
     history: Vec<String>,
     history_index: Option<usize>,
     history_draft: Option<ComposerSnapshot>,
@@ -61,6 +62,7 @@ impl SessionComposer {
                 record.selection_start..record.selection_end,
             ),
             history: record.history,
+            attachments: record.attachments,
             history_index: None,
             history_draft: None,
         }
@@ -74,6 +76,7 @@ impl SessionComposer {
             selection_start: self.composer.selection.start,
             selection_end: self.composer.selection.end,
             history: self.history.clone(),
+            attachments: self.attachments.clone(),
         }
     }
 
@@ -145,6 +148,23 @@ impl ComposerSessions {
         &self.current_target
     }
 
+    pub(crate) fn saved_attachments(
+        &self,
+    ) -> impl Iterator<Item = (&String, &[ComposerAttachment])> {
+        self.sessions
+            .iter()
+            .filter(|(_, session)| !session.attachments.is_empty())
+            .map(|(target, session)| (target, session.attachments.as_slice()))
+    }
+
+    pub(crate) fn set_attachments(&mut self, target: &str, attachments: Vec<ComposerAttachment>) {
+        let session = self.sessions.entry(target.to_owned()).or_default();
+        if session.attachments != attachments {
+            session.attachments = attachments;
+            self.persistence.save(session.record(target.to_owned()));
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn snapshot_for(&self, target: &str) -> ComposerSnapshot {
         self.sessions
@@ -206,6 +226,7 @@ impl ComposerSessions {
         if !source.history.is_empty() {
             target.history = source.history;
         }
+        target.attachments.extend(source.attachments);
         if self.current_target == from {
             self.current_target = to.clone();
         }

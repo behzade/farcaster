@@ -79,6 +79,7 @@ CREATE TABLE composer_sessions (
   selection_start INTEGER NOT NULL,
   selection_end INTEGER NOT NULL,
   history_json TEXT NOT NULL,
+  attachments_json TEXT NOT NULL DEFAULT '[]',
   updated_ms INTEGER NOT NULL
 );
 CREATE TABLE session_ops (

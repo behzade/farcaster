@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use base64::Engine as _;
-use gpui::{ClipboardEntry, ClipboardItem, Context, Image};
+use gpui::{ClipboardEntry, ClipboardItem, Context, Image, ImageFormat};
 
 use super::FarcasterApp;
 use crate::protocol::PromptImage;
@@ -11,6 +11,20 @@ pub(crate) struct ComposerImage {
     pub(crate) prompt: PromptImage,
     pub(crate) preview: Arc<Image>,
     pub(crate) byte_len: usize,
+}
+
+impl ComposerImage {
+    pub(in crate::app) fn from_prompt(prompt: PromptImage) -> Result<Self, String> {
+        let format = ImageFormat::from_mime_type(&prompt.mime_type)
+            .ok_or_else(|| format!("Unsupported image type: {}", prompt.mime_type))?;
+        let bytes = prompt.bytes()?;
+        let byte_len = bytes.len();
+        Ok(Self {
+            prompt,
+            preview: Arc::new(Image::from_bytes(format, bytes)),
+            byte_len,
+        })
+    }
 }
 
 impl FarcasterApp {
@@ -37,9 +51,10 @@ impl FarcasterApp {
         }
         let target = self.composer_sessions.current_target().to_owned();
         self.composer_images
-            .entry(target)
+            .entry(target.clone())
             .or_default()
             .extend(images);
+        self.save_composer_attachments(&target);
         self.notify_composer(cx);
         true
     }
@@ -53,6 +68,7 @@ impl FarcasterApp {
             if images.is_empty() {
                 self.composer_images.remove(&target);
             }
+            self.save_composer_attachments(&target);
             self.notify_composer(cx);
         }
     }

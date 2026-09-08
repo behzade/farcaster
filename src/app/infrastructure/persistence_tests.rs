@@ -61,6 +61,7 @@ fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn st
         selection_start: 26,
         selection_end: 26,
         history: Vec::new(),
+        attachments: Vec::new(),
     };
     {
         let mut store = StateStore::open_at(&database)?;
@@ -208,8 +209,14 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
 }
 
 #[test]
-fn v12_migration_removes_modifier_and_preserves_settings() -> Result<(), Box<dyn std::error::Error>>
-{
+fn recent_schema_migrations_preserve_settings() -> Result<(), Box<dyn std::error::Error>> {
+    for version in [12, 13] {
+        check_schema_migration(version)?;
+    }
+    Ok(())
+}
+
+fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("settings.sqlite3");
     let store = StateStore::open_at(&database)?;
@@ -217,10 +224,16 @@ fn v12_migration_removes_modifier_and_preserves_settings() -> Result<(), Box<dyn
     store.save_builtin_mcp_enabled(false)?;
     drop(store);
     let connection = rusqlite::Connection::open(&database)?;
-    connection.execute_batch(
-        "ALTER TABLE ui_state ADD COLUMN application_modifier TEXT;
-         UPDATE ui_state SET application_modifier='alt';
-         UPDATE meta SET value='12' WHERE key='schema_version';",
+    if version == 12 {
+        connection.execute_batch(
+            "ALTER TABLE ui_state ADD COLUMN application_modifier TEXT;
+         UPDATE ui_state SET application_modifier='alt';",
+        )?;
+    }
+    connection.execute_batch("ALTER TABLE composer_sessions DROP COLUMN attachments_json;")?;
+    connection.execute(
+        "UPDATE meta SET value=?1 WHERE key='schema_version'",
+        [version.to_string()],
     )?;
     drop(connection);
 
@@ -237,7 +250,7 @@ fn v12_migration_removes_modifier_and_preserves_settings() -> Result<(), Box<dyn
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 13);
+    assert_eq!(database_schema_version(&database)?, 14);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -444,6 +457,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             selection_start: 2,
             selection_end: 6,
             history: vec!["new".into(), "old".into()],
+            attachments: Vec::new(),
         })?;
         fs::write(&catalog_session_path, "{}")?;
         store.replace_sessions(&[SessionSummary::from_cached(
@@ -502,6 +516,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             selection_start: 2,
             selection_end: 6,
             history: vec!["new".into(), "old".into()],
+            attachments: Vec::new(),
         }]
     );
     assert_eq!(store.cached_sessions("literal_100%")?.len(), 1);
@@ -847,7 +862,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 13);
+    assert_eq!(database_schema_version(&database)?, 14);
     Ok(())
 }
 
@@ -885,7 +900,7 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 13);
+    assert_eq!(database_schema_version(&database)?, 14);
     Ok(())
 }
 
@@ -903,7 +918,7 @@ fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::e
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 13);
+    assert_eq!(database_schema_version(&database)?, 14);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
@@ -924,7 +939,7 @@ fn schema_v4_migrates_to_v11_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 13);
+    assert_eq!(database_schema_version(&database)?, 14);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -967,7 +982,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 13);
+    assert_eq!(database_schema_version(&database)?, 14);
     Ok(())
 }
 
@@ -1008,6 +1023,7 @@ fn relocating_session_paths_preserves_application_identity_and_composer_state()
         selection_start: 5,
         selection_end: 5,
         history: Vec::new(),
+        attachments: Vec::new(),
     })?;
     let original_id = store.cached_sessions("")?[0].app_session_id;
     store.relocate_session_paths(&[(source.clone(), target.clone())], &target_project)?;
@@ -1066,6 +1082,7 @@ fn deleting_session_state_removes_the_family_and_preserves_other_sessions()
             selection_start: 5,
             selection_end: 5,
             history: Vec::new(),
+            attachments: Vec::new(),
         })?;
     }
     store.delete_session_state(&[root.clone(), child.clone()])?;

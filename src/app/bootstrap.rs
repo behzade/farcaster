@@ -47,6 +47,9 @@ impl FarcasterApp {
             repository::RepositoryState::load(project.clone(), repository_execution_allowed);
         drop(repository_timing);
 
+        let (composer_images, composer_pastes) =
+            composer::attachments::restore(&persisted.composer_sessions);
+
         let mut this = Self {
             project: project.clone(),
             runtime,
@@ -109,8 +112,8 @@ impl FarcasterApp {
             session_surfaces: HashMap::new(),
             composer_history_marker: None,
             composer_escape_armed: None,
-            composer_images: HashMap::new(),
-            composer_pastes: HashMap::new(),
+            composer_images,
+            composer_pastes,
             search: inputs.search,
             search_focus: inputs.search_focus,
             session_title_input: inputs.session_title,

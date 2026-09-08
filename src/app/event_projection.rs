@@ -485,9 +485,7 @@ impl FarcasterApp {
         if !accepted {
             self.run_statuses.insert(target.clone(), "Failed".into());
         }
-        if let Some(pending) = self.pending_submissions.get_mut(&target) {
-            pending.result = Some((accepted, session));
-        }
+        record_pending_prompt_result(&mut self.pending_submissions, &target, accepted, session);
         dirty.rail |= self.reconcile_submitted_drafts(cx);
     }
 
@@ -609,11 +607,11 @@ impl FarcasterApp {
                 self.show_attention_notification(&title, &body, target, cx);
             }
             RuntimeEvent::PromptResult {
-                generation,
                 target,
                 accepted,
                 session,
-            } if generation == self.runtime_generation => {
+            } => {
+                // Replies belong to a submission, even after navigation changes generations.
                 self.project_prompt_result(target, accepted, session, dirty, cx);
             }
             RuntimeEvent::SessionStatus {
@@ -621,6 +619,25 @@ impl FarcasterApp {
                 session,
                 status,
             } => {
+                if status == "Stopped" {
+                    let session_key = session.as_deref().map(session_target);
+                    for (key, pending) in &mut self.pending_submissions {
+                        if pending.submitted_target == target || Some(key) == session_key.as_ref() {
+                            pending.result.get_or_insert((false, session.clone()));
+                        }
+                    }
+                    if let Some(path) = session.as_deref() {
+                        for row in self.sessions.iter_mut().chain(self.all_sessions.iter_mut()) {
+                            if row.path == path {
+                                row.is_running = false;
+                            }
+                        }
+                        clear_stopped_snapshot(Arc::make_mut(&mut self.snapshot), path);
+                    }
+                    dirty.root = true;
+                    dirty.composer = true;
+                    dirty.run = true;
+                }
                 self.record_session_status(target, session, status);
                 dirty.rail |= self.reconcile_submitted_drafts(cx);
             }
@@ -647,10 +664,45 @@ impl FarcasterApp {
             | RuntimeEvent::SessionReset { .. }
             | RuntimeEvent::HistoryReset { .. }
             | RuntimeEvent::ExtensionUi { .. }
-            | RuntimeEvent::PromptResult { .. }
             | RuntimeEvent::Sessions { .. }
             | RuntimeEvent::SessionsFailed { .. } => {}
         }
+    }
+}
+
+fn record_pending_prompt_result(
+    pending: &mut HashMap<String, PendingSubmission>,
+    target: &str,
+    accepted: bool,
+    session: Option<PathBuf>,
+) {
+    if let Some(pending) = pending
+        .values_mut()
+        .find(|pending| pending.submitted_target == target)
+    {
+        pending.result = Some((accepted, session));
+    }
+}
+
+fn clear_stopped_snapshot(snapshot: &mut RuntimeSnapshot, path: &Path) {
+    if snapshot
+        .live_session
+        .as_deref()
+        .or(snapshot.selected_session.as_deref())
+        != Some(path)
+    {
+        return;
+    }
+    let conversation = Arc::make_mut(&mut snapshot.conversation);
+    conversation.running = false;
+    conversation.compacting = false;
+    conversation.retrying = false;
+    snapshot.pending_question = None;
+    snapshot.connected = false;
+    snapshot.status = "Stopped".into();
+    snapshot.live_status = "Stopped".into();
+    if let Some(session) = snapshot.session.as_mut() {
+        session.is_streaming = false;
     }
 }
 

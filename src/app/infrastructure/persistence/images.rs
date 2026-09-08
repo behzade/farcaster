@@ -8,7 +8,7 @@ use super::{PromptImage, StateStore};
 // Only the hash is persisted, so moving the database and its images together works.
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
-enum StoredImage {
+pub(super) enum StoredImage {
     File {
         attachment: String,
         #[serde(rename = "mimeType")]
@@ -36,14 +36,16 @@ impl StateStore {
     pub(super) fn encode_prompt_images(&self, images: &[PromptImage]) -> Result<String, String> {
         let stored = images
             .iter()
-            .map(|image| {
-                Ok(StoredImage::File {
-                    attachment: self.store_image(image)?,
-                    mime_type: image.mime_type.clone(),
-                })
-            })
+            .map(|image| self.encode_prompt_image(image))
             .collect::<Result<Vec<_>, String>>()?;
         serde_json::to_string(&stored).map_err(|error| format!("encode prompt images: {error}"))
+    }
+
+    pub(super) fn encode_prompt_image(&self, image: &PromptImage) -> Result<StoredImage, String> {
+        Ok(StoredImage::File {
+            attachment: self.store_image(image)?,
+            mime_type: image.mime_type.clone(),
+        })
     }
 
     fn store_image(&self, image: &PromptImage) -> Result<String, String> {
@@ -83,26 +85,30 @@ impl StateStore {
             serde_json::from_str(json).map_err(|error| format!("decode prompt images: {error}"))?;
         stored
             .into_iter()
-            .map(|image| match image {
-                StoredImage::File {
-                    attachment,
-                    mime_type,
-                } => {
-                    if attachment.len() != 64
-                        || !attachment
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    {
-                        return Err("Invalid image attachment hash".into());
-                    }
-                    Ok(PromptImage::from_file(
-                        self.image_directory.join(attachment),
-                        mime_type,
-                    ))
-                }
-                StoredImage::Inline(image) => Ok(image),
-            })
+            .map(|image| self.decode_prompt_image(image))
             .collect()
+    }
+
+    pub(super) fn decode_prompt_image(&self, image: StoredImage) -> Result<PromptImage, String> {
+        match image {
+            StoredImage::File {
+                attachment,
+                mime_type,
+            } => {
+                if attachment.len() != 64
+                    || !attachment
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                {
+                    return Err("Invalid image attachment hash".into());
+                }
+                Ok(PromptImage::from_file(
+                    self.image_directory.join(attachment),
+                    mime_type,
+                ))
+            }
+            StoredImage::Inline(image) => Ok(image),
+        }
     }
 }
 

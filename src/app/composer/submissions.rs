@@ -19,6 +19,8 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::app) struct PendingSubmission {
+    // Runtime replies keep this target even after the draft is promoted.
+    pub(in crate::app) submitted_target: String,
     pub(in crate::app) text: String,
     pub(in crate::app) images: Vec<ComposerImage>,
     pub(in crate::app) pastes: Vec<ComposerPaste>,
@@ -101,6 +103,7 @@ impl FarcasterApp {
                 self.pending_submissions.insert(
                     target.clone(),
                     PendingSubmission {
+                        submitted_target: target.clone(),
                         text: editor_text.clone(),
                         images: pending_images,
                         pastes: pending_pastes,
@@ -210,6 +213,7 @@ impl FarcasterApp {
                 continue;
             };
             if accepted {
+                self.save_composer_attachments(&target);
                 continue;
             }
 
@@ -217,15 +221,14 @@ impl FarcasterApp {
                 .composer_sessions
                 .restore_submitted_text(&target, pending.text.clone());
             if !pending.images.is_empty() {
-                self.composer_images
-                    .entry(target.clone())
-                    .or_insert_with(|| pending.images.clone());
+                let images = self.composer_images.entry(target.clone()).or_default();
+                images.splice(0..0, pending.images.clone());
             }
             if !pending.pastes.is_empty() {
-                self.composer_pastes
-                    .entry(target.clone())
-                    .or_insert_with(|| pending.pastes.clone());
+                let pastes = self.composer_pastes.entry(target.clone()).or_default();
+                pastes.splice(0..0, pending.pastes.clone());
             }
+            self.save_composer_attachments(&target);
             if let Some(snapshot) = restored
                 && self.composer_sessions.current_target() == target
             {
