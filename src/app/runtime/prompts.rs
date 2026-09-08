@@ -68,39 +68,30 @@ impl RuntimeOwner {
             );
             return;
         }
-        let images = match self
+        let queued = self
             .state
             .as_ref()
             .ok_or_else(|| "Couldn’t save the message".to_owned())
-            .and_then(|state| state.store_prompt_images(&images))
-        {
-            Ok(images) => images,
+            .and_then(|state| {
+                let images = state.store_prompt_images(&images)?;
+                let id = agents::enqueue_prompt_with_presentation(
+                    state,
+                    &target,
+                    &self.harness,
+                    &self.project,
+                    self.snapshot.selected_session.as_deref(),
+                    mode,
+                    &message,
+                    display_message.as_deref(),
+                    invocation.as_deref(),
+                    &images,
+                )?;
+                Ok((Some(id), images))
+            });
+        let (outbox_id, images) = match queued {
+            Ok(queued) => queued,
             Err(error) => {
                 self.reject_prompt(&target, error);
-                return;
-            }
-        };
-        let outbox_id = match self.state.as_ref() {
-            Some(state) => match agents::enqueue_prompt_with_presentation(
-                state,
-                &target,
-                &self.harness,
-                &self.project,
-                self.snapshot.selected_session.as_deref(),
-                mode,
-                &message,
-                display_message.as_deref(),
-                invocation.as_deref(),
-                &images,
-            ) {
-                Ok(id) => Some(id),
-                Err(error) => {
-                    self.reject_prompt(&target, error);
-                    return;
-                }
-            },
-            None => {
-                self.reject_prompt(&target, "Couldn’t save the message".into());
                 return;
             }
         };

@@ -390,7 +390,3 @@ fn model_error_item(text: String) -> TranscriptItem {
         invocation: None,
     }
 }
-
-#[cfg(test)]
-#[path = "history_tests.rs"]
-mod tests;

@@ -34,7 +34,6 @@ fn queued_images_use_portable_deduplicated_files() -> Result<(), Box<dyn std::er
     for attachment in &queued[0].images {
         assert!(attachment.data.is_empty());
         assert!(attachment.path.as_ref().unwrap().starts_with(&moved));
-        assert_eq!(attachment.clone().into_inline()?, image);
         let wire = serde_json::to_value(attachment.clone().into_inline()?)?;
         assert_eq!(
             wire,

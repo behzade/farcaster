@@ -25,57 +25,57 @@ impl StateStore {
         images
             .iter()
             .map(|image| {
-                let bytes = image.bytes()?;
-                if bytes.is_empty() {
-                    return Err("Cannot save an empty image".into());
-                }
-                let hash = format!("{:x}", Sha256::digest(&bytes));
-                let path = self.image_directory.join(&hash);
-                std::fs::create_dir_all(&self.image_directory)
-                    .map_err(|error| format!("create image directory: {error}"))?;
-                // Publish complete bytes atomically; simultaneous writers can share a hash.
-                if !path.exists() {
-                    let mut file = tempfile::NamedTempFile::new_in(&self.image_directory)
-                        .map_err(|error| format!("create image: {error}"))?;
-                    file.write_all(&bytes)
-                        .and_then(|()| file.as_file().sync_all())
-                        .map_err(|error| format!("write image: {error}"))?;
-                    if let Err(error) = file.persist_noclobber(&path) {
-                        if error.error.kind() != std::io::ErrorKind::AlreadyExists {
-                            return Err(format!("save image: {error}"));
-                        }
-                    }
-                    std::fs::File::open(&self.image_directory)
-                        .and_then(|dir| dir.sync_all())
-                        .map_err(|error| format!("sync image directory: {error}"))?;
-                }
-                // Detect corruption rather than silently reusing the wrong bytes.
-                if std::fs::read(&path).map_err(|error| format!("read saved image: {error}"))?
-                    != bytes
-                {
-                    return Err(format!("Saved image {} is corrupt", path.display()));
-                }
-                Ok(PromptImage::from_file(path, image.mime_type.clone()))
+                Ok(PromptImage::from_file(
+                    self.image_directory.join(self.store_image(image)?),
+                    image.mime_type.clone(),
+                ))
             })
             .collect()
     }
 
     pub(super) fn encode_prompt_images(&self, images: &[PromptImage]) -> Result<String, String> {
-        let stored = self
-            .store_prompt_images(images)?
-            .into_iter()
-            .map(|image| StoredImage::File {
-                attachment: image
-                    .path
-                    .expect("stored image path")
-                    .file_name()
-                    .expect("image hash")
-                    .to_string_lossy()
-                    .into_owned(),
-                mime_type: image.mime_type,
+        let stored = images
+            .iter()
+            .map(|image| {
+                Ok(StoredImage::File {
+                    attachment: self.store_image(image)?,
+                    mime_type: image.mime_type.clone(),
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, String>>()?;
         serde_json::to_string(&stored).map_err(|error| format!("encode prompt images: {error}"))
+    }
+
+    fn store_image(&self, image: &PromptImage) -> Result<String, String> {
+        let bytes = image.bytes()?;
+        if bytes.is_empty() {
+            return Err("Cannot save an empty image".into());
+        }
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let path = self.image_directory.join(&hash);
+        std::fs::create_dir_all(&self.image_directory)
+            .map_err(|error| format!("create image directory: {error}"))?;
+        // Publish complete bytes atomically; simultaneous writers can share a hash.
+        if !path.exists() {
+            let mut file = tempfile::NamedTempFile::new_in(&self.image_directory)
+                .map_err(|error| format!("create image: {error}"))?;
+            file.write_all(&bytes)
+                .and_then(|()| file.as_file().sync_all())
+                .map_err(|error| format!("write image: {error}"))?;
+            if let Err(error) = file.persist_noclobber(&path)
+                && error.error.kind() != std::io::ErrorKind::AlreadyExists
+            {
+                return Err(format!("save image: {error}"));
+            }
+            std::fs::File::open(&self.image_directory)
+                .and_then(|dir| dir.sync_all())
+                .map_err(|error| format!("sync image directory: {error}"))?;
+        }
+        // Detect corruption rather than silently reusing the wrong bytes.
+        if std::fs::read(&path).map_err(|error| format!("read saved image: {error}"))? != bytes {
+            return Err(format!("Saved image {} is corrupt", path.display()));
+        }
+        Ok(hash)
     }
 
     pub(super) fn decode_prompt_images(&self, json: &str) -> Result<Vec<PromptImage>, String> {
