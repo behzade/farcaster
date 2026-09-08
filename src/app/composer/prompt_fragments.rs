@@ -3,6 +3,10 @@ use crate::protocol::{SlashCommand, SlashCommandSource};
 const SOURCES: &[(&str, &str)] = &[
     ("commit", include_str!("../../../prompts/commit.md")),
     ("simplify", include_str!("../../../prompts/simplify.md")),
+    (
+        "simplify-commit",
+        include_str!("../../../prompts/simplify-commit.md"),
+    ),
     ("show-me", include_str!("../../../prompts/show-me.md")),
 ];
 
@@ -28,6 +32,19 @@ pub(crate) fn commands() -> Vec<SlashCommand> {
 }
 
 pub(crate) fn expand(input: &str) -> Option<Expansion> {
+    let resolution = expand_body(input, SOURCES, &mut Vec::new())?;
+    Some(Expansion {
+        display: input.into(),
+        message: resolution.clone(),
+        resolution,
+    })
+}
+
+fn expand_body(
+    input: &str,
+    sources: &[(&str, &'static str)],
+    active: &mut Vec<usize>,
+) -> Option<String> {
     let mut resolution = String::new();
     let mut cursor = 0;
     for (start, _, token) in tokens(input) {
@@ -36,22 +53,26 @@ pub(crate) fn expand(input: &str) -> Option<Expansion> {
             continue;
         };
         let name = name.strip_prefix("prompt:").unwrap_or(name);
-        let Some((_, source)) = SOURCES.iter().find(|(candidate, _)| *candidate == name) else {
+        let Some(index) = sources.iter().position(|(candidate, _)| *candidate == name) else {
             continue;
         };
+        // Leave cyclic references literal, as with unknown or escaped invocations.
+        if active.contains(&index) {
+            continue;
+        }
+        active.push(index);
+        let body = parse(sources[index].1).1;
+        let expanded = expand_body(&body, sources, active).unwrap_or(body);
+        active.pop();
         resolution.push_str(&input[cursor..start]);
-        resolution.push_str(&parse(source).1);
+        resolution.push_str(&expanded);
         cursor = start + token.len();
     }
     if cursor == 0 {
         return None;
     }
     resolution.push_str(&input[cursor..]);
-    Some(Expansion {
-        display: input.into(),
-        message: resolution.clone(),
-        resolution,
-    })
+    Some(resolution)
 }
 
 fn parse(source: &'static str) -> (Option<String>, String) {
@@ -111,6 +132,10 @@ mod tests {
                     Some("Refine your implementation without changing behavior".into())
                 ),
                 (
+                    "simplify-commit".into(),
+                    Some("Simplify your changes, then commit them".into())
+                ),
+                (
                     "show-me".into(),
                     Some("Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.".into())
                 )
@@ -124,6 +149,14 @@ mod tests {
         let commit = parse(include_str!("../../../prompts/commit.md")).1;
         for (input, expected) in [
             ("$simplify and $commit", format!("{simplify} and {commit}")),
+            (
+                "$simplify-commit",
+                format!("{simplify}\n\nThen:\n\n{commit}"),
+            ),
+            (
+                "Please $prompt:simplify-commit! Then $commit",
+                format!("Please {simplify}\n\nThen:\n\n{commit}! Then {commit}"),
+            ),
             (
                 "please $simplify this $commit with focused tests",
                 format!("please {simplify} this {commit} with focused tests"),
@@ -141,6 +174,29 @@ mod tests {
             assert_eq!(expansion.display, input);
             assert_eq!(expansion.message, expected);
             assert_eq!(expansion.resolution, expected);
+        }
+    }
+
+    #[test]
+    fn nested_expansion_preserves_literals_and_allows_repeated_references() {
+        let sources = [
+            ("outer", r"$prompt:inner! $inner $missing \$inner"),
+            ("inner", "$leaf"),
+            ("leaf", "done"),
+        ];
+        assert_eq!(
+            expand_body("$outer", &sources, &mut Vec::new()).unwrap(),
+            r"done! done $missing \$inner"
+        );
+    }
+
+    #[test]
+    fn cycles_stop_at_the_repeated_reference() {
+        for sources in [vec![("a", "$a")], vec![("a", "$b"), ("b", "$a")]] {
+            assert_eq!(
+                expand_body("$a! $a", &sources, &mut Vec::new()).unwrap(),
+                "$a! $a"
+            );
         }
     }
 
