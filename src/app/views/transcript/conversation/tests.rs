@@ -51,6 +51,37 @@ fn farcaster_invocation_keeps_compact_text_without_backend_metadata() {
 }
 
 #[test]
+fn queued_input_after_an_unechoed_invocation_keeps_its_own_text() {
+    for queued_text in ["review the terminal fix", "expanded commit prompt"] {
+        let mut state = ConversationState::default();
+        state.push_local_invocation(
+            "$simplify and $commit".into(),
+            0,
+            "expanded commit prompt".into(),
+        );
+        for event in [
+            json!({"type":"agent_start"}),
+            json!({"type":"message_start", "message":{"role":"assistant","content":[]}}),
+            json!({"type":"message_end", "message":{"role":"assistant","content":[{"type":"text","text":"Done"}]}}),
+            json!({"type":"message_start", "message":{"role":"user","content":queued_text}}),
+            json!({"type":"message_end", "message":{"role":"user","content":queued_text}}),
+        ] {
+            state.reduce(&event);
+        }
+
+        assert_eq!(state.items.len(), 3);
+        assert_eq!(state.items[0].text, "$simplify and $commit");
+        assert_eq!(
+            state.items[0].invocation.as_deref(),
+            Some("expanded commit prompt")
+        );
+        assert_eq!(state.items[1].text, "Done");
+        assert_eq!(state.items[2].text, queued_text);
+        assert!(state.items[2].invocation.is_none());
+    }
+}
+
+#[test]
 fn saved_presentations_restore_compact_history_in_order() {
     let mut messages = vec![
         json!({"role":"user","content":"same expansion"}),
