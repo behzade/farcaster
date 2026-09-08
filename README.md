@@ -1,3 +1,5 @@
+<img src="assets/brand/farcaster.svg" alt="Farcaster app icon" width="128" height="128">
+
 # Farcaster
 
 Farcaster is a native desktop app for controlling different AI agent harnesses through one UI, with keyboard controls, an embedded terminal and Neovim.
