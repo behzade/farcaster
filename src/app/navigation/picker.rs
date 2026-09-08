@@ -692,30 +692,26 @@ impl FarcasterApp {
             }
         };
         if include_shortcuts {
-            let app_context =
-                gpui::KeyBindingContextPredicate::parse(crate::app::APP_SHORTCUT_CONTEXT)
-                    .expect("app shortcut context");
             let listed = rows
                 .iter()
                 .filter_map(|row| row.shortcut.clone())
                 .collect::<HashSet<_>>();
             let mut actions = HashSet::new();
-            for shortcut in crate::app::ui::keybindings::registry() {
-                let chat_fallback = !cfg!(target_os = "macos") && shortcut.keystroke == "f1";
-                if (!shortcut.show_in_help && !chat_fallback)
-                    || shortcut.binding.predicate().as_deref() != Some(&app_context)
-                    || shortcut.label == "Open action picker"
-                    || (shortcut.section == "Sessions"
-                        && shortcut.keystroke.ends_with(|ch: char| ch.is_ascii_digit()))
-                    || listed.contains(&shortcut.keystroke)
-                    || !actions.insert(shortcut.binding.action().name())
-                {
+            for shortcut in crate::app::ui::keybindings::registry()
+                .into_iter()
+                .filter(|shortcut| shortcut.show_in_picker)
+            {
+                if listed.contains(&shortcut.keystroke) {
+                    continue;
+                }
+                let action = shortcut.binding.action().name();
+                if !actions.insert(action) {
                     continue;
                 }
                 rows.push(picker_row(
                     &mut commands,
                     &format!("shortcut:{}", shortcut.keystroke),
-                    PickerCommand::Action(shortcut.binding.action().name()),
+                    PickerCommand::Action(action),
                     AppIcon::Key,
                     if shortcut.keystroke == application_key("w") {
                         "Close surface or draft; archive session"

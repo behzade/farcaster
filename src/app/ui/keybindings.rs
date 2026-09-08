@@ -33,7 +33,15 @@ pub(crate) struct Shortcut {
     pub label: &'static str,
     pub keystroke: String,
     pub show_in_help: bool,
+    pub show_in_picker: bool,
     pub binding: KeyBinding,
+}
+
+impl Shortcut {
+    fn in_picker(mut self, show: bool) -> Self {
+        self.show_in_picker = show;
+        self
+    }
 }
 
 macro_rules! platform {
@@ -53,6 +61,7 @@ macro_rules! shortcut {
             label: $label,
             keystroke: key.clone(),
             show_in_help: $show,
+            show_in_picker: false,
             binding: KeyBinding::new(&key, $action, $context),
         }
     }};
@@ -88,6 +97,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
                 Some(APP_SHORTCUT_CONTEXT),
                 $show
             )
+            .in_picker($show)
         };
     }
     let mut shortcuts = vec![
@@ -97,16 +107,17 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Open first unsubmitted draft",
             "0",
             SwitchSession0
-        ),
-        application_shortcut!("Sessions", "Open session 1", "1", SwitchSession1),
-        application_shortcut!("Sessions", "Open session 2", "2", SwitchSession2),
-        application_shortcut!("Sessions", "Open session 3", "3", SwitchSession3),
-        application_shortcut!("Sessions", "Open session 4", "4", SwitchSession4),
-        application_shortcut!("Sessions", "Open session 5", "5", SwitchSession5),
-        application_shortcut!("Sessions", "Open session 6", "6", SwitchSession6),
-        application_shortcut!("Sessions", "Open session 7", "7", SwitchSession7),
-        application_shortcut!("Sessions", "Open session 8", "8", SwitchSession8),
-        application_shortcut!("Sessions", "Open session 9", "9", SwitchSession9),
+        )
+        .in_picker(false),
+        application_shortcut!("Sessions", "Open session 1", "1", SwitchSession1).in_picker(false),
+        application_shortcut!("Sessions", "Open session 2", "2", SwitchSession2).in_picker(false),
+        application_shortcut!("Sessions", "Open session 3", "3", SwitchSession3).in_picker(false),
+        application_shortcut!("Sessions", "Open session 4", "4", SwitchSession4).in_picker(false),
+        application_shortcut!("Sessions", "Open session 5", "5", SwitchSession5).in_picker(false),
+        application_shortcut!("Sessions", "Open session 6", "6", SwitchSession6).in_picker(false),
+        application_shortcut!("Sessions", "Open session 7", "7", SwitchSession7).in_picker(false),
+        application_shortcut!("Sessions", "Open session 8", "8", SwitchSession8).in_picker(false),
+        application_shortcut!("Sessions", "Open session 9", "9", SwitchSession9).in_picker(false),
         application_shortcut!("Sessions", "Add project", "shift-n", AddProject),
         application_shortcut!(
             "Configuration",
@@ -139,6 +150,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Previous prompt from first line (no suggestions)",
             keystroke: "up".into(),
             show_in_help: true,
+            show_in_picker: false,
             binding: KeyBinding::new(
                 "up",
                 ComposerHistoryPrevious,
@@ -150,6 +162,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Next prompt from last line while browsing history",
             keystroke: "down".into(),
             show_in_help: true,
+            show_in_picker: false,
             binding: KeyBinding::new(
                 "down",
                 ComposerHistoryNext,
@@ -177,7 +190,8 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "cmd-g",
             FocusComposer,
             Some(APP_SHORTCUT_CONTEXT)
-        ),
+        )
+        .in_picker(true),
         shortcut!(
             "Workspace",
             "Chat and composer",
@@ -185,7 +199,8 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             FocusComposer,
             Some(APP_SHORTCUT_CONTEXT),
             false
-        ),
+        )
+        .in_picker(!cfg!(target_os = "macos")),
         application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
         shortcut!(
             "Workspace",
@@ -210,19 +225,22 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "ctrl-tab",
             CycleWorkspaceForward,
             Some(APP_SHORTCUT_CONTEXT)
-        ),
+        )
+        .in_picker(true),
         shortcut!(
             "Workspace",
             "Previous workspace surface",
             "ctrl-shift-tab",
             CycleWorkspaceBackward,
             Some(APP_SHORTCUT_CONTEXT)
-        ),
+        )
+        .in_picker(true),
         Shortcut {
             section: "Transcript",
             label: "Copy transcript selection",
             keystroke: platform!("c").into(),
             show_in_help: false,
+            show_in_picker: false,
             binding: KeyBinding::new(
                 platform!("c"),
                 CopySelection,
@@ -234,6 +252,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Copy selection",
             keystroke: platform!("c").into(),
             show_in_help: false,
+            show_in_picker: false,
             binding: KeyBinding::new(
                 platform!("c"),
                 CopySelection,
@@ -317,13 +336,15 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "shift-i",
             ShowWorkGraph
         ),
-        application_shortcut!("Application", "Open action picker", "k", ShowActionPicker),
+        application_shortcut!("Application", "Open action picker", "k", ShowActionPicker)
+            .in_picker(false),
         application_shortcut!(
             "Application",
             "Open action picker",
             "shift-p",
             ShowActionPicker
-        ),
+        )
+        .in_picker(false),
         shortcut!(
             "Application",
             "Open action picker",
@@ -352,6 +373,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Previous picker item",
             keystroke: "ctrl-p".into(),
             show_in_help: false,
+            show_in_picker: false,
             binding: KeyBinding::new("ctrl-p", SelectUp, Some("PiPicker > Input")),
         },
         Shortcut {
@@ -359,6 +381,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Next picker item",
             keystroke: "ctrl-n".into(),
             show_in_help: false,
+            show_in_picker: false,
             binding: KeyBinding::new("ctrl-n", SelectDown, Some("PiPicker > Input")),
         },
         shortcut!(
@@ -389,6 +412,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Back in action picker when search is empty",
             keystroke: "backspace".into(),
             show_in_help: false,
+            show_in_picker: false,
             binding: KeyBinding::new("backspace", PickerBack, Some("PiPicker > Input")),
         },
         Shortcut {
@@ -396,6 +420,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             label: "Close action picker",
             keystroke: "escape".into(),
             show_in_help: false,
+            show_in_picker: false,
             binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
         },
         application_shortcut!("Application", "Quit", "q", QuitApplication),
