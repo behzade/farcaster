@@ -1,4 +1,6 @@
-use gpui::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, Window, actions};
+use gpui::{
+    App, AppContext as _, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, Window, actions,
+};
 use gpui_component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 
 use crate::app::{

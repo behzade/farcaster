@@ -4,10 +4,6 @@ impl crate::access::NetworkSettingsStore for StateStore {
     fn load_proxy(&self) -> Result<Option<String>, String> {
         self.load_network_proxy()
     }
-
-    fn save_proxy(&self, proxy: Option<&str>) -> Result<(), String> {
-        self.save_network_proxy(proxy)
-    }
 }
 
 impl crate::agents::PromptStore for StateStore {

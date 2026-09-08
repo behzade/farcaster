@@ -108,7 +108,7 @@ impl FarcasterApp {
                 return;
             };
             zlog::warn!("Neovim session-view request failed for {target}: {error}");
-            let _ = weak.update_in(cx, |this, window, cx| {
+            let _ = weak.update_in(cx, |this, _window, cx| {
                 if this.editor.as_ref() != Some(&editor)
                     || !editor_completion_is_current(
                         generation,

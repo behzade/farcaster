@@ -186,7 +186,7 @@ pub(crate) fn run(
                 )
             });
             drop(placement_timing);
-            let mut window_options = WindowOptions {
+            let window_options = WindowOptions {
                 window_bounds: Some(window_bounds),
                 display_id,
                 titlebar: Some(TitlebarOptions {
@@ -197,14 +197,16 @@ pub(crate) fn run(
                 ..WindowOptions::default()
             };
             #[cfg(target_os = "linux")]
-            {
+            let window_options = {
+                let mut window_options = window_options;
                 window_options.icon = image::load_from_memory(include_bytes!(
                     "../../../assets/icons/app/icon_256x256.png"
                 ))
                 .ok()
                 .map(image::DynamicImage::into_rgba8)
                 .map(Arc::new);
-            }
+                window_options
+            };
             let open_window_timing =
                 crate::app::infrastructure::performance::StartupTiming::new("launch.open_window");
             let result = cx.open_window(window_options, move |window, cx| {
