@@ -18,12 +18,5 @@ pub(super) fn board_layout(viewport_width: f32) -> BoardLayoutMode {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn split_view_requires_room_for_both_panes() {
-        assert_eq!(board_layout(791.0), BoardLayoutMode::Narrow);
-        assert_eq!(board_layout(792.0), BoardLayoutMode::Wide);
-    }
-}
+#[path = "layout_tests.rs"]
+mod tests;
