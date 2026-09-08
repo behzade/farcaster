@@ -188,6 +188,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(APP_SHORTCUT_CONTEXT),
             false
         ),
+        application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
         shortcut!(
             "Workspace",
             "Open Neovim",
@@ -196,7 +197,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(APP_SHORTCUT_CONTEXT),
             false
         ),
-        application_shortcut!("Workspace", "Open terminal", "j", ShowTerminal),
+        application_shortcut!("Workspace", "Open terminal", "t", ShowTerminal),
         shortcut!(
             "Workspace",
             "Open terminal",
@@ -711,7 +712,7 @@ mod tests {
         );
         let app_contexts = [gpui::KeyContext::parse(APP_INPUT_CONTEXT).unwrap()];
         let native_contexts = [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).unwrap()];
-        for key in ["cmd-n", "cmd-2", "cmd-j", "cmd-k", "cmd-g"] {
+        for key in ["cmd-n", "cmd-2", "cmd-e", "cmd-t", "cmd-k", "cmd-g"] {
             if key == "cmd-g" && !cfg!(target_os = "macos") {
                 continue;
             }

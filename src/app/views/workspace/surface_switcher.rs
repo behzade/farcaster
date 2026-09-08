@@ -95,6 +95,14 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         harness_icon: AppIcon,
     ) -> impl IntoElement {
+        let (modifier, chat_hint) = if cfg!(target_os = "macos") {
+            (
+                "Cmd",
+                "Chat composer (Cmd+G in app views; Ctrl+G Ctrl+G anywhere)",
+            )
+        } else {
+            ("Ctrl", "Chat composer (Ctrl+G Ctrl+G anywhere)")
+        };
         div()
             .h_full()
             .flex()
@@ -102,7 +110,7 @@ impl FarcasterApp {
             .gap(gpui::px(2.0))
             .child(surface_control(
                 "show-chat-surface",
-                "Chat composer (Cmd+G on macOS; Ctrl+G Ctrl+G)".to_owned(),
+                chat_hint,
                 harness_icon,
                 self.surface == AppSurface::Chat,
                 entity.clone(),
@@ -111,7 +119,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-editor-surface",
                 format!(
-                    "Neovim ({})",
+                    "Neovim ({modifier}+E in app views; {} anywhere)",
                     crate::app::ui::navigation::command_key(
                         crate::app::ui::navigation::Command::Editor
                     )
@@ -124,7 +132,7 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-terminal-surface",
                 format!(
-                    "Terminal ({})",
+                    "Terminal ({modifier}+T in app views; {} anywhere)",
                     crate::app::ui::navigation::command_key(
                         crate::app::ui::navigation::Command::Terminal
                     )
