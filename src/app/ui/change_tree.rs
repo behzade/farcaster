@@ -63,6 +63,7 @@ pub(crate) enum TreeRow {
         path: PathBuf,
         label: String,
         count: usize,
+        counts: Option<(usize, usize)>,
         depth: usize,
         open: bool,
     },
@@ -72,15 +73,26 @@ pub(crate) enum TreeRow {
     },
 }
 
-#[derive(Default)]
 struct Node {
     folders: BTreeMap<String, Node>,
     files: Vec<(String, usize)>,
     count: usize,
+    counts: Option<(usize, usize)>,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self {
+            folders: BTreeMap::new(),
+            files: Vec::new(),
+            count: 0,
+            counts: Some((0, 0)),
+        }
+    }
 }
 
 pub(crate) fn rows<'a>(
-    files: impl Iterator<Item = (usize, &'a Path, Option<&'a Path>)>,
+    files: impl Iterator<Item = (usize, &'a Path, Option<&'a Path>, Option<(usize, usize)>)>,
     query: &str,
     project: &Path,
     state: &ChangeTreeState,
@@ -88,7 +100,7 @@ pub(crate) fn rows<'a>(
     let query = query.trim().to_lowercase();
     let mut root = Node::default();
     let mut seen = BTreeSet::new();
-    for (index, path, original) in files {
+    for (index, path, original, counts) in files {
         if !query.is_empty()
             && !path.to_string_lossy().to_lowercase().contains(&query)
             && !original.is_some_and(|path| path.to_string_lossy().to_lowercase().contains(&query))
@@ -98,6 +110,7 @@ pub(crate) fn rows<'a>(
         let increment = usize::from(seen.insert(path));
         let mut node = &mut root;
         node.count += increment;
+        node.counts = sum_counts(node.counts, counts);
         if let Some(parent) = path.parent() {
             for part in parent.components() {
                 node = node
@@ -105,6 +118,7 @@ pub(crate) fn rows<'a>(
                     .entry(part.as_os_str().to_string_lossy().into_owned())
                     .or_default();
                 node.count += increment;
+                node.counts = sum_counts(node.counts, counts);
             }
         }
         node.files.push((
@@ -153,6 +167,7 @@ fn flatten(
             path: path.clone(),
             label,
             count: child.count,
+            counts: child.counts,
             depth,
             open,
         });
@@ -166,6 +181,11 @@ fn flatten(
             .into_iter()
             .map(|(_, index)| TreeRow::File { index, depth }),
     );
+}
+
+fn sum_counts(a: Option<(usize, usize)>, b: Option<(usize, usize)>) -> Option<(usize, usize)> {
+    a.zip(b)
+        .map(|(a, b)| (a.0.saturating_add(b.0), a.1.saturating_add(b.1)))
 }
 
 #[cfg(test)]
@@ -185,7 +205,10 @@ mod tests {
         let mut state = ChangeTreeState::default();
         let render = |state: &ChangeTreeState| {
             rows(
-                paths.iter().enumerate().map(|(i, path)| (i, *path, None)),
+                paths
+                    .iter()
+                    .enumerate()
+                    .map(|(i, path)| (i, *path, None, Some((1, 2)))),
                 "",
                 project,
                 state,
@@ -196,6 +219,7 @@ mod tests {
             path: "/outside".into(),
             label: "/outside".into(),
             count: 1,
+            counts: Some((1, 2)),
             depth: 0,
             open: true,
         }));
@@ -203,6 +227,7 @@ mod tests {
             path: "src/modules".into(),
             label: "src/modules".into(),
             count: 3,
+            counts: Some((3, 6)),
             depth: 0,
             open: true,
         }));
@@ -255,7 +280,10 @@ mod tests {
         ];
         let render = |query| {
             rows(
-                paths.iter().enumerate().map(|(i, path)| (i, *path, None)),
+                paths
+                    .iter()
+                    .enumerate()
+                    .map(|(i, path)| (i, *path, None, Some((1, 2)))),
                 query,
                 project,
                 &state,
@@ -269,6 +297,7 @@ mod tests {
                     path: "src/app".into(),
                     label: "src/app".into(),
                     count: 1,
+                    counts: Some((1, 2)),
                     depth: 0,
                     open: true
                 },
@@ -293,7 +322,7 @@ mod tests {
                 paths
                     .iter()
                     .enumerate()
-                    .map(|(i, path)| (i, path.as_path(), None)),
+                    .map(|(i, path)| (i, path.as_path(), None, Some((1, 2)))),
                 "",
                 project,
                 state,
@@ -305,6 +334,7 @@ mod tests {
                 path: "src/app".into(),
                 label: "src/app".into(),
                 count: 50,
+                counts: Some((51, 102)),
                 depth: 0,
                 open: false,
             }]
@@ -328,11 +358,40 @@ mod tests {
     fn renamed_files_can_be_found_by_their_original_path() {
         let state = ChangeTreeState::default();
         let result = rows(
-            std::iter::once((0, Path::new("new/file.rs"), Some(Path::new("old/name.rs")))),
+            std::iter::once((
+                0,
+                Path::new("new/file.rs"),
+                Some(Path::new("old/name.rs")),
+                None,
+            )),
             "old/name",
             Path::new("/project"),
             &state,
         );
         assert!(result.contains(&TreeRow::File { index: 0, depth: 1 }));
+    }
+
+    #[test]
+    fn collapsed_parent_includes_nested_files_and_preserves_unknown_counts() {
+        let project = Path::new("/repo");
+        let mut state = ChangeTreeState::default();
+        state.set_all(project, false);
+        let render = |unknown| {
+            rows(
+                [
+                    (0, Path::new("src/main.rs"), None, Some((2, 3))),
+                    (1, Path::new("src/nested/lib.rs"), None, unknown),
+                ]
+                .into_iter(),
+                "",
+                project,
+                &state,
+            )
+        };
+        for (input, expected) in [(Some((4, 5)), Some((6, 8))), (None, None)] {
+            assert!(matches!(render(input).as_slice(), [TreeRow::Folder {
+                count: 2, counts, open: false, ..
+            }] if *counts == expected));
+        }
     }
 }

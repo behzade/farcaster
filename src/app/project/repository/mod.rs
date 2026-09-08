@@ -389,9 +389,9 @@ impl FarcasterApp {
         let task = cx.background_spawn(async move {
             RepositoryBackend::discover(&project, preference).map(|backend| {
                 backend.map(|backend| {
-                    let snapshot = backend.snapshot().map(|snapshot| {
+                    let snapshot = backend.snapshot().map(|mut snapshot| {
                         let (additions, deletions) = backend
-                            .working_copy_totals(&snapshot)
+                            .working_copy_totals(&mut snapshot)
                             .unwrap_or((None, None));
                         (snapshot, additions, deletions)
                     });
@@ -556,6 +556,7 @@ fn displayed_snapshot_eq(left: &WorkingCopySnapshot, right: &WorkingCopySnapshot
                     && left.original_relative_path == right.original_relative_path
                     && left.layer == right.layer
                     && left.kind == right.kind
+                    && left.counts == right.counts
                     && left.target.exists == right.target.exists
             })
 }

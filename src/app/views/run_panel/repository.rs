@@ -166,6 +166,7 @@ impl FarcasterApp {
                     index,
                     change.relative_path.as_path(),
                     change.original_relative_path.as_deref(),
+                    change.counts,
                 )
             }),
             browser.query,
@@ -184,7 +185,8 @@ impl FarcasterApp {
                     TreeRow::Folder {
                         path,
                         label,
-                        count: _,
+                        count,
+                        counts,
                         depth,
                         open,
                     } => {
@@ -256,6 +258,11 @@ impl FarcasterApp {
                                         .text_ellipsis()
                                         .child(label.clone()),
                                 )
+                                .when(!*open, |row| {
+                                    row.child(crate::app::ui::primitives::folder_change_summary(
+                                        *count, *counts,
+                                    ))
+                                })
                                 .into_any_element(),
                         )
                     }

@@ -305,13 +305,24 @@ fn git_snapshot_and_lazy_diff_use_separate_layers() {
         RepositoryBackend::discover_with_options(&repository, BackendPreference::Git, options)
             .expect("discover Git")
             .expect("Git repository");
-    let snapshot = backend.snapshot().expect("capture Git snapshot");
+    let mut snapshot = backend.snapshot().expect("capture Git snapshot");
     assert_eq!(
         backend
-            .working_copy_totals(&snapshot)
+            .working_copy_totals(&mut snapshot)
             .expect("count Git working copy diff"),
         (Some(2), Some(1))
     );
+    for (layer, counts) in [
+        (ChangeLayer::GitIndex, (1, 1)),
+        (ChangeLayer::GitWorkingTree, (1, 0)),
+    ] {
+        let change = snapshot
+            .changes
+            .iter()
+            .find(|change| change.layer == layer)
+            .unwrap();
+        assert_eq!(change.counts, Some(counts));
+    }
     assert_eq!(
         backend.list_project_files().expect("list Git files"),
         ["file.txt"]
@@ -451,10 +462,10 @@ fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
         RepositoryBackend::discover_with_options(&repository, BackendPreference::Jujutsu, options)
             .expect("discover JJ")
             .expect("JJ repository");
-    let snapshot = backend.snapshot().expect("capture JJ snapshot");
+    let mut snapshot = backend.snapshot().expect("capture JJ snapshot");
     assert_eq!(
         backend
-            .working_copy_totals(&snapshot)
+            .working_copy_totals(&mut snapshot)
             .expect("count JJ working copy diff"),
         (Some(1), Some(0))
     );

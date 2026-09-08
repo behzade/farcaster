@@ -14,6 +14,29 @@ pub(crate) fn panel() -> Div {
         .bg(THEME.colors.panel)
 }
 
+pub(crate) fn folder_change_summary(count: usize, counts: Option<(usize, usize)>) -> Div {
+    div()
+        .flex_none()
+        .whitespace_nowrap()
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .child(div().text_color(THEME.colors.muted).child(format!(
+            "{count} {}",
+            if count == 1 { "file" } else { "files" }
+        )))
+        .child(
+            div()
+                .text_color(THEME.colors.success)
+                .child(counts.map_or_else(|| "+—".to_owned(), |(added, _)| format!("+{added}"))),
+        )
+        .child(
+            div().text_color(THEME.colors.error).child(
+                counts.map_or_else(|| "−—".to_owned(), |(_, removed)| format!("−{removed}")),
+            ),
+        )
+}
+
 pub(crate) fn section_heading(title: impl Into<SharedString>) -> impl gpui::IntoElement {
     let title = title.into();
     div()

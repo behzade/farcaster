@@ -1,3 +1,4 @@
+mod file_counts;
 pub(super) mod port;
 mod preferences;
 mod sync;
@@ -63,7 +64,7 @@ impl RepositoryBackend {
 
     pub(crate) fn working_copy_totals(
         &self,
-        snapshot: &WorkingCopySnapshot,
+        snapshot: &mut WorkingCopySnapshot,
     ) -> Result<(Option<u64>, Option<u64>), RepositoryError> {
         if snapshot.location != self.location {
             return Err(RepositoryError::TargetMismatch(
@@ -71,6 +72,7 @@ impl RepositoryBackend {
             ));
         }
         let _operation = repository_operation()?;
+        let mut file_counts = std::collections::BTreeMap::new();
         let output = match &snapshot.identity {
             SnapshotIdentity::Git(_) => {
                 let mut patch = Vec::new();
@@ -86,6 +88,8 @@ impl RepositoryBackend {
                         "--no-ext-diff",
                         "--no-textconv",
                         "--find-renames",
+                        "--src-prefix=a/",
+                        "--dst-prefix=b/",
                     ]
                     .map(OsString::from)
                     .to_vec();
@@ -96,6 +100,16 @@ impl RepositoryBackend {
                     arguments.push(self.project_pathspec().into_os_string());
                     let output = self.run_success(&arguments)?;
                     require_complete_stdout(self.executable(), &output)?;
+                    let layer = if staged {
+                        ChangeLayer::GitIndex
+                    } else {
+                        ChangeLayer::GitWorkingTree
+                    };
+                    file_counts.extend(
+                        file_counts::parse(&String::from_utf8_lossy(&output.stdout))
+                            .into_iter()
+                            .map(|(path, counts)| ((layer, path), counts)),
+                    );
                     patch.extend(output.stdout);
                 }
                 for change in snapshot
@@ -104,6 +118,12 @@ impl RepositoryBackend {
                     .filter(|change| change.layer == ChangeLayer::GitUntracked)
                 {
                     let diff = self.operations.load_diff(self, change.target.clone())?;
+                    file_counts.insert(
+                        (change.layer, change.relative_path.clone()),
+                        diff.additions
+                            .zip(diff.deletions)
+                            .map(|(a, d)| (a as usize, d as usize)),
+                    );
                     patch.extend(diff.patch.into_bytes());
                 }
                 patch
@@ -123,10 +143,22 @@ impl RepositoryBackend {
                 ];
                 let output = self.run_success(&arguments)?;
                 require_complete_stdout(self.executable(), &output)?;
+                file_counts.extend(
+                    file_counts::parse(&String::from_utf8_lossy(&output.stdout))
+                        .into_iter()
+                        .map(|(path, counts)| ((ChangeLayer::JujutsuWorkingCopy, path), counts)),
+                );
                 output.stdout
             }
         };
-        Ok(patch_counts(&String::from_utf8_lossy(&output)))
+        let patch = String::from_utf8_lossy(&output);
+        for change in &mut snapshot.changes {
+            change.counts = file_counts
+                .get(&(change.layer, change.relative_path.clone()))
+                .copied()
+                .flatten();
+        }
+        Ok(patch_counts(&patch))
     }
 
     #[cfg(test)]
@@ -406,6 +438,7 @@ pub(super) fn change(
         token,
     };
     Ok(WorkingCopyChange {
+        counts: None,
         relative_path,
         original_relative_path,
         layer,

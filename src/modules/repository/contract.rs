@@ -158,6 +158,7 @@ impl DiffTarget {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkingCopyChange {
+    pub(crate) counts: Option<(usize, usize)>,
     pub(crate) relative_path: PathBuf,
     pub(crate) original_relative_path: Option<PathBuf>,
     pub(crate) layer: ChangeLayer,

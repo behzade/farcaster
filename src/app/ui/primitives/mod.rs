@@ -14,7 +14,7 @@ pub(crate) use button::{
     ButtonTone, activates_button, button, dropdown_button, dropdown_content_button, icon_button,
     preserve_pointer_focus, prominent_icon_button,
 };
-pub(crate) use content::{panel, section_heading};
+pub(crate) use content::{folder_change_summary, panel, section_heading};
 pub(crate) use context_menu::ContextMenuTrigger;
 pub(crate) use dialog::modal;
 pub(crate) use disclosure::{disclosure_button, disclosure_detail, disclosure_title_row};

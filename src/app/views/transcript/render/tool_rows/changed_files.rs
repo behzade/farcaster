@@ -142,7 +142,7 @@ pub(super) fn render(
         files
             .iter()
             .enumerate()
-            .map(|(index, file)| (index, Path::new(&file.label), None)),
+            .map(|(index, file)| (index, Path::new(&file.label), None, file.counts)),
         "",
         &project,
         state.unwrap_or(&default_state),
@@ -160,7 +160,8 @@ pub(super) fn render(
                     label,
                     depth,
                     open,
-                    ..
+                    count,
+                    counts,
                 } => {
                     let entity = entity.clone();
                     let project = project.clone();
@@ -191,6 +192,11 @@ pub(super) fn render(
                         AppIconSize::Inline,
                     ))
                     .child(div().min_w_0().text_ellipsis().child(label))
+                    .when(!open, |row| {
+                        row.child(crate::app::ui::primitives::folder_change_summary(
+                            count, counts,
+                        ))
+                    })
                     .into_any_element()
                 }
                 TreeRow::File { index, depth } => div()
