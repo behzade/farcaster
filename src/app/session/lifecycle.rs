@@ -21,6 +21,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.native_workspace_covered_by_overlay() {
+            self.dismiss_surface(window, cx);
+            return;
+        }
+        if self.surface == AppSurface::Work {
+            self.show_chat_surface(window, cx);
+            return;
+        }
         if self.surface == AppSurface::Editor {
             self.close_editor(cx);
             return;

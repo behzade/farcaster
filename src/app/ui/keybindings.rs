@@ -130,15 +130,15 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         ),
         application_shortcut!(
             "Sessions",
-            "Close surface or draft; archive session",
+            "Dismiss dialog; close surface or draft; archive session",
             "w",
             CloseCurrent
         ),
         Shortcut {
             section: "Composer",
-            label: "Previous prompt",
+            label: "Previous prompt from first line (no suggestions)",
             keystroke: "up".into(),
-            show_in_help: false,
+            show_in_help: true,
             binding: KeyBinding::new(
                 "up",
                 ComposerHistoryPrevious,
@@ -147,9 +147,9 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         },
         Shortcut {
             section: "Composer",
-            label: "Next prompt",
+            label: "Next prompt from last line while browsing history",
             keystroke: "down".into(),
-            show_in_help: false,
+            show_in_help: true,
             binding: KeyBinding::new(
                 "down",
                 ComposerHistoryNext,
@@ -161,16 +161,14 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Previous completion",
             "ctrl-p",
             ComposerCompletionPrevious,
-            Some(COMPOSER_COMPLETION_CONTEXT),
-            false
+            Some(COMPOSER_COMPLETION_CONTEXT)
         ),
         shortcut!(
             "Composer",
             "Next completion",
             "ctrl-n",
             ComposerCompletionNext,
-            Some(COMPOSER_COMPLETION_CONTEXT),
-            false
+            Some(COMPOSER_COMPLETION_CONTEXT)
         ),
         #[cfg(target_os = "macos")]
         shortcut!(
@@ -244,7 +242,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         },
         shortcut!(
             "Composer",
-            "Queue follow-up",
+            "Send prompt; queue follow-up during a run (no suggestions)",
             "tab",
             SubmitFollowUp,
             Some("(FarcasterComposer && !Completions) > Input")
@@ -254,20 +252,18 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Next completion",
             "tab",
             ComposerCompletionNext,
-            Some(COMPOSER_COMPLETION_CONTEXT),
-            false
+            Some(COMPOSER_COMPLETION_CONTEXT)
         ),
         shortcut!(
             "Composer",
             "Previous completion",
             "shift-tab",
             ComposerCompletionPrevious,
-            Some(COMPOSER_COMPLETION_CONTEXT),
-            false
+            Some(COMPOSER_COMPLETION_CONTEXT)
         ),
         application_shortcut!("Run", "Abort current run", ".", AbortRun),
         shortcut!(
-            "Run",
+            "Composer",
             "Apply queued steer; double-Esc aborts",
             "escape",
             ComposerEscape,

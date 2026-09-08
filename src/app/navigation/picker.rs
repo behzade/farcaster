@@ -82,6 +82,7 @@ impl PickerScope {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PickerCommand {
+    Action(&'static str),
     OpenProjects(ProjectPickerIntent),
     OpenSessions,
     AddProject(Option<ProjectPickerIntent>),
@@ -386,6 +387,15 @@ impl FarcasterApp {
             return;
         };
         match command {
+            PickerCommand::Action(name) => {
+                if let Some(shortcut) = crate::app::ui::keybindings::registry()
+                    .into_iter()
+                    .find(|shortcut| shortcut.binding.action().name() == name)
+                {
+                    self.close_picker(window, cx);
+                    window.dispatch_action(shortcut.binding.action().boxed_clone(), cx);
+                }
+            }
             PickerCommand::OpenScope(PickerScope::Sandbox) => {
                 window.dispatch_action(Box::new(crate::app::SetSandbox), cx);
             }
@@ -462,7 +472,8 @@ impl FarcasterApp {
 
     fn picker_rows(&self, scope: PickerScope) -> (Vec<PickerRow>, HashMap<String, PickerCommand>) {
         let mut commands = HashMap::new();
-        let rows = match scope {
+        let include_shortcuts = scope == PickerScope::Actions;
+        let mut rows = match scope {
             PickerScope::Actions => vec![
                 picker_row(
                     &mut commands,
@@ -501,7 +512,7 @@ impl FarcasterApp {
                     AppIcon::Plus,
                     "New session…",
                     None,
-                    None,
+                    Some(application_key("n")),
                     "project thread",
                 ),
                 picker_row(
@@ -531,7 +542,7 @@ impl FarcasterApp {
                     AppIcon::List,
                     "Project work",
                     None,
-                    None,
+                    Some(application_key("shift-i")),
                     "issues tasks",
                 ),
                 picker_row(
@@ -680,6 +691,43 @@ impl FarcasterApp {
                     .collect()
             }
         };
+        if include_shortcuts {
+            let app_context =
+                gpui::KeyBindingContextPredicate::parse(crate::app::APP_SHORTCUT_CONTEXT)
+                    .expect("app shortcut context");
+            let listed = rows
+                .iter()
+                .filter_map(|row| row.shortcut.clone())
+                .collect::<HashSet<_>>();
+            let mut actions = HashSet::new();
+            for shortcut in crate::app::ui::keybindings::registry() {
+                let chat_fallback = !cfg!(target_os = "macos") && shortcut.keystroke == "f1";
+                if (!shortcut.show_in_help && !chat_fallback)
+                    || shortcut.binding.predicate().as_deref() != Some(&app_context)
+                    || shortcut.label == "Open action picker"
+                    || (shortcut.section == "Sessions"
+                        && shortcut.keystroke.ends_with(|ch: char| ch.is_ascii_digit()))
+                    || listed.contains(&shortcut.keystroke)
+                    || !actions.insert(shortcut.binding.action().name())
+                {
+                    continue;
+                }
+                rows.push(picker_row(
+                    &mut commands,
+                    &format!("shortcut:{}", shortcut.keystroke),
+                    PickerCommand::Action(shortcut.binding.action().name()),
+                    AppIcon::Key,
+                    if shortcut.keystroke == application_key("w") {
+                        "Close surface or draft; archive session"
+                    } else {
+                        shortcut.label
+                    },
+                    Some(shortcut.section.to_owned()),
+                    Some(shortcut.keystroke),
+                    shortcut.section,
+                ));
+            }
+        }
         (rows, commands)
     }
 }

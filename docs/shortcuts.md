@@ -15,7 +15,7 @@ Session and application shortcuts:
 ```text
 mod+n -> new session
 mod+number -> jump to session
-mod+w -> close surface or draft; archive session
+mod+w -> dismiss dialog; close surface or draft; archive session
 mod+shift+n -> add project
 mod+shift+s -> set sandbox
 mod+shift+m -> set provider/model/effort
@@ -58,8 +58,26 @@ The second group also works inside Neovim and the terminal:
 
 For session shortcuts, `1–9` select sessions and `0` opens the first unsubmitted draft.
 
-The action picker also lists these actions. Sandbox choices and provider/model/effort choices happen inside the picker. Restore session lists archived sessions; selecting one restores it. Add project opens a folder chooser.
+Close dismisses an open dialog first, then closes the project work view, editor, or terminal. From chat with no dialog open, it discards the current draft or archives the current session. This applies to both `mod+W` and `Ctrl+G w`.
+
+The action picker lists app commands, including workspace switching, previous/next session, close, abort, keyboard help, and quit. Numbered session jumps stay in the shortcut help; use Find session to choose a session by name. Sandbox choices and provider/model/effort choices happen inside the picker. Restore session lists archived sessions; selecting one restores it. Add project opens a folder chooser.
 
 The runtime picker starts at the current model's effort choices, or at the current model if it has no effort choices. Use the Back button or Alt+Left to go back to models, then providers. Back restores the previous search, selection, and scroll position. Backspace also goes back when the search is empty.
 
 The terminal/Neovim keeps its Ctrl keys. Super is unbound on Linux.
+
+## Composer and local keys
+
+These keys require focus in the composer:
+
+| Key | Behavior |
+| --- | --- |
+| Enter | Accept the selected suggestion; otherwise send a prompt, or steer during a run. Some command suggestions also submit on acceptance. |
+| Shift+Enter | Insert a newline. |
+| Tab | Select the next suggestion when suggestions are visible; otherwise send a prompt, or queue a follow-up during a run. |
+| Shift+Tab | Select the previous suggestion when suggestions are visible; otherwise move focus backward. |
+| Ctrl+N / Ctrl+P | Select the next/previous suggestion when suggestions are visible. |
+| Up / Down | Select the previous/next suggestion; otherwise move through text. Up on the first line browses previous prompts; Down on the last line moves forward while browsing history. |
+| Esc | Apply queued steering during a run, or press twice to abort when no steering is queued. |
+
+In dialogs, Tab and Shift+Tab move focus and Esc dismisses the dialog. In the action picker, Tab/Shift+Tab and Ctrl+N/P select items; Enter chooses one. In project work, navigation keys such as `j`, `k`, and `/` require focus outside the search input; Esc also works within search. The in-app shortcut help groups keys by where they work.
