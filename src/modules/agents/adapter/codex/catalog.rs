@@ -35,8 +35,8 @@ pub(in crate::modules::agents::adapter) fn discover(
     })
 }
 
-pub(super) fn discover_with_client(
-    connection: &mut CatalogConnection,
+pub(super) fn discover_with_client<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
     home: &Path,
     locator_root: &Path,
     query: &str,
@@ -55,22 +55,75 @@ pub(super) fn discover_with_client(
                 .into_iter()
                 .flatten()
             {
-                let mut thread = thread.clone();
-                if let Some(id) = string(&thread, &["id"]) {
-                    if let Some(project) = super::transfer::saved_project(
-                        &super::transfer::project_database(home),
-                        id,
-                    )? {
-                        thread["cwd"] = json!(project);
-                    }
-                }
-                if let Some(summary) = summary(locator_root, &thread, archived)? {
+                if let Some(summary) = discovered_summary(home, locator_root, thread, archived)? {
                     sessions.push(summary);
                 }
             }
         }
     }
+    // General thread/list omits native children with no preview. An ancestor
+    // query includes them, including nested children, without reading their turns.
+    let roots: Vec<_> = sessions.iter().map(|session| session.id.clone()).collect();
+    let mut seen: std::collections::HashSet<_> =
+        sessions.iter().map(|session| session.id.clone()).collect();
+    for root in roots {
+        for archived in [false, true] {
+            let mut cursor = None;
+            loop {
+                let id = connection.send_request(
+                    "thread/list",
+                    descendant_list_params(&root, archived, cursor.as_deref()),
+                )?;
+                let response: Value = connection.wait_response(&id)?;
+                for thread in response
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let Some(id) = string(thread, &["id"]) else {
+                        continue;
+                    };
+                    if !seen.insert(id.to_owned()) {
+                        continue;
+                    }
+                    if let Some(session) = discovered_summary(home, locator_root, thread, archived)?
+                    {
+                        sessions.push(session);
+                    }
+                }
+                let next = string(&response, &["nextCursor"]).map(str::to_owned);
+                if next.is_none() || next == cursor {
+                    break;
+                }
+                cursor = next;
+            }
+        }
+    }
     Ok(sessions)
+}
+
+fn discovered_summary(
+    home: &Path,
+    locator_root: &Path,
+    thread: &Value,
+    archived: bool,
+) -> Result<Option<DiscoveredSession>, String> {
+    let mut thread = thread.clone();
+    if let Some(id) = string(&thread, &["id"])
+        && let Some(project) =
+            super::transfer::saved_project(&super::transfer::project_database(home), id)?
+    {
+        thread["cwd"] = json!(project);
+    }
+    summary(locator_root, &thread, archived)
+}
+
+fn descendant_list_params(root: &str, archived: bool, cursor: Option<&str>) -> Value {
+    let mut params = thread_list_params(archived, "", AGENT_SOURCE_KINDS);
+    params["ancestorThreadId"] = json!(root);
+    params["cursor"] = json!(cursor);
+    params
 }
 
 fn thread_list_params(archived: bool, query: &str, source_kinds: &[&str]) -> Value {
@@ -184,7 +237,7 @@ fn connect(child: &mut Child) -> Result<(CatalogConnection, PathBuf), String> {
         .take()
         .ok_or_else(|| "Codex catalog stdout must be piped".to_owned())?;
     let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
-    let initialized = connection.initialize(CodexClientInfo {
+    let initialized = connection.initialize_experimental(CodexClientInfo {
         name: "farcaster-catalog".into(),
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
@@ -251,6 +304,11 @@ fn summary(
     }
     let title = string(thread, &["name", "title", "preview"])
         .filter(|title| !title.trim().is_empty())
+        .or_else(|| {
+            thread
+                .pointer("/source/subAgent/thread_spawn/agent_path")
+                .and_then(Value::as_str)
+        })
         .unwrap_or("New Codex session")
         .to_owned();
     let first_user_message = string(thread, &["preview"]).unwrap_or_default().to_owned();
@@ -266,8 +324,10 @@ fn summary(
         .or_else(|| {
             crate::modules::agents::core::CallerRegistry::shared().session_parent("codex-cli", id)
         });
-    let is_running = status(thread).is_some_and(|status| {
-        matches!(status, "active" | "running" | "inProgress" | "in_progress")
+    let is_running = super::subagents::is_running(id).unwrap_or_else(|| {
+        status(thread).is_some_and(|status| {
+            matches!(status, "active" | "running" | "inProgress" | "in_progress")
+        })
     });
     let path = external_session_path(locator_root, "codex-cli", id);
     let search = format!("{title} {first_user_message} {cwd} codex");
@@ -379,6 +439,9 @@ fn history_tool_messages(item: &Value, kind: &str) -> Vec<Value> {
 }
 
 fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
+    if kind == "subAgentActivity" {
+        return vec![json!({"type": "text", "text": tool::subagent_summary(item)})];
+    }
     if kind == "mcpToolCall" {
         if is_error {
             return item

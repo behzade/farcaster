@@ -332,7 +332,9 @@ impl RuntimeOwner {
                     self.send(SessionCommand::LoadState);
                     self.refresh_sessions();
                 }
-                if tool_starts_worker(event.kind(), event.value()) {
+                if event.kind() == &SessionActivityKind::ChildSessionsChanged
+                    || tool_starts_worker(event.kind(), event.value())
+                {
                     self.schedule_session_refresh();
                 }
                 if settled {

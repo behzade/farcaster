@@ -57,9 +57,6 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             )?
             .with_slot(launch.slot.clone());
         configure_codex_app_server(&mut prepared, self.command.access_mode);
-        if farcaster_mcp::enabled() {
-            configure_farcaster_mcp(&mut prepared, caller_identity.token());
-        }
         let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -776,6 +773,11 @@ impl WorkerSession for CodexWorkerSession {
                                 return Some(WorkerEvent::Activity(activity));
                             }
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
+                            // Native child activity is an instantaneous event, projected once
+                            // from item/completed along with a catalog refresh.
+                            if item_type == Some("subAgentActivity") {
+                                continue;
+                            }
                             if item_type == Some("reasoning") {
                                 self.reasoning_started = true;
                             }
@@ -808,14 +810,11 @@ impl WorkerSession for CodexWorkerSession {
                             );
                         }
                         "item/completed" => {
-                            if self.output.is_empty()
-                                && let Some(output) = codex_agent_message_text(&params["item"])
-                            {
-                                self.output.push_str(&output);
+                            let item_type = params.pointer("/item/type").and_then(Value::as_str);
+                            if let Some(output) = codex_agent_message_text(&params["item"]) {
+                                self.output = output;
                             }
-                            if params.pointer("/item/type").and_then(Value::as_str)
-                                == Some("contextCompaction")
-                            {
+                            if item_type == Some("contextCompaction") {
                                 self.compacting = false;
                                 return Some(WorkerEvent::Activity(
                                     WorkerActivity::CompactionFinished {
@@ -824,13 +823,19 @@ impl WorkerSession for CodexWorkerSession {
                                     },
                                 ));
                             }
-                            if params.pointer("/item/type").and_then(Value::as_str)
-                                == Some("webSearch")
+                            if matches!(item_type, Some("webSearch" | "subAgentActivity"))
                                 && let Some(started) = codex_tool_start(&params)
                                 && let Some(finished) = codex_tool_end(&params)
                             {
+                                let event = if item_type == Some("subAgentActivity") {
+                                    super::subagents::observe(&self.thread_id, &params["item"]);
+                                    self.events.push_back(WorkerEvent::Activity(started));
+                                    WorkerActivity::ChildSessionsChanged
+                                } else {
+                                    started
+                                };
                                 self.events.push_back(WorkerEvent::Activity(finished));
-                                return Some(WorkerEvent::Activity(started));
+                                return Some(WorkerEvent::Activity(event));
                             }
                             if let Some(finished) = codex_tool_end(&params) {
                                 if let Some(changed) = codex_tool_metadata_changed(&params) {
@@ -1023,6 +1028,7 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn close(&mut self) -> Result<(), String> {
+        super::subagents::forget_parent(&self.thread_id);
         self.writer.take();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
@@ -1511,6 +1517,8 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
             "type": "text",
             "text": format!("Waited {}", tool::wait_duration(item)),
         }])
+    } else if kind == "subAgentActivity" {
+        json!([{"type": "text", "text": tool::subagent_summary(item)}])
     } else if kind == "collabAgentToolCall" {
         json!([{
             "type": "text",

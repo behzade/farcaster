@@ -17,6 +17,18 @@ pub(super) fn project(item: &Value, kind: &str) -> Projection {
     }
 }
 
+pub(super) fn subagent_summary(item: &Value) -> String {
+    let agent = item
+        .get("agentPath")
+        .and_then(Value::as_str)
+        .unwrap_or("agent");
+    let kind = item
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("updated");
+    format!("{agent} {kind}")
+}
+
 pub(super) fn is_tool_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -26,6 +38,7 @@ pub(super) fn is_tool_kind(kind: &str) -> bool {
             | "webSearch"
             | "dynamicToolCall"
             | "collabAgentToolCall"
+            | "subAgentActivity"
             | "imageView"
             | "imageGeneration"
             | "sleep"
@@ -91,6 +104,14 @@ pub(super) fn call(item: &Value, kind: &str) -> (String, Value) {
             "image_generation".into(),
             item.get("arguments").cloned().unwrap_or_else(|| json!({})),
         ),
+        "subAgentActivity" => (
+            "agent_activity".into(),
+            json!({
+                "agentThreadId": item.get("agentThreadId"),
+                "agentPath": item.get("agentPath"),
+                "kind": item.get("kind"),
+            }),
+        ),
         "collabAgentToolCall" => {
             let args = [
                 "prompt",
@@ -128,7 +149,7 @@ pub(super) fn metadata(item: &Value, kind: &str) -> ToolMetadata {
         "commandExecution" | "command" => command_actions_category(item),
         "fileChange" => ToolCategory::Change,
         "webSearch" => ToolCategory::Fetch,
-        "collabAgentToolCall" => ToolCategory::Delegate,
+        "collabAgentToolCall" | "subAgentActivity" => ToolCategory::Delegate,
         "imageView" => ToolCategory::Read,
         "imageGeneration" => ToolCategory::Change,
         "mcpToolCall" | "dynamicToolCall" => ToolCategory::Other,
@@ -201,6 +222,7 @@ fn generated_title(
         "fileChange" => "Change",
         "webSearch" => "Search web",
         "collabAgentToolCall" => "Delegate",
+        "subAgentActivity" => return Some(subagent_summary(item)),
         "imageView" => "View image",
         "imageGeneration" => "Generate image",
         "sleep" => return Some(format!("Waiting {}", wait_duration(item))),

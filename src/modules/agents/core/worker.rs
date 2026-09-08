@@ -176,6 +176,7 @@ pub(crate) enum WorkerActivity {
         limits: Value,
     },
     SessionGoalChanged(Option<SessionGoal>),
+    ChildSessionsChanged,
     CompactionStarted,
     CompactionFinished {
         aborted: bool,

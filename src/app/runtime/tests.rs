@@ -1455,6 +1455,17 @@ fn worker_start_tools_request_catalog_refresh() {
 }
 
 #[test]
+fn child_session_changes_schedule_catalog_refresh_without_ending_parent_turn() {
+    let (mut owner, _events, _discovery) = owner_without_process(PathBuf::from("/project"));
+    Arc::make_mut(&mut owner.snapshot.conversation).running = true;
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type": "child_sessions_changed"}).into(),
+    ));
+    assert!(owner.session_refresh_due.is_some());
+    assert!(owner.snapshot.conversation.running);
+}
+
+#[test]
 fn in_flight_catalog_refreshes_coalesce_into_one_delayed_scan() {
     let (mut owner, _events, _discovery) = owner_without_process(std::env::temp_dir());
     owner.session_discovery_in_flight = true;

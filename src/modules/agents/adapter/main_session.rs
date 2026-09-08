@@ -306,6 +306,7 @@ impl WorkerSessionTransport {
                     "toolMetadata": metadata,
                 })
             }
+            WorkerActivity::ChildSessionsChanged => json!({"type": "child_sessions_changed"}),
             WorkerActivity::ToolMetadataChanged { id, args, metadata } => {
                 let mut event = json!({
                     "type": "tool_metadata_changed",

@@ -1,7 +1,52 @@
 use super::*;
 
 #[test]
-fn answer_before_reasoning_uses_a_separate_content_slot() {
+fn native_child_events_refresh_catalog_and_emit_one_finished_activity() {
+    let mut session = test_session();
+    session.thread_id = "native-parent".into();
+    for kind in ["started", "interacted", "interrupted", "completed"] {
+        let item = json!({"type": "subAgentActivity", "id": kind,
+            "kind": kind, "agentThreadId": "native-event-child", "agentPath": "/root/reviewer"});
+        // A notification for another parent must not affect this session.
+        for (method, thread) in [
+            ("item/completed", "unrelated"),
+            ("item/started", "native-parent"),
+            ("item/completed", "native-parent"),
+        ] {
+            session
+                .queued_inbound
+                .push_back(Ok(CodexInbound::Notification {
+                    method: method.into(),
+                    params: json!({"threadId": thread, "item": item}),
+                }));
+        }
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::ChildSessionsChanged))
+        );
+        assert!(
+            matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::ToolStarted { args, .. }))
+            if args["agentThreadId"] == "native-event-child" && args["kind"] == kind)
+        );
+        assert!(
+            matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::ToolFinished { is_error: false, result, .. }))
+            if result[0]["text"] == format!("/root/reviewer {kind}"))
+        );
+        assert!(session.events.is_empty());
+        assert!(session.queued_inbound.is_empty());
+        assert_eq!(
+            super::super::subagents::is_running("native-event-child"),
+            Some(matches!(kind, "started" | "interacted"))
+        );
+    }
+    session.close().unwrap();
+    assert_eq!(
+        super::super::subagents::is_running("native-event-child"),
+        None
+    );
+}
+
+fn test_session() -> CodexWorkerSession {
     use crate::modules::agents::core::{CallerProfile, CallerRegistry};
 
     let registry = CallerRegistry::default();
@@ -16,7 +61,7 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
         None,
     );
     let (_sender, incoming) = mpsc::channel();
-    let mut session = CodexWorkerSession {
+    CodexWorkerSession {
         caller_identity,
         child: std::process::Command::new("true")
             .spawn()
@@ -41,7 +86,12 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
         turn_error: None,
-    };
+    }
+}
+
+#[test]
+fn answer_before_reasoning_uses_a_separate_content_slot() {
+    let mut session = test_session();
 
     for turn_id in ["turn-1", "turn-2"] {
         assert!(session.begin_turn(turn_id));
@@ -83,6 +133,28 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
                 event => panic!("unexpected event: {event:?}"),
             }
         }
+        for (method, params) in [
+            (
+                "item/completed",
+                json!({"threadId": "thread-1", "turnId": turn_id,
+                    "item": {"type": "agentMessage", "id": "final", "text": "Final answer"}}),
+            ),
+            (
+                "turn/completed",
+                json!({"threadId": "thread-1", "turn": {"id": turn_id, "status": "completed"}}),
+            ),
+        ] {
+            session
+                .queued_inbound
+                .push_back(Ok(CodexInbound::Notification {
+                    method: method.into(),
+                    params,
+                }));
+        }
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Settled { output }) if output == "Final answer"
+        ));
     }
 }
 

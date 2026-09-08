@@ -3,6 +3,7 @@ mod connection;
 #[cfg(test)]
 mod connection_tests;
 mod contract;
+mod subagents;
 mod tool;
 mod transfer;
 mod wire;

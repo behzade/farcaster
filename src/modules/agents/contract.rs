@@ -117,6 +117,7 @@ pub(crate) enum SessionActivityKind {
     ServiceStatusChanged,
     RateLimitsChanged,
     SessionGoalChanged,
+    ChildSessionsChanged,
     Other(String),
 }
 
@@ -145,6 +146,7 @@ impl SessionActivityKind {
             "service_status_changed" => Self::ServiceStatusChanged,
             "rate_limits_changed" => Self::RateLimitsChanged,
             "session_goal_changed" => Self::SessionGoalChanged,
+            "child_sessions_changed" => Self::ChildSessionsChanged,
             other => Self::Other(other.to_owned()),
         }
     }

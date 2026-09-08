@@ -1,6 +1,88 @@
 use super::*;
 
 #[test]
+fn discovers_previewless_descendants_across_pages_without_duplicates() -> Result<(), String> {
+    let home = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let project = std::env::current_dir().map_err(|error| error.to_string())?;
+    let root = json!({"id": "root", "cwd": project, "preview": "Review"});
+    let child = json!({"id": "child", "cwd": project, "preview": "",
+        "parentThreadId": "root", "status": {"type": "active"}});
+    let nested = json!({"id": "nested", "cwd": project, "preview": "",
+        "parentThreadId": "child"});
+    let responses = [
+        json!({"data": [root]}),
+        json!({"data": []}),
+        json!({"data": []}),
+        json!({"data": []}),
+        json!({"data": [child], "nextCursor": "page-2"}),
+        json!({"data": [child, nested], "nextCursor": null}),
+        json!({"data": [], "nextCursor": null}),
+    ];
+    let input = responses
+        .into_iter()
+        .enumerate()
+        .map(|(index, result)| format!("{}\n", json!({"id": index + 1, "result": result})))
+        .collect::<String>();
+    let mut requests = Vec::new();
+    let mut connection = CodexConnection::new(std::io::Cursor::new(input), &mut requests);
+    let sessions = discover_with_client(&mut connection, home.path(), &project, "")?;
+    assert_eq!(sessions.len(), 3);
+    assert_eq!(sessions[1].parent_session.as_deref(), Some("root"));
+    assert!(sessions[1].is_running);
+    assert_eq!(sessions[2].parent_session.as_deref(), Some("child"));
+    let requests = String::from_utf8(requests)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(requests[4]["params"]["ancestorThreadId"], "root");
+    assert_eq!(requests[5]["params"]["cursor"], "page-2");
+    assert_eq!(requests[6]["params"]["archived"], true);
+    Ok(())
+}
+
+#[test]
+fn native_child_history_keeps_identity_and_outcome() {
+    let messages = history_messages(&json!({"type": "subAgentActivity", "id": "activity",
+        "kind": "completed", "agentThreadId": "child", "agentPath": "/root/reviewer"}));
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        messages[0]["content"][0]["arguments"]["agentThreadId"],
+        "child"
+    );
+    assert_eq!(
+        messages[0]["content"][0]["toolMetadata"]["category"],
+        "delegate"
+    );
+    assert_eq!(
+        messages[1]["content"][0]["text"],
+        "/root/reviewer completed"
+    );
+}
+
+#[test]
+fn owning_connection_supplies_child_status_when_catalog_reports_not_loaded() -> Result<(), String> {
+    let project = std::env::current_dir().map_err(|error| error.to_string())?;
+    let thread = json!({"id": "catalog-native-child", "cwd": project,
+        "preview": "", "parentThreadId": "catalog-native-parent",
+        "source": {"subAgent": {"thread_spawn": {"agent_path": "/root/reviewer"}}},
+        "status": {"type": "notLoaded"}});
+    for (kind, running) in [("started", true), ("completed", false)] {
+        super::super::subagents::observe(
+            "catalog-native-parent",
+            &json!({
+                "agentThreadId": "catalog-native-child", "kind": kind
+            }),
+        );
+        let session = summary(&project, &thread, false)?.ok_or("child")?;
+        assert_eq!(session.is_running, running);
+        assert_eq!(session.title, "/root/reviewer");
+    }
+    super::super::subagents::forget_parent("catalog-native-parent");
+    Ok(())
+}
+
+#[test]
 fn translates_thread_metadata() -> Result<(), String> {
     let project = std::env::current_dir().map_err(|error| error.to_string())?;
     let value = json!({
