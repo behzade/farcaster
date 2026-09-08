@@ -1,0 +1,27 @@
+[package]
+name = "workgraph"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "GPL-3.0-or-later"
+description = "Durable work graph core for the Pi native app"
+
+[dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.19"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"

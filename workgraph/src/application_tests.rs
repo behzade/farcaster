@@ -1,0 +1,136 @@
+use crate::{add_node, create_plan, link_session, load_plan};
+
+#[test]
+fn browsing_other_plans_preserves_the_session_plan() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("state.sqlite3");
+    let project = directory.path().to_path_buf();
+    let (first, _) = create_plan(
+        database.clone(),
+        project.clone(),
+        "First".into(),
+        "First task".into(),
+    )
+    .unwrap();
+    let first = first.snapshot.unwrap();
+    let (second, _) = create_plan(
+        database.clone(),
+        project.clone(),
+        "Second".into(),
+        "Second task".into(),
+    )
+    .unwrap();
+    let second = second.snapshot.unwrap();
+    link_session(
+        database.clone(),
+        project.clone(),
+        first.walk.as_ref().unwrap().number,
+        "session".into(),
+        "/session".into(),
+    )
+    .unwrap();
+    let browse = crate::load_selected_plan(
+        database.clone(),
+        project.clone(),
+        Some("session"),
+        Some(second.plan.number),
+    )
+    .unwrap();
+    assert_eq!(browse.plans.len(), 2);
+    assert_eq!(
+        browse.snapshot.as_ref().unwrap().plan.number,
+        second.plan.number
+    );
+    assert_eq!(browse.snapshot.as_ref().unwrap().walk, second.walk);
+    assert_eq!(browse.session_link.unwrap().plan_number, first.plan.number);
+    let (edited, node) = add_node(
+        database.clone(),
+        project.clone(),
+        second.plan.number,
+        "Another task".into(),
+        vec![],
+        None,
+        Some("session".into()),
+    )
+    .unwrap();
+    assert_eq!(
+        edited.snapshot.as_ref().unwrap().plan.number,
+        second.plan.number
+    );
+    assert!(
+        edited
+            .snapshot
+            .unwrap()
+            .nodes
+            .iter()
+            .any(|item| item.number == node)
+    );
+    let reopened = load_plan(database, project, Some("session")).unwrap();
+    assert_eq!(reopened.snapshot.unwrap().plan.number, first.plan.number);
+}
+
+#[test]
+fn application_round_trips_nodes_walk_and_session() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = directory.path().join("gui-state.sqlite3");
+    let project = directory.path().join("project");
+    std::fs::create_dir(&project).expect("project directory");
+    let (created, root) = create_plan(
+        database.clone(),
+        project.clone(),
+        "Git and jj integration".into(),
+        "Current product".into(),
+    )
+    .expect("create plan");
+    let snapshot = created.snapshot.expect("snapshot");
+    assert_eq!(snapshot.nodes.len(), 1);
+    assert_eq!(snapshot.plan.root_node, root);
+    let walk = snapshot.walk.expect("default walk");
+
+    let (with_node, node) = add_node(
+        database.clone(),
+        project.clone(),
+        snapshot.plan.number,
+        "Both backends expose repository state".into(),
+        vec!["apps/farcaster/src/vcs".into()],
+        Some(root),
+        None,
+    )
+    .expect("add node");
+    assert_eq!(
+        with_node.snapshot.as_ref().map(|plan| plan.nodes.len()),
+        Some(2)
+    );
+    assert!(
+        with_node
+            .snapshot
+            .as_ref()
+            .expect("snapshot")
+            .edges
+            .iter()
+            .any(|edge| edge.from == root && edge.to == node)
+    );
+
+    let linked = link_session(
+        database.clone(),
+        project.clone(),
+        walk.number,
+        "session-1".into(),
+        "/sessions/one.jsonl".into(),
+    )
+    .expect("link session");
+    assert_eq!(
+        linked.session_link.as_ref().map(|link| link.walk_number),
+        Some(walk.number)
+    );
+
+    let loaded = load_plan(database, project, Some("session-1")).expect("load linked plan");
+    assert_eq!(
+        loaded.snapshot.as_ref().map(|plan| plan.plan.number),
+        Some(snapshot.plan.number)
+    );
+    assert_eq!(
+        loaded.snapshot.as_ref().map(|plan| plan.nodes.len()),
+        Some(2)
+    );
+}
