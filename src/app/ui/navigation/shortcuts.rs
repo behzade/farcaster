@@ -107,6 +107,9 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
     rows.extend([
         ("Agent confirmation", "n".into(), "No / deny"),
         ("Agent confirmation", "y".into(), "Yes / allow"),
+        ("Startup project trust", "y".into(), "Trust project"),
+        ("Startup project trust", "n".into(), "Do not trust"),
+        ("Startup project trust", "p".into(), "Trust parent folder"),
     ]);
     rows.extend(
         SCROLLS

@@ -2,8 +2,8 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Render, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
-    Window, div, prelude::FluentBuilder as _, px,
+    KeyDownEvent, ParentElement as _, Render, Role, StatefulInteractiveElement as _, Styled as _,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{
@@ -12,6 +12,14 @@ use crate::{
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     projects::{self, StartupTrust, TrustChoice},
 };
+
+fn trust_shortcut(choice: TrustChoice) -> &'static str {
+    match choice {
+        TrustChoice::TrustProject => "y",
+        TrustChoice::TrustParent => "p",
+        TrustChoice::DistrustProject => "n",
+    }
+}
 
 pub(crate) struct ProjectTrustView {
     project: PathBuf,
@@ -112,7 +120,7 @@ impl Render for ProjectTrustView {
             options = options.child(
                 button(
                     ("startup-trust-option", index),
-                    option.label,
+                    format!("[{}] {}", trust_shortcut(choice), option.label),
                     tone,
                     true,
                     move |window, cx| {
@@ -139,6 +147,28 @@ impl Render for ProjectTrustView {
                     .aria_label("Project trust")
                     .track_focus(&self.focus)
                     .key_context("FarcasterProjectTrust")
+                    .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        if event.keystroke.modifiers.modified()
+                            || !this.focus.contains_focused(window, cx)
+                        {
+                            return;
+                        }
+                        if event.is_held
+                            || matches!(event.keystroke.key.as_str(), "enter" | "space" | " ")
+                        {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            return;
+                        }
+                        if let Some(option) = projects::options(&this.project)
+                            .into_iter()
+                            .find(|option| trust_shortcut(option.choice) == event.keystroke.key)
+                        {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            this.select_trust(option.choice, window, cx);
+                        }
+                    }))
                     .w_full()
                     .max_w(px(640.0))
                     .flex()
