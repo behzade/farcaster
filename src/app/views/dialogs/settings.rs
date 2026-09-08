@@ -60,6 +60,21 @@ pub(in crate::app::views) fn render(
                         .gap(gpui::px(24.0))
                         .p(gpui::px(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
+                        .child(toggle_setting(
+                            "transcript-folders-toggle",
+                            "Expand changed folders in transcript",
+                            "Start change folders expanded. Your manual folder choices stay as you left them.",
+                            app.expand_transcript_folders,
+                            entity.clone(),
+                            FarcasterApp::toggle_settings_transcript_folders,
+                        ))
+                        .when_some(app.settings_transcript_error.clone(), |content, error| {
+                            content.child(feedback(
+                                "settings-transcript-error",
+                                error,
+                                FeedbackTone::Error,
+                            ))
+                        })
                         .child(
                             div()
                                 .pt(THEME.space.md)
@@ -69,9 +84,13 @@ pub(in crate::app::views) fn render(
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
                                 .child("Connections"),
                         )
-                        .child(builtin_mcp_setting(
+                        .child(toggle_setting(
+                            "builtin-mcp-toggle",
+                            "Built-in MCP",
+                            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
                             crate::builtin_mcp::enabled(),
                             entity.clone(),
+                            FarcasterApp::toggle_settings_builtin_mcp,
                         ))
                         .when_some(app.settings_mcp_error.clone(), |content, error| {
                             content.child(feedback(
@@ -152,25 +171,29 @@ pub(in crate::app::views) fn render(
     .into_any_element()
 }
 
-fn builtin_mcp_setting(enabled: bool, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+fn toggle_setting(
+    id: &'static str,
+    title: &'static str,
+    description: &'static str,
+    enabled: bool,
+    entity: WeakEntity<FarcasterApp>,
+    toggle: fn(&mut FarcasterApp, &mut gpui::Context<FarcasterApp>),
+) -> AnyElement {
     div()
         .flex()
         .items_center()
         .justify_between()
         .gap(THEME.space.md)
-        .child(setting_label(
-            "Built-in MCP",
-            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
-        ))
+        .child(setting_label(title, description))
         .child(
-            Button::new("builtin-mcp-toggle")
+            Button::new(id)
                 .label(if enabled { "On" } else { "Off" })
                 .with_size(Size::Small)
                 .toggled(enabled)
                 .when(enabled, |button| button.primary())
                 .when(!enabled, |button| button.secondary())
                 .on_click(move |_, _, cx| {
-                    let _ = entity.update(cx, |this, cx| this.toggle_settings_builtin_mcp(cx));
+                    let _ = entity.update(cx, toggle);
                 }),
         )
         .into_any_element()

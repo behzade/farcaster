@@ -229,6 +229,8 @@ pub(crate) struct FarcasterApp {
     network_proxy_error: Option<String>,
     settings_proxy_save: Option<Task<()>>,
     settings_mcp_error: Option<String>,
+    expand_transcript_folders: bool,
+    settings_transcript_error: Option<String>,
     editing_session_title: Option<SessionTitleEdit>,
     pending_session_titles: HashMap<PathBuf, String>,
     pending_session_title_focus: bool,

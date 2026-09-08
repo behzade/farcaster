@@ -189,6 +189,11 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
     let database = temp.path().join("gui.sqlite3");
     let store = StateStore::open_at(&database)?;
     assert!(store.load_builtin_mcp_enabled()?);
+    assert!(!store.load_expand_transcript_folders()?);
+    store.save_expand_transcript_folders(true)?;
+    assert!(StateStore::open_at(&database)?.load_expand_transcript_folders()?);
+    store.save_expand_transcript_folders(false)?;
+    assert!(!StateStore::open_at(&database)?.load_expand_transcript_folders()?);
 
     store.save_network_proxy(Some("http://proxy.example:8080"))?;
     store.save_builtin_mcp_enabled(false)?;

@@ -10,6 +10,7 @@ pub(super) struct PersistedState {
     pub(super) composer_sessions: ComposerSessions,
     pub(super) submitted_drafts: HashMap<String, Option<PathBuf>>,
     pub(super) saved_proxy: Option<String>,
+    pub(super) expand_transcript_folders: bool,
 }
 
 pub(super) fn load(project: &Path) -> PersistedState {
@@ -99,6 +100,13 @@ pub(super) fn load(project: &Path) -> PersistedState {
         .and_then(|store| crate::access::load_proxy(&store).unwrap_or(None));
     drop(proxy_timing);
 
+    let expand_transcript_folders = crate::app::infrastructure::persistence::StateStore::open()
+        .and_then(|store| store.load_expand_transcript_folders())
+        .unwrap_or_else(|load_error| {
+            error.get_or_insert(load_error);
+            false
+        });
+
     PersistedState {
         registry,
         error,
@@ -109,5 +117,6 @@ pub(super) fn load(project: &Path) -> PersistedState {
         composer_sessions,
         submitted_drafts,
         saved_proxy,
+        expand_transcript_folders,
     }
 }

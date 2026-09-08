@@ -13,12 +13,15 @@ impl FarcasterApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
+        let expanded = self.expand_transcript_folders;
         self.transcript_view.update(cx, |transcript, cx| {
             transcript.list.pause_following_tail();
             transcript
                 .file_trees
                 .entry(key)
-                .or_default()
+                .or_insert_with(|| {
+                    crate::app::ui::change_tree::ChangeTreeState::with_default(project, expanded)
+                })
                 .toggle(project, path);
             if let Some(index) = transcript
                 .rows

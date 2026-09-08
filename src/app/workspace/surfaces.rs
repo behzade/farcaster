@@ -685,6 +685,24 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn toggle_settings_transcript_folders(&mut self, cx: &mut Context<Self>) {
+        let expanded = !self.expand_transcript_folders;
+        match crate::app::infrastructure::persistence::StateStore::open()
+            .and_then(|store| store.save_expand_transcript_folders(expanded))
+        {
+            Ok(()) => {
+                self.expand_transcript_folders = expanded;
+                self.settings_transcript_error = None;
+                self.transcript_view.update(cx, |transcript, cx| {
+                    transcript.list.remeasure_items(0..transcript.rows.len());
+                    cx.notify();
+                });
+            }
+            Err(error) => self.settings_transcript_error = Some(error),
+        }
+        cx.notify();
+    }
+
     pub(in crate::app) fn save_settings_proxy(&mut self, cx: &mut Context<Self>) {
         self.settings_proxy_save = None;
         let value = self.network_proxy_input.read(cx).value().trim().to_owned();

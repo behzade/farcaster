@@ -1,6 +1,29 @@
 use super::*;
 
 impl StateStore {
+    pub(crate) fn load_expand_transcript_folders(&self) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='expand_transcript_folders'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| value.as_deref() == Some("true"))
+            .map_err(|error| format!("load transcript folder setting: {error}"))
+    }
+
+    pub(crate) fn save_expand_transcript_folders(&self, expanded: bool) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('expand_transcript_folders', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [if expanded { "true" } else { "false" }],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save transcript folder setting: {error}"))
+    }
+
     pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<String, String> {
         // Before the first saved choice, infer it from this project's main sessions.
         self.connection

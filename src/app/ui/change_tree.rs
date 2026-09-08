@@ -17,6 +17,12 @@ struct FolderState {
 }
 
 impl ChangeTreeState {
+    pub(crate) fn with_default(project: &Path, open: bool) -> Self {
+        let mut state = Self::default();
+        state.set_all(project, open);
+        state
+    }
+
     pub(crate) fn observe(&mut self, project: &Path, count: usize) {
         if count > 0 {
             self.projects
@@ -266,6 +272,20 @@ mod tests {
         assert!(state.is_open(project, Path::new("new/folder")));
         state.set_all(project, false);
         assert!(!state.is_open(project, Path::new("src/app")));
+    }
+
+    #[test]
+    fn explicit_defaults_preserve_toggles_across_refreshes() {
+        let project = Path::new("/repo");
+        let folder = Path::new("src");
+        for open in [false, true] {
+            let mut state = ChangeTreeState::with_default(project, open);
+            assert_eq!(state.is_open(project, folder), open);
+            state.toggle(project, folder);
+            state.observe(project, 50);
+            assert_eq!(state.is_open(project, folder), !open);
+            assert_eq!(state.is_open(project, Path::new("tests")), open);
+        }
     }
 
     #[test]

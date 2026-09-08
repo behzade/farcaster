@@ -119,6 +119,8 @@ impl FarcasterApp {
             network_proxy_error: None,
             settings_proxy_save: None,
             settings_mcp_error: None,
+            expand_transcript_folders: persisted.expand_transcript_folders,
+            settings_transcript_error: None,
             editing_session_title: None,
             pending_session_titles: HashMap::new(),
             pending_session_title_focus: false,

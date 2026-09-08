@@ -137,7 +137,10 @@ pub(super) fn render(
         home.as_deref(),
     );
     let project = project.unwrap_or_default();
-    let default_state = ChangeTreeState::default();
+    let expand = entity
+        .upgrade()
+        .is_some_and(|entity| entity.read(cx).expand_transcript_folders);
+    let default_state = ChangeTreeState::with_default(&project, expand);
     let rows = change_tree::rows(
         files
             .iter()
