@@ -24,7 +24,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !archive || !session_family_has_active_work(&self.all_sessions, &path) {
+        let has_live_work = |path: &Path| {
+            super::activity::session_has_live_work(path, &self.run_statuses, &self.snapshot)
+                || self.pending_submissions.contains_key(&session_target(path))
+        };
+        let active = session_family_has_active_work(&self.all_sessions, &path, has_live_work);
+        if !archive || !active {
             self.set_session_archived(path, archive, cx);
             return;
         }
@@ -84,9 +89,17 @@ impl FarcasterApp {
     }
 }
 
-fn session_family_has_active_work(sessions: &[SessionSummary], path: &Path) -> bool {
-    session_family_for_path(sessions, path)
-        .is_some_and(|family| family.into_iter().any(|session| session.is_running))
+fn session_family_has_active_work(
+    sessions: &[SessionSummary],
+    path: &Path,
+    has_live_work: impl Fn(&Path) -> bool,
+) -> bool {
+    has_live_work(path)
+        || session_family_for_path(sessions, path).is_some_and(|family| {
+            family
+                .into_iter()
+                .any(|session| session.is_running || has_live_work(&session.path))
+        })
 }
 
 pub(in crate::app) fn session_event_affects_archived_rail(

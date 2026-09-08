@@ -8,13 +8,7 @@ pub(super) fn semantic_status(snapshot: &RuntimeSnapshot) -> &'static str {
             "Done"
         };
     }
-    if snapshot.conversation.running {
-        "Working"
-    } else if snapshot.conversation.ended_in_error() {
-        "Failed"
-    } else {
-        "Done"
-    }
+    session_badge_status(&snapshot.conversation)
 }
 
 pub(super) fn tool_starts_worker(kind: &SessionActivityKind, event: &Value) -> bool {

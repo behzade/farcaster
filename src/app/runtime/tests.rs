@@ -618,6 +618,18 @@ fn failed_tool_does_not_mark_the_whole_session_failed() {
 }
 
 #[test]
+fn semantic_status_keeps_compacting_and_retrying_sessions_active() {
+    let mut snapshot = RuntimeSnapshot::default();
+    Arc::make_mut(&mut snapshot.conversation).compacting = true;
+    assert_eq!(semantic_status(&snapshot), "Compacting");
+    Arc::make_mut(&mut snapshot.conversation).compacting = false;
+    Arc::make_mut(&mut snapshot.conversation).retrying = true;
+    assert_eq!(semantic_status(&snapshot), "Retrying");
+    Arc::make_mut(&mut snapshot.conversation).retrying = false;
+    assert_eq!(semantic_status(&snapshot), "Done");
+}
+
+#[test]
 fn history_preview_does_not_claim_to_know_an_external_run_failed() {
     let mut conversation = ConversationState::default();
     conversation.push_local_error("Previous error", "stale".into());

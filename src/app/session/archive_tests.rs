@@ -26,9 +26,32 @@ fn active_work_includes_recursive_descendants() {
     let root = session("root", None, false, false);
     let child = session("child", Some("root"), false, false);
     let grandchild = session("grandchild", Some("child"), false, true);
-    let sessions = [root.clone(), child, grandchild];
+    let mut sessions = [root.clone(), child, grandchild];
 
-    assert!(session_family_has_active_work(&sessions, &root.path));
+    assert!(session_family_has_active_work(
+        &sessions,
+        &root.path,
+        |_| false
+    ));
+    sessions[2].is_running = false;
+    let statuses = std::collections::HashMap::from([(
+        session_target(&sessions[2].path),
+        "Needs input".to_owned(),
+    )]);
+    let snapshot = crate::runtime::RuntimeSnapshot::default();
+    let has_live_work =
+        |path: &Path| super::super::activity::session_has_live_work(path, &statuses, &snapshot);
+    assert!(session_family_has_active_work(
+        &sessions,
+        &root.path,
+        has_live_work
+    ));
+    let unrelated = session("unrelated", None, false, false);
+    assert!(!session_family_has_active_work(
+        &sessions,
+        &unrelated.path,
+        has_live_work
+    ));
 }
 
 #[test]
