@@ -26,9 +26,15 @@ jobs:
 
       - name: Install Linux build dependencies
         run: |
+          # Zig 0.16's C++ headers require libc++ 21 or newer.
+          curl --fail --silent --show-error --location https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /usr/share/keyrings/apt.llvm.org.asc >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            clang cmake desktop-file-utils libasound2-dev libegl1-mesa-dev \
+            clang cmake desktop-file-utils libc++-21-dev libc++abi-21-dev \
+            libasound2-dev libegl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev libfuse2 libvulkan-dev \
             libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libxml2-dev patchelf pkg-config
