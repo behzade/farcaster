@@ -10,9 +10,7 @@ mod tool;
 mod worker;
 pub(crate) use tool::{ToolCategory, ToolMetadata};
 mod worker_tasks;
-pub(crate) use worker_tasks::{
-    WorkerAssignment, WorkerExecution, WorkerJudgment, WorkerTaskDefinition, WorkerTasks,
-};
+pub(crate) use worker_tasks::{WorkerAssignment, WorkerExecution, WorkerProfile, WorkerProfiles};
 
 pub(crate) use caller::{
     CallerContext, CallerIdentity, CallerProfile, CallerRegistry, WorkerFamilyLink,

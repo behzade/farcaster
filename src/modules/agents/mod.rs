@@ -23,10 +23,10 @@ pub(crate) use contract::{
 pub(crate) use core::{
     CallerContext, CallerProfile, CallerRegistry, CommonTool, PromptStore, TokenUsage,
     ToolCategory, ToolMetadata, ToolReviewState, WorkerActivity, WorkerActivityState,
-    WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerJudgment, WorkerLaunch,
-    WorkerPool, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerTaskDefinition,
-    WorkerTasks, WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt_with_presentation,
-    fail_prompt, has_queued_prompts_for, is_child_input_id, queued_prompts,
+    WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerLaunch, WorkerPool,
+    WorkerProfile, WorkerProfiles, WorkerSendMode, WorkerSession, WorkerSessionFactory,
+    WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt_with_presentation, fail_prompt,
+    has_queued_prompts_for, is_child_input_id, queued_prompts,
 };
 
 #[cfg(test)]

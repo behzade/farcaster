@@ -1,11 +1,8 @@
 use super::*;
-use crate::{
-    agents::WorkerJudgment,
-    app::{
-        ui::primitives::dropdown_content_button,
-        workspace::worker_tasks::{
-            WorkerRouteChoice, WorkerRouteTarget, WorkerTaskEdit, model_efforts,
-        },
+use crate::app::{
+    ui::primitives::dropdown_content_button,
+    workspace::worker_tasks::{
+        WorkerModelEdit, WorkerProfileEdit, WorkerRouteChoice, WorkerRouteTarget, model_efforts,
     },
 };
 use gpui_component::{
@@ -14,7 +11,7 @@ use gpui_component::{
 };
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let editor = &app.worker_task_editor;
+    let editor = &app.worker_profile_editor;
     let editing = editor.edit.is_some();
     let reload = entity.clone();
     div()
@@ -36,15 +33,13 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                             div()
                                 .text_size(THEME.type_scale.reading)
                                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("Worker tasks"),
+                                .child("Worker profiles"),
                         )
                         .child(
                             div()
                                 .text_size(THEME.type_scale.body_small)
                                 .text_color(THEME.colors.muted)
-                                .child(
-                                    "Choose the models used for each task and level of autonomy.",
-                                ),
+                                .child("Each profile uses the first available model in its list."),
                         ),
                 )
                 .child(button(
@@ -61,15 +56,15 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
             div()
                 .flex()
                 .gap(THEME.space.md)
-                .child(task_rail(app, entity.clone()))
+                .child(profile_rail(app, entity.clone()))
                 .child(div().w(gpui::px(1.0)).bg(THEME.colors.surface).flex_none())
-                .child(task_detail(app, entity)),
+                .child(profile_detail(app, entity)),
         )
         .into_any_element()
 }
 
-fn task_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let editor = &app.worker_task_editor;
+fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let editor = &app.worker_profile_editor;
     let editing = editor.edit.is_some();
     let add = entity.clone();
     let mut rail = div()
@@ -78,18 +73,19 @@ fn task_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement
         .gap(THEME.space.xs)
         .w(gpui::px(132.0))
         .flex_none();
-    for (index, task) in editor.tasks.iter().enumerate() {
+    for (index, profile) in editor.profiles.iter().enumerate() {
         let entity = entity.clone();
         rail = rail.child(
             button(
-                ("worker-task", index),
-                task_label(&task.name),
+                ("worker-profile", index),
+                profile.name.clone(),
                 ButtonTone::Quiet,
                 !editing,
                 move |_, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.worker_task_editor.selected = index;
-                        this.worker_task_editor.error = None;
+                        this.worker_profile_editor.selected = index;
+                        this.worker_profile_editor.selected_model = 0;
+                        this.worker_profile_editor.error = None;
                         cx.notify();
                     });
                 },
@@ -101,12 +97,12 @@ fn task_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement
     }
     rail = rail.child(
         button(
-            "worker-task-add",
-            "+ Add task",
+            "worker-profile-add",
+            "+ Add profile",
             ButtonTone::Quiet,
             !editing,
             move |window, cx| {
-                let _ = add.update(cx, |this, cx| this.edit_worker_task_name(None, window, cx));
+                let _ = add.update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
             },
         )
         .w_full()
@@ -116,8 +112,8 @@ fn task_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement
     rail.into_any_element()
 }
 
-fn task_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let editor = &app.worker_task_editor;
+fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let editor = &app.worker_profile_editor;
     let editing = editor.edit.is_some();
     let mut detail = div()
         .flex_1()
@@ -125,9 +121,9 @@ fn task_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
         .flex()
         .flex_col()
         .gap(THEME.space.sm);
-    if let Some(edit @ WorkerTaskEdit::Name { .. }) = &editor.edit {
+    if let Some(edit @ WorkerProfileEdit::Name { .. }) = &editor.edit {
         detail = detail.child(edit_form(edit, entity.clone()));
-    } else if let Some(task) = editor.tasks.get(editor.selected) {
+    } else if let Some(profile) = editor.profiles.get(editor.selected) {
         let rename = entity.clone();
         let delete = entity.clone();
         let selected = editor.selected;
@@ -140,41 +136,129 @@ fn task_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                     div()
                         .text_size(THEME.type_scale.body)
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child(task_label(&task.name)),
+                        .child(profile.name.clone()),
                 )
                 .child(
-                    actions_button("worker-task-actions", "Task actions", !editing)
+                    actions_button("worker-profile-actions", "Profile actions", !editing)
                         .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
                             let rename = rename.clone();
                             let delete = delete.clone();
-                            menu.item(PopupMenuItem::new("Rename task…").on_click(
+                            menu.item(PopupMenuItem::new("Edit profile…").on_click(
                                 move |_, window, cx| {
                                     let _ = rename.update(cx, |this, cx| {
-                                        this.edit_worker_task_name(Some(selected), window, cx)
+                                        this.edit_worker_profile(Some(selected), window, cx)
                                     });
                                 },
                             ))
                             .item(
-                                PopupMenuItem::new("Delete task").on_click(move |_, _, cx| {
-                                    let _ =
-                                        delete.update(cx, |this, cx| this.delete_worker_task(cx));
+                                PopupMenuItem::new("Delete profile").on_click(move |_, _, cx| {
+                                    let _ = delete
+                                        .update(cx, |this, cx| this.delete_worker_profile(cx));
                                 }),
                             )
                         }),
                 ),
         );
-        for judgment in WorkerJudgment::ALL {
+        detail = detail.child(
+            div()
+                .text_size(THEME.type_scale.body_small)
+                .text_color(THEME.colors.muted)
+                .child(profile.description.clone()),
+        );
+        for (index, model) in profile.models.iter().enumerate() {
+            let select = entity.clone();
+            let catalog = editor.catalog(&model.harness, &app.project);
+            let name = catalog
+                .models
+                .iter()
+                .find(|candidate| {
+                    candidate.provider == model.provider && candidate.id == model.model
+                })
+                .map(model_label)
+                .unwrap_or_else(|| model.model.clone());
+            let label = format!(
+                "{}. {} · {}",
+                index + 1,
+                crate::agents::backend_display_name(&model.harness),
+                name
+            );
+            detail = detail.child(
+                Button::new(("worker-model-choice", index))
+                    .accessibility_label(label.clone())
+                    .tooltip(label.clone())
+                    .child(div().flex_1().min_w_0().truncate().child(label))
+                    .with_size(Size::Small)
+                    .ghost()
+                    .disabled(editing)
+                    .on_click(move |_, _, cx| {
+                        let _ = select.update(cx, |this, cx| {
+                            this.worker_profile_editor.selected_model = index;
+                            cx.notify();
+                        });
+                    })
+                    .w_full()
+                    .min_w_0()
+                    .justify_start()
+                    .toggled(index == editor.selected_model),
+            );
+        }
+        if let Some(model) = profile.models.get(editor.selected_model) {
             let target = WorkerRouteTarget {
-                task: selected,
-                judgment,
+                profile: selected,
+                model: editor.selected_model,
             };
+            detail = detail.child(
+                div().flex().gap(THEME.space.sm).children(
+                    [
+                        (
+                            "worker-model-add",
+                            "+ Add model",
+                            WorkerModelEdit::Add,
+                            true,
+                        ),
+                        (
+                            "worker-model-up",
+                            "Move up",
+                            WorkerModelEdit::MoveUp,
+                            target.model > 0,
+                        ),
+                        (
+                            "worker-model-down",
+                            "Move down",
+                            WorkerModelEdit::MoveDown,
+                            target.model + 1 < profile.models.len(),
+                        ),
+                        (
+                            "worker-model-remove",
+                            "Remove model",
+                            WorkerModelEdit::Remove,
+                            profile.models.len() > 1,
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(id, label, edit, enabled)| {
+                        let entity = entity.clone();
+                        button(
+                            id,
+                            label,
+                            ButtonTone::Quiet,
+                            enabled && !editing,
+                            move |_, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.edit_worker_models(target, edit, cx)
+                                });
+                            },
+                        )
+                    }),
+                ),
+            );
             detail = detail.child(route(app, entity.clone(), target));
-            if task.execution(judgment).validate().is_err() {
+            if model.validate().is_err() {
                 detail = detail.child(div().text_size(THEME.type_scale.caption)
                     .text_color(THEME.colors.muted)
                     .child("Not saved yet. Choose a provider and model; the previous route is still in use."));
             }
-            if let Some(edit @ WorkerTaskEdit::Custom { target: edited, .. }) = &editor.edit
+            if let Some(edit @ WorkerProfileEdit::Custom { target: edited, .. }) = &editor.edit
                 && *edited == target
             {
                 detail = detail.child(edit_form(edit, entity.clone()));
@@ -186,13 +270,13 @@ fn task_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                 .py(THEME.space.md)
                 .text_color(THEME.colors.muted)
                 .child(
-                    "Add a task to configure its workers. With no tasks, new workers cannot start.",
+                    "Add a profile to configure a worker. With no profiles, new workers cannot start.",
                 ),
         );
     }
     if let Some(error) = &editor.error {
         detail = detail.child(feedback(
-            "worker-task-error",
+            "worker-profile-error",
             error.clone(),
             FeedbackTone::Error,
         ));
@@ -205,8 +289,9 @@ fn route(
     entity: WeakEntity<FarcasterApp>,
     target: WorkerRouteTarget,
 ) -> AnyElement {
-    let editor = &app.worker_task_editor;
-    let route = editor.tasks[target.task].execution(target.judgment);
+    let editor = &app.worker_profile_editor;
+    let profile = &editor.profiles[target.profile];
+    let route = &profile.models[target.model];
     let catalog = editor.catalog(&route.harness, &app.project);
     let enabled = editor.edit.is_none();
     let harnesses = crate::agents::backend_statuses()
@@ -270,14 +355,9 @@ fn route(
         })
         .collect();
     let custom = entity.clone();
-    let (label, explanation) = match target.judgment {
-        WorkerJudgment::Specified => ("Specified", "Follow the supplied procedure"),
-        WorkerJudgment::Guided => ("Guided", "Make local decisions within constraints"),
-        WorkerJudgment::Independent => (
-            "Independent",
-            "Choose an approach and challenge assumptions",
-        ),
-    };
+    let label = format!("Model {}", target.model + 1);
+    let explanation =
+        "Move a model up to prefer it. Missing harnesses and unlisted models are skipped.";
     let mut row = div()
         .flex()
         .flex_col()
@@ -312,8 +392,8 @@ fn route(
                 )
                 .child(
                     actions_button(
-                        ("worker-route-actions", target.judgment as usize),
-                        format!("{label} route actions"),
+                        ("worker-route-actions", target.model),
+                        "Model settings",
                         enabled,
                     )
                     .dropdown_menu_with_anchor(
@@ -381,7 +461,7 @@ fn route(
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.subtle)
                 .child(
-                    "Current model is not in this catalog. Choose a model or keep the custom ID.",
+                    "This model is not in the saved catalog and will be skipped. Reload choices after refreshing the harness catalog, or choose a listed model.",
                 ),
         );
     }
@@ -417,7 +497,7 @@ fn route_menu(
         )
         .child(
             dropdown_content_button(
-                (id, target.judgment as usize),
+                (id, target.model),
                 format!("{}: {label}", id.trim_start_matches("worker-")),
                 div().flex_1().min_w_0().truncate().child(label),
                 ButtonTone::Neutral,
@@ -448,7 +528,7 @@ fn route_menu(
         .into_any_element()
 }
 
-fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let mut form = div()
         .flex()
         .flex_col()
@@ -457,14 +537,20 @@ fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElem
         .bg(THEME.colors.surface)
         .rounded(THEME.radius);
     match edit {
-        WorkerTaskEdit::Name { task, input } => {
+        WorkerProfileEdit::Name {
+            profile,
+            input,
+            description,
+        } => {
             form = form
-                .child(div().child(if task.is_some() {
-                    "Rename task"
+                .child(div().child(if profile.is_some() {
+                    "Edit profile"
                 } else {
-                    "New task"
+                    "New profile"
                 }))
                 .child(Input::new(input))
+                .child(div().child("When to use"))
+                .child(Input::new(description))
                 .child(
                     div()
                         .text_size(THEME.type_scale.caption)
@@ -472,7 +558,7 @@ fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElem
                         .child("Use letters, numbers, '-' or '_'."),
                 );
         }
-        WorkerTaskEdit::Custom { inputs, .. } => {
+        WorkerProfileEdit::Custom { inputs, .. } => {
             form = form.child(div().child("Custom IDs"))
                 .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child("Use exact IDs for models not listed by the harness. Leave effort blank for its default."))
                 .child(div().flex().gap(THEME.space.sm).children(["Provider ID", "Model ID", "Effort"].into_iter().zip(inputs).map(|(label, input)| {
@@ -488,7 +574,7 @@ fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElem
         ButtonTone::Neutral,
         true,
         move |window, cx| {
-            let _ = entity.update(cx, |this, cx| this.finish_worker_task_edit(window, cx));
+            let _ = entity.update(cx, |this, cx| this.finish_worker_profile_edit(window, cx));
         },
     )))
     .into_any_element()
@@ -519,13 +605,4 @@ fn selected(value: &str, placeholder: &str) -> String {
 
 fn model_label(model: &crate::protocol::Model) -> String {
     selected(&model.name, &model.id)
-}
-
-fn task_label(name: &str) -> String {
-    match name {
-        "read" => "Read".into(),
-        "implement" => "Implement".into(),
-        "review" => "Review".into(),
-        _ => name.into(),
-    }
 }

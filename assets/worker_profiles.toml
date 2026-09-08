@@ -1,0 +1,43 @@
+# Models are ordered by priority: the first available choice wins.
+# Omit effort to use the harness default or the effort encoded in the model ID.
+
+[[profiles]]
+name = "oracle"
+description = "Consultation, hard decisions, and important code reviews."
+models = [
+  { harness = "codex-cli", provider = "openai", model = "gpt-6-astra", effort = "medium" },
+  { harness = "pi", provider = "openai-codex", model = "gpt-6-astra", effort = "medium" },
+  { harness = "opencode2", provider = "openai", model = "gpt-6-astra", effort = "medium" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "grok-4.6[effort=high,fast=true]" },
+]
+
+[[profiles]]
+name = "fast"
+description = "Everyday implementation where speed matters. The usual worker choice."
+models = [
+  { harness = "cursor-cli", provider = "cursor-cli", model = "grok-4.6[effort=high,fast=true]" },
+  { harness = "opencode2", provider = "opencode-go", model = "glm-5.3-flash" },
+  { harness = "codex-cli", provider = "openai", model = "gpt-5.6-luna", effort = "high" },
+  { harness = "pi", provider = "openai-codex", model = "gpt-5.6-luna", effort = "high" },
+]
+
+[[profiles]]
+name = "thorough"
+description = "Harder implementation that needs more care; slower than fast."
+models = [
+  { harness = "codex-cli", provider = "openai", model = "gpt-5.6-sol", effort = "medium" },
+  { harness = "pi", provider = "openai-codex", model = "gpt-5.6-sol", effort = "medium" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "composer-2.5[fast=true]" },
+  { harness = "opencode2", provider = "openai", model = "gpt-5.6-sol", effort = "medium" },
+]
+
+[[profiles]]
+name = "cheap"
+description = "Routine work where low cost matters more than speed or reasoning depth."
+models = [
+  { harness = "opencode2", provider = "opencode-go", model = "glm-5.3-flash" },
+  { harness = "pi", provider = "opencode-go", model = "glm-5.3-flash" },
+  { harness = "codex-cli", provider = "openai", model = "gpt-5.6-luna", effort = "high" },
+  { harness = "pi", provider = "openai-codex", model = "gpt-5.6-luna", effort = "high" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "composer-2.5[fast=true]" },
+]

@@ -72,76 +72,122 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
     );
     parent.bind("/sessions/parent.jsonl");
     let token = Some(parent.token().to_owned());
-    let mut tasks = crate::agents::WorkerTasks::default();
-    tasks.tasks[0].specified.harness = "codex-cli".into();
-    tasks.tasks[0].specified.provider = "openai".into();
-    let params = |task, judgment| SendParams {
+    let send = |pool, params, token, profiles: &crate::agents::WorkerProfiles| {
+        super::send(pool, params, token, profiles, |model, _| {
+            model.harness == "codex-cli"
+        })
+    };
+    let mut tasks = crate::agents::WorkerProfiles::default();
+    // Cursor is preferred here, but only Codex is available to this pool.
+    tasks.profiles[0].models.rotate_right(1);
+    let params = |profile| SendParams {
         to: Some("inspect".into()),
         message: "inspect these files".into(),
-        task,
-        judgment,
+        profile,
     };
-    assert!(send(&pool, params(None, None), token.clone(), &tasks).is_err());
-    assert!(
-        send(
-            &pool,
-            params(Some("missing".into()), None),
-            token.clone(),
-            &tasks
-        )
-        .is_err()
-    );
+    assert!(send(&pool, params(None), token.clone(), &tasks).is_err());
+    assert!(send(&pool, params(Some("missing".into())), token.clone(), &tasks).is_err());
     assert!(launches.lock().unwrap().is_empty());
-    let result = send(
-        &pool,
-        params(
-            Some("read".into()),
-            Some(crate::agents::WorkerJudgment::Specified),
-        ),
-        token.clone(),
-        &tasks,
-    )?;
+    let result = send(&pool, params(Some("oracle".into())), token.clone(), &tasks)?;
     assert_eq!(result["created"], true);
     assert_eq!(result["assignment"]["execution"]["harness"], "codex-cli");
     assert_eq!(
         launches.lock().unwrap()[0].model.as_deref(),
-        Some("gpt-5.6-luna")
+        Some("gpt-6-astra")
     );
     {
         let launches = launches.lock().unwrap();
         let launch = &launches[0];
         assert_eq!(launch.context, WorkerContext::Fresh);
         assert_eq!(launch.provider.as_deref(), Some("openai"));
-        assert_eq!(launch.effort.as_deref(), Some("high"));
+        assert_eq!(launch.effort.as_deref(), Some("medium"));
         assert_eq!(launch.parent_session, "/sessions/parent.jsonl");
         assert_eq!(launch.project, temp.path().canonicalize().unwrap());
     }
+    tasks.profiles[0].models[1].model = "changed-model".into();
+    assert!(send(&pool, params(Some("oracle".into())), token.clone(), &tasks).is_ok());
     assert!(
         send(
             &pool,
-            params(
-                Some("read".into()),
-                Some(crate::agents::WorkerJudgment::Specified)
-            ),
-            token.clone(),
-            &tasks
-        )
-        .is_ok()
-    );
-    assert!(
-        send(
-            &pool,
-            params(None, Some(crate::agents::WorkerJudgment::Independent)),
+            params(Some("thorough".into())),
             token.clone(),
             &tasks
         )
         .is_err()
     );
-    tasks.tasks.clear();
-    let result = send(&pool, params(None, None), token.clone(), &tasks)?;
+    tasks.profiles.clear();
+    let result = send(&pool, params(None), token.clone(), &tasks)?;
     assert_eq!(result["created"], false);
-    assert_eq!(result["assignment"]["judgment"], "specified");
-    assert!(send(&pool, params(Some("review".into()), None), token, &tasks).is_err());
+    assert_eq!(result["assignment"]["profile"], "oracle");
+    assert_eq!(result["assignment"]["execution"]["model"], "gpt-6-astra");
+    assert!(send(&pool, params(Some("thorough".into())), token, &tasks).is_err());
     assert_eq!(launches.lock().unwrap().len(), 1);
     Ok(())
+}
+
+#[test]
+fn worker_send_rejects_old_routing_and_model_overrides() {
+    for field in ["task", "judgment", "model", "effort"] {
+        let mut value =
+            serde_json::json!({"to": "inspect", "message": "review", "profile": "oracle"});
+        value[field] = "override".into();
+        assert!(serde_json::from_value::<SendParams>(value).is_err());
+    }
+}
+
+#[test]
+fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
+    let profiles = crate::agents::WorkerProfiles::default();
+    let project = std::path::Path::new("/project");
+    let backends = vec!["pi".to_owned()];
+    let catalog = crate::app::persistence::CachedConfigurationCatalog {
+        harness: "pi".into(),
+        project: project.into(),
+        catalog: crate::agents::ConfigurationCatalog {
+            models: vec![crate::protocol::Model {
+                id: "gpt-5.6-luna".into(),
+                name: "Luna".into(),
+                provider: "openai-codex".into(),
+                context_window: 0,
+                reasoning: true,
+                efforts: Some(vec!["high".into()]),
+            }],
+            efforts: vec![],
+        },
+    };
+    let catalogs = [catalog];
+    let assignment = profiles
+        .resolve("cheap", |model| {
+            model_available(model, project, &backends, &catalogs)
+        })
+        .unwrap();
+    assert_eq!(assignment.execution.provider, "openai-codex");
+    assert_eq!(assignment.execution.model, "gpt-5.6-luna");
+    assert!(
+        profiles
+            .resolve("oracle", |model| model_available(
+                model, project, &backends, &catalogs
+            ))
+            .is_err()
+    );
+    assert!(!model_available(
+        &assignment.execution,
+        project,
+        &[],
+        &catalogs
+    ));
+    let preferred_pi = &profiles.profiles[3].models[1];
+    assert!(!model_available(
+        preferred_pi,
+        project,
+        &backends,
+        &catalogs
+    ));
+    assert!(model_available(
+        preferred_pi,
+        std::path::Path::new("/other"),
+        &backends,
+        &catalogs
+    ));
+    assert!(model_available(preferred_pi, project, &backends, &[]));
 }

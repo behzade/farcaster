@@ -1,30 +1,38 @@
 use super::*;
-use crate::agents::{
-    ConfigurationCatalog, WorkerExecution, WorkerJudgment, WorkerTaskDefinition, WorkerTasks,
-};
+use crate::agents::{ConfigurationCatalog, WorkerExecution, WorkerProfile, WorkerProfiles};
 
 #[derive(Default)]
-pub(in crate::app) struct WorkerTaskEditor {
-    pub(in crate::app) tasks: Vec<WorkerTaskDefinition>,
+pub(in crate::app) struct WorkerProfileEditor {
+    pub(in crate::app) profiles: Vec<WorkerProfile>,
     pub(in crate::app) selected: usize,
-    pub(in crate::app) edit: Option<WorkerTaskEdit>,
+    pub(in crate::app) selected_model: usize,
+    pub(in crate::app) edit: Option<WorkerProfileEdit>,
     pub(in crate::app) error: Option<String>,
     loaded: bool,
-    saved: Vec<WorkerTaskDefinition>,
+    saved: Vec<WorkerProfile>,
     subscriptions: Vec<Subscription>,
     catalogs: Vec<crate::app::persistence::CachedConfigurationCatalog>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) struct WorkerRouteTarget {
-    pub(in crate::app) task: usize,
-    pub(in crate::app) judgment: WorkerJudgment,
+    pub(in crate::app) profile: usize,
+    pub(in crate::app) model: usize,
 }
 
-pub(in crate::app) enum WorkerTaskEdit {
+#[derive(Clone, Copy)]
+pub(in crate::app) enum WorkerModelEdit {
+    Add,
+    Remove,
+    MoveUp,
+    MoveDown,
+}
+
+pub(in crate::app) enum WorkerProfileEdit {
     Name {
-        task: Option<usize>,
+        profile: Option<usize>,
         input: Entity<InputState>,
+        description: Entity<InputState>,
     },
     Custom {
         target: WorkerRouteTarget,
@@ -40,34 +48,28 @@ pub(in crate::app) enum WorkerRouteChoice {
     Effort(String),
 }
 
-impl WorkerTaskEditor {
-    fn persist(&mut self, tasks: Vec<WorkerTaskDefinition>) -> Result<(), String> {
+impl WorkerProfileEditor {
+    fn persist(&mut self, profiles: Vec<WorkerProfile>) -> Result<(), String> {
         if !self.loaded {
             return Err(
-                "worker task settings could not be loaded; reopen Settings before saving".into(),
+                "worker profile settings could not be loaded; reopen Settings before saving".into(),
             );
         }
-        let tasks = WorkerTasks { tasks };
-        tasks.validate()?;
-        if tasks.tasks == self.saved {
+        let profiles = WorkerProfiles { profiles };
+        profiles.validate()?;
+        if profiles.profiles == self.saved {
             return Ok(());
         }
         let backends = crate::agents::backend_statuses();
-        for task in &tasks.tasks {
-            for judgment in WorkerJudgment::ALL {
-                if !backends
-                    .iter()
-                    .any(|backend| backend.id == task.execution(judgment).harness)
-                {
-                    return Err(format!(
-                        "unknown worker harness: {}",
-                        task.execution(judgment).harness
-                    ));
+        for profile in &profiles.profiles {
+            for model in &profile.models {
+                if !backends.iter().any(|backend| backend.id == model.harness) {
+                    return Err(format!("unknown worker harness: {}", model.harness));
                 }
             }
         }
-        crate::app::persistence::StateStore::open()?.save_worker_tasks(&tasks)?;
-        self.saved = tasks.tasks;
+        crate::app::persistence::StateStore::open()?.save_worker_profiles(&profiles)?;
+        self.saved = profiles.profiles;
         Ok(())
     }
 
@@ -76,26 +78,26 @@ impl WorkerTaskEditor {
         self.persist(saved)
     }
 
-    fn route_settings(
-        &self,
-        target: WorkerRouteTarget,
-    ) -> Result<Vec<WorkerTaskDefinition>, String> {
+    fn route_settings(&self, target: WorkerRouteTarget) -> Result<Vec<WorkerProfile>, String> {
         let route = self
-            .tasks
-            .get(target.task)
-            .ok_or("Task no longer exists")?
-            .execution(target.judgment)
+            .profiles
+            .get(target.profile)
+            .ok_or("Profile no longer exists")?
+            .models
+            .get(target.model)
+            .ok_or("Model no longer exists")?
             .clone();
         route
             .validate()
             .map_err(|_| "Choose a provider and model to save this route.".to_owned())?;
         let mut saved = self.saved.clone();
-        let task = saved.get_mut(target.task).ok_or("Task no longer exists")?;
-        match target.judgment {
-            WorkerJudgment::Specified => task.specified = route,
-            WorkerJudgment::Guided => task.guided = route,
-            WorkerJudgment::Independent => task.independent = route,
-        }
+        let profile = saved
+            .get_mut(target.profile)
+            .ok_or("Profile no longer exists")?;
+        *profile
+            .models
+            .get_mut(target.model)
+            .ok_or("Model no longer exists")? = route;
         Ok(saved)
     }
 
@@ -119,12 +121,8 @@ impl WorkerTaskEditor {
     }
 
     fn route_mut(&mut self, target: WorkerRouteTarget) -> Option<&mut WorkerExecution> {
-        let task = self.tasks.get_mut(target.task)?;
-        Some(match target.judgment {
-            WorkerJudgment::Specified => &mut task.specified,
-            WorkerJudgment::Guided => &mut task.guided,
-            WorkerJudgment::Independent => &mut task.independent,
-        })
+        let profile = self.profiles.get_mut(target.profile)?;
+        profile.models.get_mut(target.model)
     }
 
     fn save_custom_route(
@@ -132,7 +130,7 @@ impl WorkerTaskEditor {
         target: WorkerRouteTarget,
         [provider, model, effort]: [String; 3],
     ) -> Result<(), String> {
-        let route = self.route_mut(target).ok_or("Task no longer exists")?;
+        let route = self.route_mut(target).ok_or("Profile no longer exists")?;
         let next = WorkerExecution {
             harness: route.harness.clone(),
             provider,
@@ -144,7 +142,7 @@ impl WorkerTaskEditor {
         Ok(())
     }
 
-    fn save_name(&mut self, task: Option<usize>, name: &str) -> Result<(), String> {
+    fn save_name(&mut self, profile: Option<usize>, name: &str) -> Result<(), String> {
         let name = name.trim();
         if !crate::agents::valid_worker_name(name) {
             return Err(
@@ -152,23 +150,51 @@ impl WorkerTaskEditor {
             );
         }
         if self
-            .tasks
+            .profiles
             .iter()
             .enumerate()
-            .any(|(index, other)| Some(index) != task && other.name.eq_ignore_ascii_case(name))
+            .any(|(index, other)| Some(index) != profile && other.name.eq_ignore_ascii_case(name))
         {
-            return Err(format!("A task named '{name}' already exists."));
+            return Err(format!("A profile named '{name}' already exists."));
         }
-        if let Some(index) = task {
-            self.tasks
+        if let Some(index) = profile {
+            self.profiles
                 .get_mut(index)
-                .ok_or("Task no longer exists")?
+                .ok_or("Profile no longer exists")?
                 .name = name.into();
         } else {
-            self.tasks.push(WorkerTaskDefinition::new(name.into()));
-            self.selected = self.tasks.len() - 1;
+            self.profiles.push(WorkerProfile::new(name.into()));
+            self.selected = self.profiles.len() - 1;
+            self.selected_model = 0;
         }
         Ok(())
+    }
+}
+
+fn edit_models(
+    models: &mut Vec<WorkerExecution>,
+    index: usize,
+    edit: WorkerModelEdit,
+) -> Result<usize, String> {
+    let model = models.get(index).ok_or("Model no longer exists")?;
+    match edit {
+        WorkerModelEdit::Add => {
+            models.push(model.clone());
+            Ok(models.len() - 1)
+        }
+        WorkerModelEdit::Remove if models.len() > 1 => {
+            models.remove(index);
+            Ok(index.min(models.len() - 1))
+        }
+        WorkerModelEdit::MoveUp if index > 0 => {
+            models.swap(index, index - 1);
+            Ok(index - 1)
+        }
+        WorkerModelEdit::MoveDown if index + 1 < models.len() => {
+            models.swap(index, index + 1);
+            Ok(index + 1)
+        }
+        _ => Err("Keep at least one model and move models only within the list.".into()),
     }
 }
 
@@ -208,16 +234,50 @@ pub(in crate::app) fn model_efforts<'a>(
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn load_worker_task_settings(&mut self) -> Result<(), String> {
-        self.worker_task_editor = WorkerTaskEditor::default();
+    pub(in crate::app) fn edit_worker_models(
+        &mut self,
+        target: WorkerRouteTarget,
+        edit: WorkerModelEdit,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = &mut self.worker_profile_editor;
+        if editor.edit.is_some() {
+            return;
+        }
+        let result = (|| {
+            let mut profiles = editor.saved.clone();
+            let mut current = editor.profiles.clone();
+            let saved = profiles
+                .get_mut(target.profile)
+                .ok_or("Profile no longer exists")?;
+            let draft = current
+                .get_mut(target.profile)
+                .ok_or("Profile no longer exists")?;
+            // Keep incomplete edits attached to their model as the list moves.
+            let selected = edit_models(&mut saved.models, target.model, edit)?;
+            edit_models(&mut draft.models, target.model, edit)?;
+            if matches!(edit, WorkerModelEdit::Add) {
+                draft.models[selected] = saved.models[selected].clone();
+            }
+            editor.persist(profiles)?;
+            editor.profiles = current;
+            editor.selected_model = selected;
+            Ok::<(), String>(())
+        })();
+        editor.error = result.err();
+        cx.notify();
+    }
+
+    pub(in crate::app) fn load_worker_profile_settings(&mut self) -> Result<(), String> {
+        self.worker_profile_editor = WorkerProfileEditor::default();
         let store = crate::app::persistence::StateStore::open()?;
-        let tasks = store.load_worker_tasks()?.tasks;
-        self.worker_task_editor = WorkerTaskEditor {
-            saved: tasks.clone(),
-            tasks,
+        let profiles = store.load_worker_profiles()?.profiles;
+        self.worker_profile_editor = WorkerProfileEditor {
+            saved: profiles.clone(),
+            profiles,
             catalogs: store.load_configuration_catalogs()?,
             loaded: true,
-            ..WorkerTaskEditor::default()
+            ..WorkerProfileEditor::default()
         };
         Ok(())
     }
@@ -227,10 +287,10 @@ impl FarcasterApp {
             .and_then(|store| store.load_configuration_catalogs())
         {
             Ok(catalogs) => {
-                self.worker_task_editor.catalogs = catalogs;
-                self.worker_task_editor.error = None;
+                self.worker_profile_editor.catalogs = catalogs;
+                self.worker_profile_editor.error = None;
             }
-            Err(error) => self.worker_task_editor.error = Some(error),
+            Err(error) => self.worker_profile_editor.error = Some(error),
         }
         cx.notify();
     }
@@ -241,43 +301,55 @@ impl FarcasterApp {
         choice: WorkerRouteChoice,
         cx: &mut Context<Self>,
     ) {
-        if self.worker_task_editor.edit.is_none()
-            && let Some(route) = self.worker_task_editor.route_mut(target)
+        if self.worker_profile_editor.edit.is_none()
+            && let Some(route) = self.worker_profile_editor.route_mut(target)
         {
             let previous = route.clone();
             apply_choice(route, choice);
             let valid = route.validate().is_ok();
-            let result = self.worker_task_editor.persist_route(target);
+            let result = self.worker_profile_editor.persist_route(target);
             if valid && result.is_err() {
-                *self.worker_task_editor.route_mut(target).unwrap() = previous;
+                *self.worker_profile_editor.route_mut(target).unwrap() = previous;
             }
-            self.worker_task_editor.error = result.err();
+            self.worker_profile_editor.error = result.err();
         }
         cx.notify();
     }
 
-    pub(in crate::app) fn edit_worker_task_name(
+    pub(in crate::app) fn edit_worker_profile(
         &mut self,
-        task: Option<usize>,
+        profile: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.worker_task_editor.edit.is_some() {
+        if self.worker_profile_editor.edit.is_some() {
             return;
         }
-        let name = task
-            .and_then(|index| self.worker_task_editor.tasks.get(index))
-            .map(|task| task.name.clone())
+        let current = profile.and_then(|index| self.worker_profile_editor.profiles.get(index));
+        let name = current
+            .map(|profile| profile.name.clone())
             .unwrap_or_default();
         let input = cx.new(|cx| {
             InputState::new(window, cx)
                 .default_value(name)
-                .placeholder("Task name")
+                .placeholder("Profile name")
+        });
+        let description = current
+            .map(|profile| profile.description.clone())
+            .unwrap_or_default();
+        let description = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(description)
+                .placeholder("When should the agent choose this worker?")
         });
         input.read(cx).focus_handle(cx).focus(window, cx);
-        self.worker_task_editor.edit = Some(WorkerTaskEdit::Name { task, input });
-        self.subscribe_worker_task_inputs(window, cx);
-        self.worker_task_editor.error = None;
+        self.worker_profile_editor.edit = Some(WorkerProfileEdit::Name {
+            profile,
+            input,
+            description,
+        });
+        self.subscribe_worker_profile_inputs(window, cx);
+        self.worker_profile_editor.error = None;
         cx.notify();
     }
 
@@ -287,10 +359,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.worker_task_editor.edit.is_some() {
+        if self.worker_profile_editor.edit.is_some() {
             return;
         }
-        let Some(route) = self.worker_task_editor.route_mut(target) else {
+        let Some(route) = self.worker_profile_editor.route_mut(target) else {
             return;
         };
         let values = [
@@ -301,66 +373,76 @@ impl FarcasterApp {
         let inputs =
             values.map(|value| cx.new(|cx| InputState::new(window, cx).default_value(value)));
         inputs[0].read(cx).focus_handle(cx).focus(window, cx);
-        self.worker_task_editor.edit = Some(WorkerTaskEdit::Custom { target, inputs });
-        self.subscribe_worker_task_inputs(window, cx);
-        self.worker_task_editor.error = None;
+        self.worker_profile_editor.edit = Some(WorkerProfileEdit::Custom { target, inputs });
+        self.subscribe_worker_profile_inputs(window, cx);
+        self.worker_profile_editor.error = None;
         cx.notify();
     }
 
-    pub(in crate::app) fn finish_worker_task_edit(
+    pub(in crate::app) fn finish_worker_profile_edit(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.save_worker_task_edit(cx) {
-            self.worker_task_editor.edit = None;
-            self.worker_task_editor.subscriptions.clear();
+        if self.save_worker_profile_edit(cx) {
+            self.worker_profile_editor.edit = None;
+            self.worker_profile_editor.subscriptions.clear();
             self.sheet_focus.focus(window, cx);
             cx.notify();
         }
     }
 
-    fn subscribe_worker_task_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let inputs = match &self.worker_task_editor.edit {
-            Some(WorkerTaskEdit::Name { input, .. }) => vec![input.clone()],
-            Some(WorkerTaskEdit::Custom { inputs, .. }) => inputs.to_vec(),
+    fn subscribe_worker_profile_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let inputs = match &self.worker_profile_editor.edit {
+            Some(WorkerProfileEdit::Name {
+                input, description, ..
+            }) => vec![input.clone(), description.clone()],
+            Some(WorkerProfileEdit::Custom { inputs, .. }) => inputs.to_vec(),
             None => return,
         };
-        self.worker_task_editor.subscriptions = inputs
+        self.worker_profile_editor.subscriptions = inputs
             .iter()
             .map(|input| {
                 cx.subscribe_in(input, window, |this, _, event: &InputEvent, _, cx| {
                     if matches!(event, InputEvent::Change) {
-                        this.save_worker_task_edit(cx);
+                        this.save_worker_profile_edit(cx);
                     }
                 })
             })
             .collect();
     }
 
-    fn save_worker_task_edit(&mut self, cx: &mut Context<Self>) -> bool {
-        let editor = &mut self.worker_task_editor;
-        let previous = editor.tasks.clone();
+    fn save_worker_profile_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        let editor = &mut self.worker_profile_editor;
+        let previous = editor.profiles.clone();
         let selected = editor.selected;
+        let selected_model = editor.selected_model;
         let result = match &editor.edit {
-            Some(WorkerTaskEdit::Name { task, input }) => {
-                let (task, name) = (*task, input.read(cx).value().to_string());
-                editor.save_name(task, &name).and_then(|()| {
+            Some(WorkerProfileEdit::Name {
+                profile,
+                input,
+                description,
+            }) => {
+                let (profile, name) = (*profile, input.read(cx).value().to_string());
+                let description = description.read(cx).value().trim().to_owned();
+                editor.save_name(profile, &name).and_then(|()| {
+                    let index = profile.unwrap_or(editor.selected);
+                    editor.profiles[index].description = description;
                     let mut saved = editor.saved.clone();
-                    if let Some(index) = task {
-                        saved[index].name = editor.tasks[index].name.clone();
+                    if let Some(index) = profile {
+                        saved[index].name = editor.profiles[index].name.clone();
+                        saved[index].description = editor.profiles[index].description.clone();
                     } else {
-                        saved.push(editor.tasks.last().unwrap().clone());
+                        saved.push(editor.profiles.last().unwrap().clone());
                     }
                     editor.persist(saved)?;
-                    let index = task.unwrap_or(editor.selected);
-                    if let Some(WorkerTaskEdit::Name { task, .. }) = &mut editor.edit {
-                        *task = Some(index);
+                    if let Some(WorkerProfileEdit::Name { profile, .. }) = &mut editor.edit {
+                        *profile = Some(index);
                     }
                     Ok(())
                 })
             }
-            Some(WorkerTaskEdit::Custom { target, inputs }) => {
+            Some(WorkerProfileEdit::Custom { target, inputs }) => {
                 let target = *target;
                 let values = inputs
                     .each_ref()
@@ -373,20 +455,21 @@ impl FarcasterApp {
         };
         let saved = result.is_ok();
         if !saved {
-            editor.tasks = previous;
+            editor.profiles = previous;
             editor.selected = selected;
+            editor.selected_model = selected_model;
         }
         editor.error = result.err();
         cx.notify();
         saved
     }
 
-    pub(in crate::app) fn delete_worker_task(&mut self, cx: &mut Context<Self>) {
-        let editor = &mut self.worker_task_editor;
+    pub(in crate::app) fn delete_worker_profile(&mut self, cx: &mut Context<Self>) {
+        let editor = &mut self.worker_profile_editor;
         if editor.edit.is_some() {
             return;
         }
-        if editor.selected < editor.tasks.len() {
+        if editor.selected < editor.profiles.len() {
             let mut saved = editor.saved.clone();
             saved.remove(editor.selected);
             if let Err(error) = editor.persist(saved) {
@@ -394,9 +477,10 @@ impl FarcasterApp {
                 cx.notify();
                 return;
             }
-            editor.tasks.remove(editor.selected);
+            editor.profiles.remove(editor.selected);
         }
-        editor.selected = editor.selected.min(editor.tasks.len().saturating_sub(1));
+        editor.selected = editor.selected.min(editor.profiles.len().saturating_sub(1));
+        editor.selected_model = 0;
         editor.error = None;
         cx.notify();
     }

@@ -36,7 +36,7 @@ fn exposes_only_farcaster_tools() {
 
 #[test]
 fn tool_schemas_follow_the_caller_role() {
-    let parent = tools_for_role(false, &crate::agents::WorkerTasks::default());
+    let parent = tools_for_role(false, &crate::agents::WorkerProfiles::default());
     let parent_send = parent
         .iter()
         .find(|tool| tool.name == "worker_send")
@@ -47,7 +47,7 @@ fn tool_schemas_follow_the_caller_role() {
         Some(&serde_json::json!(["to", "message"]))
     );
 
-    let child = tools_for_role(true, &crate::agents::WorkerTasks::default());
+    let child = tools_for_role(true, &crate::agents::WorkerProfiles::default());
     let child_send = child
         .iter()
         .find(|tool| tool.name == "worker_send")
@@ -66,22 +66,27 @@ fn tool_schemas_follow_the_caller_role() {
 
 #[test]
 fn worker_task_schema_tracks_customization_and_empty_definitions() {
-    let mut tasks = crate::agents::WorkerTasks::default();
-    tasks.tasks[0].name = "audit".into();
-    tasks.tasks.truncate(1);
+    let mut tasks = crate::agents::WorkerProfiles::default();
+    tasks.profiles[0].name = "audit".into();
+    tasks.profiles.truncate(1);
     let tools = tools_for_role(false, &tasks);
     let send = tools
         .iter()
         .find(|tool| tool.name == "worker_send")
         .unwrap();
     assert_eq!(
-        send.input_schema["properties"]["task"]["enum"],
+        send.input_schema["properties"]["profile"]["enum"],
         serde_json::json!(["audit"])
     );
-    assert_eq!(
-        send.input_schema["properties"]["judgment"]["enum"],
-        serde_json::json!(["specified", "guided", "independent"])
+    assert!(
+        send.input_schema["properties"]["profile"]["description"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("audit: {}", tasks.profiles[0].description))
     );
+    for name in ["task", "judgment", "effort", "model"] {
+        assert!(send.input_schema["properties"].get(name).is_none());
+    }
     let child = tools_for_role(true, &tasks);
     let properties = child
         .iter()
@@ -90,17 +95,17 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
         .input_schema["properties"]
         .as_object()
         .unwrap();
-    for name in ["to", "task", "judgment"] {
+    for name in ["to", "profile", "task", "judgment"] {
         assert!(!properties.contains_key(name));
     }
-    tasks.tasks.clear();
+    tasks.profiles.clear();
     let tools = tools_for_role(false, &tasks);
     assert_eq!(
         tools
             .iter()
             .find(|tool| tool.name == "worker_send")
             .unwrap()
-            .input_schema["properties"]["task"],
+            .input_schema["properties"]["profile"],
         serde_json::json!(false)
     );
 }

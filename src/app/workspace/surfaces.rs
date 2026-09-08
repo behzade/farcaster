@@ -657,8 +657,8 @@ impl FarcasterApp {
             }
             Err(error) => self.network_proxy_error = Some(error),
         }
-        if let Err(error) = self.load_worker_task_settings() {
-            self.worker_task_editor.error = Some(error);
+        if let Err(error) = self.load_worker_profile_settings() {
+            self.worker_profile_editor.error = Some(error);
         }
         self.settings_mcp_error = None;
         self.open_sheet(AppSheet::Settings, window, cx);

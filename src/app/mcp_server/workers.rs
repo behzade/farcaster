@@ -4,20 +4,19 @@ use serde::Deserialize;
 use crate::agents::{CallerContext, CallerRegistry, StartWorker, WorkerContext, WorkerPool};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct SendParams {
     pub(super) to: Option<String>,
     pub(super) message: String,
-    pub(super) task: Option<String>,
-    #[schemars(with = "Option<String>")]
-    pub(super) judgment: Option<crate::agents::WorkerJudgment>,
+    pub(super) profile: Option<String>,
 }
 
 pub(super) fn send(
     pool: &WorkerPool,
     params: SendParams,
     caller_token: Option<String>,
-    tasks: &crate::agents::WorkerTasks,
+    tasks: &crate::agents::WorkerProfiles,
+    available: impl Fn(&crate::agents::WorkerExecution, &std::path::Path) -> bool,
 ) -> Result<serde_json::Value, String> {
     if params.message.trim().is_empty() {
         return Err("worker message must not be empty".into());
@@ -29,8 +28,8 @@ pub(super) fn send(
     let caller = registry.resolve(token)?;
 
     if caller.parent_worker_id.is_some() {
-        if params.task.is_some() || params.judgment.is_some() {
-            return Err("children cannot select task routing".into());
+        if params.profile.is_some() {
+            return Err("children cannot select worker profiles".into());
         }
         let worker = registry
             .send(token, "", params.message)?
@@ -49,7 +48,7 @@ pub(super) fn send(
         return Err("child name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
     }
     if let Some(assignment) = registry.child_assignment(&caller, &to)? {
-        validate_reuse(&assignment, params.task.as_deref(), params.judgment)?;
+        validate_reuse(&assignment, params.profile.as_deref())?;
         let worker = registry
             .send(token, &to, params.message.clone())?
             .ok_or("child became unavailable; retry with a new child name")?;
@@ -63,11 +62,10 @@ pub(super) fn send(
 
     pool.allow_project(&caller.project)?;
     let name = to;
-    let task = params
-        .task
-        .as_deref()
-        .ok_or("new children require a configured `task`; omit task only when reusing a child")?;
-    let assignment = tasks.resolve(task, params.judgment.unwrap_or_default())?;
+    let profile = params.profile.as_deref().ok_or(
+        "new children require a configured `profile`; omit profile only when reusing a child",
+    )?;
+    let assignment = tasks.resolve(profile, |model| available(model, &caller.project))?;
     pool.start_assigned(
         new_worker(caller, name.clone(), params.message, &assignment),
         Some(assignment.clone()),
@@ -80,15 +78,38 @@ pub(super) fn send(
     }))
 }
 
+pub(super) fn model_available(
+    model: &crate::agents::WorkerExecution,
+    project: &std::path::Path,
+    backends: &[String],
+    catalogs: &[crate::app::persistence::CachedConfigurationCatalog],
+) -> bool {
+    if !backends.contains(&model.harness) {
+        return false;
+    }
+    let mut catalogs = catalogs
+        .iter()
+        .filter(|entry| entry.harness == model.harness && entry.project == project)
+        .peekable();
+    // Without a catalog, allow the installed harness to validate the configured IDs.
+    // With a catalog, skip providers and models that this harness does not offer.
+    catalogs.peek().is_none()
+        || catalogs.any(|entry| {
+            entry.catalog.models.iter().any(|candidate| {
+                candidate.provider == model.provider && candidate.id == model.model
+            })
+        })
+}
+
 fn validate_reuse(
     assignment: &crate::agents::WorkerAssignment,
-    task: Option<&str>,
-    judgment: Option<crate::agents::WorkerJudgment>,
+    profile: Option<&str>,
 ) -> Result<(), String> {
-    if task.is_some_and(|task| task != assignment.task)
-        || judgment.is_some_and(|judgment| judgment != assignment.judgment)
-    {
-        return Err("child task and judgment are fixed at creation; use a new child name for different routing".into());
+    if profile.is_some_and(|profile| profile != assignment.profile) {
+        return Err(
+            "a child's profile is fixed at creation; use a new child name for a different profile"
+                .into(),
+        );
     }
     Ok(())
 }

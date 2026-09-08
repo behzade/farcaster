@@ -160,20 +160,22 @@ impl StateStore {
             .collect()
     }
 
-    pub(crate) fn load_worker_tasks(&self) -> Result<crate::agents::WorkerTasks, String> {
-        let tasks: crate::agents::WorkerTasks = self
-            .load_json_setting("worker_tasks_json", "worker tasks")?
+    pub(crate) fn load_worker_profiles(&self) -> Result<crate::agents::WorkerProfiles, String> {
+        let tasks = self
+            .load_json_setting("worker_tasks_json", "worker profiles")?
+            .map(crate::agents::WorkerProfiles::from_saved)
+            .transpose()?
             .unwrap_or_default();
         tasks.validate()?;
         Ok(tasks)
     }
 
-    pub(crate) fn save_worker_tasks(
+    pub(crate) fn save_worker_profiles(
         &self,
-        tasks: &crate::agents::WorkerTasks,
+        tasks: &crate::agents::WorkerProfiles,
     ) -> Result<(), String> {
         tasks.validate()?;
-        self.save_json_setting("worker_tasks_json", "worker tasks", tasks)
+        self.save_json_setting("worker_tasks_json", "worker profiles", tasks)
     }
 
     pub(crate) fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {

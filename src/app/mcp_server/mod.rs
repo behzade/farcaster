@@ -93,9 +93,17 @@ impl FarcasterMcp {
         let pool = self.workers.clone();
         let database = self.database.clone();
         let value = tokio::task::spawn_blocking(move || {
-            let tasks =
-                crate::app::persistence::StateStore::open_at(&database)?.load_worker_tasks()?;
-            workers::send(&pool, params, caller_token, &tasks)
+            let store = crate::app::persistence::StateStore::open_at(&database)?;
+            let profiles = store.load_worker_profiles()?;
+            let catalogs = store.load_configuration_catalogs()?;
+            let backends = crate::agents::backend_statuses()
+                .into_iter()
+                .filter(|backend| backend.available)
+                .map(|backend| backend.id)
+                .collect::<Vec<_>>();
+            workers::send(&pool, params, caller_token, &profiles, |model, project| {
+                workers::model_available(model, project, &backends, &catalogs)
+            })
         })
         .await
         .map_err(|error| format!("worker send task failed: {error}"))??;
@@ -201,7 +209,7 @@ fn notify_workgraph_changed(updates: &async_channel::Sender<()>) {
     let _ = updates.try_send(());
 }
 
-fn tools_for_role(child: bool, tasks: &crate::agents::WorkerTasks) -> Vec<rmcp::model::Tool> {
+fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmcp::model::Tool> {
     let mut tools = FarcasterMcp::tool_router().list_all();
     if child {
         tools.retain(|tool| tool.name != "worker_notices");
@@ -214,8 +222,7 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerTasks) -> Vec<rmcp::
                 .and_then(serde_json::Value::as_object_mut)
             {
                 properties.remove("to");
-                properties.remove("task");
-                properties.remove("judgment");
+                properties.remove("profile");
             }
             schema.insert("required".into(), serde_json::json!(["message"]));
             tool.description = Some(Cow::Borrowed(
@@ -226,13 +233,15 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerTasks) -> Vec<rmcp::
                 .get_mut("properties")
                 .and_then(serde_json::Value::as_object_mut)
             {
-                properties.insert("judgment".into(), serde_json::json!({
-                    "type": "string", "enum": crate::agents::WorkerJudgment::ALL.map(|judgment| judgment.label()),
-                    "description": "Judgment delegated: specified procedure, guided local decisions, or independent approach. Defaults to guided on creation; omit on reuse."
-                }));
-                properties.insert("task".into(), if tasks.tasks.is_empty() { serde_json::json!(false) } else { serde_json::json!({
-                    "type": "string", "enum": tasks.tasks.iter().map(|task| task.name.as_str()).collect::<Vec<_>>(),
-                    "description": "Classification of already-delegated work; required on creation, omitted on reuse."
+                let descriptions = tasks
+                    .profiles
+                    .iter()
+                    .map(|profile| format!("{}: {}", profile.name, profile.description))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                properties.insert("profile".into(), if tasks.profiles.is_empty() { serde_json::json!(false) } else { serde_json::json!({
+                    "type": "string", "enum": tasks.profiles.iter().map(|profile| profile.name.as_str()).collect::<Vec<_>>(),
+                    "description": format!("Worker profile; required on creation, omitted on reuse. The first available model in the profile's ordered list is selected. That model and effort stay fixed for the child's lifetime.\n{descriptions}")
                 }) });
             }
             schema.insert("required".into(), serde_json::json!(["to", "message"]));
@@ -269,7 +278,7 @@ impl ServerHandler for FarcasterMcp {
             .is_child(&token)
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
         let tasks = crate::app::persistence::StateStore::open_at(&self.database)
-            .and_then(|store| store.load_worker_tasks())
+            .and_then(|store| store.load_worker_profiles())
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
         Ok(rmcp::model::ListToolsResult {
             result_type: Some(rmcp::model::ResultType::COMPLETE),

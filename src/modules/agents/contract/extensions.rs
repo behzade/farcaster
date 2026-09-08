@@ -88,13 +88,48 @@ pub(crate) enum PromptMode {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename = "image", rename_all = "camelCase", tag = "type")]
 pub(crate) struct PromptImage {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub data: String,
     pub mime_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<std::path::PathBuf>,
 }
 
 impl PromptImage {
     pub(crate) fn new(data: String, mime_type: String) -> Self {
-        Self { data, mime_type }
+        Self {
+            data,
+            mime_type,
+            path: None,
+        }
+    }
+
+    pub(crate) fn from_file(path: std::path::PathBuf, mime_type: String) -> Self {
+        Self {
+            data: String::new(),
+            mime_type,
+            path: Some(path),
+        }
+    }
+
+    pub(crate) fn bytes(&self) -> Result<Vec<u8>, String> {
+        use base64::Engine as _;
+        match &self.path {
+            Some(path) => std::fs::read(path)
+                .map_err(|error| format!("read image {}: {error}", path.display())),
+            None => base64::engine::general_purpose::STANDARD
+                .decode(&self.data)
+                .map_err(|error| format!("decode image: {error}")),
+        }
+    }
+
+    pub(crate) fn into_inline(self) -> Result<Self, String> {
+        use base64::Engine as _;
+        if self.path.is_none() {
+            return Ok(self);
+        }
+        let data = base64::engine::general_purpose::STANDARD.encode(self.bytes()?);
+        Ok(Self::new(data, self.mime_type))
     }
 }
 

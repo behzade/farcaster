@@ -485,7 +485,12 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert_eq!(queued[0].display_message.as_deref(), Some("$commit hello"));
     assert_eq!(queued[0].invocation.as_deref(), Some("expanded prompt"));
     assert_eq!(
-        queued[0].images,
+        queued[0]
+            .images
+            .clone()
+            .into_iter()
+            .map(PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?,
         vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())]
     );
     assert_eq!(
@@ -1452,20 +1457,25 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
     let temp = tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("settings.sqlite3");
     let store = StateStore::open_at(&database)?;
-    let mut tasks = store.load_worker_tasks()?;
-    assert_eq!(tasks.tasks.len(), 3);
-    tasks.tasks[0].name = "audit".into();
-    tasks.tasks[0].independent.harness = "codex-cli".into();
-    tasks.tasks[0].independent.provider = "openai".into();
-    tasks.tasks.remove(1);
-    store.save_worker_tasks(&tasks)?;
-    assert_eq!(StateStore::open_at(&database)?.load_worker_tasks()?, tasks);
-    tasks.tasks.clear();
-    store.save_worker_tasks(&tasks)?;
+    let mut tasks = store.load_worker_profiles()?;
+    assert_eq!(tasks.profiles.len(), 4);
+    tasks.profiles[0].name = "audit".into();
+    tasks.profiles[0].description = "Review security-sensitive changes.".into();
+    tasks.profiles[0].models.swap(0, 1);
+    tasks.profiles[0].models[0].harness = "codex-cli".into();
+    tasks.profiles[0].models[0].provider = "openai".into();
+    tasks.profiles.remove(1);
+    store.save_worker_profiles(&tasks)?;
+    assert_eq!(
+        StateStore::open_at(&database)?.load_worker_profiles()?,
+        tasks
+    );
+    tasks.profiles.clear();
+    store.save_worker_profiles(&tasks)?;
     assert!(
         StateStore::open_at(&database)?
-            .load_worker_tasks()?
-            .tasks
+            .load_worker_profiles()?
+            .profiles
             .is_empty()
     );
     Ok(())
@@ -1476,18 +1486,18 @@ fn settings_save_independently_and_reject_invalid_values() -> Result<(), String>
     let temp = tempdir().map_err(|error| error.to_string())?;
     let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
     store.save_network_proxy(Some("http://proxy.example:8080"))?;
-    let original = store.load_worker_tasks()?;
+    let original = store.load_worker_profiles()?;
     let mut invalid = original.clone();
-    invalid.tasks[0].guided.provider.clear();
-    assert!(store.save_worker_tasks(&invalid).is_err());
+    invalid.profiles[0].models[0].provider.clear();
+    assert!(store.save_worker_profiles(&invalid).is_err());
     assert_eq!(
         store.load_network_proxy()?.as_deref(),
         Some("http://proxy.example:8080")
     );
-    assert_eq!(store.load_worker_tasks()?, original);
+    assert_eq!(store.load_worker_profiles()?, original);
     let mut valid = original;
-    valid.tasks[0].name = "audit".into();
-    store.save_worker_tasks(&valid)?;
+    valid.profiles[0].name = "audit".into();
+    store.save_worker_profiles(&valid)?;
     assert_eq!(
         store.load_network_proxy()?.as_deref(),
         Some("http://proxy.example:8080")
@@ -1499,7 +1509,7 @@ fn settings_save_independently_and_reject_invalid_values() -> Result<(), String>
     );
     store.save_network_proxy(None)?;
     assert_eq!(store.load_network_proxy()?, None);
-    assert_eq!(store.load_worker_tasks()?, valid);
+    assert_eq!(store.load_worker_profiles()?, valid);
     Ok(())
 }
 
