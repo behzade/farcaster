@@ -338,11 +338,12 @@ impl RuntimeOwner {
                 if settled {
                     if notify_completion {
                         let failed = self.active_snapshot().conversation.ended_in_error();
-                        self.notify_attention(if failed {
+                        let title = if failed {
                             "Turn failed"
                         } else {
                             "Turn completed"
-                        });
+                        };
+                        self.notify_attention(title, None);
                     }
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
@@ -394,14 +395,14 @@ impl RuntimeOwner {
     }
 
     pub(super) fn fail(&mut self, error: String) {
+        let details = failure_details(&error);
         if self.active_snapshot().status != "Failed" {
-            self.notify_attention("Agent failed");
+            self.notify_attention("Agent failed", Some(&failure_summary(&details)));
         }
         let starting = !self.startup_state_loaded || !self.startup_history_loaded;
         let preserve_history = !self.pending_session_controls.is_empty()
             && self.snapshot.history_preview
             && self.parked_snapshot.is_some();
-        let details = failure_details(&error);
         zlog::error!("agent runtime failed: {details}");
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
