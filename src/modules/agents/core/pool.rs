@@ -161,7 +161,15 @@ impl WorkerPool {
                 return Err(error);
             }
         }
-        if let Err(error) = session.send(request.prompt, WorkerSendMode::Prompt) {
+        let prompt = if parent.is_some() {
+            format!(
+                "You are a Farcaster child worker. Your final answer is automatically sent to your parent after each turn. Farcaster MCP is not available in this child session.\n\n{}",
+                request.prompt
+            )
+        } else {
+            request.prompt
+        };
+        if let Err(error) = session.send(prompt, WorkerSendMode::Prompt) {
             let _ = session.close();
             return Err(error);
         }

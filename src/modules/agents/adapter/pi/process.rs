@@ -72,7 +72,7 @@ enum ReaderItem {
 }
 
 #[derive(Clone, Copy)]
-enum SessionLaunch<'a> {
+pub(super) enum SessionLaunch<'a> {
     Catalog,
     New,
     Resume(&'a Path),
@@ -165,21 +165,6 @@ impl PiRpcProcess {
         Self::spawn_inner(command, project, launch, wake, None, None)
     }
 
-    pub(crate) fn spawn_fork(
-        command: &AgentLaunchConfig,
-        project: &Path,
-        source: &Path,
-    ) -> Result<Self, String> {
-        Self::spawn_inner(
-            command,
-            project,
-            SessionLaunch::Fork(source),
-            None,
-            None,
-            None,
-        )
-    }
-
     pub(in crate::modules::agents::adapter) fn spawn_fork_with_optional_waker(
         command: &AgentLaunchConfig,
         project: &Path,
@@ -196,9 +181,10 @@ impl PiRpcProcess {
         )
     }
 
-    pub(crate) fn spawn_worker(
+    pub(super) fn spawn_worker(
         command: &AgentLaunchConfig,
         project: &Path,
+        launch: SessionLaunch<'_>,
         worker_id: String,
         worker_name: String,
         parent: Option<(String, String)>,
@@ -206,7 +192,7 @@ impl PiRpcProcess {
         Self::spawn_inner(
             command,
             project,
-            SessionLaunch::New,
+            launch,
             None,
             Some((worker_id, worker_name)),
             parent,
@@ -248,7 +234,7 @@ impl PiRpcProcess {
         } else {
             registry.issue(project, profile, wake.clone())
         };
-        let mcp_config = crate::modules::agents::adapter::farcaster_mcp::enabled()
+        let mcp_config = (!is_worker && crate::modules::agents::adapter::farcaster_mcp::enabled())
             .then(|| TransientMcpConfig::create(caller_identity.token()))
             .transpose()?;
         let mut prepared = rpc_command(
@@ -625,6 +611,8 @@ impl PiRpcProcess {
                 if response.success
                     && response.operation == crate::agents::SessionOperation::LoadState
                     && let Some(session) = response.data["sessionFile"].as_str()
+                    // An inherited worker resumes the parent before forking it.
+                    && self.parent_session.as_deref() != Some(session)
                 {
                     self.caller_identity.bind(session);
                     if self.parent_session.is_some() {

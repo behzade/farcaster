@@ -93,7 +93,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
             &self.profile,
             &launch.project,
             None,
-            Some(caller_identity.token()),
+            None,
             None,
         )?;
         if let Some(model) = launch.model.as_deref() {

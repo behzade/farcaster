@@ -7,7 +7,7 @@ use std::{
 
 use serde_json::Value;
 
-use super::process::PiRpcProcess;
+use super::process::{PiRpcProcess, SessionLaunch};
 use crate::{
     agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
     agents::{
@@ -36,17 +36,21 @@ impl WorkerSessionFactory for PiWorkerFactory {
         if launch.ephemeral {
             return Err("Pi workers do not expose isolated ephemeral inference".into());
         }
-        let mut process = match &launch.context {
-            WorkerContext::Fresh => PiRpcProcess::spawn_worker(
+        let spawn = |start| {
+            PiRpcProcess::spawn_worker(
                 &self.command,
                 &launch.project,
+                start,
                 launch.worker_id.clone(),
                 launch.worker_name.clone(),
                 launch
                     .parent_worker_id
                     .clone()
                     .map(|id| (id, launch.parent_session.clone())),
-            )?,
+            )
+        };
+        let mut process = match &launch.context {
+            WorkerContext::Fresh => spawn(SessionLaunch::New)?,
             WorkerContext::Session { session_locator } => {
                 let parent = canonical_session(&launch.parent_session, "parent")?;
                 let source = canonical_session(session_locator, "source")?;
@@ -57,12 +61,11 @@ impl WorkerSessionFactory for PiWorkerFactory {
                     );
                 }
                 if let Some(entry_id) = parent_before_worker_call(&source)? {
-                    let mut process =
-                        PiRpcProcess::spawn(&self.command, &launch.project, Some(&source))?;
+                    let mut process = spawn(SessionLaunch::Resume(&source))?;
                     process.request_and_wait(SessionCommand::ForkAt { entry_id })?;
                     process
                 } else {
-                    PiRpcProcess::spawn_fork(&self.command, &launch.project, &source)?
+                    spawn(SessionLaunch::Fork(&source))?
                 }
             }
         };

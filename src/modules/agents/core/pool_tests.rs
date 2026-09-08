@@ -150,7 +150,7 @@ fn projects_from_later_calling_sessions_can_be_allowed() -> Result<(), String> {
 }
 
 #[test]
-fn child_settlement_notifies_the_ui_without_messaging_parent() -> Result<(), String> {
+fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
     let (pool, updates) = pool(factory.clone(), project.path(), 1)?;
@@ -167,35 +167,34 @@ fn child_settlement_notifies_the_ui_without_messaging_parent() -> Result<(), Str
     parent.bind("pi-parent");
     let parent_id = CallerRegistry::shared().resolve(parent.token())?.worker_id;
     let mut child_request = request(project.path());
-    child_request.parent_worker_id = Some(parent_id.clone());
-
-    let child = pool.start(child_request)?;
-    let child_identity = CallerRegistry::shared().issue_as(
-        project.path(),
-        CallerProfile {
-            backend: "pi".into(),
-            provider: None,
-            model: None,
-            effort: None,
-        },
-        None,
-        child.id.clone(),
-        "implementation".into(),
-        Some(parent_id),
-    )?;
-    child_identity.bind("pi-child");
+    child_request.parent_worker_id = Some(parent_id);
+    pool.start(child_request)?;
     wait_for_update(&updates)?;
-    factory
-        .events
-        .lock()
-        .map_err(|_| "fake events unavailable".to_owned())?[0]
-        .send(WorkerEvent::Settled {
-            output: "done".into(),
-        })
-        .map_err(|_| "fake worker stopped".to_owned())?;
-
-    wait_for_update(&updates)?;
-    assert!(parent.try_recv().is_none());
+    let events = factory.events.lock().map_err(|_| "events")?[0].clone();
+    for (starts_turn, output, delivers) in [
+        (false, "done", true),
+        (false, "done", false), // Duplicate completion.
+        (true, "done", true),   // Same answer on a later turn.
+        (true, "  ", false),    // Empty completion.
+    ] {
+        if starts_turn {
+            events
+                .send(WorkerEvent::Started)
+                .map_err(|_| "start turn")?;
+        }
+        events
+            .send(WorkerEvent::Settled {
+                output: output.into(),
+            })
+            .map_err(|_| "finish turn")?;
+        wait_for_update(&updates)?;
+        if delivers {
+            let report = parent.try_recv().ok_or("missing final message")?;
+            assert_eq!(report.from, "implementation");
+            assert_eq!(report.message, output);
+        }
+        assert!(parent.try_recv().is_none(), "unexpected parent message");
+    }
     Ok(())
 }
 

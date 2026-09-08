@@ -383,17 +383,20 @@ impl CallerRegistry {
             return Ok(None);
         };
         let recipient_name = recipient.worker_name.clone();
-        recipient
-            .inbox
-            .send(PeerMessage {
-                from: caller.worker_name.clone(),
-                message,
-            })
-            .map_err(|_| format!("worker {recipient_name} is unavailable"))?;
-        if let Some(wake) = &recipient.wake {
+        recipient.send_message(caller.worker_name.clone(), message)?;
+        Ok(Some(recipient_name))
+    }
+}
+
+impl RegisteredCaller {
+    fn send_message(&self, from: String, message: String) -> Result<(), String> {
+        self.inbox
+            .send(PeerMessage { from, message })
+            .map_err(|_| format!("worker {} is unavailable", self.worker_name))?;
+        if let Some(wake) = &self.wake {
             wake.unpark();
         }
-        Ok(Some(recipient_name))
+        Ok(())
     }
 }
 
@@ -487,7 +490,7 @@ pub(super) struct WorkerParent {
 }
 
 impl WorkerParent {
-    pub(super) fn report_failure(&self, error: &str) {
+    pub(super) fn report(&self, message: String) {
         let registry = CallerRegistry::shared();
         let Ok(callers) = registry.callers.lock() else {
             return;
@@ -496,22 +499,11 @@ impl WorkerParent {
             .values()
             .find(|caller| caller.worker_id == self.id && caller.project == self.project)
         else {
+            zlog::warn!("Parent unavailable for worker {} report", self.child_name);
             return;
         };
-        if parent
-            .inbox
-            .send(PeerMessage {
-                from: self.child_name.clone(),
-                message: format!("Worker failed: {error}"),
-            })
-            .is_err()
-        {
-            zlog::warn!(
-                "Failed to notify parent of worker {} failure",
-                self.child_name
-            );
-        } else if let Some(wake) = &parent.wake {
-            wake.unpark();
+        if let Err(error) = parent.send_message(self.child_name.clone(), message) {
+            zlog::warn!("Failed to send worker {} report: {error}", self.child_name);
         }
     }
 }

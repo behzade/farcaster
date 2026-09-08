@@ -38,6 +38,28 @@ fn process_starts_directly_in_the_project_directory() -> TestResult {
 }
 
 #[test]
+fn child_process_omits_farcaster_mcp() -> TestResult {
+    for launch in [
+        SessionLaunch::New,
+        SessionLaunch::Resume(Path::new("/sessions/parent.jsonl")),
+        SessionLaunch::Fork(Path::new("/sessions/parent.jsonl")),
+    ] {
+        let (temp, command) = fake("project-directory")?;
+        let mut rpc = PiRpcProcess::spawn_worker(
+            &command,
+            temp.path(),
+            launch,
+            "child-worker".into(),
+            "child".into(),
+            None,
+        )?;
+        assert!(!temp.path().join("process-mcp-config").exists());
+        rpc.terminate()?;
+    }
+    Ok(())
+}
+
+#[test]
 fn catalog_process_disables_session_persistence() -> TestResult {
     let project = tempdir()?;
     let process = rpc_command(
@@ -249,6 +271,7 @@ fn peer_message_steers_a_busy_session_without_waiting_for_settlement() -> TestRe
     let mut rpc = PiRpcProcess::spawn_worker(
         &command,
         temp.path(),
+        SessionLaunch::New,
         "recipient-worker".into(),
         "recipient".into(),
         Some((parent_id, "sender-session".into())),
@@ -414,6 +437,41 @@ fn stamp_parent_session_rewrites_the_header_in_place() -> TestResult {
 }
 
 #[test]
+fn inherited_child_does_not_stamp_the_parent_before_forking() -> TestResult {
+    let (temp, command) = fake("deferred-session")?;
+    let path = temp.path().canonicalize()?.join("fake-session.jsonl");
+    let contents = "{\"type\":\"session\",\"version\":3,\"id\":\"parent\"}\n";
+    fs::write(&path, contents)?;
+    let registry = crate::agents::CallerRegistry::shared();
+    let parent = registry.issue(
+        temp.path(),
+        crate::modules::agents::core::CallerProfile {
+            backend: "pi".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let locator = path.to_string_lossy().into_owned();
+    parent.bind(locator.clone());
+    let parent_id = registry.resolve(parent.token())?.worker_id;
+    let mut rpc = PiRpcProcess::spawn_worker(
+        &command,
+        temp.path(),
+        SessionLaunch::Resume(&path),
+        "inherited-child".into(),
+        "review".into(),
+        Some((parent_id, locator.clone())),
+    )?;
+    assert_eq!(fs::read_to_string(&path)?, contents);
+    assert_eq!(rpc.parent_session.as_deref(), Some(locator.as_str()));
+    assert!(rpc.pending_parent_stamp.is_none());
+    rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
 fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> TestResult {
     let (temp, command) = fake("deferred-session")?;
     let path = temp.path().canonicalize()?.join("fake-session.jsonl");
@@ -433,6 +491,7 @@ fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> Te
     let mut rpc = PiRpcProcess::spawn_worker(
         &command,
         temp.path(),
+        SessionLaunch::New,
         "child-worker".into(),
         "review".into(),
         Some((parent_id, "/sessions/parent.jsonl".into())),

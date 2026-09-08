@@ -56,9 +56,6 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
                 launch.parent_worker_id.clone(),
             )?
             .with_slot(launch.slot.clone());
-        if farcaster_mcp::enabled() {
-            configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
-        }
         let password = worker_password()?;
         configure_opencode_server(&mut prepared, self.command.access_mode)?;
         let mut child = prepared

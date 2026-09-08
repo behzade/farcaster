@@ -40,6 +40,7 @@ fn run(
 ) {
     let (responses, response_rx) = mpsc::channel::<crate::agents::WorkerInputResponse>();
     let mut input_leases = Vec::new();
+    let mut turn_active = true;
     let error = 'run: loop {
         match commands.recv_timeout(POLL_INTERVAL) {
             Ok(RunCommand::Stop) => {
@@ -81,10 +82,19 @@ fn run(
         }
         while let Some(event) = session.poll() {
             match event {
-                WorkerEvent::Started => update(&snapshot, |current| {
-                    current.status = WorkerStatus::Running;
-                }),
+                WorkerEvent::Started => {
+                    turn_active = true;
+                    update(&snapshot, |current| {
+                        current.status = WorkerStatus::Running;
+                    });
+                }
                 WorkerEvent::Settled { output } => {
+                    if std::mem::replace(&mut turn_active, false)
+                        && !output.trim().is_empty()
+                        && let Some(parent) = &parent
+                    {
+                        parent.report(output.clone());
+                    }
                     input_leases.clear();
                     slot.release();
                     update(&snapshot, |current| {
@@ -126,7 +136,7 @@ fn run(
     let error = close_failed(&mut *session, &snapshot, error);
     slot.release();
     if let Some(parent) = &parent {
-        parent.report_failure(&error);
+        parent.report(format!("Worker failed: {error}"));
     }
     notify(updates);
 }
