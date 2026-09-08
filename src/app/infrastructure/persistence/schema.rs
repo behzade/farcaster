@@ -82,7 +82,11 @@ impl StateStore {
                 .commit()
                 .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
         }
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            image_directory: std::path::absolute(parent.join("images"))
+                .map_err(|error| format!("resolve image directory: {error}"))?,
+        })
     }
 
     pub(crate) fn import_legacy_pi_gpui_state(&mut self, path: &Path) -> Result<(), String> {

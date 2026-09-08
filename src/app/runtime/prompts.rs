@@ -68,6 +68,18 @@ impl RuntimeOwner {
             );
             return;
         }
+        let images = match self
+            .state
+            .as_ref()
+            .ok_or_else(|| "Couldn’t save the message".to_owned())
+            .and_then(|state| state.store_prompt_images(&images))
+        {
+            Ok(images) => images,
+            Err(error) => {
+                self.reject_prompt(&target, error);
+                return;
+            }
+        };
         let outbox_id = match self.state.as_ref() {
             Some(state) => match agents::enqueue_prompt_with_presentation(
                 state,
@@ -243,6 +255,8 @@ impl RuntimeOwner {
             message,
             images,
         };
+        // File reads can fail before the backend accepts a request.
+        self.pending_outbox_id = outbox_id;
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
                 self.pending_prompt_id = Some(id);

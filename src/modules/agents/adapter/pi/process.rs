@@ -319,7 +319,13 @@ impl PiRpcProcess {
         self.caller_identity.set_activity(activity);
     }
 
-    pub(crate) fn send_request(&mut self, request: SessionCommand) -> Result<String, String> {
+    pub(crate) fn send_request(&mut self, mut request: SessionCommand) -> Result<String, String> {
+        if let SessionCommand::Prompt { images, .. } = &mut request {
+            *images = std::mem::take(images)
+                .into_iter()
+                .map(crate::protocol::PromptImage::into_inline)
+                .collect::<Result<Vec<_>, _>>()?;
+        }
         let starts_run = matches!(
             &request,
             SessionCommand::Prompt {

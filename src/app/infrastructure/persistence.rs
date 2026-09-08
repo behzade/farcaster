@@ -19,6 +19,7 @@ use crate::{
 
 mod composer;
 mod identity;
+mod images;
 mod migrate_legacy;
 mod migrate_v12;
 mod projects;
@@ -37,6 +38,7 @@ const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 
 pub(crate) struct StateStore {
     connection: Connection,
+    image_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]

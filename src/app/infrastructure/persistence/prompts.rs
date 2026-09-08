@@ -43,8 +43,7 @@ impl StateStore {
                 session,
             )?,
         };
-        let images_json = serde_json::to_string(images)
-            .map_err(|error| format!("encode prompt images: {error}"))?;
+        let images_json = self.encode_prompt_images(images)?;
         let inserted = self
             .connection
             .execute(
@@ -94,11 +93,11 @@ impl StateStore {
             .query_map([], |row| {
                 let mode = row.get::<_, String>(5)?;
                 let images_json = row.get::<_, String>(9)?;
-                let images = serde_json::from_str(&images_json).map_err(|error| {
+                let images = self.decode_prompt_images(&images_json).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
                         9,
                         rusqlite::types::Type::Text,
-                        Box::new(error),
+                        Box::new(std::io::Error::other(error)),
                     )
                 })?;
                 let client_key = row.get::<_, Option<String>>(1)?;

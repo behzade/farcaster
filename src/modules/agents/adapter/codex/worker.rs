@@ -529,6 +529,10 @@ impl WorkerSession for CodexWorkerSession {
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
         let mut input = vec![CodexUserInput::text(message)];
+        let images = images
+            .into_iter()
+            .map(crate::protocol::PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?;
         input.extend(images.into_iter().map(|image| CodexUserInput::Image {
             url: format!("data:{};base64,{}", image.mime_type, image.data),
         }));

@@ -1060,6 +1060,10 @@ impl WorkerSession for OpenCodeWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
+        let images = images
+            .into_iter()
+            .map(crate::protocol::PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?;
         let files = images
             .into_iter()
             .enumerate()

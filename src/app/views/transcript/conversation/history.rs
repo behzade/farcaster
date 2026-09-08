@@ -317,10 +317,15 @@ pub(super) fn user_message_text(message: &str, image_count: usize) -> String {
 }
 
 pub(super) fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<Image>>> {
-    decode_images(
+    Arc::new(
         images
             .iter()
-            .map(|image| (image.data.as_str(), image.mime_type.as_str())),
+            .filter_map(|image| {
+                let format = ImageFormat::from_mime_type(&image.mime_type)?;
+                let bytes = image.bytes().ok()?;
+                (!bytes.is_empty()).then(|| Arc::new(Image::from_bytes(format, bytes)))
+            })
+            .collect(),
     )
 }
 
@@ -385,3 +390,7 @@ fn model_error_item(text: String) -> TranscriptItem {
         invocation: None,
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod tests;

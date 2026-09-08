@@ -357,14 +357,21 @@ fn merge(mut object: Value, key: &str, value: Value) -> Value {
     object
 }
 
-fn prompt_content(message: &str, images: Vec<crate::protocol::PromptImage>) -> Vec<Value> {
+fn prompt_content(
+    message: &str,
+    images: Vec<crate::protocol::PromptImage>,
+) -> Result<Vec<Value>, String> {
+    let images = images
+        .into_iter()
+        .map(crate::protocol::PromptImage::into_inline)
+        .collect::<Result<Vec<_>, _>>()?;
     let mut prompt = vec![json!({"type": "text", "text": message})];
     prompt.extend(
         images
             .into_iter()
             .map(|image| json!({"type": "image", "mimeType": image.mime_type, "data": image.data})),
     );
-    prompt
+    Ok(prompt)
 }
 
 pub(in crate::modules::agents::adapter) fn configure_command(
@@ -493,7 +500,7 @@ impl AcpWorkerSession {
         message: &str,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        let prompt = prompt_content(message, images);
+        let prompt = prompt_content(message, images)?;
         self.output.clear();
         self.thought_started = false;
         self.tool_states.clear();
@@ -788,7 +795,7 @@ impl WorkerSession for AcpWorkerSession {
                 "_session/steering",
                 json!({
                     "sessionId": self.session_id,
-                    "prompt": prompt_content(&message, images.clone()),
+                    "prompt": prompt_content(&message, images.clone())?,
                     "_meta": {"steering": {"idleBehavior": "promptRequired"}},
                 }),
             )?;
