@@ -174,7 +174,8 @@ pub fn load_selected_plan(
             _ => None,
         });
     Ok(ProjectSelection {
-        plans: project_graph.plans,
+        plans: project_graph.plans.clone(),
+        graph: project_graph,
         snapshot,
         session_link,
     })

@@ -176,7 +176,7 @@ impl Render for WorkGraphSidebarView {
                             .children(
                                 data.snapshot
                                     .as_ref()
-                                    .map(|snapshot| plan_rows(snapshot, ""))
+                                    .map(|snapshot| plan_rows(snapshot, &data.graph, ""))
                                     .unwrap_or_default()
                                     .into_iter()
                                     .map(|row| render_sidebar_row(row, self.app.clone())),

@@ -4,7 +4,11 @@ use workgraph::PlanSnapshot;
 
 use super::contract::PlanRow;
 
-pub(super) fn plan_rows(snapshot: &PlanSnapshot, search: &str) -> Vec<PlanRow> {
+pub(super) fn plan_rows(
+    snapshot: &PlanSnapshot,
+    graph: &workgraph::ProjectGraph,
+    search: &str,
+) -> Vec<PlanRow> {
     let reached = snapshot
         .active_steps()
         .into_iter()
@@ -16,10 +20,17 @@ pub(super) fn plan_rows(snapshot: &PlanSnapshot, search: &str) -> Vec<PlanRow> {
         .into_iter()
         .filter_map(|number| {
             let node = snapshot.nodes.iter().find(|node| node.number == number)?;
+            let state = graph.task_state(number);
+            let done = reached.contains(&number)
+                || state
+                    .as_ref()
+                    .is_some_and(|state| state.completion.is_some());
             node_matches(node, search).then(|| PlanRow {
                 node: node.clone(),
-                reached: reached.contains(&number),
-                current: current == Some(number),
+                reached: done,
+                current: !done
+                    && (current == Some(number)
+                        || state.as_ref().is_some_and(|state| state.owner.is_some())),
                 detached: !reachable.contains(&number),
             })
         })

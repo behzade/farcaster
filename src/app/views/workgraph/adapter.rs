@@ -1,3 +1,4 @@
+mod catalog;
 mod create;
 mod detail;
 
@@ -18,9 +19,8 @@ use crate::{
 };
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
-    prelude::FluentBuilder as _, px,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
+    Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     input::{Input, InputEvent, InputState, TextareaState},
@@ -39,6 +39,7 @@ pub(crate) struct WorkGraphBoardView {
     pub(super) selected: Option<u64>,
     plan: Option<u64>,
     all_plans: bool,
+    catalog: catalog::CatalogState,
     create_stage: CreateStage,
     pub(super) active_session: Option<(String, String)>,
     session_goal: Option<crate::agents::SessionGoal>,
@@ -98,6 +99,7 @@ impl WorkGraphBoardView {
             selected: None,
             plan: None,
             all_plans: false,
+            catalog: catalog::CatalogState::default(),
             create_stage: CreateStage::Closed,
             active_session: None,
             session_goal: None,
@@ -124,6 +126,7 @@ impl WorkGraphBoardView {
             self.plan = None;
             self.all_plans = false;
             self.selected = None;
+            self.catalog = catalog::CatalogState::default();
             self.state = PlanLoadState::Loading;
         }
         self.project = project;
@@ -237,13 +240,14 @@ impl WorkGraphBoardView {
             return;
         };
         if self.showing_plans(data) {
+            self.move_catalog_selection(delta, cx);
             return;
         }
         let Some(snapshot) = &data.snapshot else {
             return;
         };
         let search = self.search.read(cx).value().to_string();
-        let rows = plan_rows(snapshot, &search);
+        let rows = plan_rows(snapshot, &data.graph, &search);
         if let Some(number) = adjacent_node_number(&rows, self.selected, delta) {
             self.select_node(number, cx);
         }
@@ -265,6 +269,10 @@ impl WorkGraphBoardView {
             return true;
         }
         if self.selected.take().is_some() {
+            cx.notify();
+            return true;
+        }
+        if self.catalog.selected.take().is_some() {
             cx.notify();
             return true;
         }
@@ -339,59 +347,12 @@ impl WorkGraphBoardView {
 
         let search = self.search.read(cx).value().to_string();
         if self.showing_plans(data) {
-            let query = search.trim().to_lowercase();
-            let plans = data
-                .plans
-                .iter()
-                .filter(|plan| plan.title.to_lowercase().contains(&query))
-                .collect::<Vec<_>>();
-            return div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .child(render_board_header(
-                    "All plans",
-                    false,
-                    true,
-                    &self.search,
-                    entity.clone(),
-                ))
-                .child(
-                    div()
-                        .id("workgraph-all-plans")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .p(THEME.space.md)
-                        .gap(THEME.space.sm)
-                        .when(data.plans.is_empty(), |list| {
-                            list.child(render_empty_plan(entity.clone()))
-                        })
-                        .when(!data.plans.is_empty() && plans.is_empty(), |list| {
-                            list.child("No plans match your search.")
-                        })
-                        .children(plans.into_iter().map(|plan| {
-                            let entity = entity.clone();
-                            let number = plan.number;
-                            button(
-                                format!("workgraph-plan-{number}"),
-                                plan.title.clone(),
-                                ButtonTone::Quiet,
-                                true,
-                                move |window, cx| {
-                                    entity.update(cx, |this, cx| this.open_plan(number, window, cx))
-                                },
-                            )
-                        })),
-                )
-                .into_any_element();
+            return self.render_catalog(data, layout, cx);
         }
         let rows = data
             .snapshot
             .as_ref()
-            .map(|snapshot| plan_rows(snapshot, &search))
+            .map(|snapshot| plan_rows(snapshot, &data.graph, &search))
             .unwrap_or_default();
         let plan_title = data
             .snapshot

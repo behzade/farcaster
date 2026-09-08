@@ -83,7 +83,7 @@ fn render_scoped_paths(node: &workgraph::Node) -> impl IntoElement {
 
 fn render_outcome(
     completion: workgraph::CompletionRequirement,
-    outcome: Option<&workgraph::WalkStep>,
+    outcome: Option<&workgraph::Outcome>,
     current: bool,
 ) -> impl IntoElement {
     detail_section("Outcome")
@@ -96,25 +96,23 @@ fn render_outcome(
         })
         .bg(THEME.colors.surface)
         .when_some(outcome, |section, step| {
-            section
-                .child(detail_copy().child(step.outcome.note.clone()))
-                .child(
-                    div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
-                        .child(format!(
-                            "{} · {}",
-                            evidence_label(step.outcome.evidence.kind),
-                            step.outcome.evidence.reference
-                        )),
-                )
+            section.child(detail_copy().child(step.note.clone())).child(
+                div()
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.subtle)
+                    .child(format!(
+                        "{} · {}",
+                        evidence_label(step.evidence.kind),
+                        step.evidence.reference
+                    )),
+            )
         })
         .when(outcome.is_none(), |section| {
             section
                 .child(detail_empty(if current {
                     "Awaiting an outcome to advance."
                 } else {
-                    "Not reached on this walk."
+                    "No completion recorded."
                 }))
                 .child(
                     div()
@@ -192,11 +190,23 @@ impl WorkGraphBoardView {
             })
             .child(match (snapshot, node) {
                 (Some(snapshot), Some(node)) => {
-                    let outcome = snapshot.active_outcome(node.number);
-                    let current = snapshot
-                        .walk
+                    let completion = data
+                        .graph
+                        .task_state(node.number)
+                        .and_then(|state| state.completion);
+                    let outcome = completion
                         .as_ref()
-                        .is_some_and(|walk| walk.current_node == Some(node.number));
+                        .map(|completion| &completion.outcome)
+                        .or_else(|| {
+                            snapshot
+                                .active_outcome(node.number)
+                                .map(|step| &step.outcome)
+                        });
+                    let current = outcome.is_none()
+                        && snapshot
+                            .walk
+                            .as_ref()
+                            .is_some_and(|walk| walk.current_node == Some(node.number));
                     let successors = snapshot
                         .edges
                         .iter()

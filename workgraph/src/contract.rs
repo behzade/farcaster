@@ -158,6 +158,8 @@ pub struct PlanSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSelection {
     pub plans: Vec<Plan>,
+    #[serde(default)]
+    pub graph: ProjectGraph,
     pub snapshot: Option<PlanSnapshot>,
     pub session_link: Option<SessionLink>,
 }

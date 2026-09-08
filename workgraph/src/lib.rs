@@ -2,6 +2,9 @@ mod adapter;
 mod application;
 mod contract;
 mod core;
+mod overview;
+
+pub use overview::{PlanOverview, WorkStatus};
 
 pub use adapter::{SqliteAdapter, SqliteTransaction};
 pub use application::{add_node, create_plan, link_session, load_plan, load_selected_plan};

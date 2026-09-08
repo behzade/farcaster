@@ -83,8 +83,30 @@ fn snapshot() -> PlanSnapshot {
 }
 
 #[test]
+fn global_completion_is_visible_without_a_step_on_the_selected_walk() {
+    let snapshot = snapshot();
+    let graph = workgraph::ProjectGraph {
+        tasks: vec![workgraph::TaskState {
+            plan_number: 1,
+            task: 2,
+            owner: None,
+            completion: Some(workgraph::TaskCompletion {
+                session_id: "another-session".into(),
+                outcome: snapshot.steps[0].outcome.clone(),
+                completed_at: 100,
+            }),
+        }],
+        ..workgraph::ProjectGraph::default()
+    };
+    let rows = plan_rows(&snapshot, &graph, "Git");
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].reached);
+    assert!(!rows[0].current);
+}
+
+#[test]
 fn projection_is_stable_and_marks_reached_and_current_nodes() {
-    let rows = plan_rows(&snapshot(), "");
+    let rows = plan_rows(&snapshot(), &workgraph::ProjectGraph::default(), "");
     assert_eq!(
         rows.iter().map(|row| row.node.number).collect::<Vec<_>>(),
         vec![1, 2, 3, 4]
@@ -96,7 +118,7 @@ fn projection_is_stable_and_marks_reached_and_current_nodes() {
 
 #[test]
 fn search_and_keyboard_navigation_use_visible_rows() {
-    let rows = plan_rows(&snapshot(), "jj");
+    let rows = plan_rows(&snapshot(), &workgraph::ProjectGraph::default(), "jj");
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].node.number, 3);
     assert_eq!(adjacent_node_number(&rows, None, 1), Some(3));
