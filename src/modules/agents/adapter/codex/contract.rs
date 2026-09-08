@@ -95,6 +95,8 @@ impl CodexUserInput {
 #[derive(Debug, Deserialize)]
 pub(super) struct ThreadResponse {
     pub thread: CodexThread,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

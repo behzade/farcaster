@@ -62,6 +62,7 @@ struct Coverage {
     compact: bool,
     rename: bool,
     resume: bool,
+    move_project: bool,
     delete: bool,
 }
 
@@ -86,6 +87,7 @@ impl Coverage {
             compact: available(&capabilities.turns.compact),
             rename: available(&capabilities.sessions.rename),
             resume: available(&capabilities.sessions.resume),
+            move_project: available(&capabilities.sessions.move_project),
             delete: available(&capabilities.sessions.delete),
         }
     }
@@ -129,9 +131,13 @@ fn live_harnesses_conform_to_session_outcomes() -> Result<(), String> {
 
 fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Result<(), String> {
     let coverage = Coverage::from_capabilities(capabilities);
-    let project_guard = tempfile::tempdir()
-        .map_err(|error| format!("create isolated live-test project: {error}"))?;
-    let project = project_guard.path().to_owned();
+    let project_guard =
+        tempfile::tempdir_in(std::env::current_dir().map_err(|error| error.to_string())?)
+            .map_err(|error| format!("create isolated live-test project: {error}"))?;
+    let project = project_guard
+        .path()
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
     let locator_root = std::env::var_os("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| "HOME is required for live harness tests".to_owned())?
@@ -184,8 +190,131 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
         Err(error) => return Err(cleanup_error(error, close, harness, &path, coverage)),
     };
     close.map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))?;
+    if coverage.move_project {
+        exercise_live_move(harness, &config, &project, &path, &marker, coverage)
+            .map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))?;
+    }
     verify_persistence_and_cleanup(harness, &config, &launch, &path, &marker, coverage)
         .map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))
+}
+
+fn exercise_live_move(
+    harness: &str,
+    config: &AgentLaunchConfig,
+    source: &Path,
+    path: &Path,
+    marker: &str,
+    coverage: Coverage,
+) -> Result<(), String> {
+    let destination_guard =
+        tempfile::tempdir_in(std::env::current_dir().map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    let destination = destination_guard
+        .path()
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let discover =
+        || super::discover_sessions_for(harness, config.session_locator_root.as_deref(), "");
+    let original = discover()?
+        .into_iter()
+        .find(|session| session.path == path)
+        .ok_or("move fixture missing from catalog")?;
+    let rediscover = |project: &Path, path: &Path| {
+        let mut matches = discover()?
+            .into_iter()
+            .filter(|session| {
+                session.id == original.id
+                    || session.project == destination
+                    || session.project == source
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!("move duplicated or lost the fixture: {matches:?}"));
+        }
+        let stored = matches.remove(0);
+        if stored.id != original.id
+            || stored.path != path
+            || stored.project != project
+            || stored.parent_session != original.parent_session
+            || (harness != "pi" && stored.path != original.path)
+        {
+            return Err(format!(
+                "move changed identity or retained the old project: {stored:?}"
+            ));
+        }
+        Ok(stored)
+    };
+    let mut current = original.clone();
+    let outcome = (|| {
+        // Move back as well, so persistence checks and cleanup use the original locator.
+        for project in [destination.as_path(), source] {
+            let moved = super::move_session_family(&[current.clone()], project)?;
+            current.path = moved.root.clone();
+            if moved.paths.len() != 1 {
+                return Err("move returned an invalid locator mapping".into());
+            }
+            current = rediscover(project, &moved.root)?;
+            let history = super::load_session_history(harness, &current.path)?;
+            if !history
+                .messages
+                .iter()
+                .any(|message| message.to_string().contains(marker))
+            {
+                return Err("move lost the existing conversation".into());
+            }
+            let mut resumed = spawn_session(
+                config,
+                SessionLaunch {
+                    harness: harness.into(),
+                    session_id: Some(original.id.clone()),
+                    project: project.into(),
+                    start: SessionStart::Resume(current.path.clone()),
+                    wake: Some(thread::current()),
+                },
+            )?;
+            let check = (|| {
+                if session_path(&mut *resumed)? != current.path {
+                    return Err("resume created a session".into());
+                }
+                require_history_response(&mut *resumed, marker)?;
+                // The prompt does not disclose the token or an absolute path. A real
+                // relative file read must use the moved session's working directory.
+                let token = format!(
+                    "MOVE_CWD_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos()
+                );
+                fs::write(project.join("move-cwd-proof.txt"), &token)
+                    .map_err(|error| error.to_string())?;
+                resumed.send(SessionCommand::Prompt {
+                    mode: PromptMode::Normal,
+                    message: "Read move-cwd-proof.txt in your current working directory using a tool. Reply with its exact contents. Do not search other directories or change directory.".into(),
+                    images: Vec::new(),
+                })?;
+                let mut conversation = ConversationState::default();
+                poll_until(
+                    &mut *resumed,
+                    &mut conversation,
+                    &mut Lifecycle::default(),
+                    &mut HashMap::new(),
+                    TURN_TIMEOUT,
+                    |_, event, _| Ok(event["type"].as_str() == Some("agent_settled")),
+                )?;
+                require_assistant_text(&conversation, &token)
+            })();
+            let close = resumed.close();
+            check?;
+            close?;
+            rediscover(project, &current.path)?;
+        }
+        Ok(())
+    })();
+    if outcome.is_err() && current.path != path {
+        cleanup_failed_fixture(harness, &current.path, coverage)?;
+    }
+    outcome
 }
 
 fn cleanup_error(

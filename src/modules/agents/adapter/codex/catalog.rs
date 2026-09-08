@@ -30,29 +30,47 @@ pub(in crate::modules::agents::adapter) fn discover(
     locator_root: &Path,
     query: &str,
 ) -> Result<Vec<DiscoveredSession>, String> {
-    with_connection(|connection| {
-        let mut sessions = Vec::new();
-        for archived in [false, true] {
-            for source_kinds in [INTERACTIVE_SOURCE_KINDS, AGENT_SOURCE_KINDS] {
-                let id = connection.send_request(
-                    "thread/list",
-                    thread_list_params(archived, query, source_kinds),
-                )?;
-                let response: Value = connection.wait_response(&id)?;
-                for thread in response
-                    .get("data")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Some(summary) = summary(locator_root, thread, archived)? {
-                        sessions.push(summary);
+    with_connection_and_home(|connection, home| {
+        discover_with_client(connection, home, locator_root, query)
+    })
+}
+
+pub(super) fn discover_with_client(
+    connection: &mut CatalogConnection,
+    home: &Path,
+    locator_root: &Path,
+    query: &str,
+) -> Result<Vec<DiscoveredSession>, String> {
+    let mut sessions = Vec::new();
+    for archived in [false, true] {
+        for source_kinds in [INTERACTIVE_SOURCE_KINDS, AGENT_SOURCE_KINDS] {
+            let id = connection.send_request(
+                "thread/list",
+                thread_list_params(archived, query, source_kinds),
+            )?;
+            let response: Value = connection.wait_response(&id)?;
+            for thread in response
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let mut thread = thread.clone();
+                if let Some(id) = string(&thread, &["id"]) {
+                    if let Some(project) = super::transfer::saved_project(
+                        &super::transfer::project_database(home),
+                        id,
+                    )? {
+                        thread["cwd"] = json!(project);
                     }
+                }
+                if let Some(summary) = summary(locator_root, &thread, archived)? {
+                    sessions.push(summary);
                 }
             }
         }
-        Ok(sessions)
-    })
+    }
+    Ok(sessions)
 }
 
 fn thread_list_params(archived: bool, query: &str, source_kinds: &[&str]) -> Value {

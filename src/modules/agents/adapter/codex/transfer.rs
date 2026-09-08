@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc,
     thread,
@@ -9,10 +9,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{
-    connection::CodexConnection,
-    contract::{CodexClientInfo, CodexInbound},
-};
+use super::{connection::CodexConnection, contract::CodexClientInfo};
 use crate::sessions::{SessionSummary, SessionTransfer};
 
 pub(in crate::modules::agents::adapter) fn move_family(
@@ -29,15 +26,93 @@ pub(in crate::modules::agents::adapter) fn move_family(
         .to_str()
         .ok_or("Codex move destination must be UTF-8")?;
     let program = std::env::var_os("FARCASTER_CODEX_PATH").unwrap_or_else(|| "codex".into());
-    with_server(Command::new(program), |connection| {
-        move_with_client(connection, family, directory)
+    move_via_server(Command::new(program), family, directory)
+}
+
+fn move_via_server(
+    command: Command,
+    family: &[SessionSummary],
+    directory: &str,
+) -> Result<SessionTransfer, String> {
+    let root = family.first().ok_or("session family is empty")?;
+    let (database, rollouts) = with_server(command, |connection, home| {
+        Ok((project_database(home), inspect_family(connection, family)?))
+    })?;
+    persist_folders(&database, &rollouts, directory)?;
+    Ok(SessionTransfer {
+        root: root.path.clone(),
+        paths: family
+            .iter()
+            .map(|session| (session.path.clone(), session.path.clone()))
+            .collect(),
     })
+}
+
+pub(super) fn project_database(home: &Path) -> PathBuf {
+    home.join("farcaster-projects.sqlite")
+}
+
+pub(super) fn saved_project(database: &Path, id: &str) -> Result<Option<PathBuf>, String> {
+    use rusqlite::OptionalExtension;
+    if !database.exists() {
+        return Ok(None);
+    }
+    let db =
+        rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|error| error.to_string())?;
+    db.query_row(
+        "SELECT project FROM session_projects WHERE id = ?1",
+        [id],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map(|project| project.map(PathBuf::from))
+    .map_err(|error| error.to_string())
+}
+
+fn persist_folders(
+    database: &Path,
+    rollouts: &[(String, PathBuf)],
+    directory: &str,
+) -> Result<(), String> {
+    // Never replace or truncate a native rollout: another Codex process can
+    // retain an append handle even while this server reports the thread idle.
+    for (id, path) in rollouts {
+        let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        let header = BufReader::new(file)
+            .lines()
+            .next()
+            .ok_or("Codex rollout is empty")?
+            .map_err(|error| error.to_string())?;
+        let header: Value = serde_json::from_str(&header).map_err(|error| error.to_string())?;
+        if header["type"] != "session_meta" || header["payload"]["id"].as_str() != Some(id) {
+            return Err("Codex rollout identity does not match move target".into());
+        }
+    }
+    let mut db = rusqlite::Connection::open(database).map_err(|error| error.to_string())?;
+    db.busy_timeout(Duration::from_secs(5))
+        .map_err(|error| error.to_string())?;
+    let tx = db.transaction().map_err(|error| error.to_string())?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS session_projects (id TEXT PRIMARY KEY, project TEXT NOT NULL)",
+    )
+    .map_err(|error| error.to_string())?;
+    for (id, _) in rollouts {
+        tx.execute(
+            "INSERT INTO session_projects (id, project) VALUES (?1, ?2)
+            ON CONFLICT(id) DO UPDATE SET project = excluded.project",
+            rusqlite::params![id, directory],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    tx.commit().map_err(|error| error.to_string())
 }
 
 fn with_server<T>(
     mut command: Command,
     operation: impl FnOnce(
         &mut CodexConnection<BufReader<std::process::ChildStdout>, std::process::ChildStdin>,
+        &Path,
     ) -> Result<T, String>,
 ) -> Result<T, String> {
     let mut child = command
@@ -53,9 +128,19 @@ fn with_server<T>(
     // A missing notification must not leave the supervisor waiting forever.
     let watchdog = thread::spawn(move || {
         let expired = wait.recv_timeout(Duration::from_secs(30)).is_err();
+        if !expired {
+            // EOF lets Codex flush its rollout and catalog before exiting.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if let Ok(Some(status)) = child.try_wait() {
+                    return !status.success();
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
         let _ = child.kill();
         let _ = child.wait();
-        expired
+        true
     });
     let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
     let result = connection
@@ -64,7 +149,8 @@ fn with_server<T>(
             title: Some("Farcaster".into()),
             version: env!("CARGO_PKG_VERSION").into(),
         })
-        .and_then(|_| operation(&mut connection));
+        .and_then(|initialized| operation(&mut connection, Path::new(&initialized.codex_home)));
+    drop(connection);
     let _ = finished.send(());
     if watchdog.join().unwrap_or(true) {
         return Err("Codex move timed out; folder changes may be incomplete. Refresh sessions before retrying.".into());
@@ -78,19 +164,19 @@ fn request<R: BufRead, W: Write>(
     params: Value,
 ) -> Result<Value, String> {
     let id = connection.send_request(method, params)?;
-    connection.wait_response(&id)
+    connection
+        .wait_response(&id)
+        .map_err(|error| format!("{method}: {error}"))
 }
 
-fn move_with_client<R: BufRead, W: Write>(
+fn inspect_family<R: BufRead, W: Write>(
     connection: &mut CodexConnection<R, W>,
     family: &[SessionSummary],
-    destination: &str,
-) -> Result<SessionTransfer, String> {
-    let root = family.first().ok_or("session family is empty")?;
-    let mut originals = Vec::new();
-    // Preflight the entire family before loading or changing any member.
+) -> Result<Vec<(String, PathBuf)>, String> {
+    let mut rollouts = Vec::new();
     for session in family {
-        let response = request(connection, "thread/read", json!({"threadId":session.id}))?;
+        // A fresh server must load an existing thread before inspecting its work.
+        let response = request(connection, "thread/resume", json!({"threadId":session.id}))?;
         let stored = &response["thread"];
         if stored["id"].as_str() != Some(&session.id) {
             return Err("Codex returned a different thread identity".into());
@@ -104,9 +190,9 @@ fn move_with_client<R: BufRead, W: Write>(
                 session.id
             ));
         }
-        let cwd = stored["cwd"]
+        let path = stored["path"]
             .as_str()
-            .ok_or("Codex thread has no working directory")?;
+            .ok_or("Codex thread has no rollout path")?;
         let queue = request(
             connection,
             "thread/queue/list",
@@ -130,72 +216,9 @@ fn move_with_client<R: BufRead, W: Write>(
         if goal["goal"]["status"].as_str() == Some("active") {
             return Err(format!("Pause the Codex goal before moving {}", session.id));
         }
-        if cwd != destination {
-            originals.push((session.id.clone(), cwd.to_owned()));
-        }
+        rollouts.push((session.id.clone(), PathBuf::from(path)));
     }
-    // Load every native thread before changing any settings.
-    for (id, _) in &originals {
-        request(connection, "thread/resume", json!({"threadId":id}))?;
-    }
-    for (index, (id, _)) in originals.iter().enumerate() {
-        if let Err(error) = update_cwd(connection, id, destination) {
-            let mut failures = Vec::new();
-            for (id, cwd) in originals[..=index].iter().rev() {
-                if let Err(rollback) = update_cwd(connection, id, cwd) {
-                    failures.push(format!("{id}: {rollback}"));
-                }
-            }
-            return Err(if failures.is_empty() {
-                format!("Codex move failed; original folders restored: {error}")
-            } else {
-                format!(
-                    "Codex move failed: {error}. Could not confirm restored folders for {}. Refresh sessions before retrying.",
-                    failures.join("; ")
-                )
-            });
-        }
-    }
-    Ok(SessionTransfer {
-        root: root.path.clone(),
-        paths: family
-            .iter()
-            .map(|session| (session.path.clone(), session.path.clone()))
-            .collect(),
-    })
-}
-
-fn update_cwd<R: BufRead, W: Write>(
-    connection: &mut CodexConnection<R, W>,
-    id: &str,
-    cwd: &str,
-) -> Result<(), String> {
-    request(
-        connection,
-        "thread/settings/update",
-        json!({"threadId":id,"cwd":cwd}),
-    )?;
-    // The RPC response acknowledges admission, not completion or persistence.
-    loop {
-        match connection.next()? {
-            CodexInbound::Notification { method, params }
-                if method == "thread/settings/updated"
-                    && params["threadId"].as_str() == Some(id)
-                    && params["threadSettings"]["cwd"].as_str() == Some(cwd) =>
-            {
-                return Ok(());
-            }
-            CodexInbound::Notification { method, params }
-                if method == "error" && params["threadId"].as_str() == Some(id) =>
-            {
-                return Err(format!("Codex settings update failed: {}", params["error"]));
-            }
-            CodexInbound::ServerRequest { .. } => {
-                return Err("Codex requested input while moving a thread".into());
-            }
-            _ => {}
-        }
-    }
+    Ok(rollouts)
 }
 
 #[cfg(test)]

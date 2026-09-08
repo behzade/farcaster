@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     io::{BufRead, Write},
+    path::PathBuf,
 };
 
 use serde::de::DeserializeOwned;
@@ -20,6 +21,7 @@ pub(crate) struct CodexConnection<R, W> {
     writer: W,
     queued: VecDeque<CodexInbound>,
     next_id: i64,
+    codex_home: Option<PathBuf>,
 }
 
 impl<R: BufRead, W: Write> CodexConnection<R, W> {
@@ -29,6 +31,7 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
             writer,
             queued: VecDeque::new(),
             next_id: 0,
+            codex_home: None,
         }
     }
 
@@ -118,7 +121,8 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
             "initialize",
             json!({"clientInfo": client, "capabilities": capabilities}),
         )?;
-        let response = self.wait_response(&id)?;
+        let response: CodexInitializeResponse = self.wait_response(&id)?;
+        self.codex_home = Some(PathBuf::from(&response.codex_home));
         self.send_notification("initialized", None)?;
         Ok(response)
     }
@@ -192,15 +196,30 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         thread_id: &str,
         access_mode: crate::agents::HarnessAccessMode,
     ) -> Result<CodexThread, String> {
+        let cwd = self
+            .codex_home
+            .as_deref()
+            .map(|home| {
+                super::transfer::saved_project(&super::transfer::project_database(home), thread_id)
+            })
+            .transpose()?
+            .flatten();
         let id = self.send_request(
             "thread/resume",
             json!({
                 "threadId": thread_id,
+                "cwd": cwd,
                 "approvalsReviewer": approvals_reviewer(access_mode),
             }),
         )?;
         self.wait_response::<ThreadResponse>(&id)
-            .map(|response| response.thread)
+            .map(|mut response| {
+                // Resume reports the effective cwd separately from stored thread metadata.
+                if let Some(cwd) = response.cwd {
+                    response.thread.cwd = cwd;
+                }
+                response.thread
+            })
     }
 
     pub(crate) fn start_turn(
