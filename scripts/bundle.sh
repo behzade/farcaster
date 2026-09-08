@@ -40,6 +40,8 @@ if [ "$platform" = "Linux" ] && [ "$action" = "--relaunch" ]; then
 fi
 
 mkdir -p "$target_dir/release"
+# cargo-packager resolves file paths relative to its config in packaging/.
+target_dir=$(CDPATH= cd -- "$target_dir" && pwd)
 if [ "$platform" = "Linux" ]; then
     CARGO_TARGET_DIR="$target_dir" cargo build --release --locked --bin farcaster
     launcher="$target_dir/release/io.github.behzade.farcaster"
