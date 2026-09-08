@@ -218,7 +218,13 @@ fn summary(
     let Some(cwd) = string(thread, &["cwd"]) else {
         return Ok(None);
     };
-    if string(thread, &["model"]).is_some_and(|model| EPHEMERAL_MODELS.contains(&model)) {
+    // Approval reviews use the guardian source; catalog model metadata may be absent.
+    if thread
+        .pointer("/source/subAgent/other")
+        .and_then(Value::as_str)
+        == Some("guardian")
+        || string(thread, &["model"]).is_some_and(|model| EPHEMERAL_MODELS.contains(&model))
+    {
         return Ok(None);
     }
     let project = PathBuf::from(cwd);
@@ -487,6 +493,15 @@ mod tests {
             summary(project.as_path(), &auto_review, false)?.is_none(),
             "auto-review subsessions are not discovered"
         );
+        for (source, discovered) in [
+            (json!({"subAgent": {"other": "guardian"}}), false),
+            (json!({"subAgent": {"other": "custom-worker"}}), true),
+            (json!({"subAgent": "review"}), true),
+        ] {
+            let mut thread = base.clone();
+            thread["source"] = source;
+            assert_eq!(summary(&project, &thread, false)?.is_some(), discovered);
+        }
         Ok(())
     }
 
