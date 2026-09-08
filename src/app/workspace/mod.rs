@@ -7,6 +7,7 @@ const NATIVE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 mod editor;
 pub(in crate::app) mod neovim;
 mod regions;
+pub(in crate::app) mod runtime_picker;
 mod surfaces;
 mod terminal;
 pub(in crate::app) mod worker_tasks;

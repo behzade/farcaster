@@ -1,8 +1,11 @@
 use gpui::{
-    AnyElement, App, Context, IntoElement as _, ParentElement as _, Styled as _, WeakEntity,
-    Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px,
 };
-use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_component::{
+    menu::{DropdownMenu as _, PopupMenuItem},
+    popover::Popover,
+};
 
 use super::separator;
 use crate::app::FarcasterApp;
@@ -10,7 +13,6 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
-    protocol::Model,
     runtime::{ConfigurationStatus, HarnessAccessMode},
 };
 
@@ -58,29 +60,30 @@ pub(in crate::app::views) fn render(
             )
         });
     let runtime_entity = entity.clone();
-    let runtime = dropdown_content_button(
-        "select-runtime",
-        "Runtime",
-        runtime_content,
-        ButtonTone::Neutral,
-        true,
-    )
-    .flex_none()
-    .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |menu, window, cx| {
-        build_runtime_menu(menu, &runtime_entity, window, cx)
-    })
-    .refresh_key(format!(
-        "{:?}",
-        (
-            &app.snapshot.harness,
-            &app.snapshot.project,
-            &app.snapshot.models,
-            &app.snapshot.thinking_levels,
-            &app.snapshot.configuration_status,
-            app.snapshot.connected,
-            app.snapshot.session_identity(),
+    let content_entity = entity.clone();
+    let runtime = Popover::new("runtime-popover")
+        .anchor(gpui::Anchor::BottomLeft)
+        .appearance(false)
+        .open(app.runtime_picker.open)
+        .trigger(
+            dropdown_content_button(
+                "select-runtime",
+                "Runtime",
+                runtime_content,
+                ButtonTone::Neutral,
+                true,
+            )
+            .flex_none(),
         )
-    ));
+        .on_open_change(move |open, window, cx| {
+            let _ =
+                runtime_entity.update(cx, |app, cx| app.set_runtime_picker_open(*open, window, cx));
+        })
+        .content(move |_, window, cx| {
+            content_entity
+                .update(cx, |app, cx| app.render_runtime_picker(window, cx))
+                .unwrap_or_else(|_| div().into_any_element())
+        });
 
     div()
         .flex_none()
@@ -94,238 +97,6 @@ pub(in crate::app::views) fn render(
             entity,
         ))
         .into_any_element()
-}
-
-fn build_runtime_menu(
-    menu: PopupMenu,
-    entity: &WeakEntity<FarcasterApp>,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
-) -> PopupMenu {
-    let Some(app) = entity.upgrade() else {
-        return menu;
-    };
-    let data = {
-        let app = app.read(cx);
-        let identity = app.snapshot.session_identity();
-        RuntimeMenuData {
-            models: app.snapshot.models.clone(),
-            catalog_levels: app.snapshot.thinking_levels.clone(),
-            selected_model: identity.model.cloned(),
-            selected_effort: identity.effort.map(str::to_owned),
-            feedback: catalog_feedback(app),
-        }
-    };
-    if let Some(message) = data.feedback {
-        return menu
-            .min_w(px(220.0))
-            .item(PopupMenuItem::new(message).disabled(true));
-    }
-
-    let groups = runtime_menu_groups(&data.models, &data.catalog_levels);
-    let reveal = runtime_reveal_path(
-        &groups,
-        data.selected_model.as_ref(),
-        data.selected_effort.as_deref(),
-    );
-    let mut menu = menu.min_w(px(160.0));
-    for (provider_ix, group) in groups.into_iter().enumerate() {
-        let entity = entity.clone();
-        let selected_model = data.selected_model.clone();
-        let selected_effort = data.selected_effort.clone();
-        let reveal = reveal.filter(|reveal| reveal.provider == provider_ix);
-        menu = menu.submenu(group.provider, window, cx, move |menu, window, cx| {
-            build_model_menu(
-                menu,
-                &entity,
-                &group.models,
-                selected_model.as_ref(),
-                selected_effort.as_deref(),
-                reveal,
-                window,
-                cx,
-            )
-        });
-    }
-    if let Some(reveal) = reveal {
-        menu = menu.with_selected_index(reveal.provider);
-    }
-    menu
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_model_menu(
-    menu: PopupMenu,
-    entity: &WeakEntity<FarcasterApp>,
-    models: &[RuntimeMenuModel],
-    selected_model: Option<&Model>,
-    selected_effort: Option<&str>,
-    reveal: Option<RuntimeReveal>,
-    window: &mut Window,
-    cx: &mut Context<PopupMenu>,
-) -> PopupMenu {
-    let mut menu = menu.min_w(px(200.0));
-    for (model_ix, entry) in models.iter().enumerate() {
-        let selected = selected_model.is_some_and(|selected| {
-            selected.id == entry.model.id && selected.provider == entry.model.provider
-        });
-        if entry.efforts.is_empty() {
-            let model = entry.model.clone();
-            let entity = entity.clone();
-            menu = menu.item(
-                PopupMenuItem::new(entry.model.name.clone())
-                    .checked(selected)
-                    .on_click(move |_, _, cx| apply_runtime(&entity, &model, None, cx)),
-            );
-            continue;
-        }
-
-        let model = entry.model.clone();
-        let entity = entity.clone();
-        let efforts = entry.efforts.clone();
-        let selected_effort = selected_effort.map(str::to_owned);
-        let effort_ix = reveal
-            .filter(|reveal| reveal.model == model_ix)
-            .and_then(|reveal| reveal.effort);
-        menu = menu.submenu(entry.model.name.clone(), window, cx, move |menu, _, _| {
-            let mut menu = menu.min_w(px(120.0));
-            for effort in &efforts {
-                let entity = entity.clone();
-                let model = model.clone();
-                let target = effort.clone();
-                let checked = selected && selected_effort.as_deref() == Some(effort.as_str());
-                menu = menu.item(
-                    PopupMenuItem::new(effort_label(effort))
-                        .checked(checked)
-                        .on_click(move |_, _, cx| {
-                            apply_runtime(&entity, &model, Some(target.clone()), cx);
-                        }),
-                );
-            }
-            if let Some(effort_ix) = effort_ix {
-                menu = menu.with_selected_index(effort_ix);
-            }
-            menu
-        });
-    }
-    if let Some(reveal) = reveal {
-        menu = menu.with_selected_index(reveal.model);
-    }
-    menu
-}
-
-fn apply_runtime(
-    entity: &WeakEntity<FarcasterApp>,
-    model: &Model,
-    effort: Option<String>,
-    cx: &mut App,
-) {
-    let _ = entity.update(cx, |this, cx| {
-        // Reapplying the current model also lets the user recover from a rejected switch.
-        this.select_model(model, cx);
-        if let Some(effort) = effort {
-            this.set_thinking_level(effort, cx);
-        }
-    });
-}
-
-fn catalog_feedback(app: &FarcasterApp) -> Option<String> {
-    if !app.snapshot.models.is_empty() {
-        return None;
-    }
-    Some(match &app.snapshot.configuration_status {
-        ConfigurationStatus::Loading if !app.snapshot.connected => "Refreshing models…".to_owned(),
-        ConfigurationStatus::Failed(error) => format!("Models unavailable: {error}"),
-        ConfigurationStatus::Loading | ConfigurationStatus::Loaded => {
-            "No models were advertised by this harness.".to_owned()
-        }
-    })
-}
-
-struct RuntimeMenuData {
-    models: Vec<Model>,
-    catalog_levels: Vec<String>,
-    selected_model: Option<Model>,
-    selected_effort: Option<String>,
-    feedback: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RuntimeReveal {
-    provider: usize,
-    model: usize,
-    effort: Option<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RuntimeMenuGroup {
-    provider: String,
-    models: Vec<RuntimeMenuModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct RuntimeMenuModel {
-    model: Model,
-    efforts: Vec<String>,
-}
-
-fn runtime_menu_groups(models: &[Model], catalog_levels: &[String]) -> Vec<RuntimeMenuGroup> {
-    let mut providers = models
-        .iter()
-        .map(|model| model.provider.clone())
-        .collect::<Vec<_>>();
-    providers.sort();
-    providers.dedup();
-    providers
-        .into_iter()
-        .map(|provider| RuntimeMenuGroup {
-            models: models
-                .iter()
-                .filter(|model| model.provider == provider)
-                .map(|model| RuntimeMenuModel {
-                    efforts: efforts_for_model(model, catalog_levels).to_vec(),
-                    model: model.clone(),
-                })
-                .collect(),
-            provider,
-        })
-        .collect()
-}
-
-fn runtime_reveal_path(
-    groups: &[RuntimeMenuGroup],
-    selected_model: Option<&Model>,
-    selected_effort: Option<&str>,
-) -> Option<RuntimeReveal> {
-    let selected = selected_model?;
-    let provider = groups
-        .iter()
-        .position(|group| group.provider == selected.provider)?;
-    let model = groups[provider]
-        .models
-        .iter()
-        .position(|entry| entry.model.id == selected.id)?;
-    let effort = selected_effort.and_then(|effort| {
-        groups[provider].models[model]
-            .efforts
-            .iter()
-            .position(|candidate| candidate == effort)
-    });
-    Some(RuntimeReveal {
-        provider,
-        model,
-        effort,
-    })
-}
-
-fn efforts_for_model<'a>(model: &'a Model, catalog_levels: &'a [String]) -> &'a [String] {
-    if !model.reasoning {
-        return &[];
-    }
-    match model.efforts.as_deref() {
-        Some(efforts) => efforts,
-        None => catalog_levels,
-    }
 }
 
 fn runtime_slash() -> AnyElement {
@@ -411,160 +182,5 @@ fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[gpui::test]
-    fn open_model_menu_refreshes_only_when_its_catalog_changes(cx: &mut gpui::TestAppContext) {
-        use std::{cell::RefCell, rc::Rc};
-        struct Picker {
-            revision: usize,
-            builds: Rc<RefCell<Vec<usize>>>,
-        }
-        impl gpui::Render for Picker {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
-                let revision = self.revision;
-                let builds = self.builds.clone();
-                gpui_component::button::Button::new("picker-test")
-                    .label("Models")
-                    .w(px(100.0))
-                    .h(px(40.0))
-                    .dropdown_menu(move |menu, _, _| {
-                        builds.borrow_mut().push(revision);
-                        menu.item(PopupMenuItem::new(if revision == 0 {
-                            "Loading"
-                        } else {
-                            "Astra"
-                        }))
-                    })
-                    .refresh_key(revision.to_string())
-            }
-        }
-        cx.update(gpui_component::init);
-        let builds = Rc::new(RefCell::new(Vec::new()));
-        let (view, cx) = cx.add_window_view({
-            let builds = builds.clone();
-            move |_, _| Picker {
-                revision: 0,
-                builds,
-            }
-        });
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        cx.simulate_click(gpui::point(px(20.0), px(20.0)), Default::default());
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert_eq!(*builds.borrow(), vec![0]);
-        cx.update(|window, cx| {
-            view.update(cx, |_, cx| cx.notify());
-            window.draw(cx).clear(cx);
-        });
-        assert_eq!(*builds.borrow(), vec![0]);
-        cx.update(|window, cx| {
-            view.update(cx, |view, cx| {
-                view.revision = 1;
-                cx.notify();
-            });
-            window.draw(cx).clear(cx);
-        });
-        assert_eq!(*builds.borrow(), vec![0, 1]);
-        cx.simulate_keystrokes("escape");
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        cx.simulate_click(gpui::point(px(20.0), px(20.0)), Default::default());
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        assert_eq!(*builds.borrow(), vec![0, 1, 1]);
-    }
-
-    fn model(
-        provider: &str,
-        id: &str,
-        name: &str,
-        reasoning: bool,
-        efforts: Option<&[&str]>,
-    ) -> Model {
-        Model {
-            id: id.into(),
-            name: name.into(),
-            provider: provider.into(),
-            context_window: 0,
-            reasoning,
-            efforts: efforts.map(|efforts| efforts.iter().map(|effort| (*effort).into()).collect()),
-        }
-    }
-
-    #[test]
-    fn runtime_menu_nests_effort_under_models_that_reason() {
-        let groups = runtime_menu_groups(
-            &[
-                model(
-                    "openai-codex",
-                    "sol",
-                    "GPT-5.6 Sol",
-                    true,
-                    Some(&["low", "medium"]),
-                ),
-                model("openai-codex", "mini", "GPT-5.4 mini", false, None),
-                model("anthropic", "opus", "Opus", true, None),
-            ],
-            &["off".into(), "high".into()],
-        );
-
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].provider, "anthropic");
-        assert_eq!(groups[0].models[0].efforts, ["off", "high"]);
-        assert_eq!(groups[1].provider, "openai-codex");
-        assert_eq!(groups[1].models[0].efforts, ["low", "medium"]);
-        assert!(groups[1].models[1].efforts.is_empty());
-    }
-
-    #[test]
-    fn runtime_menu_reveals_the_selected_provider_model_and_effort() {
-        let groups = runtime_menu_groups(
-            &[
-                model("anthropic", "opus", "Opus", true, None),
-                model(
-                    "openai-codex",
-                    "sol",
-                    "GPT-5.6 Sol",
-                    true,
-                    Some(&["low", "medium", "high"]),
-                ),
-                model("openai-codex", "mini", "GPT-5.4 mini", false, None),
-            ],
-            &[],
-        );
-        let selected = model(
-            "openai-codex",
-            "sol",
-            "GPT-5.6 Sol",
-            true,
-            Some(&["low", "medium", "high"]),
-        );
-
-        assert_eq!(
-            runtime_reveal_path(&groups, Some(&selected), Some("medium")),
-            Some(RuntimeReveal {
-                provider: 1,
-                model: 0,
-                effort: Some(1),
-            })
-        );
-        assert_eq!(
-            runtime_reveal_path(&groups, Some(&selected), Some("missing")),
-            Some(RuntimeReveal {
-                provider: 1,
-                model: 0,
-                effort: None,
-            })
-        );
-        assert_eq!(runtime_reveal_path(&groups, None, Some("medium")), None);
-    }
-
-    #[test]
-    fn sandbox_labels_and_colors_distinguish_unrestricted_access() {
-        use HarnessAccessMode::{Auto, Full, Sandboxed};
-        assert_eq!(access_mode_label(Sandboxed), "Sandbox: On");
-        assert_eq!(access_mode_label(Full), "Sandbox: Off");
-        assert_eq!(access_mode_label(Auto), "Sandbox: Auto");
-        assert_eq!(access_mode_color(Sandboxed), THEME.colors.muted);
-        assert_eq!(access_mode_color(Full), THEME.colors.warning);
-    }
-}
+#[path = "runtime_tests.rs"]
+mod tests;

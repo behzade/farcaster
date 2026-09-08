@@ -225,6 +225,7 @@ pub(crate) struct FarcasterApp {
     search_focus: FocusHandle,
     session_title_input: Entity<InputState>,
     worker_task_editor: workspace::worker_tasks::WorkerTaskEditor,
+    runtime_picker: workspace::runtime_picker::RuntimePickerState,
     network_proxy_input: Entity<InputState>,
     network_proxy_error: Option<String>,
     settings_proxy_save: Option<Task<()>>,

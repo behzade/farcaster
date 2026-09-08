@@ -18,14 +18,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let path = runtime_picker_path(
-            &self.snapshot.models,
-            self.snapshot.session_identity().model,
-            &self.snapshot.thinking_levels,
-        );
-        for scope in path {
-            self.open_picker(scope, window, cx);
-        }
+        self.close_picker(window, cx);
+        self.show_chat_surface(window, cx);
+        self.set_runtime_picker_open(true, window, cx);
     }
 
     pub(super) fn configuration_picker_rows(
@@ -208,26 +203,6 @@ impl FarcasterApp {
     }
 }
 
-fn runtime_picker_path(
-    models: &[Model],
-    selected: Option<&Model>,
-    catalog: &[String],
-) -> Vec<PickerScope> {
-    let mut path = vec![PickerScope::Providers];
-    let Some(model) = selected.and_then(|selected| {
-        models
-            .iter()
-            .find(|model| model.id == selected.id && model.provider == selected.provider)
-    }) else {
-        return path;
-    };
-    path.push(PickerScope::Models(model.provider.clone()));
-    if !model_efforts(model, catalog).is_empty() {
-        path.push(PickerScope::Efforts(model.clone()));
-    }
-    path
-}
-
 pub(super) fn selected_row(
     rows: &[PickerRow],
     commands: &HashMap<String, PickerCommand>,
@@ -258,98 +233,5 @@ pub(super) fn selected_row(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn runtime_entry_keeps_models_and_providers_behind_current_effort() {
-        let mut model = Model {
-            id: "id".into(),
-            name: "Model".into(),
-            provider: "provider".into(),
-            context_window: 0,
-            reasoning: true,
-            efforts: Some(vec!["high".into()]),
-        };
-        assert_eq!(
-            runtime_picker_path(&[model.clone()], Some(&model), &[]),
-            vec![
-                PickerScope::Providers,
-                PickerScope::Models("provider".into()),
-                PickerScope::Efforts(model.clone())
-            ]
-        );
-        let old = model.clone();
-        model.efforts = Some(vec![]);
-        assert_eq!(
-            runtime_picker_path(&[model.clone()], Some(&old), &[]),
-            vec![
-                PickerScope::Providers,
-                PickerScope::Models("provider".into())
-            ]
-        );
-        assert_eq!(
-            runtime_picker_path(&[], Some(&model), &[]),
-            vec![PickerScope::Providers]
-        );
-        assert_eq!(
-            runtime_picker_path(&[model], None, &[]),
-            vec![PickerScope::Providers]
-        );
-    }
-
-    #[test]
-    fn runtime_selection_matches_model_identity_and_effort() {
-        let model = Model {
-            id: "id".into(),
-            name: "Model".into(),
-            provider: "provider".into(),
-            context_window: 0,
-            reasoning: true,
-            efforts: None,
-        };
-        let snapshot = crate::runtime::RuntimeSnapshot {
-            prefill_model: Some(model.clone()),
-            prefill_thinking_level: Some("high".into()),
-            ..Default::default()
-        };
-        let mut commands = HashMap::new();
-        let rows = ["low", "high"].map(|effort| {
-            picker_row(
-                &mut commands,
-                effort,
-                PickerCommand::SetRuntime {
-                    model: model.clone(),
-                    effort: Some(effort.into()),
-                },
-                AppIcon::List,
-                effort,
-                None,
-                None,
-                "",
-            )
-        });
-        assert_eq!(selected_row(&rows, &commands, &snapshot), Some(1));
-        assert_eq!(selected_row(&[], &commands, &snapshot), None);
-    }
-
-    #[test]
-    fn effort_choices_respect_each_models_limits() {
-        let catalog = vec!["low".into(), "high".into()];
-        let mut model = Model {
-            id: "test".into(),
-            name: "Test".into(),
-            provider: "test".into(),
-            context_window: 0,
-            reasoning: false,
-            efforts: None,
-        };
-        assert!(model_efforts(&model, &catalog).is_empty());
-        model.reasoning = true;
-        assert_eq!(model_efforts(&model, &catalog), catalog);
-        model.efforts = Some(vec!["high".into()]);
-        assert_eq!(model_efforts(&model, &catalog), &["high"]);
-        model.efforts = Some(vec![]);
-        assert!(model_efforts(&model, &catalog).is_empty());
-    }
-}
+#[path = "configuration_tests.rs"]
+mod tests;
