@@ -164,6 +164,8 @@ pub(crate) fn run(
                 }
             });
             cx.bind_keys(keybindings::bindings());
+            #[cfg(target_os = "macos")]
+            super::menus::install(cx);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();

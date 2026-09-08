@@ -1,6 +1,8 @@
 use super::*;
 
 pub(crate) mod launch;
+#[cfg(target_os = "macos")]
+mod menus;
 pub(crate) mod paths;
 pub(crate) mod performance;
 pub(crate) mod persistence;
