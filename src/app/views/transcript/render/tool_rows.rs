@@ -116,11 +116,19 @@ pub(super) fn render_tool(
         },
         |details| details.summary(),
     );
-    let title_label = format!(
-        "{} {summary} details. {}",
-        if expanded { "Collapse" } else { "Expand" },
-        status.map_or("No result", ToolStatus::label)
-    );
+    let read_target = direct_read_target(item).map(str::to_owned);
+    let opens_file = read_target.is_some();
+    let expanded = expanded && !opens_file;
+    let title_entity = entity.clone();
+    let toggle = toggle_transcript_item(entity.clone(), key, expanded);
+    let title_label = match &read_target {
+        Some(path) => format!("Open current file: {path}"),
+        None => format!(
+            "{} {summary} details. {}",
+            if expanded { "Collapse" } else { "Expand" },
+            status.map_or("No result", ToolStatus::label)
+        ),
+    };
     div()
         .id(("tool-row", key))
         .w_full()
@@ -129,12 +137,16 @@ pub(super) fn render_tool(
         .flex()
         .flex_col()
         .child(
-            tool_changes::title_row(
-                ("tool-title", key),
-                title_label,
-                toggle_transcript_item(entity.clone(), key, expanded),
-            )
-            .aria_expanded(expanded)
+            tool_changes::title_row(("tool-title", key), title_label, move |window, cx| {
+                if let Some(path) = &read_target {
+                    let _ = title_entity.update(cx, |this, cx| {
+                        this.open_file_editor_at_line(path.clone().into(), None, window, cx)
+                    });
+                } else {
+                    toggle(window, cx);
+                }
+            })
+            .when(!opens_file, |row| row.aria_expanded(expanded))
             .when(
                 status.is_some_and(|status| status != ToolStatus::Succeeded),
                 |row| row.child(status_slot(status)),
@@ -349,6 +361,15 @@ fn file_target_line(item: &TranscriptItem, path: &str, project: Option<&Path>) -
                     u64::try_from(edit.start.checked_add(context)?.checked_add(1)?).ok()
                 })
         })
+}
+
+fn direct_read_target(item: &TranscriptItem) -> Option<&str> {
+    if item.tool_details.as_ref()?.metadata.category != Some(crate::agents::ToolCategory::Read) {
+        return None;
+    }
+    let mut targets = file_targets(item);
+    let path = targets.next()?;
+    targets.next().is_none().then_some(path)
 }
 
 fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
