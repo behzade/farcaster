@@ -30,9 +30,8 @@ pub(in crate::app::views) fn render(
             let _ = dismiss.update(cx, |this, cx| this.close_sheet(window, cx));
         },
         |surface| {
-            let cancel = entity.clone();
+            let close = entity.clone();
             let clear = entity.clone();
-            let save = entity.clone();
             surface
                 .w(gpui::px(860.0))
                 .max_w_full()
@@ -74,6 +73,13 @@ pub(in crate::app::views) fn render(
                             crate::builtin_mcp::enabled(),
                             entity.clone(),
                         ))
+                        .when_some(app.settings_mcp_error.clone(), |content, error| {
+                            content.child(feedback(
+                                "settings-mcp-error",
+                                error,
+                                FeedbackTone::Error,
+                            ))
+                        })
                         .child(
                             div()
                                 .flex()
@@ -104,42 +110,40 @@ pub(in crate::app::views) fn render(
                                                 });
                                             },
                                         )),
-                                ),
+                                )
+                                .when_some(app.network_proxy_error.clone(), |content, error| {
+                                    content.child(feedback(
+                                        "settings-proxy-error",
+                                        error,
+                                        FeedbackTone::Error,
+                                    ))
+                                }),
                         ),
                 )
-                .when_some(app.network_proxy_error.clone(), |content, error| {
-                    content.child(div().px(THEME.space.md).child(feedback(
-                        "settings-error",
-                        error,
-                        FeedbackTone::Error,
-                    )))
-                })
                 .child(
                     div()
                         .flex_none()
                         .flex()
-                        .justify_end()
+                        .items_center()
+                        .justify_between()
                         .gap(THEME.space.sm)
                         .px(gpui::px(24.0))
                         .py(THEME.space.md)
                         .border_t_1()
                         .border_color(THEME.colors.surface)
+                        .child(
+                            div()
+                                .text_size(THEME.type_scale.caption)
+                                .text_color(THEME.colors.muted)
+                                .child("Valid changes save automatically."),
+                        )
                         .child(button(
-                            "cancel-settings",
-                            "Cancel",
+                            "close-settings",
+                            "Close",
                             ButtonTone::Neutral,
                             true,
                             move |window, cx| {
-                                let _ = cancel.update(cx, |this, cx| this.close_sheet(window, cx));
-                            },
-                        ))
-                        .child(button(
-                            "save-settings",
-                            "Save changes",
-                            ButtonTone::Accent,
-                            app.worker_task_editor.edit.is_none(),
-                            move |window, cx| {
-                                let _ = save.update(cx, |this, cx| this.save_settings(window, cx));
+                                let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
                             },
                         )),
                 )

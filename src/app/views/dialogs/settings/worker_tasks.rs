@@ -169,6 +169,11 @@ fn task_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                 judgment,
             };
             detail = detail.child(route(app, entity.clone(), target));
+            if task.execution(judgment).validate().is_err() {
+                detail = detail.child(div().text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.muted)
+                    .child("Not saved yet. Choose a provider and model; the previous route is still in use."));
+            }
             if let Some(edit @ WorkerTaskEdit::Custom { target: edited, .. }) = &editor.edit
                 && *edited == target
             {
@@ -451,7 +456,7 @@ fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElem
         .p(THEME.space.sm)
         .bg(THEME.colors.surface)
         .rounded(THEME.radius);
-    let action = match edit {
+    match edit {
         WorkerTaskEdit::Name { task, input } => {
             form = form
                 .child(div().child(if task.is_some() {
@@ -466,7 +471,6 @@ fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElem
                         .text_color(THEME.colors.muted)
                         .child("Use letters, numbers, '-' or '_'."),
                 );
-            if task.is_some() { "Rename" } else { "Add task" }
         }
         WorkerTaskEdit::Custom { inputs, .. } => {
             form = form.child(div().child("Custom IDs"))
@@ -476,34 +480,17 @@ fn edit_form(edit: &WorkerTaskEdit, entity: WeakEntity<FarcasterApp>) -> AnyElem
                         .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child(label))
                         .child(Input::new(input))
                 })));
-            "Apply"
         }
     };
-    let apply = entity.clone();
-    form.child(
-        div()
-            .flex()
-            .justify_end()
-            .gap(THEME.space.sm)
-            .child(button(
-                "cancel-worker-edit",
-                "Cancel",
-                ButtonTone::Quiet,
-                true,
-                move |window, cx| {
-                    let _ = entity.update(cx, |this, cx| this.cancel_worker_task_edit(window, cx));
-                },
-            ))
-            .child(button(
-                "apply-worker-edit",
-                action,
-                ButtonTone::Neutral,
-                true,
-                move |window, cx| {
-                    let _ = apply.update(cx, |this, cx| this.apply_worker_task_edit(window, cx));
-                },
-            )),
-    )
+    form.child(div().flex().justify_end().gap(THEME.space.sm).child(button(
+        "finish-worker-edit",
+        "Done",
+        ButtonTone::Neutral,
+        true,
+        move |window, cx| {
+            let _ = entity.update(cx, |this, cx| this.finish_worker_task_edit(window, cx));
+        },
+    )))
     .into_any_element()
 }
 

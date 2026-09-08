@@ -190,7 +190,7 @@ fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error
     let store = StateStore::open_at(&database)?;
     assert!(store.load_builtin_mcp_enabled()?);
 
-    store.save_application_settings(Some("http://proxy.example:8080"))?;
+    store.save_network_proxy(Some("http://proxy.example:8080"))?;
     store.save_builtin_mcp_enabled(false)?;
     assert_eq!(
         StateStore::open_at(&database)?
@@ -1453,10 +1453,10 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
     tasks.tasks[0].independent.harness = "codex-cli".into();
     tasks.tasks[0].independent.provider = "openai".into();
     tasks.tasks.remove(1);
-    store.save_application_settings_with_workers(None, Some(&tasks))?;
+    store.save_worker_tasks(&tasks)?;
     assert_eq!(StateStore::open_at(&database)?.load_worker_tasks()?, tasks);
     tasks.tasks.clear();
-    store.save_application_settings_with_workers(None, Some(&tasks))?;
+    store.save_worker_tasks(&tasks)?;
     assert!(
         StateStore::open_at(&database)?
             .load_worker_tasks()?
@@ -1467,25 +1467,34 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
 }
 
 #[test]
-fn invalid_worker_tasks_do_not_partially_save_application_settings() -> Result<(), String> {
+fn settings_save_independently_and_reject_invalid_values() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
-    store.save_application_settings(Some("http://proxy.example:8080"))?;
+    store.save_network_proxy(Some("http://proxy.example:8080"))?;
     let original = store.load_worker_tasks()?;
     let mut invalid = original.clone();
     invalid.tasks[0].guided.provider.clear();
-    assert!(
-        store
-            .save_application_settings_with_workers(None, Some(&invalid))
-            .is_err()
-    );
+    assert!(store.save_worker_tasks(&invalid).is_err());
     assert_eq!(
         store.load_network_proxy()?.as_deref(),
         Some("http://proxy.example:8080")
     );
     assert_eq!(store.load_worker_tasks()?, original);
-    store.save_application_settings_with_workers(None, Some(&original))?;
+    let mut valid = original;
+    valid.tasks[0].name = "audit".into();
+    store.save_worker_tasks(&valid)?;
+    assert_eq!(
+        store.load_network_proxy()?.as_deref(),
+        Some("http://proxy.example:8080")
+    );
+    assert!(store.save_network_proxy(Some("not a proxy")).is_err());
+    assert_eq!(
+        store.load_network_proxy()?.as_deref(),
+        Some("http://proxy.example:8080")
+    );
+    store.save_network_proxy(None)?;
     assert_eq!(store.load_network_proxy()?, None);
+    assert_eq!(store.load_worker_tasks()?, valid);
     Ok(())
 }
 

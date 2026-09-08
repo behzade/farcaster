@@ -4,6 +4,7 @@ pub(super) struct BootstrapSubscriptions {
     pub(super) composer: Subscription,
     pub(super) search: Subscription,
     pub(super) session_title: Subscription,
+    pub(super) network_proxy: Subscription,
     pub(super) window_placement: Subscription,
 }
 
@@ -34,11 +35,29 @@ pub(super) fn create(
         },
     );
     let window_placement = launch::observe_window_placement(window, cx);
+    let network_proxy = cx.subscribe_in(
+        &inputs.network_proxy,
+        window,
+        |this, _, event: &InputEvent, _, cx| {
+            if this.overlays.settings {
+                match event {
+                    InputEvent::Change => this.schedule_settings_proxy_save(cx),
+                    InputEvent::Blur | InputEvent::PressEnter { .. }
+                        if this.settings_proxy_save.is_some() =>
+                    {
+                        this.save_settings_proxy(cx)
+                    }
+                    _ => {}
+                }
+            }
+        },
+    );
 
     BootstrapSubscriptions {
         composer,
         search,
         session_title,
+        network_proxy,
         window_placement,
     }
 }

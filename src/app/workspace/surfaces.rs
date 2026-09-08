@@ -643,6 +643,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_proxy_save.is_some() {
+            self.save_settings_proxy(cx);
+        }
         match crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| crate::access::load_proxy(&store))
         {
@@ -655,8 +658,9 @@ impl FarcasterApp {
             Err(error) => self.network_proxy_error = Some(error),
         }
         if let Err(error) = self.load_worker_task_settings() {
-            self.network_proxy_error = Some(error);
+            self.worker_task_editor.error = Some(error);
         }
+        self.settings_mcp_error = None;
         self.open_sheet(AppSheet::Settings, window, cx);
     }
 
@@ -667,55 +671,53 @@ impl FarcasterApp {
     ) {
         self.network_proxy_input
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.network_proxy_error = None;
-        cx.notify();
-    }
-
-    pub(in crate::app) fn save_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.network_proxy_input.read(cx).value().trim().to_owned();
-        self.persist_settings((!value.is_empty()).then_some(value), window, cx);
+        self.save_settings_proxy(cx);
     }
 
     pub(in crate::app) fn toggle_settings_builtin_mcp(&mut self, cx: &mut Context<Self>) {
         let enabled = !crate::builtin_mcp::enabled();
         match crate::app::mcp_server::set_enabled(enabled) {
             Ok(()) => {
-                self.network_proxy_error = None;
+                self.settings_mcp_error = None;
             }
-            Err(error) => self.network_proxy_error = Some(error),
+            Err(error) => self.settings_mcp_error = Some(error),
         }
         cx.notify();
     }
 
-    fn persist_settings(
-        &mut self,
-        proxy: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let tasks = match self.worker_task_editor.value() {
-            Ok(tasks) => tasks,
-            Err(error) => {
-                self.network_proxy_error = Some(error);
-                cx.notify();
-                return;
-            }
-        };
+    pub(in crate::app) fn save_settings_proxy(&mut self, cx: &mut Context<Self>) {
+        self.settings_proxy_save = None;
+        let value = self.network_proxy_input.read(cx).value().trim().to_owned();
+        let proxy = (!value.is_empty()).then_some(value);
         let result =
             crate::app::infrastructure::persistence::StateStore::open().and_then(|store| {
-                store.save_application_settings_with_workers(proxy.as_deref(), Some(&tasks))
+                if store.load_network_proxy()? == proxy {
+                    return Ok(false);
+                }
+                store.save_network_proxy(proxy.as_deref())?;
+                Ok(true)
             });
         match result {
-            Ok(()) => {
+            Ok(changed) => {
                 self.network_proxy_error = None;
-                self.send(RuntimeCommand::SetAppProxy(proxy), cx);
-                self.close_sheet(window, cx);
+                if changed {
+                    self.send(RuntimeCommand::SetAppProxy(proxy), cx);
+                }
             }
             Err(error) => {
                 self.network_proxy_error = Some(error);
-                cx.notify();
             }
         }
+        cx.notify();
+    }
+
+    pub(in crate::app) fn schedule_settings_proxy_save(&mut self, cx: &mut Context<Self>) {
+        self.settings_proxy_save = Some(cx.spawn(async move |weak, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(400))
+                .await;
+            let _ = weak.update(cx, |this, cx| this.save_settings_proxy(cx));
+        }));
     }
 
     pub(in crate::app) fn open_project_trust(
@@ -797,6 +799,9 @@ impl FarcasterApp {
     pub(in crate::app) fn close_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.current_sheet_flags().any() {
             return;
+        }
+        if self.overlays.settings && self.settings_proxy_save.is_some() {
+            self.save_settings_proxy(cx);
         }
         self.apply_sheet_flags(sheet_flags(None));
         self.overlays.pending_setup = false;

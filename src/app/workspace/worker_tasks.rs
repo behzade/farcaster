@@ -10,6 +10,8 @@ pub(in crate::app) struct WorkerTaskEditor {
     pub(in crate::app) edit: Option<WorkerTaskEdit>,
     pub(in crate::app) error: Option<String>,
     loaded: bool,
+    saved: Vec<WorkerTaskDefinition>,
+    subscriptions: Vec<Subscription>,
     catalogs: Vec<crate::app::persistence::CachedConfigurationCatalog>,
 }
 
@@ -39,19 +41,17 @@ pub(in crate::app) enum WorkerRouteChoice {
 }
 
 impl WorkerTaskEditor {
-    pub(in crate::app) fn value(&self) -> Result<WorkerTasks, String> {
+    fn persist(&mut self, tasks: Vec<WorkerTaskDefinition>) -> Result<(), String> {
         if !self.loaded {
             return Err(
                 "worker task settings could not be loaded; reopen Settings before saving".into(),
             );
         }
-        if self.edit.is_some() {
-            return Err("Apply or cancel the task edit before saving Settings".into());
-        }
-        let tasks = WorkerTasks {
-            tasks: self.tasks.clone(),
-        };
+        let tasks = WorkerTasks { tasks };
         tasks.validate()?;
+        if tasks.tasks == self.saved {
+            return Ok(());
+        }
         let backends = crate::agents::backend_statuses();
         for task in &tasks.tasks {
             for judgment in WorkerJudgment::ALL {
@@ -66,7 +66,37 @@ impl WorkerTaskEditor {
                 }
             }
         }
-        Ok(tasks)
+        crate::app::persistence::StateStore::open()?.save_worker_tasks(&tasks)?;
+        self.saved = tasks.tasks;
+        Ok(())
+    }
+
+    fn persist_route(&mut self, target: WorkerRouteTarget) -> Result<(), String> {
+        let saved = self.route_settings(target)?;
+        self.persist(saved)
+    }
+
+    fn route_settings(
+        &self,
+        target: WorkerRouteTarget,
+    ) -> Result<Vec<WorkerTaskDefinition>, String> {
+        let route = self
+            .tasks
+            .get(target.task)
+            .ok_or("Task no longer exists")?
+            .execution(target.judgment)
+            .clone();
+        route
+            .validate()
+            .map_err(|_| "Choose a provider and model to save this route.".to_owned())?;
+        let mut saved = self.saved.clone();
+        let task = saved.get_mut(target.task).ok_or("Task no longer exists")?;
+        match target.judgment {
+            WorkerJudgment::Specified => task.specified = route,
+            WorkerJudgment::Guided => task.guided = route,
+            WorkerJudgment::Independent => task.independent = route,
+        }
+        Ok(saved)
     }
 
     pub(in crate::app) fn catalog(&self, harness: &str, project: &Path) -> ConfigurationCatalog {
@@ -181,8 +211,10 @@ impl FarcasterApp {
     pub(in crate::app) fn load_worker_task_settings(&mut self) -> Result<(), String> {
         self.worker_task_editor = WorkerTaskEditor::default();
         let store = crate::app::persistence::StateStore::open()?;
+        let tasks = store.load_worker_tasks()?.tasks;
         self.worker_task_editor = WorkerTaskEditor {
-            tasks: store.load_worker_tasks()?.tasks,
+            saved: tasks.clone(),
+            tasks,
             catalogs: store.load_configuration_catalogs()?,
             loaded: true,
             ..WorkerTaskEditor::default()
@@ -212,7 +244,14 @@ impl FarcasterApp {
         if self.worker_task_editor.edit.is_none()
             && let Some(route) = self.worker_task_editor.route_mut(target)
         {
+            let previous = route.clone();
             apply_choice(route, choice);
+            let valid = route.validate().is_ok();
+            let result = self.worker_task_editor.persist_route(target);
+            if valid && result.is_err() {
+                *self.worker_task_editor.route_mut(target).unwrap() = previous;
+            }
+            self.worker_task_editor.error = result.err();
         }
         cx.notify();
     }
@@ -237,6 +276,7 @@ impl FarcasterApp {
         });
         input.read(cx).focus_handle(cx).focus(window, cx);
         self.worker_task_editor.edit = Some(WorkerTaskEdit::Name { task, input });
+        self.subscribe_worker_task_inputs(window, cx);
         self.worker_task_editor.error = None;
         cx.notify();
     }
@@ -262,47 +302,83 @@ impl FarcasterApp {
             values.map(|value| cx.new(|cx| InputState::new(window, cx).default_value(value)));
         inputs[0].read(cx).focus_handle(cx).focus(window, cx);
         self.worker_task_editor.edit = Some(WorkerTaskEdit::Custom { target, inputs });
+        self.subscribe_worker_task_inputs(window, cx);
         self.worker_task_editor.error = None;
         cx.notify();
     }
 
-    pub(in crate::app) fn apply_worker_task_edit(
+    pub(in crate::app) fn finish_worker_task_edit(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let result = match &self.worker_task_editor.edit {
+        if self.save_worker_task_edit(cx) {
+            self.worker_task_editor.edit = None;
+            self.worker_task_editor.subscriptions.clear();
+            self.sheet_focus.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    fn subscribe_worker_task_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let inputs = match &self.worker_task_editor.edit {
+            Some(WorkerTaskEdit::Name { input, .. }) => vec![input.clone()],
+            Some(WorkerTaskEdit::Custom { inputs, .. }) => inputs.to_vec(),
+            None => return,
+        };
+        self.worker_task_editor.subscriptions = inputs
+            .iter()
+            .map(|input| {
+                cx.subscribe_in(input, window, |this, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.save_worker_task_edit(cx);
+                    }
+                })
+            })
+            .collect();
+    }
+
+    fn save_worker_task_edit(&mut self, cx: &mut Context<Self>) -> bool {
+        let editor = &mut self.worker_task_editor;
+        let previous = editor.tasks.clone();
+        let selected = editor.selected;
+        let result = match &editor.edit {
             Some(WorkerTaskEdit::Name { task, input }) => {
                 let (task, name) = (*task, input.read(cx).value().to_string());
-                self.worker_task_editor.save_name(task, &name)
+                editor.save_name(task, &name).and_then(|()| {
+                    let mut saved = editor.saved.clone();
+                    if let Some(index) = task {
+                        saved[index].name = editor.tasks[index].name.clone();
+                    } else {
+                        saved.push(editor.tasks.last().unwrap().clone());
+                    }
+                    editor.persist(saved)?;
+                    let index = task.unwrap_or(editor.selected);
+                    if let Some(WorkerTaskEdit::Name { task, .. }) = &mut editor.edit {
+                        *task = Some(index);
+                    }
+                    Ok(())
+                })
             }
             Some(WorkerTaskEdit::Custom { target, inputs }) => {
                 let target = *target;
                 let values = inputs
                     .each_ref()
                     .map(|input| input.read(cx).value().trim().to_owned());
-                self.worker_task_editor.save_custom_route(target, values)
+                editor
+                    .save_custom_route(target, values)
+                    .and_then(|()| editor.persist_route(target))
             }
-            None => return,
+            None => return false,
         };
-        match result {
-            Ok(()) => self.cancel_worker_task_edit(window, cx),
-            Err(error) => {
-                self.worker_task_editor.error = Some(error);
-                cx.notify();
-            }
+        let saved = result.is_ok();
+        if !saved {
+            editor.tasks = previous;
+            editor.selected = selected;
         }
-    }
-
-    pub(in crate::app) fn cancel_worker_task_edit(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.worker_task_editor.edit = None;
-        self.worker_task_editor.error = None;
-        self.sheet_focus.focus(window, cx);
+        editor.error = result.err();
         cx.notify();
+        saved
     }
 
     pub(in crate::app) fn delete_worker_task(&mut self, cx: &mut Context<Self>) {
@@ -311,6 +387,13 @@ impl FarcasterApp {
             return;
         }
         if editor.selected < editor.tasks.len() {
+            let mut saved = editor.saved.clone();
+            saved.remove(editor.selected);
+            if let Err(error) = editor.persist(saved) {
+                editor.error = Some(error);
+                cx.notify();
+                return;
+            }
             editor.tasks.remove(editor.selected);
         }
         editor.selected = editor.selected.min(editor.tasks.len().saturating_sub(1));
@@ -322,6 +405,35 @@ impl FarcasterApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_one_route_preserves_other_routes_with_incomplete_edits() {
+        let task = WorkerTaskDefinition::new("audit".into());
+        let mut editor = WorkerTaskEditor {
+            tasks: vec![task.clone()],
+            saved: vec![task.clone()],
+            ..Default::default()
+        };
+        editor.tasks[0].guided.provider.clear();
+        editor.tasks[0].specified.model = "another-model".into();
+        let saved = editor
+            .route_settings(WorkerRouteTarget {
+                task: 0,
+                judgment: WorkerJudgment::Specified,
+            })
+            .unwrap();
+        assert_eq!(saved[0].specified.model, "another-model");
+        assert_eq!(saved[0].guided, task.guided);
+        assert!(
+            editor
+                .route_settings(WorkerRouteTarget {
+                    task: 0,
+                    judgment: WorkerJudgment::Guided
+                })
+                .is_err()
+        );
+        assert_eq!(editor.saved, vec![task]);
+    }
 
     #[test]
     fn worker_route_changes_clear_only_downstream_choices() {

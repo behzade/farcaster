@@ -145,6 +145,14 @@ impl StateStore {
         Ok(tasks)
     }
 
+    pub(crate) fn save_worker_tasks(
+        &self,
+        tasks: &crate::agents::WorkerTasks,
+    ) -> Result<(), String> {
+        tasks.validate()?;
+        self.save_json_setting("worker_tasks_json", "worker tasks", tasks)
+    }
+
     pub(crate) fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {
         self.load_json_setting("window_placement_json", "window placement")
     }
@@ -200,37 +208,6 @@ impl StateStore {
             )
             .map(|_| ())
             .map_err(|error| format!("save built-in MCP setting: {error}"))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn save_application_settings(&self, proxy: Option<&str>) -> Result<(), String> {
-        self.save_application_settings_with_workers(proxy, None)
-    }
-
-    pub(crate) fn save_application_settings_with_workers(
-        &self,
-        proxy: Option<&str>,
-        tasks: Option<&crate::agents::WorkerTasks>,
-    ) -> Result<(), String> {
-        if let Some(tasks) = tasks {
-            tasks.validate()?;
-        }
-        if let Some(proxy) = proxy {
-            crate::access::validate_app_proxy(proxy)?;
-        }
-        let tasks = tasks
-            .map(serde_json::to_string)
-            .transpose()
-            .map_err(|error| format!("encode worker tasks: {error}"))?;
-        self.ensure_ui_state()?;
-        self.connection
-            .execute(
-                "UPDATE ui_state SET network_proxy=?1,
-                   worker_tasks_json=COALESCE(?2, worker_tasks_json) WHERE id=1",
-                params![proxy, tasks],
-            )
-            .map(|_| ())
-            .map_err(|error| format!("save application settings: {error}"))
     }
 
     pub(crate) fn load_configuration_catalogs(
