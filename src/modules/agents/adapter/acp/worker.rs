@@ -778,13 +778,7 @@ impl WorkerSession for AcpWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        if mode == WorkerSendMode::Steer {
-            if !self.features.steering {
-                return Err(format!(
-                    "{} ACP agent did not advertise mid-turn steering",
-                    self.profile.name
-                ));
-            }
+        if mode == WorkerSendMode::Steer && self.features.steering {
             if self.current_prompt.is_none() {
                 self.start_prompt_request(&message, images)?;
                 self.events.push_back(WorkerEvent::Started);
@@ -802,9 +796,10 @@ impl WorkerSession for AcpWorkerSession {
             return Ok(());
         }
         if self.current_prompt.is_some() {
-            if mode == WorkerSendMode::Queue {
-                self.queued_prompts
-                    .push_back((WorkerSendMode::Queue, message, images));
+            if matches!(mode, WorkerSendMode::Queue | WorkerSendMode::Steer) {
+                // Keep the requested mode for delivery acknowledgements even
+                // when an ACP agent needs to defer steering to its next turn.
+                self.queued_prompts.push_back((mode, message, images));
                 return Ok(());
             }
             return Err(format!(
@@ -1190,29 +1185,5 @@ fn request_id_string(id: &AcpRequestId) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const PROFILE: AcpProfile = AcpProfile {
-        backend: "test-acp",
-        name: "Test ACP",
-        command: "test-acp",
-        path_environment: "FARCASTER_TEST_ACP_PATH",
-        arguments: &["acp"],
-        auth_method: None,
-        force_argument: Some("--force"),
-    };
-
-    #[test]
-    fn full_access_uses_the_profile_escape_hatch() {
-        let mut command = std::process::Command::new("agent");
-        configure_command(&mut command, &PROFILE, HarnessAccessMode::Full);
-        assert_eq!(
-            command
-                .get_args()
-                .map(|argument| argument.to_string_lossy().into_owned())
-                .collect::<Vec<_>>(),
-            ["--force", "acp"]
-        );
-    }
-}
+#[path = "worker_tests.rs"]
+mod tests;

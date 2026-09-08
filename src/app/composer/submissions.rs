@@ -163,11 +163,7 @@ impl FarcasterApp {
     }
 
     pub(crate) fn handle_composer_escape(&mut self, cx: &mut Context<Self>) {
-        if !self.snapshot.conversation.running {
-            self.composer_escape_armed = None;
-            return;
-        }
-        let (abort, arm) = composer_escape(
+        let (action, arm) = composer_escape(
             self.snapshot.conversation.running,
             !self.snapshot.conversation.queue.steering.is_empty(),
             self.composer_sessions.current_target(),
@@ -175,8 +171,10 @@ impl FarcasterApp {
             Instant::now(),
         );
         self.composer_escape_armed = arm;
-        if abort {
-            self.send(RuntimeCommand::Abort, cx);
+        match action {
+            ComposerEscapeAction::ApplySteering => self.send(RuntimeCommand::ApplySteering, cx),
+            ComposerEscapeAction::Abort => self.send(RuntimeCommand::Abort, cx),
+            ComposerEscapeAction::None => {}
         }
     }
 
@@ -311,166 +309,38 @@ fn prompt_mode_for_follow_up(running: bool) -> PromptMode {
 
 const COMPOSER_ABORT_DOUBLE_TAP: Duration = Duration::from_millis(500);
 
+#[derive(Debug, PartialEq, Eq)]
+enum ComposerEscapeAction {
+    None,
+    ApplySteering,
+    Abort,
+}
+
 fn composer_escape(
     running: bool,
     has_queued_steer: bool,
     current_target: &str,
     armed: Option<&(String, Instant)>,
     now: Instant,
-) -> (bool, Option<(String, Instant)>) {
+) -> (ComposerEscapeAction, Option<(String, Instant)>) {
     if !running {
-        return (false, None);
+        return (ComposerEscapeAction::None, None);
     }
     let armed_here = armed.is_some_and(|(target, at)| {
         target == current_target && now.saturating_duration_since(*at) <= COMPOSER_ABORT_DOUBLE_TAP
     });
-    if has_queued_steer || armed_here {
-        (true, None)
+    if armed_here {
+        (ComposerEscapeAction::Abort, None)
     } else {
-        (false, Some((current_target.to_owned(), now)))
+        let action = if has_queued_steer {
+            ComposerEscapeAction::ApplySteering
+        } else {
+            ComposerEscapeAction::None
+        };
+        (action, Some((current_target.to_owned(), now)))
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::{Duration, Instant, SystemTime};
-
-    use super::*;
-    use crate::sessions::UsageSummary;
-
-    fn session(path: &str, archived: bool) -> SessionSummary {
-        SessionSummary::from_cached(
-            "test".into(),
-            path.into(),
-            "/project".into(),
-            "Test".into(),
-            String::new(),
-            String::new(),
-            None,
-            SystemTime::UNIX_EPOCH,
-            0,
-            UsageSummary::default(),
-            archived,
-            false,
-            String::new(),
-        )
-    }
-
-    fn pending() -> PendingSubmission {
-        PendingSubmission {
-            text: "submitted".into(),
-            images: Vec::new(),
-            pastes: Vec::new(),
-            result: None,
-        }
-    }
-
-    #[test]
-    fn archived_sessions_activate_when_their_message_is_sent() {
-        let path = Path::new("/sessions/inactive.jsonl");
-        let archived = [session("/sessions/inactive.jsonl", true)];
-        assert_eq!(
-            inactive_session_for_target(&session_target(path), Some(path), &archived),
-            Some(path.to_path_buf())
-        );
-        assert_eq!(
-            inactive_session_for_target("session:/sessions/other.jsonl", Some(path), &archived,),
-            None
-        );
-        let active = [session("/sessions/inactive.jsonl", false)];
-        assert_eq!(
-            inactive_session_for_target(&session_target(path), Some(path), &active),
-            None
-        );
-    }
-
-    #[test]
-    fn rejected_attachment_only_submission_moves_to_its_real_session_after_navigation() {
-        let session = Path::new("/sessions/one.jsonl");
-        assert_eq!(
-            rejected_attachment_target("", true, "draft:one", "session:other", Some(session),),
-            Some(session_target(session))
-        );
-        assert_eq!(
-            rejected_attachment_target("typed", true, "draft:one", "session:other", Some(session),),
-            None
-        );
-        assert_eq!(
-            rejected_attachment_target("", true, "draft:one", "draft:one", Some(session)),
-            None
-        );
-    }
-
-    #[test]
-    fn pending_submission_only_blocks_its_own_composer() {
-        let pending = std::collections::HashMap::from([("session:compacting".into(), pending())]);
-
-        assert!(!can_submit_to(&pending, "session:compacting"));
-        assert!(can_submit_to(&pending, "session:other"));
-        assert!(can_submit_to(&pending, "draft:new"));
-    }
-
-    #[test]
-    fn every_slash_command_uses_backend_prompt_semantics() {
-        assert_eq!(
-            submission_delivery("/settings", PromptMode::Steer),
-            (PromptMode::Normal, true)
-        );
-        assert_eq!(
-            submission_delivery("  /backend-command argument", PromptMode::FollowUp),
-            (PromptMode::Normal, true)
-        );
-        assert_eq!(
-            submission_delivery("ordinary prompt", PromptMode::Steer),
-            (PromptMode::Steer, false)
-        );
-    }
-
-    #[test]
-    fn enter_prompts_when_idle_and_steers_while_running() {
-        assert_eq!(prompt_mode_for_enter(false), PromptMode::Normal);
-        assert_eq!(prompt_mode_for_enter(true), PromptMode::Steer);
-    }
-
-    #[test]
-    fn tab_prompts_when_idle_and_queues_a_follow_up_while_running() {
-        assert_eq!(prompt_mode_for_follow_up(false), PromptMode::Normal);
-        assert_eq!(prompt_mode_for_follow_up(true), PromptMode::FollowUp);
-    }
-
-    #[test]
-    fn composer_escape_flushes_steer_or_double_taps_to_abort() {
-        let t0 = Instant::now();
-        let within = t0 + Duration::from_millis(400);
-        let expired = t0 + Duration::from_millis(501);
-        let one = "session:one";
-        let two = "session:two";
-        let armed = (one.to_owned(), t0);
-
-        assert_eq!(composer_escape(false, true, one, None, t0), (false, None));
-        assert_eq!(
-            composer_escape(false, false, one, Some(&armed), within),
-            (false, None)
-        );
-        assert_eq!(
-            composer_escape(true, true, one, Some(&armed), t0),
-            (true, None)
-        );
-        assert_eq!(
-            composer_escape(true, false, one, None, t0),
-            (false, Some((one.into(), t0)))
-        );
-        assert_eq!(
-            composer_escape(true, false, one, Some(&armed), within),
-            (true, None)
-        );
-        assert_eq!(
-            composer_escape(true, false, one, Some(&armed), expired),
-            (false, Some((one.into(), expired)))
-        );
-        assert_eq!(
-            composer_escape(true, false, two, Some(&armed), t0),
-            (false, Some((two.into(), t0)))
-        );
-    }
-}
+#[path = "submissions_tests.rs"]
+mod tests;

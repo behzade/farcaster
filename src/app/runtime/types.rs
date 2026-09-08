@@ -13,6 +13,7 @@ pub(crate) enum RuntimeCommand {
         allow_while_running: bool,
     },
     Abort,
+    ApplySteering,
     StopSessionFamily {
         path: PathBuf,
     },
