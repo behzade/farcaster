@@ -2,3 +2,4 @@
 **/target/
 .direnv/
 .DS_Store
+/third_party/gpui-component-bd83329/ui/Cargo.lock
