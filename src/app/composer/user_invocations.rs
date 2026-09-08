@@ -1,3 +1,10 @@
+use std::cell::RefCell;
+
+use nucleo_matcher::{
+    Config, Matcher, Utf32Str,
+    pattern::{Atom, AtomKind, CaseMatching, Normalization},
+};
+
 use crate::{
     app::composer::prompt_fragments,
     protocol::{SlashCommand, SlashCommandSource},
@@ -8,6 +15,45 @@ pub(crate) struct ComposerSuggestion {
     pub(crate) name: String,
     pub(crate) description: Option<String>,
     pub(crate) sigil: char,
+}
+
+thread_local! {
+    static SUGGESTION_MATCHER: RefCell<Matcher> = RefCell::new(Matcher::new(Config::DEFAULT));
+}
+
+pub(super) fn fuzzy_suggestions(
+    suggestions: impl IntoIterator<Item = ComposerSuggestion>,
+    query: &str,
+) -> Vec<ComposerSuggestion> {
+    if query.is_empty() {
+        return suggestions.into_iter().collect();
+    }
+    let pattern = Atom::new(
+        query,
+        CaseMatching::Ignore,
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+        false,
+    );
+    SUGGESTION_MATCHER.with(|matcher| {
+        let mut matcher = matcher.borrow_mut();
+        let mut buffer = Vec::new();
+        let mut matches = suggestions
+            .into_iter()
+            .filter_map(|suggestion| {
+                let score =
+                    pattern.score(Utf32Str::new(&suggestion.name, &mut buffer), &mut matcher)?;
+                Some((suggestion, score))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by_key(|(suggestion, score)| {
+            std::cmp::Reverse((suggestion.name.eq_ignore_ascii_case(query), *score))
+        });
+        matches
+            .into_iter()
+            .map(|(suggestion, _)| suggestion)
+            .collect()
+    })
 }
 
 pub(crate) fn contains_invocation(input: &str, commands: &[SlashCommand]) -> bool {
@@ -36,7 +82,7 @@ pub(crate) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
     let Some(query) = invocation_query(input) else {
         return Vec::new();
     };
-    let mut ordered = invocable.clone();
+    let mut ordered = invocable.iter().collect::<Vec<_>>();
     if query.is_empty()
         && !ordered
             .iter()
@@ -50,27 +96,23 @@ pub(crate) fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<Compose
         let index = 7.min(ordered.len());
         ordered.insert(index, skill);
     }
-    ordered
-        .into_iter()
-        .filter_map(|command| {
-            let name = invocation_alias(&command, &invocable);
-            name.contains(query).then(|| {
-                let kind = if command.source == SlashCommandSource::Prompt {
-                    "Prompt"
-                } else {
-                    "Skill"
-                };
-                ComposerSuggestion {
-                    name,
-                    description: Some(match &command.description {
-                        Some(description) => format!("{kind} · {description}"),
-                        None => kind.into(),
-                    }),
-                    sigil: '$',
-                }
-            })
-        })
-        .collect()
+    let suggestions = ordered.into_iter().map(|command| {
+        let name = invocation_alias(command, &invocable);
+        let kind = if command.source == SlashCommandSource::Prompt {
+            "Prompt"
+        } else {
+            "Skill"
+        };
+        ComposerSuggestion {
+            name,
+            description: Some(match &command.description {
+                Some(description) => format!("{kind} · {description}"),
+                None => kind.into(),
+            }),
+            sigil: '$',
+        }
+    });
+    fuzzy_suggestions(suggestions, query)
 }
 
 pub(crate) fn complete(input: &str, cursor: usize, sigil: char, name: &str) -> (String, usize) {
@@ -98,7 +140,7 @@ fn invocation_query(input: &str) -> Option<&str> {
     let name = token.strip_prefix('$')?;
     name.chars()
         .all(|character| {
-            character.is_ascii_lowercase()
+            character.is_alphabetic()
                 || character.is_ascii_digit()
                 || matches!(character, ':' | '_' | '-')
         })

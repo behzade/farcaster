@@ -1,4 +1,7 @@
-use crate::{app::composer::user_invocations::ComposerSuggestion, protocol::SlashCommand};
+use crate::{
+    app::composer::user_invocations::{ComposerSuggestion, fuzzy_suggestions},
+    protocol::SlashCommand,
+};
 
 pub(in crate::app) fn exact<'a>(
     input: &str,
@@ -32,10 +35,7 @@ fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<ComposerSuggestion
         return Vec::new();
     }
     let mut matches = Vec::new();
-    for command in commands
-        .iter()
-        .filter(|command| command.name.starts_with(query))
-    {
+    for command in commands {
         if matches
             .iter()
             .any(|existing: &ComposerSuggestion| existing.name == command.name)
@@ -48,7 +48,7 @@ fn suggestions(input: &str, commands: &[SlashCommand]) -> Vec<ComposerSuggestion
             sigil: '/',
         });
     }
-    matches
+    fuzzy_suggestions(matches, query)
 }
 
 fn command_name(input: &str) -> Option<&str> {

@@ -10,6 +10,25 @@ fn command(name: &str, source: SlashCommandSource) -> SlashCommand {
 }
 
 #[test]
+fn suggestions_match_gaps_and_case_and_rank_the_best_match_first() {
+    let commands = vec![
+        command("extension-reload", SlashCommandSource::Extension),
+        command("reload", SlashCommandSource::Extension),
+    ];
+    let matches = suggestions("/RLD", &commands);
+    assert_eq!(
+        matches
+            .iter()
+            .map(|suggestion| suggestion.name.as_str())
+            .collect::<Vec<_>>(),
+        ["reload", "extension-reload"]
+    );
+    assert!(suggestions("/zqx", &commands).is_empty());
+    assert!(exact("/rld", &commands).is_none());
+    assert_eq!(suggestions("/", &commands)[0].name, "extension-reload");
+}
+
+#[test]
 fn execution_requires_an_exact_backend_catalog_name() {
     let commands = vec![
         command("extension-reload", SlashCommandSource::Extension),

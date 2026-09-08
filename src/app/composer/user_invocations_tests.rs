@@ -9,6 +9,24 @@ fn command(name: &str, source: SlashCommandSource) -> SlashCommand {
 }
 
 #[test]
+fn skill_suggestions_match_gaps_and_case_and_prefer_exact_names() {
+    let commands = vec![
+        command("skill:code-review", SlashCommandSource::Skill),
+        command("skill:cdrv", SlashCommandSource::Skill),
+    ];
+    let matches = suggestions("please $CDRV", &commands);
+    assert_eq!(
+        matches
+            .iter()
+            .map(|suggestion| suggestion.name.as_str())
+            .collect::<Vec<_>>(),
+        ["cdrv", "code-review"]
+    );
+    assert!(!contains_invocation("$CDRV", &commands));
+    assert!(suggestions("$zqx", &commands).is_empty());
+}
+
+#[test]
 fn dollar_suggestions_compose_prompts_and_skills() {
     let commands = vec![
         command("skill:review", SlashCommandSource::Skill),
