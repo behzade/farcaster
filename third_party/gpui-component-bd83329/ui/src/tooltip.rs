@@ -123,9 +123,11 @@ impl Render for Tooltip {
                 .px_2()
                 .text_sm()
                 .gap_3()
+                .max_w(px(360.))
+                .whitespace_normal()
                 .refine_style(&self.style)
                 .map(|this| {
-                    this.child(div().map(|this| match self.content {
+                    this.child(div().min_w_0().map(|this| match self.content {
                         TooltipContext::Text(ref text) => this.child(text.clone()),
                         TooltipContext::Element(ref builder) => this.child(builder(window, cx)),
                     }))
