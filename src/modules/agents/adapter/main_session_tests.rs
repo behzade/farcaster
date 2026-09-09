@@ -1,4 +1,10 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use super::*;
 
@@ -10,15 +16,32 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
     let image = crate::protocol::PromptImage::new("AQID".into(), "image/png".into());
     let mut conversation = ConversationState::default();
     conversation.push_local_user_with_prompt_images(String::new(), &[image.clone()], false);
-    let mut transport = WorkerSessionTransport::new(std::path::Path::new("/locators"),
-        "claude", "one".into(), Box::new(IdleWorker), MainSessionMetadata::default(), None).unwrap();
-    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDeliveredWithImages {
-        mode:WorkerSendMode::Prompt, message:String::new(), images:vec![image],
-    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "claude",
+        "one".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .unwrap();
+    transport.enqueue_worker_event(WorkerEvent::Activity(
+        WorkerActivity::InputDeliveredWithImages {
+            mode: WorkerSendMode::Prompt,
+            message: String::new(),
+            images: vec![image],
+        },
+    ));
     for event in &transport.pending {
-        if let SessionEvent::Activity(event) = event {conversation.reduce(event.value());}
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
     }
-    let users = conversation.items.iter().filter(|item| item.kind == TranscriptKind::User).collect::<Vec<_>>();
+    let users = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User)
+        .collect::<Vec<_>>();
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].images.len(), 1);
 }
@@ -172,9 +195,14 @@ fn native_child_activity_carries_a_backend_locator_without_discovery() {
     assert_eq!(event.value()["child"]["is_running"], true);
 }
 
-struct SteeringWorker(WorkerSendMode);
+struct SteeringWorker(WorkerSendMode, Arc<AtomicBool>);
 
 impl WorkerSession for SteeringWorker {
+    fn apply_steering(&mut self) -> Result<(), String> {
+        self.1.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
     fn send(&mut self, _: String, mode: WorkerSendMode) -> Result<(), String> {
         assert_eq!(mode, self.0);
         Ok(())
@@ -204,11 +232,12 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         ("opencode2", WorkerSendMode::Steer),
         ("cursor-cli", WorkerSendMode::Queue),
     ] {
+        let applied = Arc::new(AtomicBool::new(false));
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
             harness,
             "session-1".into(),
-            Box::new(SteeringWorker(mode)),
+            Box::new(SteeringWorker(mode, applied.clone())),
             MainSessionMetadata::default(),
             None,
         )
@@ -224,6 +253,7 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         transport
             .send(SessionCommand::ApplySteering)
             .expect("apply steer");
+        assert!(applied.load(Ordering::SeqCst));
         assert!(transport.running);
         let (queued, other) = if mode == WorkerSendMode::Queue {
             (&transport.follow_up, &transport.steering)

@@ -118,6 +118,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             generation: 0,
             completions: None,
             turn_active: false,
+            steering_interrupts: 0,
             wake: None,
             pending: VecDeque::from([WorkerEvent::SessionChanged {
                 locator: session_id,
@@ -239,6 +240,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             generation: 0,
             completions: None,
             turn_active: false,
+            steering_interrupts: 0,
             wake: launch.wake.clone(),
             pending: VecDeque::new(),
         }),
@@ -490,6 +492,7 @@ struct OpenCodeWorkerSession {
     generation: u64,
     completions: Option<mpsc::Receiver<(u64, Result<String, String>)>>,
     turn_active: bool,
+    steering_interrupts: usize,
     wake: Option<thread::Thread>,
     pending: VecDeque<WorkerEvent>,
 }
@@ -517,9 +520,7 @@ impl OpenCodeWorkerSession {
             .set_activity(WorkerActivityState::Working);
         if mode != WorkerSendMode::Steer {
             self.reasoning_started = false;
-            self.text_streams.clear();
-            self.reasoning_streams.clear();
-            self.active_tools.clear();
+            self.clear_streams();
         }
         self.generation = self.generation.saturating_add(1);
         self.completions = None;
@@ -531,10 +532,14 @@ impl OpenCodeWorkerSession {
     fn finish_turn(&mut self) {
         self.turn_active = false;
         self.completions = None;
+        self.clear_streams();
+        self.caller_identity.set_activity(WorkerActivityState::Idle);
+    }
+
+    fn clear_streams(&mut self) {
         self.active_tools.clear();
         self.text_streams.clear();
         self.reasoning_streams.clear();
-        self.caller_identity.set_activity(WorkerActivityState::Idle);
     }
 
     fn fetch_completed_context(&mut self) -> Result<(), String> {
@@ -626,6 +631,14 @@ impl OpenCodeWorkerSession {
                     }
                 }
                 "session.execution.interrupted" => {
+                    if self.steering_interrupts > 0 {
+                        self.steering_interrupts -= 1;
+                        self.generation = self.generation.saturating_add(1);
+                        self.completions = None;
+                        self.clear_streams();
+                        self.reasoning_started = false;
+                        continue;
+                    }
                     if self.turn_active {
                         self.finish_turn();
                         return Some(WorkerEvent::Settled {
@@ -1111,12 +1124,23 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        self.server.client().interrupt(&self.session_id)?;
+        self.server.client().interrupt(&self.session_id, false)?;
         self.generation = self.generation.saturating_add(1);
         self.finish_turn();
         self.pending.push_back(WorkerEvent::Settled {
             output: String::new(),
         });
+        Ok(())
+    }
+
+    fn apply_steering(&mut self) -> Result<(), String> {
+        if self.server.client().interrupt(&self.session_id, true)? {
+            // The interrupted execution resumes on the server. Settling here
+            // would clear the composer's pending steering and follow-ups.
+            self.steering_interrupts += 1;
+            self.generation = self.generation.saturating_add(1);
+            self.completions = None;
+        }
         Ok(())
     }
 

@@ -345,3 +345,89 @@ fn extracts_the_last_assistant_text() {
     ];
     assert_eq!(final_assistant_text(&context), "done");
 }
+
+#[test]
+fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<(), String> {
+    let child = std::process::Command::new("sh")
+        .args(["-c", "printf '{\"url\":\"http://127.0.0.1:4096\"}\\n'; cat"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+    let (sender, incoming) = mpsc::channel();
+    let caller_identity = crate::agents::CallerRegistry::shared().issue(
+        std::path::Path::new("/project"),
+        crate::modules::agents::core::CallerProfile {
+            backend: "opencode2".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let mut worker = OpenCodeWorkerSession {
+        caller_identity,
+        server,
+        session_id: "session-1".into(),
+        provider: None,
+        model: None,
+        effort: None,
+        effort_catalog: HashMap::new(),
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        incoming,
+        reasoning_started: true,
+        text_streams: HashMap::new(),
+        reasoning_streams: HashMap::new(),
+        usage: OpenCodeUsageTracker::default(),
+        context_window: 0,
+        pending_inputs: HashMap::new(),
+        pending_deliveries: HashMap::from([
+            ("steer-1".into(), (WorkerSendMode::Steer, "redirect".into())),
+            ("queue-1".into(), (WorkerSendMode::Queue, "later".into())),
+        ]),
+        active_tools: HashMap::new(),
+        generation: 0,
+        completions: None,
+        turn_active: true,
+        steering_interrupts: 1,
+        wake: None,
+        pending: VecDeque::new(),
+    };
+    let send = |kind: &str, extra: Value| {
+        let mut data = json!({"sessionID": "session-1"});
+        data.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        sender
+            .send(Ok(super::super::contract::OpenCodeEvent {
+                id: None,
+                event: Some(kind.into()),
+                data,
+            }))
+            .unwrap();
+    };
+    send("session.execution.interrupted", json!({}));
+    send("session.execution.started", json!({}));
+    assert!(worker.poll_native_event().is_none());
+    assert!(worker.turn_active);
+    assert_eq!(worker.pending_deliveries.len(), 2);
+    send("session.inbox.delivered", json!({"inboxID": "steer-1"}));
+    assert!(matches!(
+        worker.poll_native_event(),
+        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            mode: WorkerSendMode::Steer,
+            ..
+        }))
+    ));
+    assert!(worker.pending_deliveries.contains_key("queue-1"));
+    send("session.execution.interrupted", json!({}));
+    assert!(matches!(
+        worker.poll_native_event(),
+        Some(WorkerEvent::Settled { .. })
+    ));
+    assert!(!worker.turn_active);
+    worker.close()?;
+    Ok(())
+}

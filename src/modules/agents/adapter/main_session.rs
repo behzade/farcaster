@@ -238,11 +238,17 @@ impl WorkerSessionTransport {
                 self.input_delivered(mode, &message, json!(message));
                 return;
             }
-            WorkerActivity::InputDeliveredWithImages { mode, message, images } => {
+            WorkerActivity::InputDeliveredWithImages {
+                mode,
+                message,
+                images,
+            } => {
                 let mut content = vec![json!({"type":"text","text":message})];
-                content.extend(images.into_iter().map(|image| json!({
-                    "type":"image", "data":image.data, "mimeType":image.mime_type,
-                })));
+                content.extend(images.into_iter().map(|image| {
+                    json!({
+                        "type":"image", "data":image.data, "mimeType":image.mime_type,
+                    })
+                }));
                 self.input_delivered(mode, &message, json!(content));
                 return;
             }
@@ -481,9 +487,11 @@ impl WorkerSessionTransport {
     fn input_delivered(&mut self, mode: WorkerSendMode, text: &str, content: Value) {
         self.acknowledge_delivery(mode, text);
         self.finish_assistant_message(None);
-        let message = json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
+        let message =
+            json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
         for event_type in ["message_start", "message_end"] {
-            self.pending.push_back(activity(json!({"type":event_type, "message":message})));
+            self.pending
+                .push_back(activity(json!({"type":event_type, "message":message})));
         }
     }
 
@@ -555,10 +563,12 @@ impl SessionTransport for WorkerSessionTransport {
         let id = format!("{}-{}", self.harness, self.next_id);
         let operation = command.response_operation();
         match command {
-            // Worker adapters send steering on submission. Applying it must not
-            // interrupt the turn or discard messages awaiting delivery.
-            SessionCommand::ConfigureSteering | SessionCommand::ApplySteering => {
+            SessionCommand::ConfigureSteering => {
                 self.response(id.clone(), operation, json!({}))
+            }
+            SessionCommand::ApplySteering => {
+                self.worker.apply_steering()?;
+                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::LoadState => {
                 self.response(id.clone(), operation, self.state());

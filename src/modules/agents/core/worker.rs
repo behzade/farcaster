@@ -234,6 +234,11 @@ pub(crate) trait WorkerSession: Send {
     }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;
     fn abort(&mut self) -> Result<(), String>;
+    /// Apply submitted steering without discarding pending input.
+    /// Backends that deliver steering on submission need no extra action.
+    fn apply_steering(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     fn compact(&mut self) -> Result<(), String> {
         Err("worker backend does not support compaction".into())
     }

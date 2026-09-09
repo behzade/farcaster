@@ -63,7 +63,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
             200,
             json!({"data": {"id": "prompt-1", "sessionID": "session/1", "delivery": "queue"}}),
         ),
-        response(204, Value::Null),
+        response(200, json!({"interrupted": true})),
         response(204, Value::Null),
     ]);
     let mut client = OpenCodeClient::new(transport);
@@ -82,7 +82,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
         OpenCodeDelivery::Queue,
     )?;
     assert_eq!(admission.session_id, "session/1");
-    client.interrupt("session/1")?;
+    assert!(client.interrupt("session/1", false)?);
     client.delete_session("session/1")?;
 
     let transport = client.into_transport();
@@ -102,7 +102,11 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
             "resume": true
         })
     );
-    assert_eq!(body(&transport.requests[3]), json!({"continue": false}));
+    assert_eq!(
+        transport.requests[3].path,
+        "/api/session/session%2F1/interrupt?continue=false"
+    );
+    assert!(transport.requests[3].body.is_none());
     assert_eq!(transport.requests[4].method, OpenCodeHttpMethod::Delete);
     Ok(())
 }
@@ -121,6 +125,24 @@ fn steer_is_encoded_independently_from_queue() -> Result<(), String> {
         body(&client.into_transport().requests[0])["delivery"],
         "steer"
     );
+    Ok(())
+}
+
+#[test]
+fn apply_steering_uses_continue_query_and_reports_idle() -> Result<(), String> {
+    for interrupted in [true, false] {
+        let transport =
+            FakeTransport::with_responses([response(200, json!({"interrupted": interrupted}))]);
+        let mut client = OpenCodeClient::new(transport);
+        assert_eq!(client.interrupt("session/1", true)?, interrupted);
+        let requests = client.into_transport().requests;
+        assert_eq!(requests[0].method, OpenCodeHttpMethod::Post);
+        assert_eq!(
+            requests[0].path,
+            "/api/session/session%2F1/interrupt?continue=true"
+        );
+        assert!(requests[0].body.is_none());
+    }
     Ok(())
 }
 

@@ -87,13 +87,25 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         )
     }
 
-    pub(crate) fn interrupt(&mut self, session_id: &str) -> Result<(), String> {
+    pub(crate) fn interrupt(&mut self, session_id: &str, resume: bool) -> Result<bool, String> {
+        #[derive(serde::Deserialize)]
+        struct InterruptReceipt {
+            interrupted: bool,
+        }
+
         let response = self.execute(
             OpenCodeHttpMethod::Post,
-            format!("/api/session/{}/interrupt", path_segment(session_id)),
-            Some(json!({"continue": false})),
+            format!(
+                "/api/session/{}/interrupt?continue={resume}",
+                path_segment(session_id)
+            ),
+            None,
         )?;
-        decode_empty(response)
+        ensure_success(&response)?;
+        // Interrupt returns a receipt directly, without a data envelope.
+        serde_json::from_slice::<InterruptReceipt>(&response.body)
+            .map(|receipt| receipt.interrupted)
+            .map_err(|error| format!("decode OpenCode interrupt response: {error}"))
     }
 
     pub(crate) fn models(&mut self, directory: &str) -> Result<Value, String> {
