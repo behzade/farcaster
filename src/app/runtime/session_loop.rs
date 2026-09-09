@@ -45,6 +45,8 @@ pub(super) fn run(
         active_session: None,
         parked_snapshot: None,
         deferred_prompt: None,
+        queued_prompts: VecDeque::new(),
+        normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
@@ -60,6 +62,7 @@ pub(super) fn run(
     }
     owner.publish();
     let mut running = true;
+    let mut pending_command = None;
     let mut stream_publish_due = None;
     while running {
         while let Ok(result) = history_rx.try_recv() {
@@ -104,7 +107,7 @@ pub(super) fn run(
         .into_iter()
         .flatten()
         .min();
-        match command_rx.try_recv() {
+        match super::command_queue::receive_command(&command_rx, &mut pending_command) {
             Ok(RuntimeCommand::Shutdown) => running = false,
             Ok(command) => owner.apply_command(command),
             Err(mpsc::TryRecvError::Empty) => match next_deadline {

@@ -110,6 +110,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             native_queue: false,
             next_id,
             current_turn: None,
+            abort_starting_turn: false,
             output: String::new(),
             reasoning_started: false,
             compacting: false,
@@ -246,6 +247,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         native_queue: true,
         next_id,
         current_turn: None,
+        abort_starting_turn: false,
         output: String::new(),
         reasoning_started: false,
         compacting: false,
@@ -506,6 +508,7 @@ struct CodexWorkerSession {
     native_queue: bool,
     next_id: i64,
     current_turn: Option<String>,
+    abort_starting_turn: bool,
     output: String,
     reasoning_started: bool,
     compacting: bool,
@@ -566,14 +569,16 @@ impl WorkerSession for CodexWorkerSession {
 
     fn abort(&mut self) -> Result<(), String> {
         let Some(turn_id) = self.current_turn.clone() else {
+            if self
+                .pending
+                .values()
+                .any(|request| matches!(request, PendingRequest::StartTurn))
+            {
+                self.abort_starting_turn = true;
+            }
             return Ok(());
         };
-        let id = self.request(
-            "turn/interrupt",
-            json!({"threadId": self.thread_id, "turnId": turn_id}),
-        )?;
-        self.pending.insert(id, PendingRequest::Ignore);
-        Ok(())
+        self.interrupt_turn(&turn_id)
     }
 
     fn compact(&mut self) -> Result<(), String> {
@@ -649,7 +654,11 @@ impl WorkerSession for CodexWorkerSession {
                                 )));
                             }
                         };
-                        if self.begin_turn(&turn.id) {
+                        let started = self.begin_turn(&turn.id);
+                        if let Err(error) = self.interrupt_started_turn_if_requested() {
+                            return Some(WorkerEvent::Failed(error));
+                        }
+                        if started {
                             return Some(WorkerEvent::Started);
                         }
                     }
@@ -686,6 +695,7 @@ impl WorkerSession for CodexWorkerSession {
                             continue;
                         }
                         Some(PendingRequest::StartTurn) => {
+                            self.abort_starting_turn = false;
                             self.caller_identity.set_activity(WorkerActivityState::Idle);
                         }
                         Some(PendingRequest::Ignore) | None => {}
@@ -716,7 +726,11 @@ impl WorkerSession for CodexWorkerSession {
                     match method.as_str() {
                         "turn/started" => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
-                                if self.begin_turn(turn_id) {
+                                let started = self.begin_turn(turn_id);
+                                if let Err(error) = self.interrupt_started_turn_if_requested() {
+                                    return Some(WorkerEvent::Failed(error));
+                                }
+                                if started {
                                     return Some(WorkerEvent::Started);
                                 }
                             } else {
@@ -1075,6 +1089,27 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn interrupt_turn(&mut self, turn_id: &str) -> Result<(), String> {
+        let id = self.request(
+            "turn/interrupt",
+            json!({"threadId": self.thread_id, "turnId": turn_id}),
+        )?;
+        self.pending.insert(id, PendingRequest::Ignore);
+        Ok(())
+    }
+
+    fn interrupt_started_turn_if_requested(&mut self) -> Result<(), String> {
+        if !self.abort_starting_turn {
+            return Ok(());
+        }
+        let Some(turn_id) = self.current_turn.clone() else {
+            return Ok(());
+        };
+        self.interrupt_turn(&turn_id)?;
+        self.abort_starting_turn = false;
+        Ok(())
+    }
+
     fn wait_response(
         &mut self,
         request_id: &CodexRequestId,

@@ -1,6 +1,66 @@
+use std::collections::VecDeque;
+
 use super::*;
 
 struct IdleWorker;
+
+struct RejectAfterWriteWorker {
+    events: VecDeque<WorkerEvent>,
+}
+
+impl WorkerSession for RejectAfterWriteWorker {
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        self.events.push_back(WorkerEvent::Failed(
+            "native backend rejected the prompt".into(),
+        ));
+        Ok(())
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        self.events.pop_front()
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+#[ignore = "audit regression: prompt response must wait for native backend acknowledgement"]
+fn prompt_response_does_not_precede_worker_rejection() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(RejectAfterWriteWorker {
+            events: VecDeque::new(),
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "do not delete the durable row yet".into(),
+            images: Vec::new(),
+        })
+        .expect("worker write");
+
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Failure(_))),
+        "a successful bridge response currently arrives before the worker reports rejection"
+    );
+}
 
 #[test]
 fn neutral_metadata_events_refresh_session_state_and_modes() {

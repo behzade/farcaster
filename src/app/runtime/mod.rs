@@ -1,5 +1,6 @@
 mod access_mode;
 mod catalog;
+mod command_queue;
 mod commands;
 mod documents;
 mod history;
@@ -32,7 +33,7 @@ use status::{
 };
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{Arc, mpsc},
     thread,
@@ -118,6 +119,8 @@ struct RuntimeOwner {
     active_session: Option<PathBuf>,
     parked_snapshot: Option<RuntimeSnapshot>,
     deferred_prompt: Option<DeferredPrompt>,
+    queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
+    normal_prompt_in_flight: bool,
     pending_session_controls: PendingSessionControls,
     access_mode_changes: AccessModeChangeState,
     startup_state_loaded: bool,
@@ -147,6 +150,7 @@ struct SessionTitleResult {
 }
 
 struct SessionTitleGeneration {
+    new_session: bool,
     in_flight: bool,
     revision: u64,
     sender: mpsc::Sender<SessionTitleResult>,
@@ -157,6 +161,7 @@ impl Default for SessionTitleGeneration {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
+            new_session: false,
             in_flight: false,
             revision: 0,
             sender,
@@ -165,5 +170,8 @@ impl Default for SessionTitleGeneration {
     }
 }
 
+#[cfg(test)]
+#[path = "outbox_recovery_tests.rs"]
+mod outbox_recovery_tests;
 #[cfg(test)]
 mod tests;

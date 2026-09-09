@@ -82,6 +82,7 @@ fn test_session() -> CodexWorkerSession {
         native_queue: false,
         next_id: 0,
         current_turn: None,
+        abort_starting_turn: false,
         output: String::new(),
         reasoning_started: false,
         compacting: false,
@@ -93,6 +94,73 @@ fn test_session() -> CodexWorkerSession {
         events: VecDeque::new(),
         turn_error: None,
     }
+}
+
+fn writable_test_session() -> (
+    CodexWorkerSession,
+    std::io::BufReader<std::process::ChildStdout>,
+) {
+    let mut session = test_session();
+    session.child.wait().expect("reap initial test child");
+    let mut child = std::process::Command::new("cat")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("test echo child");
+    let writer = child.stdin.take().expect("test child stdin");
+    let reader = child.stdout.take().expect("test child stdout");
+    session.child = child;
+    session.writer = Some(writer);
+    (session, std::io::BufReader::new(reader))
+}
+
+fn assert_deferred_interrupt(start: CodexInbound) {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session
+        .send("work".into(), WorkerSendMode::Prompt)
+        .expect("start turn");
+    let mut request = String::new();
+    sent.read_line(&mut request).expect("read turn start");
+    assert_eq!(
+        serde_json::from_str::<Value>(&request).expect("decode turn start")["method"],
+        "turn/start"
+    );
+
+    session.abort().expect("defer interrupt");
+    assert!(session.abort_starting_turn);
+    assert_eq!(
+        session.next_id, 1,
+        "an unknown turn cannot be interrupted yet"
+    );
+
+    session.queued_inbound.push_back(Ok(start));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert!(!session.abort_starting_turn);
+
+    let mut request = String::new();
+    sent.read_line(&mut request)
+        .expect("read deferred interrupt");
+    let interrupt = serde_json::from_str::<Value>(&request).expect("decode turn interrupt");
+    assert_eq!(interrupt["method"], "turn/interrupt");
+    assert_eq!(interrupt["params"]["turnId"], "turn-1");
+}
+
+#[test]
+fn abort_before_turn_id_interrupts_after_start_response() {
+    assert_deferred_interrupt(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"turn": {"id": "turn-1", "status": "inProgress"}}),
+    });
+}
+
+#[test]
+fn abort_before_turn_id_interrupts_after_started_notification() {
+    assert_deferred_interrupt(CodexInbound::Notification {
+        method: "turn/started".into(),
+        params: json!({"threadId": "thread-1", "turn": {"id": "turn-1"}}),
+    });
 }
 
 #[test]

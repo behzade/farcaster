@@ -7,11 +7,14 @@ use crate::{
 
 use super::{RuntimeEvent, RuntimeOwner, can_send_prompt, conversation_mut};
 
+#[cfg(test)]
+#[path = "prompts_tests.rs"]
+mod tests;
+
 #[derive(Clone, Debug)]
 pub(super) struct DeferredPrompt {
     pub(super) mode: PromptMode,
     pub(super) message: String,
-    pub(super) auto_title: bool,
     pub(super) display_message: Option<String>,
     pub(super) invocation: Option<String>,
     pub(super) images: Vec<PromptImage>,
@@ -61,7 +64,9 @@ impl RuntimeOwner {
             return;
         }
         let was_running = self.active_snapshot().conversation.running;
-        if !can_send_prompt(mode, was_running, allow_while_running) {
+        if (mode == PromptMode::Normal && self.normal_prompt_in_flight)
+            || !can_send_prompt(mode, was_running, allow_while_running)
+        {
             self.reject_prompt(
                 &target,
                 format!("{} is already working on this session", self.backend_name()),
@@ -97,7 +102,6 @@ impl RuntimeOwner {
         };
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
-        let auto_title = self.should_generate_automatic_title(mode, was_running);
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &message,
             &self.snapshot.commands,
@@ -123,7 +127,6 @@ impl RuntimeOwner {
         self.dispatch_prompt(
             mode,
             message,
-            auto_title,
             display_message,
             invocation,
             images,
@@ -132,11 +135,14 @@ impl RuntimeOwner {
     }
 
     pub(super) fn deliver_queued(&mut self, prompt: QueuedPrompt) {
+        if !self.can_deliver_queued(prompt.mode) {
+            self.queued_prompts.push_back(prompt);
+            return;
+        }
         self.project = prompt.project;
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
         self.pending_prompt_target = Some(prompt.target);
-        let auto_title = self.should_generate_automatic_title(prompt.mode, false);
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &prompt.message,
             &self.snapshot.commands,
@@ -161,7 +167,6 @@ impl RuntimeOwner {
         self.dispatch_prompt(
             prompt.mode,
             prompt.message,
-            auto_title,
             prompt.display_message,
             prompt.invocation,
             prompt.images,
@@ -169,12 +174,29 @@ impl RuntimeOwner {
         );
     }
 
+    fn can_deliver_queued(&self, mode: PromptMode) -> bool {
+        if self.pending_prompt_id.is_some()
+            || self.pending_prompt_target.is_some()
+            || self.deferred_prompt.is_some()
+        {
+            return false;
+        }
+        if mode != PromptMode::Normal {
+            return true;
+        }
+        let snapshot = self.active_snapshot();
+        !self.normal_prompt_in_flight
+            && !snapshot.conversation.running
+            && !snapshot.conversation.compacting
+            && !snapshot.conversation.retrying
+            && snapshot.pending_question.is_none()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn dispatch_prompt(
         &mut self,
         mode: PromptMode,
         message: String,
-        auto_title: bool,
         display_message: Option<String>,
         invocation: Option<String>,
         images: Vec<PromptImage>,
@@ -205,7 +227,6 @@ impl RuntimeOwner {
             self.deferred_prompt = Some(DeferredPrompt {
                 mode,
                 message,
-                auto_title,
                 display_message,
                 invocation,
                 images,
@@ -240,7 +261,14 @@ impl RuntimeOwner {
             self.reject_prompt(&target, error);
             return;
         }
-        let title_prompt = auto_title.then(|| message.clone());
+        let was_running = self
+            .active_snapshot()
+            .session
+            .as_ref()
+            .is_some_and(|state| state.is_streaming);
+        let title_prompt = self
+            .should_generate_automatic_title(mode, was_running)
+            .then(|| message.clone());
         let request = SessionCommand::Prompt {
             mode,
             message,
@@ -252,6 +280,7 @@ impl RuntimeOwner {
             Some(Ok(id)) => {
                 self.pending_prompt_id = Some(id);
                 self.pending_outbox_id = outbox_id;
+                self.normal_prompt_in_flight |= mode == PromptMode::Normal;
                 if let Some(prompt) = title_prompt {
                     self.start_auto_title_generation(prompt);
                 }
@@ -271,11 +300,14 @@ impl RuntimeOwner {
     fn should_generate_automatic_title(&self, mode: PromptMode, was_running: bool) -> bool {
         mode == PromptMode::Normal
             && !was_running
+            && self.title_generation.new_session
+            && self.startup_state_loaded
+            && self.startup_history_loaded
             && self
-                .snapshot
+                .active_snapshot()
                 .session
                 .as_ref()
-                .is_none_or(|state| state.message_count == 0 && state.session_name.is_none())
+                .is_some_and(|state| state.message_count == 0 && state.session_name.is_none())
             && !self.title_generation.in_flight
             && agents::supports_auto_title_generation(&self.harness)
     }
@@ -316,6 +348,15 @@ impl RuntimeOwner {
         {
             return;
         }
+        if self.deferred_prompt.is_none()
+            && self
+                .queued_prompts
+                .front()
+                .is_some_and(|prompt| self.can_deliver_queued(prompt.mode))
+            && let Some(prompt) = self.queued_prompts.pop_front()
+        {
+            self.deliver_queued(prompt);
+        }
         if let Some(prompt) = self.deferred_prompt.take() {
             if self.pending_prompt_item.is_none() {
                 let optimistic = match (&prompt.display_message, &prompt.invocation) {
@@ -354,12 +395,23 @@ impl RuntimeOwner {
             self.dispatch_prompt(
                 prompt.mode,
                 prompt.message,
-                prompt.auto_title,
                 prompt.display_message,
                 prompt.invocation,
                 prompt.images,
                 prompt.outbox_id,
             );
         }
+    }
+
+    pub(super) fn cancel_deferred_prompt(&mut self) {
+        if self.deferred_prompt.take().is_none() {
+            return;
+        }
+        self.rollback_failed_prompt("Prompt cancelled before delivery");
+        if let Some(target) = self.pending_prompt_target.take() {
+            self.emit_prompt_result(&target, false);
+        }
+        self.snapshot.status = "Stopped".into();
+        self.publish();
     }
 }

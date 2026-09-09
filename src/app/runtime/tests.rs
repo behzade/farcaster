@@ -82,7 +82,9 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
     Ok(())
 }
 
-fn owner_without_process(project: PathBuf) -> (RuntimeOwner, mpsc::Receiver<RuntimeEvent>) {
+pub(super) fn owner_without_process(
+    project: PathBuf,
+) -> (RuntimeOwner, mpsc::Receiver<RuntimeEvent>) {
     let (event_tx, event_rx) = test_event_channel();
     let (history_tx, _history_rx) = mpsc::channel();
     (
@@ -123,6 +125,8 @@ fn owner_without_process(project: PathBuf) -> (RuntimeOwner, mpsc::Receiver<Runt
             active_session: None,
             parked_snapshot: None,
             deferred_prompt: None,
+            queued_prompts: VecDeque::new(),
+            normal_prompt_in_flight: false,
             pending_session_controls: PendingSessionControls::default(),
             access_mode_changes: AccessModeChangeState::default(),
             startup_state_loaded: false,
@@ -1462,7 +1466,7 @@ fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
 
 #[test]
 fn first_session_path_publishes_metadata_without_a_catalog_refresh() {
-    let project = std::env::temp_dir();
+    let project = std::env::temp_dir().canonicalize().unwrap();
     let session = project.join("new-session.jsonl");
     let (mut owner, events) = owner_without_process(project);
 
@@ -1970,6 +1974,8 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         active_session: Some(PathBuf::from("/old")),
         parked_snapshot: None,
         deferred_prompt: None,
+        queued_prompts: VecDeque::new(),
+        normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
@@ -2203,6 +2209,8 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         active_session: Some(old_path.clone()),
         parked_snapshot: None,
         deferred_prompt: None,
+        queued_prompts: VecDeque::new(),
+        normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: false,
@@ -2380,6 +2388,8 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         active_session: Some(active_path.clone()),
         parked_snapshot: None,
         deferred_prompt: None,
+        queued_prompts: VecDeque::new(),
+        normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),
         startup_state_loaded: true,

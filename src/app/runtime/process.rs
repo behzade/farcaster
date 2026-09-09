@@ -2,7 +2,8 @@ use super::*;
 
 impl RuntimeOwner {
     pub(super) fn start_auto_title_generation(&mut self, prompt: String) {
-        if self.title_generation.in_flight
+        if !self.title_generation.new_session
+            || self.title_generation.in_flight
             || !agents::supports_auto_title_generation(&self.harness)
             || self
                 .active_snapshot()
@@ -117,7 +118,9 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.normal_prompt_in_flight = false;
         self.invalidate_auto_title_generation();
+        self.title_generation.new_session = false;
         self.transcript_changed_from = Some(0);
     }
 
@@ -129,6 +132,7 @@ impl RuntimeOwner {
     ) {
         let preserve_transcript = preserve_transcript
             || self.deferred_prompt.is_some()
+            || !self.queued_prompts.is_empty()
             || (!self.pending_session_controls.is_empty() && self.snapshot.history_preview);
         let keep_preview = preserve_transcript && self.snapshot.history_preview;
         let preserved_conversation =
@@ -137,6 +141,8 @@ impl RuntimeOwner {
             .as_ref()
             .and(self.pending_prompt_item.clone());
         self.reset_process_runtime();
+        // Missing backend metadata must never make a resume or fork eligible for a title.
+        self.title_generation.new_session = session.is_none() && fork.is_none();
         self.active_session = session.clone();
         self.process_command.access_mode = self
             .access_mode_changes
@@ -214,8 +220,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reload(&mut self) {
-        let active = self.active_snapshot();
-        if active.conversation.running || active.conversation.compacting {
+        if !self.access_mode_change_ready() {
             let snapshot = self.active_snapshot_mut();
             conversation_mut(snapshot).push_local_error(
                 "Reload not started",
@@ -329,6 +334,7 @@ impl RuntimeOwner {
                     self.publish_child_session_metadata(event.value());
                 }
                 if settled {
+                    self.normal_prompt_in_flight = false;
                     if notify_completion {
                         let failed = self.active_snapshot().conversation.ended_in_error();
                         let title = if failed {
@@ -341,6 +347,7 @@ impl RuntimeOwner {
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);
                     self.publish_session_metadata();
+                    self.maybe_send_deferred_prompt();
                 }
                 if !should_publish {
                     SnapshotChange::None
@@ -399,6 +406,7 @@ impl RuntimeOwner {
         zlog::error!("agent runtime failed: {details}");
         self.mark_outbox_failed(&details);
         self.pending_prompt_id = None;
+        self.normal_prompt_in_flight = false;
         self.deferred_prompt = None;
         conversation_mut(self.active_snapshot_mut()).running = false;
         self.publish_session_metadata();

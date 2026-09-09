@@ -63,8 +63,13 @@ impl AccessModeChangeState {
 
 impl RuntimeOwner {
     pub(super) fn access_mode_change_ready(&self) -> bool {
-        let conversation = &self.active_snapshot().conversation;
-        !conversation.running && !conversation.compacting
+        let snapshot = self.active_snapshot();
+        let conversation = &snapshot.conversation;
+        !self.normal_prompt_in_flight
+            && !conversation.running
+            && !conversation.compacting
+            && !conversation.retrying
+            && snapshot.pending_question.is_none()
     }
 
     pub(super) fn set_access_mode(&mut self, mode: HarnessAccessMode) {

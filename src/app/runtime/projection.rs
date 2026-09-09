@@ -139,6 +139,9 @@ impl RuntimeOwner {
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
         if is_prompt_response {
             self.pending_prompt_id = None;
+            if !response.success && operation == SessionOperation::Prompt(PromptMode::Normal) {
+                self.normal_prompt_in_flight = false;
+            }
             if response.success {
                 let target = self.pending_prompt_target.clone().unwrap_or_default();
                 let session = self.active_session.clone();
@@ -200,6 +203,15 @@ impl RuntimeOwner {
                     self.snapshot = snapshot;
                 }
             }
+            if is_prompt_response {
+                let running = self
+                    .active_snapshot()
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.is_streaming);
+                conversation_mut(self.active_snapshot_mut()).running = running;
+                self.maybe_send_deferred_prompt();
+            }
             if self.parked_snapshot.is_none() {
                 self.publish();
             }
@@ -209,6 +221,7 @@ impl RuntimeOwner {
             SessionOperation::LoadState => {
                 match serde_json::from_value::<SessionState>(response.data) {
                     Ok(state) => {
+                        let normal_prompt_in_flight = self.normal_prompt_in_flight;
                         let selected_session = state
                             .session_file
                             .as_ref()
@@ -218,7 +231,8 @@ impl RuntimeOwner {
                         self.active_session = selected_session.clone();
                         let snapshot = self.active_snapshot_mut();
                         snapshot.selected_session = selected_session;
-                        conversation_mut(snapshot).running = state.is_streaming;
+                        conversation_mut(snapshot).running =
+                            state.is_streaming || normal_prompt_in_flight;
                         snapshot.session = Some(state);
                         snapshot.status = "Ready".into();
                         self.startup_state_loaded = true;

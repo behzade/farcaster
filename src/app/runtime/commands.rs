@@ -26,7 +26,10 @@ impl RuntimeOwner {
                 ),
             },
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
-            RuntimeCommand::Abort => self.send(SessionCommand::Abort),
+            RuntimeCommand::Abort => {
+                self.cancel_deferred_prompt();
+                self.send(SessionCommand::Abort);
+            }
             RuntimeCommand::ApplySteering => self.send(SessionCommand::ApplySteering),
             RuntimeCommand::Reload => self.reload(),
             RuntimeCommand::Compact {
