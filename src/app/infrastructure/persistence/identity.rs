@@ -127,6 +127,7 @@ pub(super) fn ensure_project(
     path: &Path,
     added_ms: i64,
 ) -> Result<i64, String> {
+    let path = crate::sessions::normalize_session_path(path);
     let path = path.to_string_lossy();
     transaction
         .execute(
@@ -149,12 +150,27 @@ pub(super) fn target_for_session(
     locator: Option<&str>,
 ) -> rusqlite::Result<String> {
     if let Some(locator) = locator {
-        Ok(format!("session:{locator}"))
+        Ok(format!(
+            "session:{}",
+            crate::sessions::normalize_session_path(Path::new(locator)).display()
+        ))
     } else if let Some(key) = client_key {
         Ok(format!("draft:{key}"))
     } else {
         Err(rusqlite::Error::InvalidQuery)
     }
+}
+
+fn target_locator(target: &str, session_path: Option<&Path>) -> Option<PathBuf> {
+    session_path
+        .map(PathBuf::from)
+        .or_else(|| {
+            target
+                .strip_prefix("session:")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+        })
+        .map(|path| crate::sessions::normalize_session_path(&path))
 }
 
 pub(super) fn create_target_session(
@@ -165,14 +181,7 @@ pub(super) fn create_target_session(
     session_path: Option<&Path>,
 ) -> Result<i64, String> {
     let client_key = target.strip_prefix("draft:").filter(|key| !key.is_empty());
-    let locator = session_path
-        .map(crate::sessions::normalize_session_path)
-        .or_else(|| {
-            target
-                .strip_prefix("session:")
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-        });
+    let locator = target_locator(target, session_path);
     if client_key.is_none() && locator.is_none() {
         return Err(format!("invalid session target: {target}"));
     }
@@ -214,9 +223,7 @@ impl StateStore {
                 return Ok(id);
             }
         }
-        let locator = session_path
-            .map(crate::sessions::normalize_session_path)
-            .or_else(|| target.strip_prefix("session:").map(PathBuf::from));
+        let locator = target_locator(target, session_path);
         let Some(locator) = locator else {
             return Ok(None);
         };
@@ -233,6 +240,11 @@ impl StateStore {
             .map_err(|error| format!("resolve session: {error}"))?
             .collect::<rusqlite::Result<Vec<i64>>>()
             .map_err(|error| format!("resolve session: {error}"))?;
+        let ids = if ids.is_empty() {
+            legacy_session_ids_for_locator(&self.connection, &locator, harness)?
+        } else {
+            ids
+        };
         match ids.as_slice() {
             [] => Ok(None),
             [id] => Ok(Some(*id)),
@@ -241,5 +253,49 @@ impl StateStore {
                 locator.display()
             )),
         }
+    }
+}
+
+fn legacy_session_ids_for_locator(
+    connection: &Connection,
+    locator: &Path,
+    harness: Option<&str>,
+) -> Result<Vec<i64>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, locator FROM sessions
+              WHERE locator IS NOT NULL AND (?1 IS NULL OR harness=?1)",
+        )
+        .map_err(|error| format!("prepare legacy session lookup: {error}"))?;
+    statement
+        .query_map([harness], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("query legacy session lookup: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("decode legacy session lookup: {error}"))
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|(id, candidate)| {
+                    (crate::sessions::normalize_session_path(Path::new(&candidate)) == locator)
+                        .then_some(id)
+                })
+                .collect()
+        })
+}
+
+pub(super) fn legacy_session_id_for_locator(
+    transaction: &Transaction<'_>,
+    harness: &str,
+    locator: &Path,
+) -> Result<Option<i64>, String> {
+    let ids = legacy_session_ids_for_locator(transaction, locator, Some(harness))?;
+    match ids.as_slice() {
+        [] => Ok(None),
+        [id] => Ok(Some(*id)),
+        _ => Err(format!(
+            "legacy session locator is ambiguous for {harness}: {}",
+            locator.display()
+        )),
     }
 }

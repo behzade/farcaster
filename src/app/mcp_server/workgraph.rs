@@ -54,12 +54,14 @@ pub(super) struct CompleteParams {
 fn session_identity(database: &Path, caller: &CallerContext) -> Result<(String, String), String> {
     let store = crate::app::persistence::StateStore::open_at(database)?;
     let sessions = store.cached_sessions("")?;
+    let caller_project = crate::sessions::normalize_session_path(&caller.project);
+    let caller_session = crate::sessions::normalize_session_path(Path::new(&caller.session));
     let session = sessions
         .iter()
         .find(|session| {
-            session.project == caller.project
+            session.project == caller_project
                 && session.harness == caller.backend
-                && (session.id == caller.session || session.path == Path::new(&caller.session))
+                && (session.id == caller.session || session.path == caller_session)
         })
         .ok_or_else(|| {
             "authenticated session is not indexed yet; retry after session discovery".to_owned()

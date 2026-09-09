@@ -54,37 +54,49 @@ impl StateStore {
             .map_err(|error| error.to_string())?;
         let now = u64_to_i64(now_ms());
         let project = ensure_project(&tx, &update.project, now)?;
-        tx.execute(
-            "INSERT INTO sessions(project_id,harness,locator,backend_id,modified_ms,created_ms)
-             VALUES(?1,?2,?3,?4,?5,?5) ON CONFLICT(harness,locator) DO NOTHING",
-            params![
-                project,
-                update.harness,
-                path.to_string_lossy(),
-                update.id,
-                now
-            ],
-        )
-        .map_err(|error| error.to_string())?;
-        let id: i64 = tx
+        let existing = tx
             .query_row(
                 "SELECT id FROM sessions WHERE harness=?1 AND locator=?2",
                 params![update.harness, path.to_string_lossy()],
                 |row| row.get(0),
             )
+            .optional()
             .map_err(|error| error.to_string())?;
+        let existing = if existing.is_some() {
+            existing
+        } else {
+            super::identity::legacy_session_id_for_locator(&tx, &update.harness, &path)?
+        };
+        let id = if let Some(id) = existing {
+            id
+        } else {
+            tx.execute(
+                "INSERT INTO sessions(project_id,harness,locator,backend_id,modified_ms,created_ms)
+                 VALUES(?1,?2,?3,?4,?5,?5)",
+                params![
+                    project,
+                    update.harness,
+                    path.to_string_lossy(),
+                    update.id,
+                    now
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            tx.last_insert_rowid()
+        };
         tx.execute(
-            "UPDATE sessions SET backend_id=?2,
-               search_text=CASE WHEN ?3 IS NOT NULL AND ?3 != title
-                   THEN search_text || ' ' || LOWER(?3) ELSE search_text END,
-               title=COALESCE(?3,NULLIF(title,''),?4,''),
-               first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?4,'') ELSE first_user_message END,
-               parent_backend_id=COALESCE(?5,parent_backend_id),
-               parent_id=COALESCE((SELECT id FROM sessions WHERE harness=?6 AND backend_id=?5 LIMIT 1),parent_id),
-               message_count=COALESCE(?7,message_count), modified_ms=?8
+            "UPDATE sessions SET project_id=?2, locator=?3, backend_id=?4,
+               search_text=CASE WHEN ?5 IS NOT NULL AND ?5 != title
+                   THEN search_text || ' ' || LOWER(?5) ELSE search_text END,
+               title=COALESCE(?5,NULLIF(title,''),?6,''),
+               first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?6,'') ELSE first_user_message END,
+               parent_backend_id=COALESCE(?7,parent_backend_id),
+               parent_id=COALESCE((SELECT id FROM sessions WHERE harness=?8 AND backend_id=?7 LIMIT 1),parent_id),
+               message_count=COALESCE(?9,message_count), modified_ms=?10
              WHERE id=?1",
-            params![id, update.id, update.title, update.first_user_message,
-                update.parent_session, update.harness, update.message_count.map(|n| n as i64), now],
+            params![id, project, path.to_string_lossy(), update.id, update.title,
+                update.first_user_message, update.parent_session, update.harness,
+                update.message_count.map(|n| n as i64), now],
         ).map_err(|error| format!("update live session metadata: {error}"))?;
         tx.execute(
             "UPDATE sessions SET search_text=LOWER(title || ' ' || first_user_message)
@@ -150,8 +162,9 @@ impl StateStore {
                 )
             })
             .collect::<HashSet<_>>();
+        let legacy_locators = legacy_session_locator_index(&transaction)?;
         for session in sessions {
-            upsert_bound_session(&transaction, session)?;
+            upsert_bound_session(&transaction, session, &legacy_locators)?;
         }
         transaction
             .execute_batch(
@@ -202,6 +215,7 @@ impl StateStore {
     }
 
     pub(crate) fn has_queued_prompts_for(&self, paths: &[PathBuf]) -> Result<bool, String> {
+        let mut missing = HashSet::new();
         for path in paths {
             let locator = crate::sessions::normalize_session_path(path);
             let queued = self
@@ -219,6 +233,30 @@ impl StateStore {
             if queued {
                 return Ok(true);
             }
+            missing.insert(locator);
+        }
+        if missing.is_empty() {
+            return Ok(false);
+        }
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT s.locator FROM outbox o
+                   JOIN sessions s ON s.id=o.session_id
+                  WHERE o.state='queued' AND s.locator IS NOT NULL",
+            )
+            .map_err(|error| format!("prepare legacy queued locator index: {error}"))?;
+        let locators = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("query legacy queued locator index: {error}"))?;
+        for locator in locators {
+            let locator =
+                locator.map_err(|error| format!("decode legacy queued locator: {error}"))?;
+            if missing.contains(&crate::sessions::normalize_session_path(Path::new(
+                &locator,
+            ))) {
+                return Ok(true);
+            }
         }
         Ok(false)
     }
@@ -233,10 +271,11 @@ impl StateStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session path relocation: {error}"))?;
         let project_id = ensure_project(&transaction, target_project, u64_to_i64(now_ms()))?;
+        let mut missing = Vec::new();
         for (source, target) in paths {
             let source_text = crate::sessions::normalize_session_path(source);
             let target_text = crate::sessions::normalize_session_path(target);
-            transaction
+            let updated = transaction
                 .execute(
                     "UPDATE sessions SET locator=?2, project_id=?3 WHERE locator=?1",
                     params![
@@ -252,6 +291,30 @@ impl StateStore {
                         target.display()
                     )
                 })?;
+            if updated == 0 {
+                missing.push((source_text, target_text));
+            }
+        }
+        if !missing.is_empty() {
+            let legacy_locators = legacy_session_locator_index(&transaction)?;
+            for (source, target) in missing {
+                let Some(id) = legacy_session_id_from_index(&legacy_locators, &source, None)?
+                else {
+                    continue;
+                };
+                transaction
+                    .execute(
+                        "UPDATE sessions SET locator=?2, project_id=?3 WHERE id=?1",
+                        params![id, target.to_string_lossy(), project_id],
+                    )
+                    .map_err(|error| {
+                        format!(
+                            "relocate legacy session state {} to {}: {error}",
+                            source.display(),
+                            target.display()
+                        )
+                    })?;
+            }
         }
         transaction
             .commit()
@@ -263,14 +326,35 @@ impl StateStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session state deletion: {error}"))?;
+        let mut missing = Vec::new();
         for path in paths {
             let locator = crate::sessions::normalize_session_path(path);
-            transaction
+            let deleted = transaction
                 .execute(
                     "DELETE FROM sessions WHERE locator=?1",
                     [locator.to_string_lossy()],
                 )
                 .map_err(|error| format!("delete saved state for {}: {error}", path.display()))?;
+            if deleted == 0 {
+                missing.push(locator);
+            }
+        }
+        if !missing.is_empty() {
+            let legacy_locators = legacy_session_locator_index(&transaction)?;
+            for locator in missing {
+                let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None)?
+                else {
+                    continue;
+                };
+                transaction
+                    .execute("DELETE FROM sessions WHERE id=?1", [id])
+                    .map_err(|error| {
+                        format!(
+                            "delete legacy saved state for {}: {error}",
+                            locator.display()
+                        )
+                    })?;
+            }
         }
         transaction
             .commit()
@@ -279,22 +363,40 @@ impl StateStore {
 
     pub(crate) fn set_session_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
         let locator = crate::sessions::normalize_session_path(path);
-        self.connection
+        let archived_at = archived.then_some(now_ms()).map(u64_to_i64);
+        let updated = self
+            .connection
             .execute(
                 "UPDATE sessions SET archived_at=?2 WHERE locator=?1",
-                params![
-                    locator.to_string_lossy(),
-                    archived.then_some(now_ms()).map(u64_to_i64)
-                ],
+                params![locator.to_string_lossy(), archived_at],
+            )
+            .map_err(|error| format!("update archived state for {}: {error}", path.display()))?;
+        if updated > 0 {
+            return Ok(());
+        }
+        let legacy_locators = legacy_session_locator_index(&self.connection)?;
+        let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None)? else {
+            return Ok(());
+        };
+        self.connection
+            .execute(
+                "UPDATE sessions SET locator=?2, archived_at=?3 WHERE id=?1",
+                params![id, locator.to_string_lossy(), archived_at],
             )
             .map(|_| ())
-            .map_err(|error| format!("update archived state for {}: {error}", path.display()))
+            .map_err(|error| {
+                format!(
+                    "update legacy archived state for {}: {error}",
+                    path.display()
+                )
+            })
     }
 }
 
 fn upsert_bound_session(
     transaction: &Transaction<'_>,
     session: &SessionSummary,
+    legacy_locators: &LegacyLocatorIndex,
 ) -> Result<(), String> {
     let locator = crate::sessions::normalize_session_path(&session.path);
     let locator_text = locator.to_string_lossy();
@@ -322,6 +424,11 @@ fn upsert_bound_session(
         )
         .optional()
         .map_err(|error| format!("find session {}: {error}", session.path.display()))?;
+    let existing = if existing.is_some() {
+        existing
+    } else {
+        legacy_session_id_from_index(legacy_locators, &locator, Some(&session.harness))?
+    };
     let existing = existing.or_else(|| {
         (session.app_session_id > 0)
             .then_some(session.app_session_id)
@@ -420,17 +527,92 @@ fn upsert_bound_session(
     Ok(())
 }
 
+type LegacyLocatorIndex = BTreeMap<PathBuf, BTreeMap<String, Vec<i64>>>;
+
+fn legacy_session_locator_index(connection: &Connection) -> Result<LegacyLocatorIndex, String> {
+    let mut statement = connection
+        .prepare("SELECT id, harness, locator FROM sessions WHERE locator IS NOT NULL")
+        .map_err(|error| format!("prepare legacy locator index: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("query legacy locator index: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("decode legacy locator index: {error}"))?;
+    let mut index = BTreeMap::new();
+    for (id, harness, locator) in rows {
+        index
+            .entry(crate::sessions::normalize_session_path(Path::new(&locator)))
+            .or_insert_with(BTreeMap::new)
+            .entry(harness)
+            .or_insert_with(Vec::new)
+            .push(id);
+    }
+    Ok(index)
+}
+
+fn legacy_session_id_from_index(
+    index: &LegacyLocatorIndex,
+    locator: &Path,
+    harness: Option<&str>,
+) -> Result<Option<i64>, String> {
+    let Some(harnesses) = index.get(locator) else {
+        return Ok(None);
+    };
+    match harness {
+        Some(harness) => legacy_session_id(
+            harnesses
+                .get(harness)
+                .into_iter()
+                .flat_map(|ids| ids.iter().copied()),
+            locator,
+            Some(harness),
+        ),
+        None => legacy_session_id(
+            harnesses.values().flat_map(|ids| ids.iter().copied()),
+            locator,
+            None,
+        ),
+    }
+}
+
+fn legacy_session_id(
+    mut ids: impl Iterator<Item = i64>,
+    locator: &Path,
+    harness: Option<&str>,
+) -> Result<Option<i64>, String> {
+    let Some(id) = ids.next() else {
+        return Ok(None);
+    };
+    if ids.next().is_none() {
+        return Ok(Some(id));
+    }
+    Err(format!(
+        "legacy session locator is ambiguous{}: {}",
+        harness
+            .map(|harness| format!(" for {harness}"))
+            .unwrap_or_default(),
+        locator.display()
+    ))
+}
+
 fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     let id = row.get::<_, i64>(0)?;
     let locator = row.get::<_, String>(1)?;
+    let project = row.get::<_, String>(2)?;
     let provider = row.get::<_, Option<String>>(18)?;
     let model = row.get::<_, Option<String>>(19)?;
     let effort = row.get::<_, Option<String>>(20)?;
     let mut session = SessionSummary::from_cached_for_harness(
         row.get(21)?,
         row.get(17)?,
-        PathBuf::from(locator),
-        PathBuf::from(row.get::<_, String>(2)?),
+        crate::sessions::normalize_session_path(Path::new(&locator)),
+        crate::sessions::normalize_session_path(Path::new(&project)),
         row.get(3)?,
         row.get(4)?,
         row.get::<_, Option<String>>(5)?.unwrap_or_default(),

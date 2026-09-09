@@ -26,17 +26,22 @@ impl StateStore {
 
     pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<String, String> {
         // Before the first saved choice, infer it from this project's main sessions.
+        let normalized_project = crate::sessions::normalize_session_path(project);
+        let legacy_project = project.to_string_lossy();
         self.connection
             .query_row(
                 "SELECT COALESCE(
                     (SELECT value FROM meta WHERE key='preferred_harness'),
                     (SELECT harness FROM sessions
                      WHERE submitted=1 AND client_key IS NOT NULL
-                       AND project_id=(SELECT id FROM projects WHERE path=?1)
+                       AND project_id IN (SELECT id FROM projects WHERE path IN (?1, ?2))
                        AND parent_id IS NULL AND parent_backend_id IS NULL
                      ORDER BY created_ms DESC, id DESC LIMIT 1),
                     'pi')",
-                [project.to_string_lossy().as_ref()],
+                [
+                    normalized_project.to_string_lossy().as_ref(),
+                    legacy_project.as_ref(),
+                ],
                 |row| row.get(0),
             )
             .map_err(|error| format!("load preferred harness: {error}"))
@@ -149,7 +154,7 @@ impl StateStore {
                     .map_err(|error| error.to_string())?
                     .flatten();
                 Ok(crate::agents::WorkerFamilyLink {
-                    project: PathBuf::from(project),
+                    project: crate::sessions::normalize_session_path(Path::new(&project)),
                     child_backend,
                     child_session: child_locator.unwrap_or_default(),
                     parent_backend,
@@ -240,6 +245,7 @@ impl StateStore {
     ) -> Result<Vec<CachedConfigurationCatalog>, String> {
         self.load_json_setting("configuration_catalogs_json", "configuration catalogs")
             .map(Option::unwrap_or_default)
+            .map(normalize_configuration_catalogs)
     }
 
     pub(crate) fn save_configuration_catalogs(
@@ -249,7 +255,7 @@ impl StateStore {
         self.save_json_setting(
             "configuration_catalogs_json",
             "configuration catalogs",
-            catalogs,
+            &normalize_configuration_catalogs(catalogs.to_vec()),
         )
     }
 
@@ -328,7 +334,8 @@ impl StateStore {
             .connection
             .prepare(
                 "SELECT path, repository_backend FROM projects
-                  WHERE repository_backend IS NOT NULL",
+                  WHERE repository_backend IS NOT NULL
+                  ORDER BY deleted_at IS NOT NULL, added_ms, path",
             )
             .map_err(|error| format!("load repository backend preferences: {error}"))?;
         let rows = statement
@@ -339,7 +346,9 @@ impl StateStore {
         let mut preferences = BTreeMap::new();
         for row in rows {
             let (path, backend) = row.map_err(|error| error.to_string())?;
-            preferences.insert(PathBuf::from(path), backend);
+            preferences
+                .entry(crate::sessions::normalize_session_path(Path::new(&path)))
+                .or_insert(backend);
         }
         validate_repository_backend_preferences(&preferences)?;
         Ok(preferences)
@@ -358,12 +367,11 @@ impl StateStore {
             .execute("UPDATE projects SET repository_backend=NULL", [])
             .map_err(|error| format!("clear repository backend preferences: {error}"))?;
         for (project, backend) in preferences {
+            let project_id = ensure_project(&transaction, project, u64_to_i64(now_ms()))?;
             transaction
                 .execute(
-                    "INSERT INTO projects(path, added_ms, repository_backend)
-                     VALUES(?1, ?2, ?3)
-                     ON CONFLICT(path) DO UPDATE SET repository_backend=excluded.repository_backend",
-                    params![project.to_string_lossy(), u64_to_i64(now_ms()), backend],
+                    "UPDATE projects SET repository_backend=?2 WHERE id=?1",
+                    params![project_id, backend],
                 )
                 .map_err(|error| {
                     format!(
@@ -376,6 +384,24 @@ impl StateStore {
             .commit()
             .map_err(|error| format!("commit repository backend preferences: {error}"))
     }
+}
+
+fn normalize_configuration_catalogs(
+    catalogs: Vec<CachedConfigurationCatalog>,
+) -> Vec<CachedConfigurationCatalog> {
+    let mut indexes = BTreeMap::new();
+    let mut normalized = Vec::with_capacity(catalogs.len());
+    for mut catalog in catalogs {
+        catalog.project = crate::sessions::normalize_session_path(&catalog.project);
+        let key = (catalog.harness.clone(), catalog.project.clone());
+        if let Some(index) = indexes.get(&key) {
+            normalized[*index] = catalog;
+        } else {
+            indexes.insert(key, normalized.len());
+            normalized.push(catalog);
+        }
+    }
+    normalized
 }
 
 fn validate_repository_backend_preferences(

@@ -4,6 +4,9 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 fn caller(project: &Path, id: &str) -> CallerContext {
     CallerContext {
         worker_id: format!("worker-{id}"),
@@ -191,6 +194,30 @@ fn duplicate_backend_ids_cannot_share_task_ownership() -> Result<(), String> {
         session_identity(&database, &bob)
             .unwrap_err()
             .contains("ambiguous")
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn session_identity_accepts_an_authenticated_project_alias() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    std::fs::create_dir(&project).map_err(|error| error.to_string())?;
+    symlink(&project, &alias).map_err(|error| error.to_string())?;
+    let caller = caller(&alias, "alice");
+    index(&database, std::slice::from_ref(&caller))?;
+
+    assert_eq!(
+        session_identity(&database, &caller)?,
+        (
+            "alice".into(),
+            crate::sessions::normalize_session_path(Path::new(&caller.session))
+                .to_string_lossy()
+                .into_owned(),
+        )
     );
     Ok(())
 }

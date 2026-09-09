@@ -10,6 +10,9 @@ use std::{
 use rusqlite::{Connection, params};
 use tempfile::tempdir;
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 use crate::{
     agents::ConfigurationCatalog,
     app::infrastructure::persistence::{
@@ -38,6 +41,17 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     store.allocate_app_session_id(&empty)?;
     assert_eq!(store.load_preferred_harness(temp.path())?, "codex-cli");
     drop(store);
+
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "UPDATE projects SET path=?1",
+        [temp.path().to_string_lossy()],
+    )?;
+    drop(connection);
+    assert_eq!(
+        StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
+        "codex-cli"
+    );
 
     for harness in ["opencode", "codex-cli"] {
         StateStore::open_at(&database)?.save_preferred_harness(harness)?;
@@ -125,10 +139,76 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
     };
 
     StateStore::open_at(&database)?.save_configuration_catalogs(std::slice::from_ref(&cached))?;
+    let expected = CachedConfigurationCatalog {
+        project: temp.path().canonicalize()?,
+        ..cached
+    };
+    let stored: String = Connection::open(&database)?.query_row(
+        "SELECT configuration_catalogs_json FROM ui_state WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(
+        serde_json::from_str::<Vec<CachedConfigurationCatalog>>(&stored)?,
+        vec![expected.clone()]
+    );
 
     assert_eq!(
         StateStore::open_at(&database)?.load_configuration_catalogs()?,
-        vec![cached]
+        vec![expected]
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_configuration_catalog_aliases_share_one_project_key()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    fs::create_dir(&project)?;
+    symlink(&project, &alias)?;
+    StateStore::open_at(&database)?;
+    let catalog = |id: &str| ConfigurationCatalog {
+        models: vec![Model {
+            id: id.into(),
+            name: id.into(),
+            provider: "provider".into(),
+            context_window: 0,
+            reasoning: false,
+            efforts: None,
+        }],
+        efforts: Vec::new(),
+    };
+    let legacy = vec![
+        CachedConfigurationCatalog {
+            harness: "codex-cli".into(),
+            project: alias,
+            catalog: catalog("old"),
+        },
+        CachedConfigurationCatalog {
+            harness: "codex-cli".into(),
+            project: project.clone(),
+            catalog: catalog("new"),
+        },
+    ];
+    let connection = Connection::open(&database)?;
+    connection.execute("INSERT OR IGNORE INTO ui_state(id) VALUES(1)", [])?;
+    connection.execute(
+        "UPDATE ui_state SET configuration_catalogs_json=?1 WHERE id=1",
+        [serde_json::to_string(&legacy)?],
+    )?;
+    drop(connection);
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_configuration_catalogs()?,
+        vec![CachedConfigurationCatalog {
+            harness: "codex-cli".into(),
+            project: project.canonicalize()?,
+            catalog: catalog("new"),
+        }]
     );
     Ok(())
 }
@@ -308,6 +388,74 @@ fn repository_backend_preferences_round_trip_deterministically()
     assert_eq!(
         StateStore::open_at(&database)?.load_repository_backend_preferences()?,
         preferences
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_repository_backend_aliases_prefer_the_active_project()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    fs::create_dir(&project)?;
+    symlink(&project, &alias)?;
+    StateStore::open_at(&database)?;
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "INSERT INTO projects(path, added_ms, deleted_at, repository_backend)
+         VALUES(?1, 1, 1, 'jj'), (?2, 2, NULL, 'git')",
+        params![
+            alias.to_string_lossy(),
+            project.canonicalize()?.to_string_lossy()
+        ],
+    )?;
+    drop(connection);
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_repository_backend_preferences()?,
+        BTreeMap::from([(project.canonicalize()?, "git".to_owned())])
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_queued_prompt_project_alias_is_normalized_on_read()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    let session = temp.path().join("session.jsonl");
+    fs::create_dir(&project)?;
+    fs::write(&session, "{}")?;
+    symlink(&project, &alias)?;
+    let project = project.canonicalize()?;
+    let session = session.canonicalize()?;
+    let store = StateStore::open_at(&database)?;
+    store.enqueue_prompt(
+        &format!("session:{}", session.display()),
+        "codex-cli",
+        &project,
+        Some(&session),
+        PromptMode::Normal,
+        "resume",
+        &[],
+    )?;
+    drop(store);
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "UPDATE projects SET path=?1 WHERE path=?2",
+        params![alias.to_string_lossy(), project.to_string_lossy()],
+    )?;
+    drop(connection);
+
+    assert_eq!(
+        StateStore::open_at(&database)?.queued_prompts()?[0].project,
+        project
     );
     Ok(())
 }
@@ -559,13 +707,251 @@ fn application_session_ids_are_incremental_i64_values() -> Result<(), Box<dyn st
     assert!(first > 0);
     assert_eq!(second, first + 1);
     let registry = store.load_registry()?;
-    assert_eq!(registry.projects, vec![temp.path().to_path_buf()]);
+    assert_eq!(registry.projects, vec![temp.path().canonicalize()?]);
     assert!(
         registry
             .drafts
             .iter()
             .all(|draft| draft.harness == "codex-cli")
     );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn project_aliases_share_one_registry_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    fs::create_dir(&project)?;
+    symlink(&project, &alias)?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    store.save_registry(&Registry {
+        projects: vec![alias, project.clone()],
+        excluded_projects: Vec::new(),
+        drafts: Vec::new(),
+    })?;
+
+    assert_eq!(
+        store.load_registry()?.projects,
+        vec![project.canonicalize()?]
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_project_aliases_keep_one_visible_or_excluded_registry_entry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let visible = temp.path().join("visible");
+    let visible_alias = temp.path().join("visible-alias");
+    let excluded = temp.path().join("excluded");
+    let excluded_alias = temp.path().join("excluded-alias");
+    fs::create_dir(&visible)?;
+    fs::create_dir(&excluded)?;
+    symlink(&visible, &visible_alias)?;
+    symlink(&excluded, &excluded_alias)?;
+    StateStore::open_at(&database)?;
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "INSERT INTO projects(path, added_ms, deleted_at) VALUES
+           (?1, 1, 1), (?2, 2, NULL), (?3, 3, 1), (?4, 4, 2)",
+        params![
+            visible_alias.to_string_lossy(),
+            visible.canonicalize()?.to_string_lossy(),
+            excluded_alias.to_string_lossy(),
+            excluded.canonicalize()?.to_string_lossy(),
+        ],
+    )?;
+    drop(connection);
+
+    let registry = StateStore::open_at(&database)?.load_registry()?;
+    assert_eq!(registry.projects, vec![visible.canonicalize()?]);
+    assert_eq!(registry.excluded_projects, vec![excluded.canonicalize()?]);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn active_registry_projects_override_excluded_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    fs::create_dir(&project)?;
+    symlink(&project, &alias)?;
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    store.save_registry(&Registry {
+        projects: vec![project.clone()],
+        excluded_projects: vec![alias],
+        drafts: Vec::new(),
+    })?;
+
+    let registry = store.load_registry()?;
+    assert_eq!(registry.projects, vec![project.canonicalize()?]);
+    assert!(registry.excluded_projects.is_empty());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn composer_session_targets_resolve_file_aliases() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    let session = temp.path().join("session.jsonl");
+    let alias = temp.path().join("session-alias.jsonl");
+    fs::create_dir(&project)?;
+    fs::write(&session, "{}")?;
+    symlink(&session, &alias)?;
+    let summary = SessionSummary::from_cached(
+        "session".into(),
+        session.canonicalize()?,
+        project.canonicalize()?,
+        "Session".into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        UsageSummary::default(),
+        false,
+        false,
+        "session".into(),
+    );
+    let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+    store.replace_sessions(&[summary])?;
+    let target = format!("session:{}", alias.display());
+
+    store.save_composer_session(&ComposerRecord {
+        target: target.clone(),
+        text: "draft".into(),
+        ..ComposerRecord::default()
+    })?;
+    assert_eq!(
+        store.load_composer_sessions()?,
+        vec![ComposerRecord {
+            target: format!("session:{}", session.canonicalize()?.display()),
+            text: "draft".into(),
+            ..ComposerRecord::default()
+        }]
+    );
+
+    store.delete_composer_session(&target)?;
+    assert!(store.load_composer_sessions()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn synthetic_session_targets_keep_lexical_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let project = temp.path().join("project");
+    let session = temp.path().join("synthetic/../session.jsonl");
+    fs::create_dir(&project)?;
+    assert!(!session.exists());
+    let target = format!("session:{}", session.display());
+    let expected_target = format!(
+        "session:{}",
+        crate::sessions::normalize_session_path(&session).display()
+    );
+    let store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
+
+    store.enqueue_prompt(
+        &target,
+        "codex-cli",
+        &project,
+        None,
+        PromptMode::Normal,
+        "hello",
+        &[],
+    )?;
+    assert_eq!(store.queued_prompts()?[0].target, expected_target);
+    store.save_composer_session(&ComposerRecord {
+        target,
+        text: "draft".into(),
+        ..ComposerRecord::default()
+    })?;
+    assert_eq!(store.load_composer_sessions()?[0].target, expected_target);
+    Ok(())
+}
+
+#[test]
+fn legacy_synthetic_session_locator_keeps_one_composer_and_queue_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let project = temp.path().canonicalize()?;
+    let raw_locator = temp.path().join("synthetic/../session.jsonl");
+    let locator = crate::sessions::normalize_session_path(&raw_locator);
+    let target = format!("session:{}", locator.display());
+    StateStore::open_at(&database)?;
+    let connection = Connection::open(&database)?;
+    connection.execute(
+        "INSERT INTO projects(path, added_ms) VALUES(?1, 1)",
+        [project.to_string_lossy()],
+    )?;
+    let project_id = connection.last_insert_rowid();
+    connection.execute(
+        "INSERT INTO sessions(project_id, harness, locator, backend_id, modified_ms, created_ms)
+         VALUES(?1, 'codex-cli', ?2, 'old-id', 1, 1)",
+        params![project_id, raw_locator.to_string_lossy()],
+    )?;
+    let session_id = connection.last_insert_rowid();
+    connection.execute(
+        "INSERT INTO composer_sessions(
+           session_id, text, cursor, selection_start, selection_end, history_json, updated_ms,
+           attachments_json
+         ) VALUES(?1, 'old', 0, 0, 0, '[]', 1, '[]')",
+        [session_id],
+    )?;
+    connection.execute(
+        "INSERT INTO outbox(session_id, mode, message, images_json, created_ms)
+         VALUES(?1, 'normal', 'resume', '[]', 1)",
+        [session_id],
+    )?;
+    drop(connection);
+    let mut store = StateStore::open_at(&database)?;
+
+    assert_eq!(store.load_composer_sessions()?[0].target, target);
+    let queued = store.queued_prompts()?;
+    assert_eq!(queued[0].target, target);
+    assert_eq!(queued[0].session.as_deref(), Some(locator.as_path()));
+    store.save_composer_session(&ComposerRecord {
+        target: target.clone(),
+        text: "new".into(),
+        ..ComposerRecord::default()
+    })?;
+    store.enqueue_prompt(
+        &target,
+        "codex-cli",
+        &project,
+        None,
+        PromptMode::Normal,
+        "resume again",
+        &[],
+    )?;
+    store.replace_sessions(&[SessionSummary::from_cached_for_harness(
+        "legacy".into(),
+        "codex-cli".into(),
+        locator.clone(),
+        project,
+        "Session".into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    )])?;
+    assert_eq!(store.cached_sessions("")?.len(), 1);
+    assert_eq!(store.load_composer_sessions()?[0].text, "new");
+    store.delete_composer_session(&target)?;
+    assert!(store.load_composer_sessions()?.is_empty());
     Ok(())
 }
 
@@ -1150,7 +1536,10 @@ fn parent_identity_survives_child_first_and_partial_indexing()
 
     let store = StateStore::open_at(&database)?;
     let cached = store.cached_sessions("")?;
-    let cached_child = cached.iter().find(|s| s.path == child.path).unwrap();
+    let cached_child = cached
+        .iter()
+        .find(|s| s.path == crate::sessions::normalize_session_path(&child.path))
+        .unwrap();
     assert_eq!(cached_child.id, "child");
     assert_eq!(cached_child.parent_session.as_deref(), Some("root"));
     let connection = Connection::open(&database)?;
@@ -1316,7 +1705,10 @@ fn worker_identity_binds_a_discovered_locator_without_creating_a_second_session(
     )?;
     assert_eq!(store.cached_sessions("")?.len(), 2);
     let links = store.load_worker_families()?;
-    assert_eq!(links[0].child_session, child.path.to_string_lossy());
+    assert_eq!(
+        links[0].child_session,
+        crate::sessions::normalize_session_path(&child.path).to_string_lossy()
+    );
     let connection = Connection::open(&database)?;
     assert_eq!(
         connection.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
@@ -1550,9 +1942,14 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     let mut store = StateStore::open_at(&database)?;
     store.save_worker_family(&link)?;
     store.save_worker_family(&link)?;
+    let mut persisted_link = link.clone();
+    persisted_link.project = link
+        .project
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
     assert_eq!(
         StateStore::open_at(&database)?.load_worker_families()?,
-        vec![link.clone()]
+        vec![persisted_link]
     );
     let mut session = SessionSummary::from_cached(
         link.child_session.clone(),
@@ -1585,5 +1982,42 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     let legacy: crate::agents::WorkerFamilyLink =
         serde_json::from_value(legacy).map_err(|error| error.to_string())?;
     assert!(legacy.execution.is_none());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_worker_family_project_alias_is_normalized_on_read() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("settings.sqlite3");
+    let project = temp.path().join("project");
+    let alias = temp.path().join("project-alias");
+    fs::create_dir(&project).map_err(|error| error.to_string())?;
+    symlink(&project, &alias).map_err(|error| error.to_string())?;
+    let project = project.canonicalize().map_err(|error| error.to_string())?;
+    let link = crate::agents::WorkerFamilyLink {
+        project: project.clone(),
+        child_backend: "codex-cli".into(),
+        child_session: "child".into(),
+        parent_backend: "pi".into(),
+        parent_session: "parent".into(),
+        execution: None,
+    };
+    let store = StateStore::open_at(&database)?;
+    store.save_worker_family(&link)?;
+    drop(store);
+    let connection = Connection::open(&database).map_err(|error| error.to_string())?;
+    connection
+        .execute(
+            "UPDATE projects SET path=?1 WHERE path=?2",
+            params![alias.to_string_lossy(), project.to_string_lossy()],
+        )
+        .map_err(|error| error.to_string())?;
+    drop(connection);
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_worker_families()?,
+        vec![link]
+    );
     Ok(())
 }

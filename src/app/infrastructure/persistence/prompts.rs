@@ -102,13 +102,16 @@ impl StateStore {
                 })?;
                 let client_key = row.get::<_, Option<String>>(1)?;
                 let locator = row.get::<_, Option<String>>(2)?;
+                let project = row.get::<_, String>(4)?;
                 let target = target_for_session(client_key.as_deref(), locator.as_deref())?;
                 Ok(QueuedPrompt {
                     id: row.get(0)?,
                     target,
                     harness: row.get(3)?,
-                    project: PathBuf::from(row.get::<_, String>(4)?),
-                    session: locator.map(PathBuf::from),
+                    project: crate::sessions::normalize_session_path(Path::new(&project)),
+                    session: locator
+                        .map(PathBuf::from)
+                        .map(|path| crate::sessions::normalize_session_path(&path)),
                     mode: parse_prompt_mode(&mode),
                     message: row.get(6)?,
                     display_message: row.get(7)?,

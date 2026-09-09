@@ -14,8 +14,8 @@ impl StateStore {
     }
 
     pub(crate) fn load_registry(&self) -> Result<Registry, String> {
-        let mut projects = Vec::new();
-        let mut excluded_projects = Vec::new();
+        let mut project_states = Vec::<(PathBuf, bool)>::new();
+        let mut project_indexes = BTreeMap::<PathBuf, usize>::new();
         let mut statement = self
             .connection
             .prepare("SELECT path, deleted_at FROM projects ORDER BY added_ms, path")
@@ -30,12 +30,26 @@ impl StateStore {
             let Some(path) = existing_directory(&path) else {
                 continue;
             };
-            if deleted_at.is_some() {
-                excluded_projects.push(path);
+            if let Some(index) = project_indexes.get(&path) {
+                // A visible row takes precedence over a legacy hidden alias. Registry callers
+                // cannot otherwise restore a project that the same persisted state also hides.
+                project_states[*index].1 &= deleted_at.is_some();
             } else {
-                projects.push(path);
+                project_indexes.insert(path.clone(), project_states.len());
+                project_states.push((path, deleted_at.is_some()));
             }
         }
+        let (projects, excluded_projects) = project_states.into_iter().fold(
+            (Vec::new(), Vec::new()),
+            |(mut projects, mut excluded_projects), (path, excluded)| {
+                if excluded {
+                    excluded_projects.push(path);
+                } else {
+                    projects.push(path);
+                }
+                (projects, excluded_projects)
+            },
+        );
         let mut drafts = Vec::new();
         let mut statement = self
             .connection
@@ -93,13 +107,19 @@ impl StateStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start registry update: {error}"))?;
         let now = u64_to_i64(now_ms());
+        let projects = unique_project_paths(&registry.projects);
+        let active_projects = projects.iter().cloned().collect::<HashSet<_>>();
+        let excluded_projects = unique_project_paths(&registry.excluded_projects)
+            .into_iter()
+            .filter(|project| !active_projects.contains(project))
+            .collect::<Vec<_>>();
         transaction
             .execute(
                 "UPDATE projects SET deleted_at=COALESCE(deleted_at, ?1)",
                 [now],
             )
             .map_err(|error| format!("hide projects: {error}"))?;
-        for (index, project) in registry.projects.iter().enumerate() {
+        for (index, project) in projects.iter().enumerate() {
             let project_id =
                 ensure_project(&transaction, project, now.saturating_add(index as i64))?;
             transaction
@@ -109,12 +129,12 @@ impl StateStore {
                 )
                 .map_err(|error| format!("restore registered project: {error}"))?;
         }
-        for project in &registry.excluded_projects {
+        for project in &excluded_projects {
+            let project_id = ensure_project(&transaction, project, now)?;
             transaction
                 .execute(
-                    "INSERT INTO projects(path, added_ms, deleted_at) VALUES(?1, ?2, ?2)
-                     ON CONFLICT(path) DO UPDATE SET deleted_at=excluded.deleted_at",
-                    params![project.to_string_lossy(), now],
+                    "UPDATE projects SET deleted_at=?2 WHERE id=?1",
+                    params![project_id, now],
                 )
                 .map_err(|error| format!("exclude project {}: {error}", project.display()))?;
         }
@@ -158,6 +178,15 @@ impl StateStore {
 fn existing_directory(path: &str) -> Option<PathBuf> {
     let path = PathBuf::from(path).canonicalize().ok()?;
     path.is_dir().then_some(path)
+}
+
+fn unique_project_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    paths
+        .iter()
+        .map(|path| crate::sessions::normalize_session_path(path))
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
 }
 
 fn save_draft(tx: &Transaction<'_>, draft: &DraftSession) -> Result<i64, String> {
