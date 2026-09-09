@@ -595,6 +595,15 @@ impl OpenCodeWorkerSession {
                 log_bad_opencode_event(&event, "missing event type");
                 continue;
             };
+            match opencode_child_activity(&event, &self.session_id, |id| {
+                self.server.client().get_session(id)
+            }) {
+                Ok(Some(activity)) => return Some(WorkerEvent::Activity(activity)),
+                Ok(None) => {}
+                Err(error) => {
+                    zlog::warn!("Failed to read OpenCode child session: {error}");
+                }
+            }
             if !opencode_event_is_for_session(&event, reported_event_type, &self.session_id) {
                 continue;
             }
@@ -1182,6 +1191,39 @@ impl WorkerSession for OpenCodeWorkerSession {
     fn close(&mut self) -> Result<(), String> {
         self.server.terminate()
     }
+}
+
+fn opencode_child_activity(
+    event: &super::contract::OpenCodeEvent,
+    parent_id: &str,
+    lookup_session: impl FnOnce(&str) -> Result<super::contract::OpenCodeSession, String>,
+) -> Result<Option<WorkerActivity>, String> {
+    let Some(event_type) = event.event.as_deref() else {
+        return Ok(None);
+    };
+    let is_running = match unversioned_opencode_event_type(event_type) {
+        "session.execution.started" => true,
+        "session.execution.succeeded"
+        | "session.execution.failed"
+        | "session.execution.interrupted" => false,
+        _ => return Ok(None),
+    };
+    let Some(id) = event.data.get("sessionID").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if id.is_empty() || id == parent_id {
+        return Ok(None);
+    }
+    // The event stream includes other sessions. Resolve the native parent before
+    // publishing a child, including when we attached after that child was created.
+    let child = lookup_session(id)?;
+    Ok((child.parent_id.as_deref() == Some(parent_id)).then_some(
+        WorkerActivity::ChildSessionsChanged {
+            id: child.id,
+            title: child.title,
+            is_running,
+        },
+    ))
 }
 
 fn opencode_event_is_for_session(

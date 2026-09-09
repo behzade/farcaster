@@ -2,6 +2,77 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn child_execution_events_publish_sidebar_metadata() {
+    for (kind, parent, running) in [
+        ("session.execution.started", "parent-1", Some(true)),
+        ("session.execution.started.1", "parent-1", Some(true)),
+        ("session.execution.succeeded", "parent-1", Some(false)),
+        ("session.execution.failed", "parent-1", Some(false)),
+        ("session.execution.interrupted", "parent-1", Some(false)),
+        ("session.execution.started", "unrelated", None),
+    ] {
+        let event = super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some(kind.into()),
+            data: json!({"sessionID": "child-1"}),
+        };
+        let activity = opencode_child_activity(&event, "parent-1", |id| {
+            assert_eq!(id, "child-1");
+            serde_json::from_value(json!({
+                "id": id, "parentID": parent,
+                "location": {"directory": "/project"},
+                "title": "Explore code",
+            }))
+            .map_err(|error| error.to_string())
+        })
+        .expect("session lookup");
+        let actual = activity.map(|activity| {
+            let WorkerActivity::ChildSessionsChanged {
+                id,
+                title,
+                is_running,
+            } = activity
+            else {
+                panic!("expected child metadata");
+            };
+            assert_eq!(id, "child-1");
+            assert_eq!(title.as_deref(), Some("Explore code"));
+            is_running
+        });
+        assert_eq!(actual, running, "{kind} with parent {parent}");
+    }
+}
+
+#[test]
+fn child_observation_skips_parent_text_and_malformed_events() {
+    for (kind, data) in [
+        (
+            "session.execution.started",
+            json!({"sessionID": "parent-1"}),
+        ),
+        (
+            "session.text.delta",
+            json!({"sessionID": "child-1", "delta": "text"}),
+        ),
+        ("session.execution.started", json!({})),
+        ("session.execution.started", json!({"sessionID": ""})),
+    ] {
+        let event = super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some(kind.into()),
+            data,
+        };
+        assert!(
+            opencode_child_activity(&event, "parent-1", |_| {
+                panic!("unrelated events must not query the server")
+            })
+            .unwrap()
+            .is_none()
+        );
+    }
+}
+
+#[test]
 fn cli_model_fallback_preserves_provider_and_nested_model_ids() {
     assert_eq!(
         models_from_cli("openai/gpt-5\nopenrouter/anthropic/claude\nnoise\n"),
