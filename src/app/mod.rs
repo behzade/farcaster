@@ -97,6 +97,7 @@ actions!(
         AddProject,
         SetSandbox,
         SetRuntime,
+        SetHarness,
         RestoreSession,
         ShowActionPicker,
         PickerBack,

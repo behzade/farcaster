@@ -25,6 +25,7 @@ pub(crate) struct PickerRow {
     pub(crate) detail: Option<String>,
     pub(crate) shortcut: Option<String>,
     removable_project: Option<std::path::PathBuf>,
+    disabled: bool,
     search: String,
 }
 
@@ -50,8 +51,14 @@ impl PickerRow {
             detail,
             shortcut,
             removable_project: None,
+            disabled: false,
             search,
         }
+    }
+
+    pub(crate) fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
     }
 
     pub(crate) fn removable_project(mut self, project: std::path::PathBuf) -> Self {
@@ -132,6 +139,7 @@ impl ListDelegate for PickerDelegate {
         let row = self.visible_rows.get(index.row)?.clone();
         Some(
             ListItem::new(("picker-row", index.row))
+                .disabled(row.disabled)
                 .h(if row.detail.is_some() {
                     THEME.controls.archived_preview_row
                 } else {
@@ -220,6 +228,7 @@ impl ListDelegate for PickerDelegate {
         *self.confirmed_id.borrow_mut() = self
             .selected_index
             .and_then(|index| self.visible_rows.get(index.row))
+            .filter(|row| !row.disabled)
             .map(|row| row.id.clone());
     }
 }

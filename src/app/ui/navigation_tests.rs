@@ -99,6 +99,7 @@ fn activation_routes_bare_surfaces_and_transcript_boundaries() {
         ("p", Command::AddProject),
         ("s", Command::Sandbox),
         ("m", Command::Runtime),
+        ("h", Command::Harness),
         ("a", Command::RestoreSession),
     ] {
         activated(&mut state, "ctrl-g", now);

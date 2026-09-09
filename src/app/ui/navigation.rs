@@ -269,6 +269,7 @@ impl FarcasterApp {
             Command::Actions => window.dispatch_action(Box::new(crate::app::ShowActionPicker), cx),
             Command::AddProject => window.dispatch_action(Box::new(crate::app::AddProject), cx),
             Command::Sandbox => window.dispatch_action(Box::new(crate::app::SetSandbox), cx),
+            Command::Harness => window.dispatch_action(Box::new(crate::app::SetHarness), cx),
             Command::Runtime => window.dispatch_action(Box::new(crate::app::SetRuntime), cx),
             Command::RestoreSession => {
                 window.dispatch_action(Box::new(crate::app::RestoreSession), cx)

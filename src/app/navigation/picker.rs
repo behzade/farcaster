@@ -45,6 +45,7 @@ pub(crate) enum PickerScope {
     Projects(ProjectPickerIntent),
     Sessions,
     Sandbox,
+    Harnesses,
     Providers,
     Models(String),
     Efforts(crate::protocol::Model),
@@ -59,6 +60,7 @@ impl PickerScope {
             Self::Projects(_) => "Choose project",
             Self::Sessions => "Find session",
             Self::Sandbox => "Set sandbox",
+            Self::Harnesses => "Set harness",
             Self::Providers => "Choose provider",
             Self::Models(_) => "Choose model",
             Self::Efforts(_) => "Choose reasoning effort",
@@ -72,6 +74,7 @@ impl PickerScope {
             Self::Projects(_) => "Search projects…",
             Self::Sessions => "Search sessions…",
             Self::Sandbox => "Search sandbox modes…",
+            Self::Harnesses => "Search harnesses…",
             Self::Providers => "Search providers…",
             Self::Models(_) => "Search models…",
             Self::Efforts(_) => "Search reasoning efforts…",
@@ -105,6 +108,7 @@ enum PickerCommand {
     },
     OpenScope(PickerScope),
     SetSandbox(crate::runtime::HarnessAccessMode),
+    SetHarness(String),
     SetRuntime {
         model: crate::protocol::Model,
         effort: Option<String>,
@@ -145,6 +149,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if scope == PickerScope::Harnesses && self.editable_draft_harness().is_none() {
+            return;
+        }
         if self
             .picker
             .as_ref()
@@ -182,11 +189,16 @@ impl FarcasterApp {
             }
         }
         let (rows, commands) = self.picker_rows(scope.clone());
-        let selected =
-            configuration::selected_row(&rows, &commands, &self.snapshot).map(|row| IndexPath {
-                row,
-                ..Default::default()
-            });
+        let selected = configuration::selected_row(
+            &rows,
+            &commands,
+            &self.snapshot,
+            (scope == PickerScope::Harnesses).then(|| self.active_harness()),
+        )
+        .map(|row| IndexPath {
+            row,
+            ..Default::default()
+        });
         let (delegate, handles) = PickerDelegate::new(rows);
         let confirmed_id = handles.confirmed_id;
         let query = handles.query;
@@ -406,6 +418,17 @@ impl FarcasterApp {
                 window.dispatch_action(Box::new(crate::app::RestoreSession), cx);
             }
             PickerCommand::OpenScope(scope) => self.open_picker(scope, window, cx),
+            PickerCommand::SetHarness(harness) => {
+                if self.editable_draft_harness().is_none()
+                    || !crate::agents::backend_statuses()
+                        .iter()
+                        .any(|backend| backend.id == harness && backend.available)
+                {
+                    return;
+                }
+                self.close_picker(window, cx);
+                self.change_draft_harness(harness, window, cx);
+            }
             PickerCommand::SetSandbox(mode) => {
                 self.close_picker(window, cx);
                 self.set_access_mode(mode, cx);
@@ -475,6 +498,17 @@ impl FarcasterApp {
         let include_shortcuts = scope == PickerScope::Actions;
         let mut rows = match scope {
             PickerScope::Actions => vec![
+                picker_row(
+                    &mut commands,
+                    "action:harness",
+                    PickerCommand::OpenScope(PickerScope::Harnesses),
+                    AppIcon::Code,
+                    "Set harness…",
+                    None,
+                    Some(application_key("shift-h")),
+                    "backend agent",
+                )
+                .disabled(self.editable_draft_harness().is_none()),
                 picker_row(
                     &mut commands,
                     "action:sandbox",
@@ -566,7 +600,8 @@ impl FarcasterApp {
                     "configuration preferences keybindings modifier",
                 ),
             ],
-            PickerScope::Sandbox
+            PickerScope::Harnesses
+            | PickerScope::Sandbox
             | PickerScope::Providers
             | PickerScope::Models(_)
             | PickerScope::Efforts(_)

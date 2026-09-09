@@ -19,6 +19,7 @@ mod+w -> dismiss dialog; close surface or draft; archive session
 mod+shift+n -> add project
 mod+shift+s -> set sandbox
 mod+shift+m -> set provider/model/effort
+mod+shift+h -> set harness (unsubmitted draft)
 mod+shift+a -> restore session
 mod+shift+p -> open action picker
 ```
@@ -53,6 +54,7 @@ The second group also works inside Neovim and the terminal:
 <leader> p -> add project
 <leader> s -> set sandbox
 <leader> m -> set provider/model/effort
+<leader> h -> set harness (unsubmitted draft)
 <leader> a -> restore session
 <leader> Space -> open action picker
 ```

@@ -32,8 +32,8 @@ fn runtime_selection_matches_model_identity_and_effort() {
             "",
         )
     });
-    assert_eq!(selected_row(&rows, &commands, &snapshot), Some(1));
-    assert_eq!(selected_row(&[], &commands, &snapshot), None);
+    assert_eq!(selected_row(&rows, &commands, &snapshot, None), Some(1));
+    assert_eq!(selected_row(&[], &commands, &snapshot, None), None);
 }
 
 #[test]

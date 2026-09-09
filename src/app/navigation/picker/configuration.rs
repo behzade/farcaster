@@ -31,6 +31,30 @@ impl FarcasterApp {
         let identity = self.snapshot.session_identity();
         let current_model = identity.model;
         match scope {
+            PickerScope::Harnesses => crate::agents::backend_statuses()
+                .into_iter()
+                .map(|backend| {
+                    let detail = if !backend.available {
+                        Some(format!(
+                            "Not installed (expected: {})",
+                            backend.program.display()
+                        ))
+                    } else {
+                        (backend.id == self.active_harness()).then(|| "Current".into())
+                    };
+                    picker_row(
+                        commands,
+                        &format!("harness:{}", backend.id),
+                        PickerCommand::SetHarness(backend.id.clone()),
+                        AppIcon::for_harness(&backend.id),
+                        &backend.name,
+                        detail,
+                        None,
+                        &backend.id,
+                    )
+                    .disabled(!backend.available)
+                })
+                .collect(),
             PickerScope::Sandbox => self
                 .snapshot
                 .available_access_modes()
@@ -209,7 +233,14 @@ pub(super) fn selected_row(
     rows: &[PickerRow],
     commands: &HashMap<String, PickerCommand>,
     snapshot: &crate::runtime::RuntimeSnapshot,
+    harness: Option<&str>,
 ) -> Option<usize> {
+    if let Some(harness) = harness {
+        return rows.iter().position(|row| {
+            matches!(commands.get(&row.id), Some(PickerCommand::SetHarness(id)) if id == harness)
+        });
+    }
+
     let identity = snapshot.session_identity();
     let is_current_model = |model: &Model| {
         identity

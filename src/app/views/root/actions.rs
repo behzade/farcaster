@@ -48,6 +48,9 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &crate::app::SetSandbox, window, cx| {
         this.open_picker(PickerScope::Sandbox, window, cx);
     }))
+    .on_action(cx.listener(|this, _: &crate::app::SetHarness, window, cx| {
+        this.open_picker(PickerScope::Harnesses, window, cx);
+    }))
     .on_action(cx.listener(|this, _: &crate::app::SetRuntime, window, cx| {
         this.open_runtime_picker(window, cx);
     }))

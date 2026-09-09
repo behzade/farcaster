@@ -76,6 +76,10 @@ fn picker_shortcuts_route_only_in_their_owned_contexts() {
         for (suffix, action) in [
             ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
             ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
+            (
+                "shift-h",
+                Box::new(crate::app::SetHarness) as Box<dyn gpui::Action>,
+            ),
             ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
             ("e", Box::new(ShowEditor) as Box<dyn gpui::Action>),
             ("t", Box::new(ShowTerminal) as Box<dyn gpui::Action>),

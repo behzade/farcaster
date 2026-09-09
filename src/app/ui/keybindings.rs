@@ -146,6 +146,12 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "shift-m",
             crate::app::SetRuntime
         ),
+        application_shortcut!(
+            "Configuration",
+            "Set harness",
+            "shift-h",
+            crate::app::SetHarness
+        ),
         application_shortcut!("Sessions", "Previous session", "[", PreviousSession),
         application_shortcut!("Sessions", "Next session", "]", NextSession),
         application_shortcut!(
