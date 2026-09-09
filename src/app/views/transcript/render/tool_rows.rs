@@ -27,6 +27,10 @@ use super::{
 #[path = "tool_rows/changed_files.rs"]
 mod changed_files;
 
+#[path = "tool_preview.rs"]
+mod tool_preview;
+use tool_preview::ToolPreview;
+
 pub(super) fn render_activity_group(
     key: usize,
     items: &PersistentVec<Arc<TranscriptItem>>,
@@ -431,7 +435,8 @@ fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> 
 }
 
 fn tool_body_text(item: &TranscriptItem) -> String {
-    let mut detail = item.text.clone();
+    let mut detail = ToolPreview::default();
+    detail.push_str(&item.text);
     if let Some(command) = item
         .tool_details
         .as_ref()
@@ -448,10 +453,11 @@ fn tool_body_text(item: &TranscriptItem) -> String {
         detail.push_str(&item.tool_output);
     }
     if detail.is_empty() {
-        detail = item.tool_details.as_ref().map_or_else(
-            || "No details available".into(),
-            |details| details.inspection_text(),
-        );
+        if let Some(details) = &item.tool_details {
+            let _ = details.write_inspection(&mut detail);
+        } else {
+            detail.push_str("No details available");
+        }
     }
     if let Some(review) = &item.tool_review {
         if !detail.is_empty() {
@@ -460,11 +466,11 @@ fn tool_body_text(item: &TranscriptItem) -> String {
         detail.push_str("Approval review: ");
         detail.push_str(review.state.label());
         if let Some(review_detail) = &review.detail {
-            detail.push('\n');
+            detail.push_str("\n");
             detail.push_str(review_detail);
         }
     }
-    detail
+    detail.finish()
 }
 
 #[cfg(test)]

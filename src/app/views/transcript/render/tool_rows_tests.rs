@@ -154,3 +154,67 @@ fn details_preserve_readable_output_and_do_not_repeat_commands() {
     assert_eq!(detail.matches("cargo check").count(), 1);
     assert!(detail.contains("error: missing trait\n  src/main.rs:5"));
 }
+
+#[test]
+fn expanded_details_bound_each_source() {
+    let huge = "a".repeat(1_500_000);
+    for source in ["text", "output", "command", "arguments", "result", "native"] {
+        let mut item = write_item();
+        item.text.clear();
+        item.tool_output.clear();
+        let details = Arc::make_mut(item.tool_details.as_mut().unwrap());
+        details.arguments = json!({});
+        details.result = None;
+        details.metadata.native = None;
+        match source {
+            "text" => item.text = huge.clone(),
+            "output" => item.tool_output = huge.clone(),
+            "command" => details.arguments = json!({"command": huge}),
+            "arguments" => details.arguments = json!({"data": huge}),
+            "result" => details.result = Some(json!({"data": huge})),
+            "native" => details.metadata.native = Some(json!({"data": huge})),
+            _ => unreachable!(),
+        }
+        let preview = tool_body_text(&item);
+        assert!(preview.len() < 5 * 1024, "{source}");
+        assert!(preview.contains("Preview truncated"), "{source}");
+    }
+}
+
+#[gpui::test]
+fn hovering_short_tool_output_does_not_notify_the_view(cx: &mut gpui::TestAppContext) {
+    use std::{cell::Cell, rc::Rc};
+
+    struct ToolOutput(TranscriptItem);
+    impl gpui::Render for ToolOutput {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            div()
+                .w(px(300.0))
+                .child(expanded_tool_body("output", &self.0))
+        }
+    }
+
+    cx.update(gpui_component::init);
+    let (view, cx) = cx.add_window_view(|_, _| ToolOutput(write_item()));
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+    let notifications = Rc::new(Cell::new(0));
+    let observed = notifications.clone();
+    let _subscription =
+        cx.update(|_, cx| cx.observe(&view, move |_, _| observed.set(observed.get() + 1)));
+    // Sweep the text area, including multiple characters and lines.
+    for y in (50..130).step_by(10) {
+        for x in (20..150).step_by(10) {
+            cx.simulate_mouse_move(
+                gpui::point(px(x as f32), px(y as f32)),
+                None,
+                Default::default(),
+            );
+        }
+    }
+    assert_eq!(notifications.get(), 0);
+}

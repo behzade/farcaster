@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 
 use serde_json::Value;
 
@@ -104,18 +104,24 @@ impl ToolDetails {
     }
 
     pub(crate) fn inspection_text(&self) -> String {
-        let mut text = format!(
-            "Tool: {}\n\nArguments:\n{}",
-            self.name,
-            pretty_json(&self.arguments)
-        );
+        let mut text = Vec::new();
+        self.write_inspection(&mut text)
+            .expect("writing tool JSON to memory cannot fail");
+        String::from_utf8(text).expect("JSON inspection text is UTF-8")
+    }
+
+    pub(crate) fn write_inspection(&self, mut writer: impl Write) -> std::io::Result<()> {
+        write!(writer, "Tool: {}\n\nArguments:\n", self.name)?;
+        serde_json::to_writer_pretty(&mut writer, &self.arguments)?;
         if let Some(result) = &self.result {
-            text.push_str(&format!("\n\nResult:\n{}", pretty_json(result)));
+            writer.write_all(b"\n\nResult:\n")?;
+            serde_json::to_writer_pretty(&mut writer, result)?;
         }
         if let Some(native) = &self.metadata.native {
-            text.push_str(&format!("\n\nNative data:\n{}", pretty_json(native)));
+            writer.write_all(b"\n\nNative data:\n")?;
+            serde_json::to_writer_pretty(&mut writer, native)?;
         }
-        text
+        Ok(())
     }
 }
 
@@ -148,10 +154,6 @@ impl TranscriptItem {
 #[cfg(test)]
 #[path = "tool_details_tests.rs"]
 mod tests;
-
-fn pretty_json(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_default()
-}
 
 fn short_summary(text: &str) -> String {
     let mut summary = text
