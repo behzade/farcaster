@@ -130,6 +130,9 @@ impl FarcasterApp {
             .when(self.pending_archive.is_some(), |root| {
                 root.child(dialogs::archive_confirmation::render(self, entity.clone()))
             })
+            .when(self.code_comment.is_some(), |root| {
+                root.child(dialogs::code_comment::render(self, entity.clone(), cx))
+            })
             .when(self.pending_delete.is_some(), |root| {
                 root.child(dialogs::delete_confirmation::render(self, entity.clone()))
             })
@@ -138,6 +141,9 @@ impl FarcasterApp {
             })
             .when(self.repository.pending_jj_init.is_some(), |root| {
                 root.child(dialogs::jj_init_confirmation::render(self, entity.clone()))
+            })
+            .when(self.repository.edits.pending.is_some(), |root| {
+                root.child(dialogs::repository_edit::render(self, entity.clone(), cx))
             })
             .when_some(
                 dialogs::image_preview::render(self, entity.clone()),

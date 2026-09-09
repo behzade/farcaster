@@ -73,8 +73,16 @@ impl FarcasterApp {
         _window: &Window,
         cx: &gpui::App,
     ) -> Option<FocusHandle> {
-        if self.image_preview.is_some() {
+        if let Some(comment) = &self.code_comment {
+            Some(comment.input.read(cx).focus_handle(cx))
+        } else if self.image_preview.is_some() {
             Some(self.image_preview_focus.clone())
+        } else if let Some(pending) = &self.repository.edits.pending {
+            Some(if pending.action == crate::repository::RepositoryEdit::Commit {
+                pending.input.read(cx).focus_handle(cx)
+            } else {
+                pending.focus.clone()
+            })
         } else if let Some(pending) = &self.repository.pending_jj_init {
             Some(pending.focus.clone())
         } else if let Some(pending) = &self.pending_delete {
@@ -339,7 +347,8 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_workspace_modal_active(&self) -> bool {
-        self.picker.is_some()
+        self.code_comment.is_some()
+            || self.picker.is_some()
             || self.overlays.sessions
             || self.overlays.run
             || self.overlays.keybindings
@@ -350,6 +359,7 @@ impl FarcasterApp {
             || self.session_import.is_some()
             || self.image_preview.is_some()
             || self.repository.pending_jj_init.is_some()
+            || self.repository.edits.pending.is_some()
     }
 
     pub(in crate::app) fn native_workspace_covered_by_overlay(&self) -> bool {
@@ -830,8 +840,12 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.image_preview.is_some() {
+        if self.code_comment.is_some() {
+            self.close_code_comment(window, cx);
+        } else if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
+        } else if self.repository.edits.pending.is_some() {
+            self.close_repository_edit(window, cx);
         } else if self.repository.pending_jj_init.is_some() {
             self.close_jj_init_confirmation(window, cx);
         } else if self.pending_delete.is_some() {

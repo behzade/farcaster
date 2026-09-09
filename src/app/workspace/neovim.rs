@@ -21,6 +21,18 @@ const SESSION_VIEW: &str = include_str!("neovim_session.lua");
 mod diff;
 use diff::head_contents;
 
+#[derive(Debug, serde::Deserialize)]
+pub(in crate::app) struct CodeContext {
+    pub path: String,
+    pub cursor_line: usize,
+    pub cursor_column: usize,
+    pub anchor_line: usize,
+    pub anchor_column: usize,
+    pub mode: String,
+    pub text: String,
+    pub modified: bool,
+}
+
 pub(super) enum EditorTarget {
     Resume,
     File(PathBuf, Option<u64>),
@@ -41,6 +53,15 @@ pub(in crate::app) struct NvimEditor {
 }
 
 impl NvimEditor {
+    pub(super) fn capture_code(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CodeContext, String>> {
+        self.request(cx, |executable, project, state_dir| {
+            capture_code(executable, project, &state_dir.join("nvim.sock"))
+        })
+    }
+
     pub(super) fn spawn<T: 'static>(
         project: PathBuf,
         window: &mut Window,
@@ -96,6 +117,16 @@ impl NvimEditor {
         target: EditorTarget,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
+        self.request(cx, move |executable, project, state_dir| {
+            open_target(executable, project, state_dir, tab, target)
+        })
+    }
+
+    fn request<T: Send + 'static>(
+        &mut self,
+        cx: &mut Context<Self>,
+        request: impl FnOnce(&Path, &Path, &Path) -> Result<T, String> + Send + 'static,
+    ) -> Task<Result<T, String>> {
         let executable = self.executable.clone();
         let project = self.project.clone();
         let socket_dir = self.socket_dir.clone();
@@ -105,7 +136,7 @@ impl NvimEditor {
             if let Some(previous) = previous {
                 previous.await;
             }
-            let result = open_target(&executable, &project, socket_dir.path(), tab, target);
+            let result = request(&executable, &project, socket_dir.path());
             let _ = send.send(result).await;
         }));
         cx.background_executor().spawn(async move {
@@ -214,16 +245,35 @@ fn run_remote(
     socket: &Path,
     expression: &str,
 ) -> Result<(), String> {
+    remote_output(executable, project, socket, expression).map(|_| ())
+}
+
+fn capture_code(executable: &Path, project: &Path, socket: &Path) -> Result<CodeContext, String> {
+    let expression = format!(
+        "luaeval({})",
+        vim_string(include_str!("neovim_capture.lua"))
+    );
+    let output = remote_output(executable, project, socket, &expression)?;
+    serde_json::from_str(&output).map_err(|error| format!("Read Neovim selection: {error}"))
+}
+
+fn remote_output(
+    executable: &Path,
+    project: &Path,
+    socket: &Path,
+    expression: &str,
+) -> Result<String, String> {
     let started = Instant::now();
     loop {
         let mut stderr = tempfile::tempfile().map_err(|error| error.to_string())?;
+        let mut stdout = tempfile::tempfile().map_err(|error| error.to_string())?;
         let mut child = Command::new(executable)
             .current_dir(project)
             .args(["--server"])
             .arg(socket)
             .args(["--remote-expr", expression])
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(stdout.try_clone().map_err(|error| error.to_string())?)
             .stderr(stderr.try_clone().map_err(|error| error.to_string())?)
             .spawn()
             .map_err(|error| format!("contact embedded Neovim: {error}"))?;
@@ -244,7 +294,13 @@ fn run_remote(
             }
         };
         if status.success() {
-            return Ok(());
+            stdout.rewind().map_err(|error| error.to_string())?;
+            let mut output = String::new();
+            stdout
+                .take(2 * 1024 * 1024)
+                .read_to_string(&mut output)
+                .map_err(|error| format!("Read Neovim response: {error}"))?;
+            return Ok(output);
         }
         let mut detail = String::new();
         let _ = stderr.rewind();

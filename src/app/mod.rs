@@ -242,6 +242,8 @@ pub(crate) struct FarcasterApp {
     dialog_focus: FocusHandle,
     dialog_return_focus: Option<FocusHandle>,
     image_preview: Option<ImagePreview>,
+    code_comment: Option<workspace::code_comment::CodeComment>,
+    code_comment_capture: Option<Task<()>>,
     image_preview_focus: FocusHandle,
     image_preview_return_focus: Option<FocusHandle>,
     sheet_focus: FocusHandle,

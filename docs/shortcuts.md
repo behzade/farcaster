@@ -44,6 +44,7 @@ The second group also works inside Neovim and the terminal:
 ```text
 <leader> <leader> -> jump to chat
 <leader> e -> jump to editor
+<leader> c -> comment on code in Neovim
 <leader> t -> jump to terminal
 <leader> number -> jump to session
 <leader> j -> next session
@@ -65,6 +66,14 @@ The action picker lists app commands, including workspace switching, previous/ne
 The runtime picker starts at the current model's effort choices, or at the current model if it has no effort choices. Use the Back button or Alt+Left to go back to models, then providers. Back restores the previous search, selection, and scroll position. Backspace also goes back when the search is empty.
 
 The terminal/Neovim keeps its Ctrl keys. Super is unbound on Linux.
+
+In Neovim, `Ctrl-G c` opens an app modal with the current file and cursor line
+(normal mode), or selected buffer text and range (visual mode, including line
+and block selections). Unsaved edits are included. Enter adds your comment and
+code to the current session's composer without sending; Shift+Enter adds a new
+line. Existing draft text and attachments remain. Esc returns to the editor
+without moving the cursor or changing the selection. File buffers only; captures
+are limited to 2,000 lines and 128 KiB.
 
 ## Composer and local keys
 

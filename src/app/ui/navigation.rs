@@ -190,6 +190,15 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.chat_navigation.activation.clear();
+        if self.repository.edits.pending.is_some() {
+            self.close_repository_edit(window, cx);
+            if self.repository.edits.pending.is_some() {
+                return;
+            }
+        }
+        if self.code_comment.is_some() {
+            self.close_code_comment(window, cx);
+        }
         if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }
@@ -265,6 +274,7 @@ impl FarcasterApp {
                 window.dispatch_action(Box::new(crate::app::RestoreSession), cx)
             }
             Command::Editor => self.show_editor_surface(window, cx),
+            Command::CommentCode => self.comment_on_code(window, cx),
             Command::TranscriptScratch => self.open_transcript_scratch(window, cx),
             Command::Terminal => self.show_terminal_surface(window, cx),
             Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),

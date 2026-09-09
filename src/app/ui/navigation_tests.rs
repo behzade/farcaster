@@ -94,6 +94,7 @@ fn activation_routes_bare_surfaces_and_transcript_boundaries() {
         ("space", Command::Actions),
         ("e", Command::Editor),
         ("v", Command::TranscriptScratch),
+        ("c", Command::CommentCode),
         ("t", Command::Terminal),
         ("p", Command::AddProject),
         ("s", Command::Sandbox),

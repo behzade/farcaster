@@ -1,15 +1,95 @@
 use super::*;
 
+struct Server(std::process::Child);
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+#[ignore = "requires a Neovim executable; runs a real headless server"]
+fn code_capture_preserves_normal_visual_and_unsaved_buffer_state() -> Result<(), String> {
+    let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let socket = directory.path().join("nvim.sock");
+    let executable = nvim_executable();
+    let _server = Server(
+        Command::new(&executable)
+            .current_dir(directory.path())
+            .args(["--clean", "--headless", "-i", "NONE", "--listen"])
+            .arg(&socket)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?,
+    );
+    let lua = |body: &str| {
+        run_remote(
+            &executable,
+            directory.path(),
+            &socket,
+            &format!(
+                "luaeval({})",
+                vim_string(&format!("(function() {body}; return 0 end)()"))
+            ),
+        )
+    };
+    lua(
+        "vim.api.nvim_buf_set_name(0, 'capture.rs'); vim.api.nvim_buf_set_lines(0, 0, -1, false, {'alpha beta', 'αβγ world', 'third line'}); vim.api.nvim_win_set_cursor(0, {1, 2})",
+    )?;
+    let capture = || capture_code(&executable, directory.path(), &socket);
+    let normal = capture()?;
+    assert_eq!(normal.text, "alpha beta");
+    assert_eq!((normal.cursor_line, normal.cursor_column), (1, 3));
+    assert!(normal.modified);
+    lua(
+        "assert(vim.fn.mode() == 'n'); assert(vim.api.nvim_win_get_cursor(0)[2] == 2); vim.cmd('normal! vll')",
+    )?;
+    let visual = capture()?;
+    assert_eq!(visual.text, "pha");
+    assert_eq!(visual.mode, "v");
+    lua(
+        "assert(vim.fn.mode() == 'v'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {2, 0}); vim.cmd('normal! Vj')",
+    )?;
+    assert_eq!(capture()?.text, "αβγ world\nthird line");
+    lua(
+        "assert(vim.fn.mode() == 'V'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {1, 4}); vim.cmd('normal! vhh')",
+    )?;
+    assert_eq!(capture()?.text, "pha");
+    lua(
+        "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {2, 0}); vim.cmd('normal! vl')",
+    )?;
+    assert_eq!(capture()?.text, "αβ");
+    lua(
+        "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<C-v>jl', true, false, true))",
+    )?;
+    assert_eq!(capture()?.text, "al\nαβ");
+    lua(
+        "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.o.selection = 'exclusive'; vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! vll')",
+    )?;
+    assert_eq!(capture()?.text, "al");
+    lua(
+        "assert(vim.fn.mode() == 'v'); assert(vim.bo.modified); assert(vim.api.nvim_buf_get_lines(0, 1, 2, false)[1] == 'αβγ world'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_buf_set_lines(0, 0, -1, false, {string.rep('x', 131073)})",
+    )?;
+    assert!(capture().unwrap_err().contains("128 KiB"));
+    lua(
+        "vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.fn['repeat']({'x'}, 2001)); vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! V2000j')",
+    )?;
+    assert!(capture().unwrap_err().contains("2,000 lines"));
+    lua(
+        "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.bo.buftype = 'nofile'",
+    )?;
+    assert!(capture().unwrap_err().contains("Open a file buffer"));
+    assert!(!directory.path().join("capture.rs").exists());
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires a Neovim executable; runs two real headless servers"]
 fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> {
-    struct Server(std::process::Child);
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let a = tempfile::tempdir().map_err(|error| error.to_string())?;
     let b = tempfile::tempdir().map_err(|error| error.to_string())?;

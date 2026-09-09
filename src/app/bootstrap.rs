@@ -140,6 +140,8 @@ impl FarcasterApp {
             dialog_focus: inputs.dialog_focus,
             dialog_return_focus: None,
             image_preview: None,
+            code_comment: None,
+            code_comment_capture: None,
             image_preview_focus: cx.focus_handle(),
             image_preview_return_focus: None,
             sheet_focus: cx.focus_handle(),

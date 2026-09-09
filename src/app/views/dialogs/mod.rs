@@ -1,7 +1,9 @@
 pub(super) mod archive_confirmation;
+pub(super) mod code_comment;
 pub(super) mod delete_confirmation;
 pub(super) mod image_preview;
 pub(super) mod jj_init_confirmation;
+pub(super) mod repository_edit;
 pub(super) mod project_trust;
 pub(super) mod session_import;
 pub(super) mod settings;
