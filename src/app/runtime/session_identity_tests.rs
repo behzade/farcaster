@@ -7,6 +7,7 @@ fn model(id: &str, reasoning: bool, efforts: Option<&[&str]>) -> Model {
         provider: "provider".into(),
         context_window: 0,
         reasoning,
+        access_modes: None,
         efforts: efforts.map(|efforts| efforts.iter().map(|effort| (*effort).into()).collect()),
     }
 }
@@ -183,4 +184,23 @@ fn cached_defaults_restore_across_projects_per_harness() {
     restarted.reconcile_snapshot(&mut other_harness, true);
     assert_eq!(other_harness.prefill_model, None);
     assert_eq!(other_harness.prefill_thinking_level, None);
+}
+
+#[test]
+fn available_access_modes_use_fresh_catalog_support_for_selected_model() {
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+    let selected = model("selected", false, None);
+    let mut supported = selected.clone();
+    supported.access_modes = Some(vec![Sandboxed, Auto, Full]);
+    let mut snapshot = RuntimeSnapshot {
+        harness: "claude".into(),
+        prefill_model: Some(selected),
+        models: vec![supported],
+        ..RuntimeSnapshot::default()
+    };
+    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Auto, Full]);
+    snapshot.models[0].access_modes = Some(vec![Sandboxed, Full]);
+    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
+    snapshot.models.clear();
+    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
 }

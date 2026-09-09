@@ -8,6 +8,7 @@ fn runtime_selection_matches_model_identity_and_effort() {
         provider: "provider".into(),
         context_window: 0,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     let snapshot = crate::runtime::RuntimeSnapshot {
@@ -44,6 +45,7 @@ fn effort_choices_respect_each_models_limits() {
         provider: "test".into(),
         context_window: 0,
         reasoning: false,
+        access_modes: None,
         efforts: None,
     };
     assert!(model_efforts(&model, &catalog).is_empty());

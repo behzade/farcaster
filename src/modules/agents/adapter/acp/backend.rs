@@ -11,6 +11,7 @@ pub(in crate::modules::agents::adapter) fn descriptor(
     replays_history: bool,
 ) -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
+    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
     let history = if replays_history {
         Available
     } else {
@@ -40,6 +41,8 @@ pub(in crate::modules::agents::adapter) fn descriptor(
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
+                access_modes: &[Sandboxed, Full],
+                model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,
                 reasoning_effort: Available,

@@ -150,6 +150,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
                 provider: "openai-codex".into(),
                 context_window: 0,
                 reasoning: true,
+                access_modes: None,
                 efforts: Some(vec!["high".into()]),
             }],
             efforts: vec![],

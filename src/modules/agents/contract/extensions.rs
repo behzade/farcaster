@@ -56,6 +56,9 @@ pub(crate) struct Model {
     pub reasoning: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub efforts: Option<Vec<String>>,
+    /// Access modes reported by the model, when provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_modes: Option<Vec<super::HarnessAccessMode>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

@@ -88,10 +88,10 @@ pub(super) fn configure(
 }
 
 pub(super) fn permission_mode(access: HarnessAccessMode) -> &'static str {
-    if access == HarnessAccessMode::Full {
-        "bypassPermissions"
-    } else {
-        "default"
+    match access {
+        HarnessAccessMode::Sandboxed => "default",
+        HarnessAccessMode::Auto => "auto",
+        HarnessAccessMode::Full => "bypassPermissions",
     }
 }
 

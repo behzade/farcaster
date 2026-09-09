@@ -140,6 +140,7 @@ impl RuntimeOwner {
         let preserved_prompt_item = preserved_conversation
             .as_ref()
             .and(self.pending_prompt_item.clone());
+        let available_access_modes = self.available_access_modes();
         self.reset_process_runtime();
         // Missing backend metadata must never make a resume or fork eligible for a title.
         self.title_generation.new_session = session.is_none() && fork.is_none();
@@ -147,6 +148,13 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
+        if !available_access_modes.contains(&self.process_command.access_mode) {
+            let Some(mode) = available_access_modes.first().copied() else {
+                self.fail("No access mode is available for this model".into());
+                return;
+            };
+            self.process_command.access_mode = mode;
+        }
         let status = if fork.is_some() {
             "Forking session".into()
         } else {
@@ -186,8 +194,6 @@ impl RuntimeOwner {
         } else {
             SessionStart::New
         };
-        self.process_command.access_mode =
-            crate::agents::normalize_access_mode(&self.harness, self.process_command.access_mode);
         let process = crate::agents::spawn_session(
             &self.process_command,
             SessionLaunch {

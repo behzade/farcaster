@@ -22,6 +22,7 @@ use super::super::contract::{
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
+    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
 
     AgentBackendDescriptor {
         id: AgentBackendId::new("pi").expect("Pi backend id is valid"),
@@ -47,6 +48,8 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
+                access_modes: &[Sandboxed, Full],
+                model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,
                 reasoning_effort: Available,

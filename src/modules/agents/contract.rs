@@ -422,6 +422,10 @@ pub(crate) struct TurnCapabilities {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigurationCapabilities {
+    /// Modes implemented by the adapter.
+    pub access_modes: &'static [HarnessAccessMode],
+    /// Modes that also require an explicit declaration from the selected model.
+    pub model_required_access_modes: &'static [HarnessAccessMode],
     pub models: CapabilitySupport,
     pub select_model: CapabilitySupport,
     pub reasoning_effort: CapabilitySupport,
@@ -498,7 +502,8 @@ pub(crate) struct WorkerInputResponse {
     pub(crate) cancel: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum HarnessAccessMode {
     Full,
     Sandboxed,

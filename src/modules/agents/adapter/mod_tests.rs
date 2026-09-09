@@ -1,6 +1,5 @@
 use super::*;
 use crate::agents::{
-    HarnessAccessMode,
     HarnessAccessMode::{Auto, Full, Sandboxed},
     SessionCommand,
 };
@@ -20,17 +19,39 @@ fn pi_startup_skips_unsupported_mode_query() {
 }
 
 #[test]
-fn backend_access_modes_match_their_native_safety_models() {
-    assert_eq!(HarnessAccessMode::default(), Auto);
-    assert_eq!(supported_access_modes("pi"), &[Sandboxed, Full]);
+fn access_modes_require_both_backend_and_model_support() {
+    for backend in ["pi", "cursor-cli", "opencode2", "claude", "antigravity-acp"] {
+        assert_eq!(
+            available_access_modes(backend, None),
+            [Sandboxed, Full],
+            "{backend}"
+        );
+    }
     assert_eq!(
-        supported_access_modes("codex-cli"),
-        &[Sandboxed, Auto, Full]
+        available_access_modes("codex-cli", None),
+        [Sandboxed, Auto, Full]
     );
-    assert_eq!(supported_access_modes("cursor-cli"), &[Sandboxed, Full]);
-    assert_eq!(supported_access_modes("opencode2"), &[Sandboxed, Full]);
-    assert_eq!(normalize_access_mode("opencode2", Auto), Sandboxed);
-    assert_eq!(normalize_access_mode("codex-cli", Auto), Auto);
-    assert_eq!(normalize_access_mode("cursor-cli", Auto), Sandboxed);
-    assert_eq!(normalize_access_mode("pi", Auto), Sandboxed);
+    assert_eq!(available_access_modes("custom", None), [Full]);
+    let mut model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
+        "id":"model", "name":"Model", "provider":"claude"
+    }))
+    .unwrap();
+    assert_eq!(
+        available_access_modes("claude", Some(&model)),
+        [Sandboxed, Full]
+    );
+    model.access_modes = Some(vec![Sandboxed, Auto, Full]);
+    assert_eq!(
+        available_access_modes("claude", Some(&model)),
+        [Sandboxed, Auto, Full]
+    );
+    assert_eq!(
+        available_access_modes("pi", Some(&model)),
+        [Sandboxed, Full]
+    );
+    model.access_modes = Some(vec![Sandboxed, Full]);
+    assert_eq!(
+        available_access_modes("claude", Some(&model)),
+        [Sandboxed, Full]
+    );
 }

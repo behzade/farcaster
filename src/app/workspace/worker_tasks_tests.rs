@@ -158,6 +158,7 @@ fn worker_efforts_follow_the_selected_model_not_the_harness_alone() {
             provider: route.provider.clone(),
             context_window: 0,
             reasoning: true,
+            access_modes: None,
             efforts: Some(vec!["high".into()]),
         }],
         efforts: vec!["low".into(), "high".into()],

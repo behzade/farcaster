@@ -418,6 +418,7 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
             provider: "opencode-go".into(),
             context_window: 0,
             reasoning: false,
+            access_modes: None,
             efforts: None,
         })
     );
@@ -626,6 +627,7 @@ fn history_uses_latest_assistant_usage_for_context() {
         provider: "test".into(),
         context_window: 200,
         reasoning: false,
+        access_modes: None,
         efforts: None,
     }];
 
@@ -1266,6 +1268,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
         provider: "provider".into(),
         context_window: 1,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     owner.apply_command(RuntimeCommand::NewSession {
@@ -1292,6 +1295,7 @@ fn cold_model_selection_replaces_an_unsupported_effort() {
         provider: "provider".into(),
         context_window: 0,
         reasoning: true,
+        access_modes: None,
         efforts: Some(vec!["low".into(), "medium".into()]),
     }));
 
@@ -1540,6 +1544,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
         provider: "provider-1".into(),
         context_window: 200_000,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     let mut controls = HarnessConfigurationStore::default();
@@ -1589,6 +1594,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         provider: "openai-codex".into(),
         context_window: 200_000,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     let luna = Model {
@@ -1597,6 +1603,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         provider: "openai-codex".into(),
         context_window: 200_000,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     let mut defaults = HarnessConfigurationStore::default();
@@ -1652,6 +1659,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         provider: "openai-codex".into(),
         context_window: 200_000,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     let luna = Model {
@@ -1660,6 +1668,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         provider: "openai-codex".into(),
         context_window: 200_000,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     };
     let session_state = |path: &str, model: Model| {
@@ -1714,6 +1723,7 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
         provider: "pi-provider".into(),
         context_window: 1,
         reasoning: false,
+        access_modes: None,
         efforts: None,
     };
     let mut defaults = HarnessConfigurationStore::default();
@@ -1771,6 +1781,7 @@ fn process_replacement_clears_all_session_owned_snapshot_state() {
             provider: "test".into(),
             context_window: 0,
             reasoning: false,
+            access_modes: None,
             efforts: None,
         }],
         thinking_levels: vec!["high".into()],
@@ -1829,6 +1840,7 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
         provider: "new-provider".into(),
         context_window: 0,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     }));
 
@@ -1899,6 +1911,7 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
         provider: "provider".into(),
         context_window: 0,
         reasoning: true,
+        access_modes: None,
         efforts: None,
     }));
 
@@ -1942,6 +1955,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
                 provider: "test".into(),
                 context_window: 0,
                 reasoning: false,
+                access_modes: None,
                 efforts: None,
             }],
             thinking_levels: vec!["high".into()],

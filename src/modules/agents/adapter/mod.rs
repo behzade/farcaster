@@ -35,16 +35,29 @@ fn external_acp_profile(harness: &str) -> Option<&'static acp::AcpProfile> {
     }
 }
 
-pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::HarnessAccessMode] {
-    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
-    match harness {
-        "pi" => &[Sandboxed, Full],
-        "codex-cli" => &[Sandboxed, Auto, Full],
-        "cursor-cli" => &[Sandboxed, Full],
-        "opencode2" => &[Sandboxed, Full],
-        "claude" | "antigravity-acp" => &[Sandboxed, Full],
-        _ => &[Full],
-    }
+pub(crate) fn available_access_modes(
+    harness: &str,
+    model: Option<&crate::protocol::Model>,
+) -> Vec<crate::agents::HarnessAccessMode> {
+    let Some(descriptor) = known_backend_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.id.as_str() == harness)
+    else {
+        return vec![crate::agents::HarnessAccessMode::Full];
+    };
+    let capabilities = descriptor.capabilities.configuration;
+    let declared = model.and_then(|model| model.access_modes.as_deref());
+    capabilities
+        .access_modes
+        .iter()
+        .copied()
+        .filter(|mode| {
+            declared.map_or(
+                !capabilities.model_required_access_modes.contains(mode),
+                |modes| modes.contains(mode),
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn supports_reasoning_effort(harness: &str) -> bool {
@@ -61,18 +74,6 @@ pub(crate) fn supports_session_fork(harness: &str) -> bool {
             && descriptor.capabilities.sessions.fork
                 == super::contract::CapabilitySupport::Available
     })
-}
-
-pub(crate) fn normalize_access_mode(
-    harness: &str,
-    mode: crate::agents::HarnessAccessMode,
-) -> crate::agents::HarnessAccessMode {
-    let supported = supported_access_modes(harness);
-    if supported.contains(&mode) {
-        mode
-    } else {
-        supported[0]
-    }
 }
 
 pub(crate) fn validate_launch(

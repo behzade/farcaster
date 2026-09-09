@@ -31,7 +31,9 @@ impl FarcasterApp {
         let identity = self.snapshot.session_identity();
         let current_model = identity.model;
         match scope {
-            PickerScope::Sandbox => crate::agents::supported_access_modes(&self.snapshot.harness)
+            PickerScope::Sandbox => self
+                .snapshot
+                .available_access_modes()
                 .iter()
                 .enumerate()
                 .map(|(index, mode)| {

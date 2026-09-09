@@ -93,7 +93,7 @@ pub(in crate::app::views) fn render(
         .child(separator())
         .child(access_selector(
             app.snapshot.access_mode,
-            &app.snapshot.harness,
+            app.snapshot.available_access_modes(),
             entity,
         ))
         .into_any_element()
@@ -129,11 +129,9 @@ fn effort_label(level: &str) -> String {
 
 fn access_selector(
     selected: HarnessAccessMode,
-    harness: &str,
+    supported: Vec<HarnessAccessMode>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let supported = crate::agents::supported_access_modes(harness);
-    let selected = crate::agents::normalize_access_mode(harness, selected);
     let content = div()
         .flex()
         .items_center()
@@ -149,8 +147,7 @@ fn access_selector(
         supported.len() > 1,
     )
     .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
-        for mode in supported {
-            let target = *mode;
+        for &target in &supported {
             let entity = entity.clone();
             menu = menu.item(
                 PopupMenuItem::new(access_mode_label(target))

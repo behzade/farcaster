@@ -156,7 +156,12 @@ fn initialize(
             }
             json!({"id":model.value, "name":model.display_name, "provider":BACKEND,
             "contextWindow":0, "reasoning":value["supportsEffort"].as_bool().unwrap_or(false),
-            "resolvedModel":value["resolvedModel"], "efforts":levels})
+            "resolvedModel":value["resolvedModel"], "efforts":levels,
+            "access_modes": if value["supportsAutoMode"].as_bool() == Some(true) {
+                vec![HarnessAccessMode::Sandboxed, HarnessAccessMode::Auto, HarnessAccessMode::Full]
+            } else {
+                vec![HarnessAccessMode::Sandboxed, HarnessAccessMode::Full]
+            }})
         })
         .collect();
     let commands = response

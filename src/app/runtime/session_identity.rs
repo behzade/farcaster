@@ -41,6 +41,24 @@ fn effort_rank(effort: &str) -> Option<u8> {
 }
 
 impl RuntimeSnapshot {
+    pub(crate) fn available_access_modes(&self) -> Vec<crate::agents::HarnessAccessMode> {
+        crate::agents::available_access_modes(&self.harness, self.access_mode_model())
+    }
+
+    pub(super) fn access_mode_model(&self) -> Option<&Model> {
+        self.session_identity()
+            .model
+            .map(|model| self.catalog_model(model))
+            .or_else(|| self.models.first())
+    }
+
+    pub(super) fn catalog_model<'a>(&'a self, selected: &'a Model) -> &'a Model {
+        self.models
+            .iter()
+            .find(|model| model.id == selected.id && model.provider == selected.provider)
+            .unwrap_or(selected)
+    }
+
     pub(crate) fn session_target(&self) -> Option<crate::sessions::SessionTarget> {
         let state = self.session.as_ref()?;
         if self.harness.is_empty() || state.session_id.is_empty() {
@@ -80,11 +98,7 @@ impl RuntimeSnapshot {
         else {
             return &self.thinking_levels;
         };
-        let model = self
-            .models
-            .iter()
-            .find(|model| model.id == selected.id && model.provider == selected.provider)
-            .unwrap_or(selected);
+        let model = self.catalog_model(selected);
         if !model.reasoning {
             return &[];
         }
@@ -294,6 +308,7 @@ impl HarnessConfigurationStore {
                     provider: provider.clone(),
                     context_window: 0,
                     reasoning: false,
+                    access_modes: None,
                     efforts: None,
                 })
         })

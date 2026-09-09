@@ -110,6 +110,27 @@ impl SessionControl {
 
 impl RuntimeOwner {
     pub(super) fn set_model(&mut self, model: Model) {
+        let available = crate::agents::available_access_modes(
+            &self.harness,
+            Some(self.snapshot.catalog_model(&model)),
+        );
+        let current = self.process_command.access_mode;
+        let requested = self.access_mode_changes.requested_mode(current);
+        if self.process.is_some() {
+            if !available.contains(&current) || !available.contains(&requested) {
+                self.command_not_sent(
+                    "set_model",
+                    "Change the sandbox mode before selecting this model",
+                );
+                return;
+            }
+        } else if !available.contains(&current) {
+            let Some(mode) = available.first().copied() else {
+                self.command_not_sent("set_model", "No access mode is available for this model");
+                return;
+            };
+            self.process_command.access_mode = mode;
+        }
         let replacement_effort = super::session_identity::replacement_effort(
             &model,
             self.snapshot.session_identity().effort,

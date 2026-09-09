@@ -23,6 +23,7 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
+    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
 
     AgentBackendDescriptor {
         id: AgentBackendId::new(PROFILE.backend).expect("Cursor backend id is valid"),
@@ -48,6 +49,8 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
+                access_modes: &[Sandboxed, Full],
+                model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,
                 reasoning_effort: Available,

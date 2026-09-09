@@ -225,7 +225,11 @@ fn interrupt_drops_queue_and_process_exit_fails_once() {
 
 #[test]
 fn cli_launch_and_image_envelopes_are_source_typed() {
-    for access in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
+    for (access, permission_mode) in [
+        (HarnessAccessMode::Sandboxed, "--permission-mode=default"),
+        (HarnessAccessMode::Auto, "--permission-mode=auto"),
+        (HarnessAccessMode::Full, "--permission-mode=bypassPermissions"),
+    ] {
         let mut command = std::process::Command::new("claude");
         super::super::process::configure(&mut command, access, "id", true, None, false);
         let args = command
@@ -235,6 +239,7 @@ fn cli_launch_and_image_envelopes_are_source_typed() {
         assert!(args.contains(&"--resume=id"));
         assert!(args.contains(&"--no-session-persistence"));
         assert!(args.contains(&"--permission-prompt-tool"));
+        assert!(args.contains(&permission_mode));
         assert!(!args.contains(&"--mcp-config"));
         assert_eq!(
             args.contains(&"--allow-dangerously-skip-permissions"),
@@ -334,4 +339,30 @@ fn cancelling_an_approval_denies_without_changing_tool_input() {
         std::fs::read_to_string(directory.path().join("claude-fixture.requests")).unwrap();
     assert!(requests.contains("\"behavior\":\"deny\""));
     assert!(!requests.contains("\"behavior\":\"allow\""));
+}
+
+#[test]
+fn access_modes_preserve_claude_model_auto_support() {
+    for support in [None, Some(false), Some(true)] {
+        let (directory, command) = setup();
+        let field = support
+            .map(|value| format!(",\"supportsAutoMode\":{value}"))
+            .unwrap_or_default();
+        let script = SCRIPT.replace(
+            "\"supportsEffort\":true",
+            &format!("\"supportsEffort\":true{field}"),
+        );
+        std::fs::write(directory.path().join("claude-fixture"), script).unwrap();
+        let mut session = session(&command, directory.path());
+        let model: crate::protocol::Model =
+            serde_json::from_value(session.models[0].clone()).unwrap();
+        let modes = crate::agents::available_access_modes(BACKEND, Some(&model));
+        assert_eq!(
+            modes.contains(&HarnessAccessMode::Auto),
+            support == Some(true)
+        );
+        assert!(modes.contains(&HarnessAccessMode::Sandboxed));
+        assert!(modes.contains(&HarnessAccessMode::Full));
+        session.close().unwrap();
+    }
 }

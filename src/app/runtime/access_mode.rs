@@ -62,6 +62,10 @@ impl AccessModeChangeState {
 }
 
 impl RuntimeOwner {
+    pub(super) fn available_access_modes(&self) -> Vec<HarnessAccessMode> {
+        crate::agents::available_access_modes(&self.harness, self.active_snapshot().access_mode_model())
+    }
+
     pub(super) fn access_mode_change_ready(&self) -> bool {
         let snapshot = self.active_snapshot();
         let conversation = &snapshot.conversation;
@@ -73,7 +77,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn set_access_mode(&mut self, mode: HarnessAccessMode) {
-        if crate::agents::normalize_access_mode(&self.harness, mode) != mode {
+        if !self.available_access_modes().contains(&mode) {
             return;
         }
         if self.process.is_none() && self.access_mode_change_ready() {
@@ -89,7 +93,10 @@ impl RuntimeOwner {
     }
 
     fn apply_access_mode(&mut self, mode: HarnessAccessMode) {
-        if self.process_command.access_mode == mode {
+        if !self.available_access_modes().contains(&mode)
+            || self.process_command.access_mode == mode
+        {
+            self.publish();
             return;
         }
         let mut next_command = self.process_command.clone();
@@ -149,3 +156,7 @@ impl RuntimeOwner {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "access_mode_tests.rs"]
+mod tests;

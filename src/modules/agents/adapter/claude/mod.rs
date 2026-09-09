@@ -20,6 +20,7 @@ pub(super) fn program() -> std::path::PathBuf {
 pub(super) fn descriptor() -> crate::agents::contract::AgentBackendDescriptor {
     use crate::agents::contract::*;
     use CapabilitySupport::{Available, Unsupported};
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
     AgentBackendDescriptor {
         id: AgentBackendId::new(BACKEND).expect("valid Claude backend id"),
         name: "Claude Code".into(),
@@ -44,6 +45,8 @@ pub(super) fn descriptor() -> crate::agents::contract::AgentBackendDescriptor {
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
+                access_modes: &[Sandboxed, Auto, Full],
+                model_required_access_modes: &[Auto],
                 models: Available,
                 select_model: Available,
                 reasoning_effort: Available,
