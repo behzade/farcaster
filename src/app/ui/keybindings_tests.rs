@@ -60,6 +60,7 @@ fn picker_shortcuts_route_only_in_their_owned_contexts() {
     use super::registry_for_platform;
     use crate::app::{
         APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
+        ShowEditor, ShowTerminal,
     };
 
     for prefix in ["cmd", "ctrl"] {
@@ -73,6 +74,8 @@ fn picker_shortcuts_route_only_in_their_owned_contexts() {
             ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
             ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
             ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
+            ("e", Box::new(ShowEditor) as Box<dyn gpui::Action>),
+            ("t", Box::new(ShowTerminal) as Box<dyn gpui::Action>),
             (
                 "shift-p",
                 Box::new(crate::app::ShowActionPicker) as Box<dyn gpui::Action>,
@@ -90,7 +93,7 @@ fn picker_shortcuts_route_only_in_their_owned_contexts() {
             );
             assert!(bindings.is_empty());
         }
-        for suffix in ["m", "t", "e", "l"] {
+        for suffix in ["m", "l"] {
             let key = format!("{prefix}-{suffix}");
             let (bindings, _) = keymap.bindings_for_input(
                 &[gpui::Keystroke::parse(&key).unwrap()],

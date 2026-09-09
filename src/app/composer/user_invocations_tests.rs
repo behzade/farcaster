@@ -38,7 +38,7 @@ fn dollar_suggestions_compose_prompts_and_skills() {
             .into_iter()
             .map(|suggestion| suggestion.name)
             .collect::<Vec<_>>(),
-        ["commit", "simplify", "show-me", "review"]
+        ["commit", "simplify", "simplify-commit", "show-me", "review"]
     );
     let suggestion = suggestions("please $com", &commands)
         .into_iter()
@@ -54,7 +54,7 @@ fn dollar_suggestions_compose_prompts_and_skills() {
         ),
         ("$simplify $commit later".into(), "$simplify $commit ".len())
     );
-    assert_eq!(suggestions("please $", &commands).len(), 4);
+    assert_eq!(suggestions("please $", &commands).len(), 5);
     assert!(suggestions("please$com", &commands).is_empty());
 }
 
