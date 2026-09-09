@@ -1022,6 +1022,7 @@ impl WorkerSession for CodexWorkerSession {
                         | "turn/diff/updated"
                         | "turn/plan/updated"
                         | "serverRequest/resolved"
+                        | "item/commandExecution/terminalInteraction"
                         | "item/fileChange/outputDelta" => {}
                         _ => log_bad_codex_notification(
                             &method,
@@ -1611,6 +1612,10 @@ fn codex_tool_end(params: &Value) -> Option<WorkerActivity> {
             "type": "text",
             "text": output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string()),
         }])
+    } else if kind == "commandExecution" && item.get("aggregatedOutput").is_none_or(Value::is_null)
+    {
+        // Commands may complete without output, including when output was streamed.
+        json!([{"type": "text", "text": ""}])
     } else if kind == "webSearch" {
         json!([{"type": "text", "text": tool::web_search_query(item).unwrap_or_default()}])
     } else if kind == "fileChange" && !failed {

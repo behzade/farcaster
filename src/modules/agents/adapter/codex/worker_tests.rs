@@ -476,6 +476,41 @@ fn denied_automatic_approval_review_ends_the_pending_tool() {
 }
 
 #[test]
+fn command_completion_accepts_empty_output_and_preserves_failures() {
+    for status in ["completed", "failed"] {
+        for output in [None, Some(Value::Null)] {
+            let mut item = json!({
+                "id": "exec-1",
+                "type": "commandExecution",
+                "status": status,
+            });
+            if let Some(output) = output {
+                item["aggregatedOutput"] = output;
+            }
+            assert_eq!(
+                codex_tool_end(&json!({"item": item})),
+                Some(WorkerActivity::ToolFinished {
+                    id: "exec-1".into(),
+                    result: json!([{"type": "text", "text": ""}]),
+                    is_error: status != "completed",
+                })
+            );
+        }
+    }
+    assert_eq!(
+        codex_tool_end(&json!({"item": {
+            "id": "exec-1", "type": "commandExecution", "status": "failed",
+            "aggregatedOutput": null, "error": {"message": "Permission denied"}
+        }})),
+        Some(WorkerActivity::ToolFinished {
+            id: "exec-1".into(),
+            result: json!([{"type": "text", "text": "Permission denied"}]),
+            is_error: true,
+        })
+    );
+}
+
+#[test]
 fn completed_mcp_call_preserves_structured_content() {
     assert_eq!(
         codex_tool_end(&json!({
