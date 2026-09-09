@@ -702,7 +702,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             is_running,
             model,
             thinking_level: (!detail_limited).then_some(thinking_level),
-            search: search.to_lowercase(),
+            search: search.to_lowercase().into(),
         },
         activity,
     )))

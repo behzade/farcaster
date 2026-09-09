@@ -181,5 +181,8 @@ const fn active_kind_rank(item: &ActiveSessionItem) -> u8 {
 }
 
 #[cfg(test)]
+#[path = "groups_scale_tests.rs"]
+mod scale_tests;
+#[cfg(test)]
 #[path = "groups_tests.rs"]
 mod tests;

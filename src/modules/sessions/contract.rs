@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, time::SystemTime};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::SystemTime};
 
 use serde_json::Value;
 
@@ -71,7 +71,7 @@ pub(crate) struct SessionSummary {
     pub is_running: bool,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
-    pub(crate) search: String,
+    pub(crate) search: Arc<str>,
 }
 
 impl SessionSummary {
@@ -98,7 +98,7 @@ impl SessionSummary {
             is_running,
             model: None,
             thinking_level: None,
-            search: value.search.to_lowercase(),
+            search: value.search.to_lowercase().into(),
         }
     }
 
@@ -193,7 +193,7 @@ impl SessionSummary {
             is_running,
             model: None,
             thinking_level: None,
-            search,
+            search: search.into(),
         }
     }
 }
@@ -232,3 +232,7 @@ pub(crate) struct LoadedHistory {
     pub thinking_level: Option<String>,
     pub pending_question: Option<RestoredQuestion>,
 }
+
+#[cfg(test)]
+#[path = "contract_tests.rs"]
+mod tests;

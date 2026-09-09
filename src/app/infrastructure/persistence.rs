@@ -17,6 +17,9 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
+#[cfg(test)]
+#[path = "persistence/catalog_scale_tests.rs"]
+mod catalog_scale_tests;
 mod composer;
 mod identity;
 mod images;
