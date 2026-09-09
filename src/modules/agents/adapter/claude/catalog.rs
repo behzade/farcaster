@@ -60,6 +60,50 @@ fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+// A child shares its parent's session UUID; include both IDs in its locator.
+pub(super) fn child_id(parent: &str, agent: &str) -> Option<String> {
+    uuid::Uuid::parse_str(parent).ok()?;
+    if agent.is_empty()
+        || !agent
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return None;
+    }
+    Some(format!("{parent}/{agent}"))
+}
+
+fn child_files(parent: &Path, parent_id: &str) -> Result<Vec<(PathBuf, String)>, String> {
+    let directory = parent.with_extension("").join("subagents");
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if !entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_file()
+            || path.extension().is_none_or(|ext| ext != "jsonl")
+        {
+            continue;
+        }
+        if let Some(id) = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| stem.strip_prefix("agent-"))
+            .and_then(|agent| child_id(parent_id, agent))
+        {
+            paths.push((path, id));
+        }
+    }
+    Ok(paths)
+}
+
 fn read(path: &Path) -> Result<Vec<Value>, String> {
     let file = fs::File::open(path)
         .map_err(|error| format!("read Claude transcript {}: {error}", path.display()))?;
@@ -124,7 +168,7 @@ fn summary(path: &Path) -> Result<Vec<Value>, String> {
 
 /// Follow the newest main conversation's parent chain, not abandoned branches.
 /// Compaction can reparent a preserved segment; apply those links as the SDK does.
-fn conversation(rows: &[Value]) -> Vec<&Value> {
+fn conversation(rows: &[Value], sidechain: bool) -> Vec<&Value> {
     let mut nodes = HashMap::new();
     let mut parents = HashMap::new();
     for row in rows {
@@ -168,7 +212,7 @@ fn conversation(rows: &[Value]) -> Vec<&Value> {
     }
     let latest = rows.iter().rev().find(|row| {
         matches!(string(row, "type"), "user" | "assistant")
-            && row["isSidechain"] != true
+            && (sidechain || row["isSidechain"] != true)
             && row["isMeta"] != true
             && row["teamName"].is_null()
     });
@@ -189,8 +233,8 @@ fn conversation(rows: &[Value]) -> Vec<&Value> {
     chain
 }
 
-fn history(rows: &[Value]) -> DiscoveredHistory {
-    let chain = conversation(rows);
+fn history(rows: &[Value], sidechain: bool) -> DiscoveredHistory {
+    let chain = conversation(rows, sidechain);
     let model = chain
         .iter()
         .rev()
@@ -210,14 +254,34 @@ fn history(rows: &[Value]) -> DiscoveredHistory {
 pub(in crate::modules::agents::adapter) fn load_history(
     path: &Path,
 ) -> Result<DiscoveredHistory, String> {
+    load_history_in(&projects_root()?, path)
+}
+
+fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String> {
     let id = external_session_locator(BACKEND, path).ok_or("invalid Claude session locator")?;
-    uuid::Uuid::parse_str(&id).map_err(|_| "invalid Claude session UUID")?;
-    let matching = files(&projects_root()?)?
+    let (parent, agent) = id
+        .split_once('/')
+        .map_or((id.as_str(), None), |(parent, agent)| (parent, Some(agent)));
+    uuid::Uuid::parse_str(parent).map_err(|_| "invalid Claude session UUID")?;
+    if let Some(agent) = agent {
+        child_id(parent, agent).ok_or("invalid Claude agent ID")?;
+    }
+    let matching = files(root)?
         .into_iter()
-        .filter(|path| path.file_stem().and_then(|stem| stem.to_str()) == Some(&id))
+        .filter(|path| path.file_stem().and_then(|stem| stem.to_str()) == Some(parent))
         .collect::<Vec<_>>();
     match matching.as_slice() {
-        [path] => read(path).map(|rows| history(&rows)),
+        [path] => {
+            let path = agent.map_or_else(
+                || path.clone(),
+                |agent| {
+                    path.with_extension("")
+                        .join("subagents")
+                        .join(format!("agent-{agent}.jsonl"))
+                },
+            );
+            read(&path).map(|rows| history(&rows, agent.is_some()))
+        }
         [] => Err(format!("Claude transcript {id} not found")),
         _ => Err(format!(
             "Claude transcript {id} exists in more than one project"
@@ -230,6 +294,18 @@ pub(in crate::modules::agents::adapter) fn discover(
     query: &str,
 ) -> Result<Vec<DiscoveredSession>, String> {
     discover_in(&projects_root()?, locator_root, query)
+}
+
+fn first_prompt(rows: &[Value], sidechain: bool) -> String {
+    rows.iter()
+        .filter(|row| {
+            row["type"] == "user"
+                && row["isMeta"] != true
+                && (sidechain || row["isSidechain"] != true)
+        })
+        .map(|row| text(&row["message"]["content"]))
+        .find(|text| !text.is_empty())
+        .unwrap_or_default()
 }
 
 fn discover_in(
@@ -264,14 +340,7 @@ fn discover_in(
         if rows.first().is_some_and(|row| row["isSidechain"] == true) {
             continue;
         }
-        let first = rows
-            .iter()
-            .filter(|row| {
-                row["type"] == "user" && row["isMeta"] != true && row["isSidechain"] != true
-            })
-            .map(|row| text(&row["message"]["content"]))
-            .find(|text| !text.is_empty())
-            .unwrap_or_default();
+        let first = first_prompt(&rows, false);
         let title = rows
             .iter()
             .rev()
@@ -289,11 +358,8 @@ fn discover_in(
                 }
             });
         let search = format!("{title} {first} {} Claude Code", project.display());
-        if !search.to_lowercase().contains(&query) {
-            continue;
-        }
         let id = path.file_stem().unwrap().to_string_lossy().into_owned();
-        sessions.push(DiscoveredSession {
+        let parent = DiscoveredSession {
             path: external_session_path(locator_root, BACKEND, &id),
             id,
             harness: BACKEND.into(),
@@ -321,8 +387,49 @@ fn discover_in(
             archived: false,
             is_running: false,
             search,
-        });
+        };
+        for (child_path, id) in child_files(&path, &parent.id)? {
+            let rows = match summary(&child_path) {
+                Ok(rows) => rows,
+                Err(_) => continue,
+            };
+            let metadata: Value = fs::read(child_path.with_extension("meta.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                .unwrap_or_default();
+            let first = first_prompt(&rows, true);
+            let title = metadata["description"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| first.chars().take(120).collect());
+            let search = format!("{title} {first} {} Claude Code", parent.project.display());
+            sessions.push(DiscoveredSession {
+                path: external_session_path(locator_root, BACKEND, &id),
+                id,
+                title,
+                first_user_message: first,
+                search,
+                parent_session: Some(parent.id.clone()),
+                timestamp: rows
+                    .iter()
+                    .rev()
+                    .find_map(|row| row["timestamp"].as_str())
+                    .unwrap_or_default()
+                    .into(),
+                model: rows
+                    .iter()
+                    .rev()
+                    .find_map(|row| row["message"]["model"].as_str())
+                    .map(|model| (BACKEND.into(), model.into())),
+                modified: fs::metadata(&child_path)
+                    .and_then(|meta| meta.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH),
+                ..parent.clone()
+            });
+        }
+        sessions.push(parent);
     }
+    sessions.retain(|session| session.search.to_lowercase().contains(&query));
     sessions.sort_by_key(|session| std::cmp::Reverse(session.modified));
     Ok(sessions)
 }

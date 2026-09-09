@@ -60,3 +60,44 @@ fn session_usage_reads_cumulative_model_totals_without_double_counting() {
     assert!(events.pending.iter().all(|event| matches!(event,
         WorkerEvent::Activity(WorkerActivity::Usage(usage)) if usage.session.input == 25 && usage.session.output == 13)));
 }
+
+#[test]
+fn native_agent_tasks_publish_sidebar_lifecycle_without_child_text() {
+    let mut events = Events::default();
+    let parent = "00000000-0000-4000-8000-000000000001";
+    events.message(&json!({"type":"assistant","message":{"content":[
+        {"type":"tool_use","id":"tool","name":"Agent","input":{}}
+    ]}}));
+    for subtype in ["task_started", "task_progress", "task_notification"] {
+        events.message(
+            &json!({"type":"system","subtype":subtype,"session_id":parent,
+            "task_id":"a123","tool_use_id":"tool","description":"Inspect source"}),
+        );
+    }
+    events.message(&json!({"type":"assistant","parent_tool_use_id":"tool",
+        "message":{"content":[{"type":"text","text":"child answer"}]}}));
+    events.message(
+        &json!({"type":"system","subtype":"task_started","session_id":parent,
+        "task_id":"shell","task_type":"local_bash","description":"Build"}),
+    );
+    let children = events
+        .pending
+        .iter()
+        .filter_map(|event| match event {
+            WorkerEvent::Activity(WorkerActivity::ChildSessionsChanged {
+                id, is_running, ..
+            }) => Some((id.as_str(), *is_running)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let id = format!("{parent}/a123");
+    assert_eq!(
+        children,
+        vec![
+            (id.as_str(), true),
+            (id.as_str(), true),
+            (id.as_str(), false)
+        ]
+    );
+    assert!(events.output.is_empty());
+}

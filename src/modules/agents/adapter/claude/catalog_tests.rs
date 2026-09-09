@@ -10,7 +10,7 @@ fn history_follows_latest_branch_and_preserves_tool_results() {
         json!({"type":"user","uuid":"r","parentUuid":"a","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"bad path","is_error":true}]}}),
         json!({"type":"assistant","uuid":"child","parentUuid":null,"isSidechain":true,"message":{"role":"assistant","content":"child"}}),
     ];
-    let history = history(&rows);
+    let history = history(&rows, false);
     assert_eq!(history.messages.len(), 3);
     assert_eq!(
         history.messages[1]["content"][0]["arguments"]["file_path"],
@@ -28,9 +28,9 @@ fn compaction_relinks_preserved_messages_without_cycles() {
         json!({"type":"assistant","uuid":"a","parentUuid":"u","message":{"role":"assistant","content":"answer"}}),
         json!({"type":"user","uuid":"next","parentUuid":"anchor","message":{"role":"user","content":"next"}}),
     ];
-    assert_eq!(history(&rows).messages.len(), 3);
+    assert_eq!(history(&rows, false).messages.len(), 3);
     rows[0]["parentUuid"] = json!("next");
-    assert_eq!(history(&rows).messages.len(), 3);
+    assert_eq!(history(&rows, false).messages.len(), 3);
 }
 
 #[test]
@@ -66,4 +66,48 @@ fn discovery_samples_large_transcripts_and_uses_the_direct_backend_identity() {
         external_session_locator(BACKEND, &sessions[0].path),
         Some(id.into())
     );
+}
+
+#[test]
+fn discovery_includes_native_children_and_reads_sidechain_history() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_dir = directory.path().join("encoded-project");
+    let parent = "00000000-0000-4000-8000-000000000001";
+    let children = project_dir.join(parent).join("subagents");
+    fs::create_dir_all(&children).unwrap();
+    let project = std::env::current_dir().unwrap();
+    fs::write(
+        project_dir.join(format!("{parent}.jsonl")),
+        format!(
+            "{}\n",
+            json!({
+                "type":"user","cwd":project,"message":{"role":"user","content":"Parent"}
+            })
+        ),
+    )
+    .unwrap();
+    let rows = vec![
+        json!({"type":"user","uuid":"u","parentUuid":null,"isSidechain":true,"message":{"role":"user","content":"Inspect source"}}),
+        json!({"type":"assistant","uuid":"a","parentUuid":"u","isSidechain":true,"message":{"role":"assistant","model":"child-model","content":"Found it"}}),
+    ];
+    fs::write(
+        children.join("agent-a123.jsonl"),
+        rows.iter()
+            .map(|row| format!("{row}\n"))
+            .collect::<String>(),
+    )
+    .unwrap();
+    fs::write(
+        children.join("agent-a123.meta.json"),
+        r#"{"description":"Source review"}"#,
+    )
+    .unwrap();
+    let sessions = discover_in(directory.path(), directory.path(), "source review").unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, format!("{parent}/a123"));
+    assert_eq!(sessions[0].parent_session.as_deref(), Some(parent));
+    let history = load_history_in(directory.path(), &sessions[0].path).unwrap();
+    assert_eq!(history.messages.len(), 2);
+    assert_eq!(history.messages[1]["content"][0]["text"], "Found it");
+    assert!(child_id(parent, "../../outside").is_none());
 }

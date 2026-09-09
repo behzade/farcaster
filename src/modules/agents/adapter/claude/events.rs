@@ -99,6 +99,8 @@ pub(super) struct Events {
     tools: HashSet<String>,
     context_usage: TokenUsage,
     compacting: bool,
+    child_tasks: HashSet<String>,
+    agent_tools: HashSet<String>,
 }
 
 impl Events {
@@ -136,6 +138,25 @@ impl Events {
             self.activity(WorkerActivity::TextDelta {
                 content_index: index,
                 delta: delta.into(),
+            });
+        }
+    }
+
+    fn child_task(&mut self, frame: &Value) {
+        let task = string(frame, "task_id");
+        let subtype = string(frame, "subtype");
+        let is_agent = frame["task_type"] == "local_agent"
+            || frame["subagent_type"].as_str().is_some()
+            || self.child_tasks.contains(task)
+            || frame["tool_use_id"]
+                .as_str()
+                .is_some_and(|id| self.agent_tools.contains(id));
+        if is_agent && let Some(id) = super::catalog::child_id(string(frame, "session_id"), task) {
+            self.child_tasks.insert(task.into());
+            self.activity(WorkerActivity::ChildSessionsChanged {
+                id,
+                title: frame["description"].as_str().map(str::to_owned),
+                is_running: subtype != "task_notification",
             });
         }
     }
@@ -209,6 +230,9 @@ impl Events {
                         }
                         "tool_use" => {
                             let id = string(block,"id");
+                            if matches!(string(block, "name"), "Agent" | "Task") {
+                                self.agent_tools.insert(id.into());
+                            }
                             if self.tools.insert(id.into()) {
                                 self.activity(WorkerActivity::ToolStarted { id:id.into(),
                                     name:string(block,"name").into(), args:block["input"].clone(),
@@ -248,6 +272,9 @@ impl Events {
                 content:json!([{"type":"text","text":format!("Running for {}s", frame["elapsed_time_seconds"])}]) }),
             "rate_limit_event" => self.activity(WorkerActivity::RateLimitsChanged { limits:frame["rate_limit_info"].clone() }),
             "system" => match string(frame,"subtype") {
+                "task_started" | "task_progress" | "task_notification" => {
+                    self.child_task(frame);
+                }
                 "init" => {
                     self.activity(WorkerActivity::ModeChanged(string(frame,"permissionMode").into()));
                     if let Some(servers) = frame["mcp_servers"].as_array() {
