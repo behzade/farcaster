@@ -18,7 +18,11 @@ pub(super) fn write_item() -> TranscriptItem {
 #[test]
 fn file_links_use_each_targets_first_changed_line() {
     let mut item = write_item();
-    let details = Arc::make_mut(item.tool_details.as_mut().unwrap());
+    let details = Arc::make_mut(
+        item.tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    );
     details.metadata.targets = vec!["src/main.rs".into(), "src/other.rs".into()];
     details.arguments = json!({"changes": [
         {"path": "src/main.rs", "diff": "@@ -37,3 +37,3 @@\n context\n-old\n+new\n tail"},
@@ -39,8 +43,12 @@ fn file_links_handle_insertions_deletions_and_missing_positions() {
         ("+new\n-old", None),
     ] {
         let mut item = write_item();
-        Arc::make_mut(item.tool_details.as_mut().unwrap()).result =
-            Some(json!({"details": {"unifiedDiff": diff}}));
+        Arc::make_mut(
+            item.tool_details
+                .as_mut()
+                .expect("test operation should succeed"),
+        )
+        .result = Some(json!({"details": {"unifiedDiff": diff}}));
         assert_eq!(
             file_target_line(&item, "src/main.rs", None),
             expected,
@@ -59,9 +67,13 @@ fn only_successful_file_changes_open_editor() {
     item.is_error = true;
     assert!(file_targets(&item).next().is_none());
     item.is_error = false;
-    Arc::make_mut(item.tool_details.as_mut().unwrap())
-        .metadata
-        .targets = vec![
+    Arc::make_mut(
+        item.tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    )
+    .metadata
+    .targets = vec![
         "other.rs".into(),
         String::new(),
         "other.rs".into(),
@@ -71,10 +83,14 @@ fn only_successful_file_changes_open_editor() {
         file_targets(&item).collect::<Vec<_>>(),
         ["other.rs", "last.rs"]
     );
-    Arc::make_mut(item.tool_details.as_mut().unwrap())
-        .metadata
-        .targets
-        .clear();
+    Arc::make_mut(
+        item.tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    )
+    .metadata
+    .targets
+    .clear();
     assert_eq!(file_targets(&item).collect::<Vec<_>>(), ["src/main.rs"]);
     item.tool_presentation = None;
     assert!(file_targets(&item).next().is_none());
@@ -91,10 +107,16 @@ fn approval_replaces_execution_status_instead_of_coexisting() {
     assert_eq!(item_status(&item), Some(ToolStatus::Reviewing));
     assert!(file_targets(&item).next().is_none());
     item.is_error = true;
-    item.tool_review.as_mut().unwrap().state = ToolReviewState::Blocked;
+    item.tool_review
+        .as_mut()
+        .expect("test operation should succeed")
+        .state = ToolReviewState::Blocked;
     assert_eq!(item_status(&item), Some(ToolStatus::Rejected));
     assert!(file_targets(&item).next().is_none());
-    item.tool_review.as_mut().unwrap().state = ToolReviewState::Approved;
+    item.tool_review
+        .as_mut()
+        .expect("test operation should succeed")
+        .state = ToolReviewState::Approved;
     assert_eq!(item_status(&item), Some(ToolStatus::Failed));
     item.is_error = false;
     assert_eq!(item_status(&item), Some(ToolStatus::Running));
@@ -162,7 +184,11 @@ fn expanded_details_bound_each_source() {
         let mut item = write_item();
         item.text.clear();
         item.tool_output.clear();
-        let details = Arc::make_mut(item.tool_details.as_mut().unwrap());
+        let details = Arc::make_mut(
+            item.tool_details
+                .as_mut()
+                .expect("test operation should succeed"),
+        );
         details.arguments = json!({});
         details.result = None;
         details.metadata.native = None;

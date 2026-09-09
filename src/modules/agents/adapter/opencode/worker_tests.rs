@@ -66,7 +66,7 @@ fn child_observation_skips_parent_text_and_malformed_events() {
             opencode_child_activity(&event, "parent-1", |_| {
                 panic!("unrelated events must not query the server")
             })
-            .unwrap()
+            .expect("test operation should succeed")
             .is_none()
         );
     }
@@ -398,15 +398,20 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     let send = |kind: &str, extra: Value| {
         let mut data = json!({"sessionID": "session-1"});
         data.as_object_mut()
-            .unwrap()
-            .extend(extra.as_object().unwrap().clone());
+            .expect("test operation should succeed")
+            .extend(
+                extra
+                    .as_object()
+                    .expect("test operation should succeed")
+                    .clone(),
+            );
         sender
             .send(Ok(super::super::contract::OpenCodeEvent {
                 id: None,
                 event: Some(kind.into()),
                 data,
             }))
-            .unwrap();
+            .expect("test operation should succeed");
     };
     send("session.execution.interrupted", json!({}));
     send("session.execution.started", json!({}));

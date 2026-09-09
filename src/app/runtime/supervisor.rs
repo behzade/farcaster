@@ -213,6 +213,7 @@ pub(super) fn publish_session_status_if_changed(
     });
 }
 
+#[cfg(test)]
 pub(super) fn changed_external_documents(
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
     paths: &[PathBuf],
@@ -556,7 +557,7 @@ pub(super) fn initial_draft_command(
 
 #[derive(Debug)]
 pub(super) enum SupervisorSessionAction {
-    Publish(RuntimeEvent),
+    Publish(Box<RuntimeEvent>),
     RefreshCatalog,
 }
 
@@ -581,7 +582,7 @@ pub(super) fn route_session_discovery(
     event: RuntimeEvent,
 ) -> SupervisorSessionAction {
     if actor_key == catalog_key {
-        SupervisorSessionAction::Publish(event)
+        SupervisorSessionAction::Publish(Box::new(event))
     } else {
         SupervisorSessionAction::RefreshCatalog
     }

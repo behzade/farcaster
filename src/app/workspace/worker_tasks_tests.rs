@@ -5,18 +5,22 @@ fn model_list_edits_preserve_order_and_keep_at_least_one_choice() {
     let mut models = WorkerProfile::new("fast".into()).models;
     let original = models.clone();
     assert_eq!(
-        edit_models(&mut models, 1, WorkerModelEdit::MoveUp).unwrap(),
+        edit_models(&mut models, 1, WorkerModelEdit::MoveUp)
+            .expect("test operation should succeed"),
         0
     );
     assert_eq!(models[0], original[1]);
     assert_eq!(
-        edit_models(&mut models, 0, WorkerModelEdit::MoveDown).unwrap(),
+        edit_models(&mut models, 0, WorkerModelEdit::MoveDown)
+            .expect("test operation should succeed"),
         1
     );
     assert_eq!(models, original);
-    let added = edit_models(&mut models, 0, WorkerModelEdit::Add).unwrap();
+    let added =
+        edit_models(&mut models, 0, WorkerModelEdit::Add).expect("test operation should succeed");
     assert_eq!(models[added], original[0]);
-    edit_models(&mut models, added, WorkerModelEdit::Remove).unwrap();
+    edit_models(&mut models, added, WorkerModelEdit::Remove)
+        .expect("test operation should succeed");
     assert_eq!(models, original);
     models.truncate(1);
     assert!(edit_models(&mut models, 0, WorkerModelEdit::Remove).is_err());
@@ -40,7 +44,7 @@ fn saving_one_route_preserves_other_routes_with_incomplete_edits() {
             profile: 0,
             model: 0,
         })
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(saved[0].models[0].model, "another-model");
     assert_eq!(saved[1], editor.saved[1]);
     assert_eq!(saved[0].models[1], editor.saved[0].models[1]);
@@ -94,9 +98,13 @@ fn worker_task_edits_validate_before_mutating() {
     let mut editor = WorkerProfileEditor::default();
     assert!(editor.save_name(None, "bad name").is_err());
     assert!(editor.profiles.is_empty());
-    editor.save_name(None, "audit").unwrap();
+    editor
+        .save_name(None, "audit")
+        .expect("test operation should succeed");
     assert!(editor.save_name(None, "AUDIT").is_err());
-    editor.save_name(Some(0), "review").unwrap();
+    editor
+        .save_name(Some(0), "review")
+        .expect("test operation should succeed");
     assert_eq!(editor.profiles.len(), 1);
     assert_eq!(editor.profiles[0].name, "review");
     let target = WorkerRouteTarget {
@@ -115,7 +123,7 @@ fn worker_task_edits_validate_before_mutating() {
             target,
             ["provider".into(), "custom-model".into(), String::new()],
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(editor.profiles[0].models[0].harness, original.harness);
     assert_eq!(editor.profiles[0].models[0].model, "custom-model");
     assert_eq!(editor.profiles[0].models[0].effort, None);

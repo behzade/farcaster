@@ -23,7 +23,10 @@ impl WorkerSessionFactory for Factory {
             launch.parent_worker_id.clone(),
         )?;
         identity.bind(format!("session-{}", launch.worker_id));
-        self.launches.lock().unwrap().push(launch);
+        self.launches
+            .lock()
+            .expect("test operation should succeed")
+            .push(launch);
         Ok(Box::new(Session(identity)))
     }
 }
@@ -87,22 +90,34 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
     };
     assert!(send(&pool, params(None), token.clone(), &tasks).is_err());
     assert!(send(&pool, params(Some("missing".into())), token.clone(), &tasks).is_err());
-    assert!(launches.lock().unwrap().is_empty());
+    assert!(
+        launches
+            .lock()
+            .expect("test operation should succeed")
+            .is_empty()
+    );
     let result = send(&pool, params(Some("oracle".into())), token.clone(), &tasks)?;
     assert_eq!(result["created"], true);
     assert_eq!(result["assignment"]["execution"]["harness"], "codex-cli");
     assert_eq!(
-        launches.lock().unwrap()[0].model.as_deref(),
+        launches.lock().expect("test operation should succeed")[0]
+            .model
+            .as_deref(),
         Some("gpt-6-astra")
     );
     {
-        let launches = launches.lock().unwrap();
+        let launches = launches.lock().expect("test operation should succeed");
         let launch = &launches[0];
         assert_eq!(launch.context, WorkerContext::Fresh);
         assert_eq!(launch.provider.as_deref(), Some("openai"));
         assert_eq!(launch.effort.as_deref(), Some("medium"));
         assert_eq!(launch.parent_session, "/sessions/parent.jsonl");
-        assert_eq!(launch.project, temp.path().canonicalize().unwrap());
+        assert_eq!(
+            launch.project,
+            temp.path()
+                .canonicalize()
+                .expect("test operation should succeed")
+        );
     }
     tasks.profiles[0].models[1].model = "changed-model".into();
     assert!(send(&pool, params(Some("oracle".into())), token.clone(), &tasks).is_ok());
@@ -121,7 +136,13 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
     assert_eq!(result["assignment"]["profile"], "oracle");
     assert_eq!(result["assignment"]["execution"]["model"], "gpt-6-astra");
     assert!(send(&pool, params(Some("thorough".into())), token, &tasks).is_err());
-    assert_eq!(launches.lock().unwrap().len(), 1);
+    assert_eq!(
+        launches
+            .lock()
+            .expect("test operation should succeed")
+            .len(),
+        1
+    );
     Ok(())
 }
 
@@ -161,7 +182,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
         .resolve("cheap", |model| {
             model_available(model, project, &backends, &catalogs)
         })
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(assignment.execution.provider, "openai-codex");
     assert_eq!(assignment.execution.model, "gpt-5.6-luna");
     assert!(

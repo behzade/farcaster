@@ -193,7 +193,7 @@ fn conversation(rows: &[Value], sidechain: bool) -> Vec<&Value> {
             }
             (
                 ids[0],
-                *ids.last().unwrap(),
+                *ids.last().expect("preserved IDs checked nonempty above"),
                 preserved["anchorUuid"].as_str(),
             )
         } else if let (Some(head), Some(tail)) =
@@ -358,7 +358,11 @@ fn discover_in(
                 }
             });
         let search = format!("{title} {first} {} Claude Code", project.display());
-        let id = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let id = path
+            .file_stem()
+            .expect("session path has a JSONL filename")
+            .to_string_lossy()
+            .into_owned();
         let parent = DiscoveredSession {
             path: external_session_path(locator_root, BACKEND, &id),
             id,

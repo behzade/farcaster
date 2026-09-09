@@ -30,7 +30,8 @@ fn per_block_assistant_envelopes_do_not_repeat_streamed_text() {
 fn final_stream_usage_updates_context_without_clearing_omitted_counts() {
     let mut events = Events::default();
     for line in include_str!("fixtures/cli-2.1.236.jsonl").lines() {
-        events.message(&serde_json::from_str::<Value>(line).unwrap());
+        events
+            .message(&serde_json::from_str::<Value>(line).expect("test operation should succeed"));
     }
     let usage = events
         .pending
@@ -39,7 +40,7 @@ fn final_stream_usage_updates_context_without_clearing_omitted_counts() {
             WorkerEvent::Activity(WorkerActivity::Usage(usage)) => Some(usage),
             _ => None,
         })
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(usage.turn.input, 22635);
     assert_eq!(usage.turn.output, 6);
     events.pending.clear();

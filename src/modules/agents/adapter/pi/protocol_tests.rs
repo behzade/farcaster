@@ -4,11 +4,11 @@ use crate::agents::extensions::PromptImage;
 #[test]
 fn encodes_pi_requests_only_at_the_adapter_boundary() {
     assert_eq!(
-        encode_request(SessionCommand::ApplySteering).unwrap(),
+        encode_request(SessionCommand::ApplySteering).expect("test operation should succeed"),
         json!({"type":"abort"})
     );
     assert_eq!(
-        encode_request(SessionCommand::ConfigureSteering).unwrap(),
+        encode_request(SessionCommand::ConfigureSteering).expect("test operation should succeed"),
         json!({"type":"set_steering_mode","mode":"all"})
     );
     assert_eq!(
@@ -17,7 +17,7 @@ fn encodes_pi_requests_only_at_the_adapter_boundary() {
             message: "later".into(),
             images: vec![PromptImage::new("aGVsbG8=".into(), "image/png".into())],
         })
-        .unwrap(),
+        .expect("test operation should succeed"),
         json!({
             "type":"follow_up",
             "message":"later",
@@ -25,7 +25,8 @@ fn encodes_pi_requests_only_at_the_adapter_boundary() {
         })
     );
     assert_eq!(
-        encode_request(SessionCommand::Compact { instructions: None }).unwrap(),
+        encode_request(SessionCommand::Compact { instructions: None })
+            .expect("test operation should succeed"),
         json!({"type":"compact"})
     );
     assert!(

@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::io::Write as _;
 use std::{
     io::{BufRead as _, BufReader},
     process::Child,
@@ -44,7 +46,7 @@ fn emit_line(label: &str, line: &str) {
         return;
     }
     #[cfg(test)]
-    eprintln!("{label} stderr: {line}");
+    writeln!(std::io::stderr().lock(), "{label} stderr: {line}").expect("write test diagnostics");
     let level = structured_level(line).unwrap_or(Level::Warn);
     zlog::log!(zlog::default_logger!(), level, "{label} stderr: {line}");
 }

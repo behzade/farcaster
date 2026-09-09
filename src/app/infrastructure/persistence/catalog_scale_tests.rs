@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::time::Instant;
 
 use super::*;
@@ -75,7 +76,7 @@ fn cached_catalog_decodes_1535_large_rows() -> Result<(), String> {
     );
     let comparison_elapsed = started.elapsed();
     assert!(!catalog_changed);
-    eprintln!(
+    writeln!(std::io::stderr().lock(),
         "cached_catalog_decodes_1535_large_rows import_ms={:.2} decode_ms={:.2} clone_ms={:.2} miss_filter_ms={:.2} unchanged_ui_compare_ms={:.2} rows={} search_mib={:.1}",
         import_elapsed.as_secs_f64() * 1_000.0,
         decode_elapsed.as_secs_f64() * 1_000.0,
@@ -84,6 +85,6 @@ fn cached_catalog_decodes_1535_large_rows() -> Result<(), String> {
         comparison_elapsed.as_secs_f64() * 1_000.0,
         sessions.len(),
         (SESSION_COUNT * SEARCH_BYTES) as f64 / (1024.0 * 1024.0),
-    );
+    ).expect("write test diagnostics");
     Ok(())
 }

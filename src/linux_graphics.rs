@@ -102,10 +102,10 @@ fn appimage_environment(
                 mesa.display()
             ));
         }
-        if let Some(library) = wayland_dependency(&String::from_utf8_lossy(&output.stdout)) {
-            if let Some(preload) = preload_host_wayland(value("LD_PRELOAD"), library) {
-                environment.push(("LD_PRELOAD", preload));
-            }
+        if let Some(library) = wayland_dependency(&String::from_utf8_lossy(&output.stdout))
+            && let Some(preload) = preload_host_wayland(value("LD_PRELOAD"), library)
+        {
+            environment.push(("LD_PRELOAD", preload));
         }
     }
     Ok(environment)

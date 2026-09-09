@@ -31,6 +31,7 @@ mod changed_files;
 mod tool_preview;
 use tool_preview::ToolPreview;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_activity_group(
     key: usize,
     items: &PersistentVec<Arc<TranscriptItem>>,

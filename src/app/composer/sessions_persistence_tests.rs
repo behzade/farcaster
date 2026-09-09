@@ -8,7 +8,12 @@ fn bound_draft_aliases_preserve_write_and_delete_order() -> Result<(), Box<dyn s
         crate::projects::DraftSession::new("draft".into(), 0, temp.path().to_path_buf(), 1);
     draft.session_path = Some(temp.path().join("session.jsonl"));
     store.allocate_app_session_id(&draft)?;
-    let bound = session_target(draft.session_path.as_ref().unwrap());
+    let bound = session_target(
+        draft
+            .session_path
+            .as_ref()
+            .expect("test operation should succeed"),
+    );
     let save = |target: String, text: &str| {
         PersistenceCommand::Save(ComposerRecord {
             target,

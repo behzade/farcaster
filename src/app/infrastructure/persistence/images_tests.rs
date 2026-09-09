@@ -33,7 +33,13 @@ fn queued_images_use_portable_deduplicated_files() -> Result<(), Box<dyn std::er
     assert_eq!(queued[0].images.len(), 2);
     for attachment in &queued[0].images {
         assert!(attachment.data.is_empty());
-        assert!(attachment.path.as_ref().unwrap().starts_with(&moved));
+        assert!(
+            attachment
+                .path
+                .as_ref()
+                .expect("test operation should succeed")
+                .starts_with(&moved)
+        );
         let wire = serde_json::to_value(attachment.clone().into_inline()?)?;
         assert_eq!(
             wire,
@@ -41,13 +47,18 @@ fn queued_images_use_portable_deduplicated_files() -> Result<(), Box<dyn std::er
         );
     }
     // Keep a missing attachment in the queue, and fail sending it explicitly.
-    std::fs::remove_file(queued[0].images[0].path.as_ref().unwrap())?;
+    std::fs::remove_file(
+        queued[0].images[0]
+            .path
+            .as_ref()
+            .expect("test operation should succeed"),
+    )?;
     assert_eq!(store.queued_prompts()?.len(), 1);
     assert!(
         queued[0].images[0]
             .clone()
             .into_inline()
-            .unwrap_err()
+            .expect_err("invalid test input must fail")
             .contains("read image")
     );
     Ok(())
@@ -59,7 +70,7 @@ fn legacy_images_load_and_invalid_references_fail() -> Result<(), Box<dyn std::e
     let store = StateStore::open_at(&directory.path().join("state.sqlite3"))?;
     let image = PromptImage::new("AQID".into(), "image/png".into());
     assert_eq!(
-        store.decode_prompt_images(&serde_json::to_string(&[image.clone()])?)?,
+        store.decode_prompt_images(&serde_json::to_string(std::slice::from_ref(&image))?)?,
         vec![image]
     );
     assert!(
@@ -85,12 +96,18 @@ fn corrupt_existing_image_is_not_reused() -> Result<(), Box<dyn std::error::Erro
     let directory = tempfile::tempdir()?;
     let store = StateStore::open_at(&directory.path().join("state.sqlite3"))?;
     let image = PromptImage::new("AQID".into(), "image/png".into());
-    let stored = store.store_prompt_images(&[image.clone()])?;
-    std::fs::write(stored[0].path.as_ref().unwrap(), b"wrong")?;
+    let stored = store.store_prompt_images(std::slice::from_ref(&image))?;
+    std::fs::write(
+        stored[0]
+            .path
+            .as_ref()
+            .expect("test operation should succeed"),
+        b"wrong",
+    )?;
     assert!(
         store
             .store_prompt_images(&[image])
-            .unwrap_err()
+            .expect_err("invalid test input must fail")
             .contains("corrupt")
     );
     Ok(())

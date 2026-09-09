@@ -439,6 +439,7 @@ pub(super) fn latest_allows_tail_reserve(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_row(
     row: TranscriptRow,
     items: &PersistentVec<Arc<TranscriptItem>>,

@@ -272,7 +272,7 @@ pub(super) fn wait_duration(item: &Value) -> String {
         .and_then(Value::as_u64)
         .map(|millis| millis / 1000)
         .unwrap_or(0);
-    if seconds > 0 && seconds % 60 == 0 {
+    if seconds > 0 && seconds.is_multiple_of(60) {
         format!("{}m", seconds / 60)
     } else {
         format!("{}s", seconds)

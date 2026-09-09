@@ -12,9 +12,9 @@ impl EditRepo {
         let root = temp.path().join("repo");
         let home = temp.path().join("home");
         let config = temp.path().join("config");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&home).unwrap();
-        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&root).expect("test operation should succeed");
+        fs::create_dir_all(&home).expect("test operation should succeed");
+        fs::create_dir_all(&config).expect("test operation should succeed");
         let preference = match kind {
             RepositoryKind::Git => {
                 run_git(&root, &home, &config, &["init"]);
@@ -42,8 +42,8 @@ impl EditRepo {
             ..RepositoryOptions::default()
         };
         let backend = RepositoryBackend::discover_with_options(&root, preference, options)
-            .unwrap()
-            .unwrap();
+            .expect("test operation should succeed")
+            .expect("test operation should succeed");
         Self { temp, backend }
     }
 
@@ -51,10 +51,10 @@ impl EditRepo {
         &self.backend.location.workspace_root
     }
     fn write(&self, path: &str, text: impl AsRef<[u8]>) {
-        fs::write(self.root().join(path), text).unwrap();
+        fs::write(self.root().join(path), text).expect("test operation should succeed");
     }
     fn read(&self, path: &str) -> String {
-        fs::read_to_string(self.root().join(path)).unwrap()
+        fs::read_to_string(self.root().join(path)).expect("test operation should succeed")
     }
 
     fn command(&self, args: &[&str]) -> String {
@@ -66,20 +66,23 @@ impl EditRepo {
                 &self.temp.path().join("config"),
             ))
             .output()
-            .unwrap();
+            .expect("test operation should succeed");
         assert!(
             output.status.success(),
             "{args:?}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8(output.stdout).unwrap()
+        String::from_utf8(output.stdout).expect("test operation should succeed")
     }
 
     fn review(&self, paths: &[&str]) -> RepositoryEditReview {
-        let snapshot = self.backend.snapshot().unwrap();
+        let snapshot = self
+            .backend
+            .snapshot()
+            .expect("test operation should succeed");
         self.backend
             .prepare_edit(&snapshot, &paths.iter().map(PathBuf::from).collect())
-            .unwrap()
+            .expect("test operation should succeed")
     }
 
     fn base(&self) {
@@ -105,7 +108,7 @@ fn git_commit_selected_includes_working_contents_and_preserves_other_staging() {
     let review = repo.review(&["selected", ":(glob)* new"]);
     repo.backend
         .apply_edit(&review, RepositoryEdit::Commit, "feat: chosen files")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(repo.command(&["show", "HEAD:selected"]), "working\n");
     assert_eq!(repo.command(&["show", "HEAD::(glob)* new"]), "new\n");
     assert_eq!(repo.command(&["show", "HEAD:other"]), "base\n");
@@ -135,7 +138,10 @@ fn git_review_rejects_same_status_binary_edits_and_empty_message() {
             Err(RepositoryError::StaleSnapshot)
         ));
     }
-    assert_eq!(fs::read(repo.root().join("selected")).unwrap(), b"\0two");
+    assert_eq!(
+        fs::read(repo.root().join("selected")).expect("test operation should succeed"),
+        b"\0two"
+    );
 }
 
 #[test]
@@ -149,14 +155,14 @@ fn git_discard_restores_both_layers_and_does_not_touch_other_files() {
     let review = repo.review(&["selected"]);
     repo.backend
         .apply_edit(&review, RepositoryEdit::Discard, "")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(repo.read("selected"), "base\n");
     assert_eq!(repo.command(&["show", ":selected"]), "base\n");
     assert_eq!(repo.read("other"), "keep\n");
-    fs::remove_file(repo.root().join("selected")).unwrap();
+    fs::remove_file(repo.root().join("selected")).expect("test operation should succeed");
     repo.backend
         .apply_edit(&repo.review(&["selected"]), RepositoryEdit::Discard, "")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(repo.read("selected"), "base\n");
 }
 
@@ -169,7 +175,7 @@ fn git_discard_handles_renames_and_new_files() {
     assert!(review.paths().contains(&PathBuf::from("selected")));
     repo.backend
         .apply_edit(&review, RepositoryEdit::Discard, "")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(repo.read("selected"), "base\n");
     assert!(!repo.root().join("renamed").exists());
     for staged in [false, true] {
@@ -179,7 +185,7 @@ fn git_discard_handles_renames_and_new_files() {
         }
         repo.backend
             .apply_edit(&repo.review(&["new"]), RepositoryEdit::Discard, "")
-            .unwrap();
+            .expect("test operation should succeed");
         assert!(!repo.root().join("new").exists());
     }
 }
@@ -196,7 +202,7 @@ fn git_initial_commit_selects_only_chosen_new_file() {
             RepositoryEdit::Commit,
             "initial",
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(
         repo.command(&["ls-tree", "--name-only", "HEAD"]),
         "selected\n"
@@ -211,7 +217,10 @@ fn git_initial_commit_selects_only_chosen_new_file() {
 fn review_rejects_empty_selection_and_paths_outside_project() {
     let repo = EditRepo::new(RepositoryKind::Git);
     repo.base();
-    let snapshot = repo.backend.snapshot().unwrap();
+    let snapshot = repo
+        .backend
+        .snapshot()
+        .expect("test operation should succeed");
     for selected in [BTreeSet::new(), BTreeSet::from([PathBuf::from("../other")])] {
         assert!(repo.backend.prepare_edit(&snapshot, &selected).is_err());
     }
@@ -227,7 +236,7 @@ fn jj_commit_selected_and_discard_keep_other_changes() {
     let review = repo.review(&["selected", "a|b.txt"]);
     repo.backend
         .apply_edit(&review, RepositoryEdit::Commit, "chosen files")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(
         repo.command(&["file", "show", "-r", "@-", "selected"]),
         "chosen\n"
@@ -239,7 +248,7 @@ fn jj_commit_selected_and_discard_keep_other_changes() {
     assert_eq!(repo.read("other"), "keep\n");
     repo.backend
         .apply_edit(&repo.review(&["other"]), RepositoryEdit::Discard, "")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(repo.read("other"), "base\n");
     assert_eq!(repo.read("selected"), "chosen\n");
 }
@@ -271,8 +280,9 @@ fn git_failed_commit_preserves_contents_and_unrelated_index_entries() {
     repo.command(&["add", "other"]);
     let head = repo.command(&["rev-parse", "HEAD"]);
     let hook = repo.root().join(".git/hooks/pre-commit");
-    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").expect("test operation should succeed");
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))
+        .expect("test operation should succeed");
     assert!(
         repo.backend
             .apply_edit(
@@ -292,21 +302,24 @@ fn git_failed_commit_preserves_contents_and_unrelated_index_entries() {
 fn scoped_commit_leaves_the_outside_end_of_a_rename_staged() {
     let mut repo = EditRepo::new(RepositoryKind::Git);
     repo.base();
-    fs::create_dir(repo.root().join("nested")).unwrap();
+    fs::create_dir(repo.root().join("nested")).expect("test operation should succeed");
     repo.command(&["mv", "selected", "nested/selected"]);
     repo.backend.location.project_root = repo.root().join("nested");
-    let snapshot = repo.backend.snapshot().unwrap();
+    let snapshot = repo
+        .backend
+        .snapshot()
+        .expect("test operation should succeed");
     let review = repo
         .backend
         .prepare_edit(
             &snapshot,
             &BTreeSet::from([PathBuf::from("nested/selected")]),
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(review.paths(), &[PathBuf::from("nested/selected")]);
     repo.backend
         .apply_edit(&review, RepositoryEdit::Commit, "add nested file")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(repo.command(&["show", "HEAD:selected"]), "base\n");
     assert_eq!(
         repo.command(&["diff", "--cached", "--name-only"]),
@@ -321,11 +334,15 @@ fn symlink_discard_does_not_follow_the_target() {
     let repo = EditRepo::new(RepositoryKind::Git);
     repo.base();
     let outside = repo.temp.path().join("outside");
-    fs::write(&outside, "keep outside\n").unwrap();
-    std::os::unix::fs::symlink(&outside, repo.root().join("link")).unwrap();
+    fs::write(&outside, "keep outside\n").expect("test operation should succeed");
+    std::os::unix::fs::symlink(&outside, repo.root().join("link"))
+        .expect("test operation should succeed");
     repo.backend
         .apply_edit(&repo.review(&["link"]), RepositoryEdit::Discard, "")
-        .unwrap();
-    assert_eq!(fs::read_to_string(&outside).unwrap(), "keep outside\n");
+        .expect("test operation should succeed");
+    assert_eq!(
+        fs::read_to_string(&outside).expect("test operation should succeed"),
+        "keep outside\n"
+    );
     assert!(fs::symlink_metadata(repo.root().join("link")).is_err());
 }

@@ -134,26 +134,32 @@ fn nested_jujutsu_project_observes_shared_operations_and_git_commits() {
     let project = workspace.join("app");
     // The shared repository need not have a .jj component in its path.
     let shared_repo = temp.path().join("shared-repo");
-    fs::create_dir_all(shared_repo.join("op_heads/heads")).unwrap();
-    fs::create_dir_all(workspace.join(".jj")).unwrap();
-    fs::create_dir_all(workspace.join(".git/refs/heads")).unwrap();
-    fs::create_dir_all(&project).unwrap();
-    fs::write(workspace.join(".jj/repo"), "../../shared-repo").unwrap();
+    fs::create_dir_all(shared_repo.join("op_heads/heads")).expect("test operation should succeed");
+    fs::create_dir_all(workspace.join(".jj")).expect("test operation should succeed");
+    fs::create_dir_all(workspace.join(".git/refs/heads")).expect("test operation should succeed");
+    fs::create_dir_all(&project).expect("test operation should succeed");
+    fs::write(workspace.join(".jj/repo"), "../../shared-repo")
+        .expect("test operation should succeed");
     let location = RepositoryLocation {
         kind: RepositoryKind::Jujutsu,
-        workspace_root: workspace.canonicalize().unwrap(),
-        project_root: project.canonicalize().unwrap(),
+        workspace_root: workspace
+            .canonicalize()
+            .expect("test operation should succeed"),
+        project_root: project
+            .canonicalize()
+            .expect("test operation should succeed"),
     };
-    let metadata = JujutsuMetadata::resolve(&location).unwrap();
+    let metadata = JujutsuMetadata::resolve(&location).expect("test operation should succeed");
     assert!(!metadata.changed(&shared_repo.join("op_heads/lock")));
-    let (_watcher, events) = RepositoryWatcher::start(&location).unwrap();
+    let (_watcher, events) =
+        RepositoryWatcher::start(&location).expect("test operation should succeed");
     for path in [
         shared_repo.join("op_heads/heads/abcdef0123"),
         workspace.join(".git/HEAD"),
         workspace.join(".git/refs/heads/main"),
     ] {
         while events.try_recv().is_ok() {}
-        fs::write(&path, "commit").unwrap();
+        fs::write(&path, "commit").expect("test operation should succeed");
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             if let Ok(event) = events.try_recv() {

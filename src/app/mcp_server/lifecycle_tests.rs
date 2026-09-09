@@ -17,7 +17,7 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
     use std::net::TcpStream;
     use std::time::Duration;
 
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("test operation should succeed");
     let caller = crate::agents::CallerRegistry::shared().issue(
         project.path(),
         crate::agents::CallerProfile {
@@ -30,8 +30,8 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
     );
     let (factories, backend) =
         crate::agents::worker_factories(crate::agents::AgentLaunchConfig::default());
-    let workers =
-        crate::agents::WorkerPool::new(factories, backend, project.path().into(), 1).unwrap();
+    let workers = crate::agents::WorkerPool::new(factories, backend, project.path().into(), 1)
+        .expect("test operation should succeed");
     let (updates, _) = async_channel::bounded(1);
     let service = FarcasterMcp::new(
         project.path().join("state.db"),
@@ -39,25 +39,33 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
         updates,
         notices::NoticeBoard::default(),
     );
-    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = probe.local_addr().unwrap();
+    let probe = TcpListener::bind("127.0.0.1:0").expect("test operation should succeed");
+    let address = probe.local_addr().expect("test operation should succeed");
     drop(probe);
-    let mut server = ServerState::new(service, true, &address.to_string()).unwrap();
+    let mut server = ServerState::new(service, true, &address.to_string())
+        .expect("test operation should succeed");
     let request = |body: serde_json::Value| {
         let body = body.to_string();
-        let mut stream = TcpStream::connect(address).unwrap();
+        let mut stream = TcpStream::connect(address).expect("test operation should succeed");
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
-            .unwrap();
+            .expect("test operation should succeed");
         write!(stream,
             "POST /mcp HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nMCP-Protocol-Version: 2025-11-25\r\nfarcaster-caller: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             caller.token(), body.len(),
-        ).unwrap();
+        ).expect("test operation should succeed");
         let mut response = String::new();
-        stream.read_to_string(&mut response).unwrap();
+        stream
+            .read_to_string(&mut response)
+            .expect("test operation should succeed");
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
-        serde_json::from_str::<serde_json::Value>(response.split_once("\r\n\r\n").unwrap().1)
-            .unwrap()
+        serde_json::from_str::<serde_json::Value>(
+            response
+                .split_once("\r\n\r\n")
+                .expect("test operation should succeed")
+                .1,
+        )
+        .expect("test operation should succeed")
     };
     let initialized = request(serde_json::json!({
         "jsonrpc":"2.0", "id":1, "method":"initialize",
@@ -67,7 +75,9 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
     assert_eq!(initialized["result"]["protocolVersion"], "2025-11-25");
     let response =
         request(serde_json::json!({"jsonrpc":"2.0", "id":2, "method":"tools/list", "params":{}}));
-    let tools = response["result"]["tools"].as_array().unwrap();
+    let tools = response["result"]["tools"]
+        .as_array()
+        .expect("test operation should succeed");
     for tool in tools {
         assert_eq!(
             tool["inputSchema"]["type"], "object",
@@ -123,10 +133,10 @@ try {
             .env("FARCASTER_TEST_CALLER", caller.token())
             .env(
                 "FARCASTER_TEST_TOOL_NAMES",
-                serde_json::to_string(&expected).unwrap(),
+                serde_json::to_string(&expected).expect("test operation should succeed"),
             )
             .status()
-            .unwrap();
+            .expect("test operation should succeed");
         assert!(result.success(), "Claude SDK rejected Farcaster tools");
     }
     server.disable();

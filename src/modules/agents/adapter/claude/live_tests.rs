@@ -5,6 +5,7 @@ use crate::agents::{
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+use std::io::Write as _;
 use std::{
     path::Path,
     thread,
@@ -130,13 +131,20 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let (config, mut launch) = setup(project.path(), HarnessAccessMode::Sandboxed);
     let (worker, id, metadata) = super::spawn_main(&config, &launch)?;
-    let root = config.session_locator_root.as_deref().unwrap();
+    let root = config
+        .session_locator_root
+        .as_deref()
+        .expect("test operation should succeed");
     let path = external_session_path(root, super::BACKEND, &id);
     let mut session =
         WorkerSessionTransport::new(root, super::BACKEND, id.clone(), worker, metadata, None)?;
-    eprintln!("Claude live session {id}");
+    writeln!(std::io::stderr().lock(), "Claude live session {id}").expect("write test diagnostics");
     turn(&mut session, "hi".into(), "", false)?;
-    eprintln!("literal hi prompt rendered a streamed answer with usage");
+    writeln!(
+        std::io::stderr().lock(),
+        "literal hi prompt rendered a streamed answer with usage"
+    )
+    .expect("write test diagnostics");
     session.send(SessionCommand::Prompt {mode:PromptMode::Normal,
         message:"Look at this image, then reply exactly LIVE_IMAGE_OK.".into(),
         images:vec![crate::protocol::PromptImage::new("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4EKBBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULACvxoEydbL2eAAAAAElFTkSuQmCC".into(), "image/png".into())]})?;
@@ -144,7 +152,11 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
     if !has_image(&image_turn.conversation) {
         return Err("attached image disappeared from live transcript".into());
     }
-    eprintln!("attached image remained visible and answer appeared exactly once");
+    writeln!(
+        std::io::stderr().lock(),
+        "attached image remained visible and answer appeared exactly once"
+    )
+    .expect("write test diagnostics");
     std::fs::write(project.path().join("proof.txt"), "LIVE_READ_OK")
         .map_err(|error| error.to_string())?;
     turn(
@@ -153,7 +165,11 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
         "LIVE_READ_OK",
         true,
     )?;
-    eprintln!("real Read tool completed and rendered");
+    writeln!(
+        std::io::stderr().lock(),
+        "real Read tool completed and rendered"
+    )
+    .expect("write test diagnostics");
     session.send(SessionCommand::Prompt {
         mode: PromptMode::Normal,
         message: "Reply exactly LIVE_QUEUE_FIRST. Do not use tools.".into(),
@@ -166,9 +182,11 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
     })?;
     settled(&mut session, "LIVE_QUEUE_FIRST", false)?;
     settled(&mut session, "LIVE_QUEUE_SECOND", false)?;
-    eprintln!(
+    writeln!(
+        std::io::stderr().lock(),
         "queued prompt delivered after first turn settled; nonzero usage verified on each turn"
-    );
+    )
+    .expect("write test diagnostics");
     if session
         .send(SessionCommand::Prompt {
             mode: PromptMode::Steer,
@@ -179,12 +197,20 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
     {
         return Err("Claude advertised no steering but accepted a steer".into());
     }
-    eprintln!("unsupported steering rejected without sending input");
+    writeln!(
+        std::io::stderr().lock(),
+        "unsupported steering rejected without sending input"
+    )
+    .expect("write test diagnostics");
     let child_turn = turn(&mut session,"Use the Agent tool to ask a subagent to read proof.txt and return its contents. After that subagent returns LIVE_READ_OK, reply LIVE_SUBAGENT_OK. Do not read the file yourself.".into(),"LIVE_SUBAGENT_OK",true)?;
     if !child_turn.agent_started {
         return Err("model answered without invoking a native subagent".into());
     }
-    eprintln!("native subagent tool completed and parent answer rendered");
+    writeln!(
+        std::io::stderr().lock(),
+        "native subagent tool completed and parent answer rendered"
+    )
+    .expect("write test diagnostics");
     session.close()?;
     let history = super::load_history(&path)?;
     let mut saved = ConversationState::default();
@@ -208,7 +234,11 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
         false,
     )?;
     resumed.close()?;
-    eprintln!("history loaded and resumed turn rendered and settled");
+    writeln!(
+        std::io::stderr().lock(),
+        "history loaded and resumed turn rendered and settled"
+    )
+    .expect("write test diagnostics");
     Ok(())
 }
 
@@ -220,7 +250,11 @@ fn real_claude_interrupt_and_recover() -> Result<(), String> {
     let (config, launch) = setup(project.path(), HarnessAccessMode::Full);
     for during_tool in [false, true] {
         let (mut worker, id, _) = super::spawn_main(&config, &launch)?;
-        eprintln!("interrupt session {id}: during_tool={during_tool}");
+        writeln!(
+            std::io::stderr().lock(),
+            "interrupt session {id}: during_tool={during_tool}"
+        )
+        .expect("write test diagnostics");
         worker.send(
             "Use Bash to run sleep 30 in the foreground (run_in_background=false), then reply LIVE_SHOULD_BE_INTERRUPTED.".into(),
             WorkerSendMode::Prompt,
@@ -282,7 +316,11 @@ fn real_claude_interrupt_and_recover() -> Result<(), String> {
         if !recovered {
             return Err("session did not recover after interrupt".into());
         }
-        eprintln!("interrupt, queue cancellation, and recovery passed: during_tool={during_tool}");
+        writeln!(
+            std::io::stderr().lock(),
+            "interrupt, queue cancellation, and recovery passed: during_tool={during_tool}"
+        )
+        .expect("write test diagnostics");
     }
     Ok(())
 }

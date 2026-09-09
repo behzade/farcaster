@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -166,10 +167,12 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
     let mut session = spawn_session(&config, launch(SessionStart::New, None))?;
     let path = session_path(&mut *session)?;
     if !coverage.delete {
-        eprintln!(
+        writeln!(
+            std::io::stderr().lock(),
             "{harness}: live test session {} will remain because deletion is unsupported",
             path.display()
-        );
+        )
+        .expect("write test diagnostics");
     }
 
     let outcome = (|| {
@@ -296,7 +299,7 @@ fn exercise_live_move(
                     "MOVE_CWD_{}",
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
+                        .expect("test operation should succeed")
                         .as_nanos()
                 );
                 fs::write(project.join("move-cwd-proof.txt"), &token)

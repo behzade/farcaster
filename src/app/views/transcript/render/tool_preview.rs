@@ -29,7 +29,8 @@ impl ToolPreview {
         // A serializer can split UTF-8 across writes; only the final prefix needs
         // to end on a character boundary.
         std::str::from_utf8(&self.bytes).unwrap_or_else(|error| {
-            std::str::from_utf8(&self.bytes[..error.valid_up_to()]).unwrap()
+            std::str::from_utf8(&self.bytes[..error.valid_up_to()])
+                .expect("valid_up_to marks a valid UTF-8 prefix")
         })
     }
 

@@ -20,16 +20,16 @@ fn recognizes_wsl_kernel_versions() {
 
 #[test]
 fn non_nixos_appimages_keep_their_environment() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().expect("test operation should succeed");
     assert!(
         appimage_environment(&directory.path().join("absent"), false, |_| None)
-            .unwrap()
+            .expect("test operation should succeed")
             .is_empty()
     );
 }
 
 fn driver_fixture() -> tempfile::TempDir {
-    let root = tempfile::tempdir().unwrap();
+    let root = tempfile::tempdir().expect("test operation should succeed");
     for name in [
         "share/vulkan/icd.d/radeon_icd.json",
         "share/vulkan/icd.d/dzn_icd.json",
@@ -37,8 +37,9 @@ fn driver_fixture() -> tempfile::TempDir {
         "share/glvnd/egl_vendor.d/50_mesa.json",
     ] {
         let path = root.path().join(name);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, "{}").unwrap();
+        std::fs::create_dir_all(path.parent().expect("test operation should succeed"))
+            .expect("test operation should succeed");
+        std::fs::write(path, "{}").expect("test operation should succeed");
     }
     root
 }
@@ -46,11 +47,12 @@ fn driver_fixture() -> tempfile::TempDir {
 #[test]
 fn nixos_appimage_finds_host_manifests_without_native_linux_dzn() {
     let root = driver_fixture();
-    let environment = appimage_environment(root.path(), false, |_| None).unwrap();
+    let environment =
+        appimage_environment(root.path(), false, |_| None).expect("test operation should succeed");
     let vulkan = &environment
         .iter()
         .find(|(key, _)| *key == "VK_ICD_FILENAMES")
-        .unwrap()
+        .expect("test operation should succeed")
         .1;
     assert_eq!(
         std::env::split_paths(vulkan).collect::<Vec<_>>(),
@@ -59,7 +61,7 @@ fn nixos_appimage_finds_host_manifests_without_native_linux_dzn() {
     let egl = &environment
         .iter()
         .find(|(key, _)| *key == "__EGL_VENDOR_LIBRARY_FILENAMES")
-        .unwrap()
+        .expect("test operation should succeed")
         .1;
     assert_eq!(
         std::env::split_paths(egl).collect::<Vec<_>>(),
@@ -70,11 +72,12 @@ fn nixos_appimage_finds_host_manifests_without_native_linux_dzn() {
 #[test]
 fn wsl_keeps_dzn_available() {
     let root = driver_fixture();
-    let environment = appimage_environment(root.path(), true, |_| None).unwrap();
+    let environment =
+        appimage_environment(root.path(), true, |_| None).expect("test operation should succeed");
     let vulkan = &environment
         .iter()
         .find(|(key, _)| *key == "VK_ICD_FILENAMES")
-        .unwrap()
+        .expect("test operation should succeed")
         .1;
     assert!(std::env::split_paths(vulkan).any(|path| path.ends_with("dzn_icd.json")));
 }
@@ -86,7 +89,7 @@ fn host_manifest_defaults_respect_explicit_driver_configuration() {
         let environment = appimage_environment(root.path(), false, |name| {
             (name == key).then(|| "explicit".into())
         })
-        .unwrap();
+        .expect("test operation should succeed");
         assert!(
             !environment
                 .iter()
@@ -101,7 +104,7 @@ fn host_manifest_defaults_respect_explicit_driver_configuration() {
         let environment = appimage_environment(root.path(), false, |name| {
             (name == key).then(|| "explicit".into())
         })
-        .unwrap();
+        .expect("test operation should succeed");
         assert!(
             !environment
                 .iter()
@@ -131,7 +134,8 @@ fn wayland_resolution_uses_only_a_resolved_client_library() {
 #[test]
 fn host_wayland_preload_preserves_entries_and_converges_after_relaunch() {
     let host = "/host/lib/libwayland-client.so.0";
-    let preload = preload_host_wayland(Some("/custom/a.so /custom/b.so".into()), host).unwrap();
+    let preload = preload_host_wayland(Some("/custom/a.so /custom/b.so".into()), host)
+        .expect("test operation should succeed");
     assert_eq!(
         preload,
         OsString::from(format!("{host}:/custom/a.so /custom/b.so"))
@@ -143,13 +147,14 @@ fn host_wayland_preload_preserves_entries_and_converges_after_relaunch() {
 #[test]
 fn manifest_defaults_converge_after_relaunch() {
     let root = driver_fixture();
-    let environment = appimage_environment(root.path(), false, |_| None).unwrap();
+    let environment =
+        appimage_environment(root.path(), false, |_| None).expect("test operation should succeed");
     let second = appimage_environment(root.path(), false, |name| {
         environment
             .iter()
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value.clone())
     })
-    .unwrap();
+    .expect("test operation should succeed");
     assert!(second.is_empty());
 }

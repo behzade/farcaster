@@ -363,7 +363,10 @@ impl ClaudeSession {
                         let receipt: SDKControlInterruptResponse =
                             decode(response["response"].clone())?;
                         if let Presence::Present(cancelled) = receipt.cancelled
-                            && self.active_uuid.as_ref().is_some_and(|id| cancelled.contains(id))
+                            && self
+                                .active_uuid
+                                .as_ref()
+                                .is_some_and(|id| cancelled.contains(id))
                         {
                             self.idle();
                             self.events.pending.push_back(WorkerEvent::Settled {
@@ -377,7 +380,8 @@ impl ClaudeSession {
                 self.events.message(&frame);
                 self.idle();
                 let interrupted = matches!(
-                    string(&frame, "terminal_reason"), "aborted_streaming" | "aborted_tools"
+                    string(&frame, "terminal_reason"),
+                    "aborted_streaming" | "aborted_tools"
                 );
                 if !interrupted && (frame["is_error"] == true || frame["subtype"] != "success") {
                     self.queued.clear();
@@ -469,7 +473,8 @@ impl WorkerSession for ClaudeSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        let images = images.into_iter()
+        let images = images
+            .into_iter()
             .map(crate::protocol::PromptImage::into_inline)
             .collect::<Result<Vec<_>, _>>()?;
         let prompt = Prompt {
@@ -477,7 +482,11 @@ impl WorkerSession for ClaudeSession {
             delivery: if images.is_empty() {
                 WorkerActivity::InputDelivered { mode, message }
             } else {
-                WorkerActivity::InputDeliveredWithImages { mode, message, images }
+                WorkerActivity::InputDeliveredWithImages {
+                    mode,
+                    message,
+                    images,
+                }
             },
         };
         self.admit(prompt, mode)
@@ -546,10 +555,10 @@ impl WorkerSession for ClaudeSession {
                 if let Err(error) = self.deliver(prompt) {
                     return Some(self.fail(error));
                 }
-            } else if let Some(message) = self.caller.try_recv() {
-                if let Err(error) = self.send_peer_message(&message, WorkerSendMode::Prompt) {
-                    return Some(self.fail(error));
-                }
+            } else if let Some(message) = self.caller.try_recv()
+                && let Err(error) = self.send_peer_message(&message, WorkerSendMode::Prompt)
+            {
+                return Some(self.fail(error));
             }
         }
         self.events.pending.pop_front()

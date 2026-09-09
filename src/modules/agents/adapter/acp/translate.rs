@@ -100,10 +100,10 @@ pub(super) fn metadata_from_session(
             {
                 metadata.modes.swap(0, index);
             }
-        } else if id == ids.effort.as_deref() {
-            if let Some(index) = metadata.efforts.iter().position(|effort| effort == current) {
-                metadata.efforts.swap(0, index);
-            }
+        } else if id == ids.effort.as_deref()
+            && let Some(index) = metadata.efforts.iter().position(|effort| effort == current)
+        {
+            metadata.efforts.swap(0, index);
         }
     }
     (metadata, ids)

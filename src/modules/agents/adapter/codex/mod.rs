@@ -56,8 +56,8 @@ use super::super::contract::{
 };
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
-    use CapabilitySupport::{Available, Unsupported};
     use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+    use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
         id: AgentBackendId::new("codex-cli").expect("Codex backend id is valid"),

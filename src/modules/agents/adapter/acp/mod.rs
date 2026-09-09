@@ -9,6 +9,13 @@ mod worker;
 
 use std::path::PathBuf;
 
+pub(super) type MainSession = (
+    Box<dyn crate::agents::WorkerSession>,
+    String,
+    super::main_session::MainSessionMetadata,
+    Option<crate::agents::DiscoveredHistory>,
+);
+
 pub(in crate::modules::agents::adapter) use catalog::{
     list_sessions, load_configuration, load_history,
 };

@@ -22,8 +22,8 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
 };
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
-    use CapabilitySupport::{Available, Unsupported};
     use crate::agents::HarnessAccessMode::{Full, Sandboxed};
+    use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
         id: AgentBackendId::new(PROFILE.backend).expect("Cursor backend id is valid"),
@@ -83,15 +83,7 @@ pub(super) fn worker_factory(mut command: crate::agents::AgentLaunchConfig) -> A
 pub(super) fn spawn_main(
     command: &crate::agents::AgentLaunchConfig,
     launch: &crate::agents::SessionLaunch,
-) -> Result<
-    (
-        Box<dyn crate::agents::WorkerSession>,
-        String,
-        super::main_session::MainSessionMetadata,
-        Option<crate::agents::DiscoveredHistory>,
-    ),
-    String,
-> {
+) -> Result<super::acp::MainSession, String> {
     if let crate::agents::SessionStart::Resume(_) = &launch.start {
         let id = super::main_session::launch_session_locator(launch)
             .ok_or_else(|| "Cursor resume requires a session id".to_owned())?;

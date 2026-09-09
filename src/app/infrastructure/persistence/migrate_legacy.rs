@@ -97,7 +97,7 @@ pub(super) fn migrate_to_v11(
                      UPDATE meta SET value='5' WHERE key='schema_version';",
             )
             .map_err(|error| format!("migrate GUI state schema to 5: {error}"))?,
-        5 | 6 | 7 | 8 | 9 | 10 | 11 => {}
+        5..=11 => {}
         _ => {
             return Err(format!(
                 "GUI state schema {schema_version} is not supported by this build"

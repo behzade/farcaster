@@ -19,7 +19,7 @@ fn empty_session() -> crate::protocol::SessionState {
         "messageCount": 0,
         "pendingMessageCount": 0
     }))
-    .unwrap()
+    .expect("test operation should succeed")
 }
 
 #[test]
@@ -54,12 +54,32 @@ fn automatic_title_requires_a_loaded_new_unnamed_session() {
             matches!(harness, "codex-cli" | "pi"),
             "{harness} fresh-session title support"
         );
-        owner.snapshot.session.as_mut().unwrap().session_name = Some("Keep this title".into());
+        owner
+            .snapshot
+            .session
+            .as_mut()
+            .expect("test operation should succeed")
+            .session_name = Some("Keep this title".into());
         assert!(!owner.should_generate_automatic_title(PromptMode::Normal, false));
-        owner.snapshot.session.as_mut().unwrap().session_name = None;
-        owner.snapshot.session.as_mut().unwrap().message_count = 2;
+        owner
+            .snapshot
+            .session
+            .as_mut()
+            .expect("test operation should succeed")
+            .session_name = None;
+        owner
+            .snapshot
+            .session
+            .as_mut()
+            .expect("test operation should succeed")
+            .message_count = 2;
         assert!(!owner.should_generate_automatic_title(PromptMode::Normal, false));
-        owner.snapshot.session.as_mut().unwrap().message_count = 0;
+        owner
+            .snapshot
+            .session
+            .as_mut()
+            .expect("test operation should succeed")
+            .message_count = 0;
         assert!(!owner.should_generate_automatic_title(PromptMode::Normal, true));
         assert!(!owner.should_generate_automatic_title(PromptMode::Steer, false));
         assert!(!owner.should_generate_automatic_title(PromptMode::FollowUp, false));

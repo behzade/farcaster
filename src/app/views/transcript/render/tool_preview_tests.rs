@@ -54,9 +54,9 @@ fn json_serialization_stops_at_preview_limit() {
 fn short_json_keeps_the_full_inspection_format() {
     let value = serde_json::json!({"command": "echo 🦀", "args": [1, 2]});
     let mut preview = ToolPreview::default();
-    serde_json::to_writer_pretty(&mut preview, &value).unwrap();
+    serde_json::to_writer_pretty(&mut preview, &value).expect("test operation should succeed");
     assert_eq!(
         preview.finish(),
-        serde_json::to_string_pretty(&value).unwrap()
+        serde_json::to_string_pretty(&value).expect("test operation should succeed")
     );
 }

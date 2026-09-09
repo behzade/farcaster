@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use super::*;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle},
-    app::session::lifecycle::{USER_SESSION_SWITCH_RESTORES_CENTER, current_close_target},
+    app::session::lifecycle::current_close_target,
     app::views::transcript::conversation::{TranscriptItem, TranscriptKind},
     sessions::UsageSummary,
 };
@@ -20,11 +20,6 @@ fn close_targets_a_draft_before_its_backing_session() {
         current_close_target(None, Some(session)),
         CurrentCloseTarget::Session(session.into())
     );
-}
-
-#[test]
-fn explicit_session_switches_restore_each_sessions_native_center() {
-    assert!(USER_SESSION_SWITCH_RESTORES_CENTER);
 }
 
 fn item(text: &str) -> TranscriptItem {
@@ -349,12 +344,15 @@ fn service_tier_changes_refresh_controls_without_changing_model_identity() {
                 "autoCompactionEnabled":false,"messageCount":0,"pendingMessageCount":0,
                 "serviceTier":"standard","serviceTiers":["standard","priority"]
             }))
-            .unwrap(),
+            .expect("test operation should succeed"),
         ),
         ..RuntimeSnapshot::default()
     };
     let mut next = previous.clone();
-    next.session.as_mut().unwrap().service_tier = Some("priority".into());
+    next.session
+        .as_mut()
+        .expect("test operation should succeed")
+        .service_tier = Some("priority".into());
     assert_eq!(previous.session_identity(), next.session_identity());
     assert!(composer_snapshot_changed(&previous, &next));
 }

@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::{
     path::PathBuf,
     time::{Duration, Instant, UNIX_EPOCH},
@@ -43,10 +44,12 @@ fn archived_rail_lists_792_large_roots() {
 
     assert!(lists.active.is_empty());
     assert_eq!(lists.archived.len(), ROOTS);
-    eprintln!(
+    writeln!(
+        std::io::stderr().lock(),
         "archived_rail_lists_792_large_roots elapsed_ms={:.2} roots={} search_mib={:.1}",
         elapsed.as_secs_f64() * 1_000.0,
         ROOTS,
         (ROOTS * SEARCH_BYTES) as f64 / (1024.0 * 1024.0),
-    );
+    )
+    .expect("write test diagnostics");
 }

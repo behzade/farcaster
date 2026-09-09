@@ -184,7 +184,10 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
     let links = Arc::new(Mutex::new(Vec::new()));
     let captured = links.clone();
     registry.set_family_sink(Some(Arc::new(move |link| {
-        captured.lock().unwrap().push(link.clone());
+        captured
+            .lock()
+            .expect("test operation should succeed")
+            .push(link.clone());
         Ok(())
     })));
     let parent = identity(&registry, Path::new("/project"), "pi");
@@ -221,19 +224,42 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
             .session_parent("opencode2", "opencode-child")
             .is_none()
     );
-    assert_eq!(links.lock().unwrap().len(), 1);
-    assert_eq!(links.lock().unwrap()[0].parent_backend, "pi");
+    assert_eq!(
+        links.lock().expect("test operation should succeed").len(),
+        1
+    );
+    assert_eq!(
+        links.lock().expect("test operation should succeed")[0].parent_backend,
+        "pi"
+    );
     child.select_model("opencode-go", "glm-5.3-flash");
     child.select_effort("high");
-    let saved = links.lock().unwrap().last().unwrap().clone();
+    let saved = links
+        .lock()
+        .expect("test operation should succeed")
+        .last()
+        .expect("test operation should succeed")
+        .clone();
     let execution = saved.execution.expect("persisted execution");
     assert_eq!(execution.provider, "opencode-go");
     assert_eq!(execution.model, "glm-5.3-flash");
     assert_eq!(execution.effort.as_deref(), Some("high"));
     registry.send(child.token(), "", "done".into())?;
-    assert_eq!(parent.try_recv().unwrap().message, "done");
+    assert_eq!(
+        parent
+            .try_recv()
+            .expect("test operation should succeed")
+            .message,
+        "done"
+    );
     registry.send(parent.token(), "inspect", "continue".into())?;
-    assert_eq!(child.try_recv().unwrap().message, "continue");
+    assert_eq!(
+        child
+            .try_recv()
+            .expect("test operation should succeed")
+            .message,
+        "continue"
+    );
     Ok(())
 }
 

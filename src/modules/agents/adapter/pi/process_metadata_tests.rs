@@ -6,8 +6,8 @@ fn environment(command: &Command) -> BTreeMap<&str, Option<&str>> {
         .get_envs()
         .map(|(key, value)| {
             (
-                key.to_str().unwrap(),
-                value.map(|value| value.to_str().unwrap()),
+                key.to_str().expect("test operation should succeed"),
+                value.map(|value| value.to_str().expect("test operation should succeed")),
             )
         })
         .collect()

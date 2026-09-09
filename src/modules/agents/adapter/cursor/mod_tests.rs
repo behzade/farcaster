@@ -1,3 +1,4 @@
+use std::io::Write as _;
 #[test]
 #[ignore = "queries the configured live Cursor account"]
 fn live_cursor_configuration_catalog() -> Result<(), String> {
@@ -14,6 +15,11 @@ fn live_cursor_configuration_catalog() -> Result<(), String> {
             .iter()
             .all(|model| { model.provider == super::PROFILE.backend && !model.id.is_empty() })
     );
-    eprintln!("Cursor catalog loaded {} models", catalog.models.len());
+    writeln!(
+        std::io::stderr().lock(),
+        "Cursor catalog loaded {} models",
+        catalog.models.len()
+    )
+    .expect("write test diagnostics");
     Ok(())
 }

@@ -70,7 +70,7 @@ fn nested_expansion_preserves_literals_and_allows_repeated_references() {
         ("leaf", "done"),
     ];
     assert_eq!(
-        expand_body("$outer", &sources, &mut Vec::new()).unwrap(),
+        expand_body("$outer", &sources, &mut Vec::new()).expect("test operation should succeed"),
         r"done! done $missing \$inner"
     );
 }
@@ -79,7 +79,8 @@ fn nested_expansion_preserves_literals_and_allows_repeated_references() {
 fn cycles_stop_at_the_repeated_reference() {
     for sources in [vec![("a", "$a")], vec![("a", "$b"), ("b", "$a")]] {
         assert_eq!(
-            expand_body("$a! $a", &sources, &mut Vec::new()).unwrap(),
+            expand_body("$a! $a", &sources, &mut Vec::new())
+                .expect("test operation should succeed"),
             "$a! $a"
         );
     }
@@ -91,9 +92,9 @@ fn show_me_expands_without_attribution_metadata() {
         let expansion = expand(input).expect("show-me prompt should expand");
         let (_, body) = include_str!("../../../prompts/show-me.md")
             .strip_prefix("---\n")
-            .unwrap()
+            .expect("test operation should succeed")
             .split_once("\n---\n")
-            .unwrap();
+            .expect("test operation should succeed");
         assert_eq!(expansion.message, body.trim());
     }
 }

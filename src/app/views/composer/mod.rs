@@ -28,6 +28,7 @@ use dialogs::{
 use queue::{QueuedMessageKind, queued_message_groups, queued_message_preview};
 
 impl FarcasterApp {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_composer(
         &self,
         entity: WeakEntity<Self>,

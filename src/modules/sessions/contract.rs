@@ -202,6 +202,10 @@ impl SessionSummary {
 pub(crate) struct SessionDiscovery {
     pub sessions: Vec<SessionSummary>,
     pub activities: HashMap<String, AgentActivity>,
+    #[allow(
+        dead_code,
+        reason = "Adapters report scan completeness alongside discovered sessions."
+    )]
     pub exhaustive: bool,
 }
 

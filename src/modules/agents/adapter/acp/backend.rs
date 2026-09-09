@@ -10,8 +10,8 @@ pub(in crate::modules::agents::adapter) fn descriptor(
     profile: &AcpProfile,
     replays_history: bool,
 ) -> AgentBackendDescriptor {
-    use CapabilitySupport::{Available, Unsupported};
     use crate::agents::HarnessAccessMode::{Full, Sandboxed};
+    use CapabilitySupport::{Available, Unsupported};
     let history = if replays_history {
         Available
     } else {

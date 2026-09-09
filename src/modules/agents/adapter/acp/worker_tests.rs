@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write as _;
 
 #[cfg(unix)]
 #[test]
@@ -44,7 +45,7 @@ done
                             value: Some("Allow".into()),
                             cancel: false,
                         })
-                        .unwrap();
+                        .expect("test operation should succeed");
                 }
                 Some(WorkerEvent::Settled { output }) => return (output, approvals),
                 Some(WorkerEvent::Failed(error)) => panic!("{error}"),
@@ -55,11 +56,13 @@ done
     }
     for profile in [&super::super::super::antigravity::PROFILE] {
         for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
-            let project = tempfile::tempdir().unwrap();
+            let project = tempfile::tempdir().expect("test operation should succeed");
             let executable = project.path().join("agent");
-            std::fs::write(&executable, SCRIPT).unwrap();
-            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
-            std::fs::write(project.path().join("localharness_external"), "fixture").unwrap();
+            std::fs::write(&executable, SCRIPT).expect("test operation should succeed");
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+                .expect("test operation should succeed");
+            std::fs::write(project.path().join("localharness_external"), "fixture")
+                .expect("test operation should succeed");
             let command = AgentLaunchConfig {
                 program: executable.clone(),
                 prefix_args: vec![],
@@ -68,30 +71,49 @@ done
                 session_locator_root: None,
             };
             let (mut session, metadata, _) =
-                spawn_session(&command, profile, project.path(), None, None, None).unwrap();
+                spawn_session(&command, profile, project.path(), None, None, None)
+                    .expect("test operation should succeed");
             assert_eq!(
                 metadata.modes[0]["id"],
-                profile.permission_mode(access_mode).unwrap()
+                profile
+                    .permission_mode(access_mode)
+                    .expect("test operation should succeed")
             );
             session
                 .send("hello".into(), WorkerSendMode::Prompt)
-                .unwrap();
+                .expect("test operation should succeed");
             assert_eq!(settle(&mut session), ("fixture ok".into(), 1));
-            session.send("hold".into(), WorkerSendMode::Prompt).unwrap();
-            session.abort().unwrap();
+            session
+                .send("hold".into(), WorkerSendMode::Prompt)
+                .expect("test operation should succeed");
+            session.abort().expect("test operation should succeed");
             assert_eq!(settle(&mut session).1, 0);
-            session.close().unwrap();
-            assert!(session.child.try_wait().unwrap().is_some());
+            session.close().expect("test operation should succeed");
+            assert!(
+                session
+                    .child
+                    .try_wait()
+                    .expect("test operation should succeed")
+                    .is_some()
+            );
             let (mut resumed, _, _) =
-                spawn_session(&command, profile, project.path(), Some("one"), None, None).unwrap();
-            resumed.close().unwrap();
-            let requests = std::fs::read_to_string(executable.with_extension("requests")).unwrap();
+                spawn_session(&command, profile, project.path(), Some("one"), None, None)
+                    .expect("test operation should succeed");
+            resumed.close().expect("test operation should succeed");
+            let requests = std::fs::read_to_string(executable.with_extension("requests"))
+                .expect("test operation should succeed");
             assert!(requests.contains(profile.resume_method));
             assert_eq!(
                 requests.contains("authenticate"),
                 profile.auth_method.is_some()
             );
-            assert!(requests.contains(profile.permission_mode(access_mode).unwrap()));
+            assert!(
+                requests.contains(
+                    profile
+                        .permission_mode(access_mode)
+                        .expect("test operation should succeed")
+                )
+            );
         }
     }
 }
@@ -112,13 +134,15 @@ const PROFILE: AcpProfile = AcpProfile {
 fn inert_session() -> AcpWorkerSession {
     AcpWorkerSession {
         profile: PROFILE.clone(),
-        child: std::process::Command::new("true").spawn().unwrap(),
+        child: std::process::Command::new("true")
+            .spawn()
+            .expect("test operation should succeed"),
         connection: AcpConnection::new(
             futures::io::Cursor::new(Vec::<u8>::new()),
             futures::io::Cursor::new(Vec::<u8>::new()),
             None,
         )
-        .unwrap(),
+        .expect("test operation should succeed"),
         session_id: "one".into(),
         current_prompt: Some(AcpRequestId::Number(1)),
         pending_steers: HashMap::new(),
@@ -143,9 +167,9 @@ fn inert_session() -> AcpWorkerSession {
 fn model_and_service_tier_are_sent_independently() {
     use std::io::{BufRead as _, Write as _};
     use std::os::unix::net::UnixStream;
-    let (client, peer) = UnixStream::pair().unwrap();
+    let (client, peer) = UnixStream::pair().expect("test operation should succeed");
     peer.set_read_timeout(Some(std::time::Duration::from_secs(3)))
-        .unwrap();
+        .expect("test operation should succeed");
     let peer = thread::spawn(move || {
         let mut peer = std::io::BufReader::new(peer);
         for (config, value) in [
@@ -155,8 +179,10 @@ fn model_and_service_tier_are_sent_independently() {
             ("fast", "false"),
         ] {
             let mut line = String::new();
-            peer.read_line(&mut line).unwrap();
-            let request: Value = serde_json::from_str(&line).unwrap();
+            peer.read_line(&mut line)
+                .expect("test operation should succeed");
+            let request: Value =
+                serde_json::from_str(&line).expect("test operation should succeed");
             assert_eq!(request["method"], "session/set_config_option");
             assert_eq!(request["params"]["configId"], config);
             assert_eq!(request["params"]["value"], value);
@@ -166,18 +192,20 @@ fn model_and_service_tier_are_sent_independently() {
                 {"id":"fast","category":"model_config","currentValue":if config == "fast" {value} else {"false"},"options":[{"value":"false"},{"value":"true"}]},
                 {"id":"effort","category":"thought_level","currentValue":"high","options":[{"value":"high"}]}
             ]}});
-            writeln!(peer.get_mut(), "{response}").unwrap();
-            peer.get_mut().flush().unwrap();
+            writeln!(peer.get_mut(), "{response}").expect("test operation should succeed");
+            peer.get_mut()
+                .flush()
+                .expect("test operation should succeed");
         }
     });
     let mut session = inert_session();
     session.profile = super::super::super::cursor::PROFILE;
     session.connection = AcpConnection::new(
-        blocking::Unblock::new(client.try_clone().unwrap()),
+        blocking::Unblock::new(client.try_clone().expect("test operation should succeed")),
         blocking::Unblock::new(client),
         None,
     )
-    .unwrap();
+    .expect("test operation should succeed");
     session.config_ids.model = Some("model".into());
     session.config_ids.service_tier = Some("fast".into());
     session.config_ids.selected_service_tier = Some("priority".into());
@@ -194,13 +222,15 @@ fn model_and_service_tier_are_sent_independently() {
     );
     session
         .select_model("cursor-cli", "base[context=1m]")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(
         session.config_ids.selected_service_tier.as_deref(),
         Some("priority")
     );
     let model = session.config_ids.selected_model.clone();
-    session.select_service_tier("standard").unwrap();
+    session
+        .select_service_tier("standard")
+        .expect("test operation should succeed");
     assert_eq!(session.config_ids.selected_model, model);
     assert_eq!(model.as_deref(), Some("base[context=1m]"));
     assert_eq!(
@@ -210,7 +240,7 @@ fn model_and_service_tier_are_sent_independently() {
     assert!(session.events.iter().any(|event| matches!(event,
         WorkerEvent::Activity(WorkerActivity::ServiceTierChanged {selected:Some(tier),options})
             if tier == "priority" && options == &["standard", "priority"])));
-    peer.join().unwrap();
+    peer.join().expect("test operation should succeed");
 }
 
 #[cfg(unix)]
@@ -227,7 +257,7 @@ fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
     );
     assert!(session.update(json!({"sessionId":"other","update":{"sessionUpdate":"session_info_update","title":"Wrong"}})).is_none());
     for (index, status) in ["pending", "completed"].into_iter().enumerate() {
-        let event = session.update(json!({"sessionId":"one","update":{"sessionUpdate":"plan","entries":[{"content":"Check","status":status,"priority":"high"}]}})).unwrap();
+        let event = session.update(json!({"sessionId":"one","update":{"sessionUpdate":"plan","entries":[{"content":"Check","status":status,"priority":"high"}]}})).expect("test operation should succeed");
         if index == 0 {
             assert!(matches!(
                 event,
@@ -249,7 +279,8 @@ fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
 #[test]
 fn full_access_uses_the_profile_escape_hatch() {
     let mut command = std::process::Command::new("agent");
-    configure_command(&mut command, &PROFILE, HarnessAccessMode::Full).unwrap();
+    configure_command(&mut command, &PROFILE, HarnessAccessMode::Full)
+        .expect("test operation should succeed");
     assert_eq!(
         command
             .get_args()
@@ -262,7 +293,7 @@ fn full_access_uses_the_profile_escape_hatch() {
 #[test]
 #[ignore = "requires signed-in Cursor and network; creates a scratch session"]
 fn live_cursor_configuration_and_listing() {
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("test operation should succeed");
     let command = AgentLaunchConfig {
         program: "agent".into(),
         prefix_args: Vec::new(),
@@ -272,7 +303,8 @@ fn live_cursor_configuration_and_listing() {
     };
     let profile = &super::super::super::cursor::PROFILE;
     let (mut session, metadata, _) =
-        spawn_session(&command, profile, project.path(), None, None, None).unwrap();
+        spawn_session(&command, profile, project.path(), None, None, None)
+            .expect("test operation should succeed");
     assert!(!metadata.models.is_empty());
     assert!(
         metadata
@@ -291,21 +323,32 @@ fn live_cursor_configuration_and_listing() {
             .as_array()
             .is_some_and(|efforts| !efforts.is_empty())
     }));
-    let original_mode = metadata.modes.first().unwrap()["id"]
+    let original_mode = metadata
+        .modes
+        .first()
+        .expect("test operation should succeed")["id"]
         .as_str()
-        .unwrap()
+        .expect("test operation should succeed")
         .to_owned();
     if let Some(tier) = &metadata.service_tier {
         let original_model = session.config_ids.selected_model.clone();
-        session.select_service_tier(tier).unwrap();
+        session
+            .select_service_tier(tier)
+            .expect("test operation should succeed");
         assert_eq!(session.config_ids.selected_model, original_model);
         assert_eq!(
             session.config_ids.selected_service_tier.as_ref(),
             Some(tier)
         );
-        eprintln!("Service tier {tier} confirmed without changing model identity");
+        writeln!(
+            std::io::stderr().lock(),
+            "Service tier {tier} confirmed without changing model identity"
+        )
+        .expect("write test diagnostics");
     }
-    session.select_mode("ask").unwrap();
+    session
+        .select_mode("ask")
+        .expect("test operation should succeed");
     assert!(session.events.iter().any(|event| matches!(event,
         WorkerEvent::Activity(WorkerActivity::ModeChanged(mode)) if mode == "ask")));
     assert!(session.events.iter().any(|event| matches!(
@@ -315,20 +358,29 @@ fn live_cursor_configuration_and_listing() {
             ..
         })
     )));
-    session.select_mode(&original_mode).unwrap();
-    session.close().unwrap();
-    assert!(session.child.try_wait().unwrap().is_some());
-    let sessions = super::super::catalog::list_sessions(profile).unwrap();
+    session
+        .select_mode(&original_mode)
+        .expect("test operation should succeed");
+    session.close().expect("test operation should succeed");
+    assert!(
+        session
+            .child
+            .try_wait()
+            .expect("test operation should succeed")
+            .is_some()
+    );
+    let sessions =
+        super::super::catalog::list_sessions(profile).expect("test operation should succeed");
     assert!(
         sessions
             .iter()
             .all(|entry| entry["sessionId"].is_string() && entry["cwd"].is_string())
     );
-    eprintln!(
+    writeln!(std::io::stderr().lock(),
         "Live configuration: {} model choices; service tier excluded from model IDs; context/effort present; mode response refreshed; listing returned {} sessions",
         metadata.models.len(),
         sessions.len()
-    );
+    ).expect("write test diagnostics");
 }
 
 /// Uses the installed, signed-in Cursor CLI and makes real model requests.
@@ -343,7 +395,12 @@ fn live_cursor_session_round_trip() {
             match session.poll() {
                 Some(WorkerEvent::Settled { output }) => return output,
                 Some(WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands })) => {
-                    eprintln!("Live command update: {} commands", commands.len());
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "Live command update: {} commands",
+                        commands.len()
+                    )
+                    .expect("write test diagnostics");
                 }
                 Some(WorkerEvent::Failed(error)) => panic!("Cursor failed: {error}"),
                 Some(WorkerEvent::NeedsInput(input)) => {
@@ -353,7 +410,7 @@ fn live_cursor_session_round_trip() {
                             value: None,
                             cancel: true,
                         })
-                        .unwrap();
+                        .expect("test operation should succeed");
                     panic!("no-tool prompt unexpectedly requested permission");
                 }
                 _ => thread::sleep(Duration::from_millis(20)),
@@ -366,7 +423,7 @@ fn live_cursor_session_round_trip() {
         session.send(
             "Use the shell tool exactly once to run `printf FARCASTER_PERMISSION_CHECK`. Do not read or change files or run any other command. If denied, do not retry; just reply DENIED.".into(),
             WorkerSendMode::Prompt,
-        ).unwrap();
+        ).expect("test operation should succeed");
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut permissions = 0;
         let mut approvals = 0;
@@ -375,7 +432,7 @@ fn live_cursor_session_round_trip() {
                 Some(WorkerEvent::NeedsInput(input)) => {
                     permissions += 1;
                     if action == "cancel" {
-                        session.abort().unwrap();
+                        session.abort().expect("test operation should succeed");
                     } else {
                         // Only approve the harmless command named by this test.
                         let approved = action == "allow"
@@ -387,13 +444,13 @@ fn live_cursor_session_round_trip() {
                                 value: Some(if approved { "Allow" } else { "Decline" }.into()),
                                 cancel: false,
                             })
-                            .unwrap();
+                            .expect("test operation should succeed");
                     }
                 }
                 Some(WorkerEvent::Settled { .. }) => {
-                    eprintln!(
+                    writeln!(std::io::stderr().lock(),
                         "Permission phase {action}: {permissions} requests, {approvals} approved; settled"
-                    );
+                    ).expect("write test diagnostics");
                     assert!(session.pending_inputs.is_empty());
                     assert!(session.current_prompt.is_none());
                     return;
@@ -405,7 +462,7 @@ fn live_cursor_session_round_trip() {
         panic!("permission phase {action} did not settle");
     }
 
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("test operation should succeed");
     let command = AgentLaunchConfig {
         program: "agent".into(),
         prefix_args: Vec::new(),
@@ -424,22 +481,34 @@ fn live_cursor_session_round_trip() {
     )
     .expect("create live Cursor session");
     assert!(history.is_none());
-    eprintln!(
+    writeln!(
+        std::io::stderr().lock(),
         "Cursor session created; commands: {}, models: {}",
         metadata.commands.len(),
         metadata.models.len()
-    );
+    )
+    .expect("write test diagnostics");
     session
         .send(
             "Do not call tools or access files. Reply with exactly FARCASTER_ACP_LIVE_OK.".into(),
             WorkerSendMode::Queue,
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert!(settle(&mut session).contains("FARCASTER_ACP_LIVE_OK"));
     let locator = session.session_id.clone();
-    session.close().unwrap();
-    assert!(session.child.try_wait().unwrap().is_some());
-    eprintln!("Prompt settled and original process reaped");
+    session.close().expect("test operation should succeed");
+    assert!(
+        session
+            .child
+            .try_wait()
+            .expect("test operation should succeed")
+            .is_some()
+    );
+    writeln!(
+        std::io::stderr().lock(),
+        "Prompt settled and original process reaped"
+    )
+    .expect("write test diagnostics");
 
     let (mut resumed, _, history) = spawn_session(
         &command,
@@ -456,13 +525,18 @@ fn live_cursor_session_round_trip() {
         2,
         "expected one user and one assistant message"
     );
-    eprintln!("Resume loaded {} history messages", history.messages.len());
+    writeln!(
+        std::io::stderr().lock(),
+        "Resume loaded {} history messages",
+        history.messages.len()
+    )
+    .expect("write test diagnostics");
     resumed
         .send(
             "Do not call tools. Reply with exactly FARCASTER_ACP_RESUMED_OK.".into(),
             WorkerSendMode::Queue,
         )
-        .unwrap();
+        .expect("test operation should succeed");
     let output = settle(&mut resumed);
     assert!(
         output.contains("FARCASTER_ACP_RESUMED_OK"),
@@ -477,12 +551,23 @@ fn live_cursor_session_round_trip() {
             "Do not use tools. Count from one to one hundred.".into(),
             WorkerSendMode::Prompt,
         )
-        .unwrap();
-    resumed.abort().unwrap();
+        .expect("test operation should succeed");
+    resumed.abort().expect("test operation should succeed");
     let _ = settle(&mut resumed);
     assert!(resumed.current_prompt.is_none());
-    eprintln!("Immediate cancellation settled");
-    resumed.close().unwrap();
-    assert!(resumed.child.try_wait().unwrap().is_some());
-    eprintln!("Resumed prompt settled and process reaped");
+    writeln!(std::io::stderr().lock(), "Immediate cancellation settled")
+        .expect("write test diagnostics");
+    resumed.close().expect("test operation should succeed");
+    assert!(
+        resumed
+            .child
+            .try_wait()
+            .expect("test operation should succeed")
+            .is_some()
+    );
+    writeln!(
+        std::io::stderr().lock(),
+        "Resumed prompt settled and process reaped"
+    )
+    .expect("write test diagnostics");
 }

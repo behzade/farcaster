@@ -71,8 +71,12 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
             before: None,
         },
     )?;
-    let first = created["tasks"][0]["task"].as_u64().unwrap();
-    let second = created["tasks"][1]["task"].as_u64().unwrap();
+    let first = created["tasks"][0]["task"]
+        .as_u64()
+        .expect("test operation should succeed");
+    let second = created["tasks"][1]["task"]
+        .as_u64()
+        .expect("test operation should succeed");
     assert_eq!(created["tasks"][0]["status"], "ready");
     assert!(created["tasks"][0]["owner"].is_null());
     assert_eq!(created["tasks"][1]["blockers"], json!([first]));
@@ -119,7 +123,12 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
     );
     let selection = workgraph::load_plan(database.clone(), temp.path().to_owned(), Some("alice"))?;
     assert_eq!(
-        selection.snapshot.unwrap().walk.unwrap().current_node,
+        selection
+            .snapshot
+            .expect("test operation should succeed")
+            .walk
+            .expect("test operation should succeed")
+            .current_node,
         Some(first)
     );
     release(&database, &alice, TaskParams { task: first })?;
@@ -143,14 +152,22 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
             query: "APPROVED".into(),
         },
     )?;
-    assert_eq!(found["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        found["tasks"]
+            .as_array()
+            .expect("test operation should succeed")
+            .len(),
+        1
+    );
     assert_eq!(found["tasks"][0]["task"], second);
     assert!(!found.to_string().contains("sessionPath"));
     edit(
         &database,
         &alice,
         EditAction::SetNode {
-            plan: created["tasks"][1]["plan"].as_u64().unwrap(),
+            plan: created["tasks"][1]["plan"]
+                .as_u64()
+                .expect("test operation should succeed"),
             number: second,
             title: None,
             files: None,
@@ -187,12 +204,12 @@ fn duplicate_backend_ids_cannot_share_task_ownership() -> Result<(), String> {
     index(&database, &[alice.clone(), bob.clone()])?;
     assert!(
         session_identity(&database, &alice)
-            .unwrap_err()
+            .expect_err("invalid test input must fail")
             .contains("ambiguous")
     );
     assert!(
         session_identity(&database, &bob)
-            .unwrap_err()
+            .expect_err("invalid test input must fail")
             .contains("ambiguous")
     );
     Ok(())

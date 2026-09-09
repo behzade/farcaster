@@ -357,16 +357,15 @@ fn resolve_target(
     target: &str,
     session_path: Option<&str>,
 ) -> Result<Option<i64>, String> {
-    if let Some(path) = session_path.filter(|path| !path.is_empty()) {
-        if let Some(id) = tx
+    if let Some(path) = session_path.filter(|path| !path.is_empty())
+        && let Some(id) = tx
             .query_row("SELECT id FROM sessions WHERE locator=?1", [path], |row| {
                 row.get(0)
             })
             .optional()
             .map_err(|error| format!("resolve locator {path}: {error}"))?
-        {
-            return Ok(Some(id));
-        }
+    {
+        return Ok(Some(id));
     }
     if let Some(draft) = target.strip_prefix("draft:") {
         return tx

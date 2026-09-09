@@ -14,7 +14,7 @@ fn access_modes_reject_unsupported_and_recheck_queued_changes() {
         "id":"model", "name":"Model", "provider":"claude",
         "access_modes":["sandboxed", "auto", "full"]
     }))
-    .unwrap();
+    .expect("test operation should succeed");
     owner.snapshot.models = vec![model];
     conversation_mut(owner.active_snapshot_mut()).running = true;
     owner.set_access_mode(Auto);
@@ -53,7 +53,7 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
         "id":"limited", "name":"Limited", "provider":"claude",
         "access_modes":["sandboxed", "full"]
     }))
-    .unwrap();
+    .expect("test operation should succeed");
     owner.set_model(model.clone());
     assert!(owner.pending_session_controls.is_empty());
     assert!(owner.snapshot.prefill_model.is_none());

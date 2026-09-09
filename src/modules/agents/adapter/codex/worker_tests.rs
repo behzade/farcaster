@@ -34,7 +34,7 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
                     WorkerActivity::ChildSessionsChanged {
                         id: "native-event-child".into(),
                         title: Some("/root/reviewer".into()),
-                        is_running: running.unwrap(),
+                        is_running: running.expect("test operation should succeed"),
                     }
                 ))
             );
@@ -54,7 +54,7 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
             running
         );
     }
-    session.close().unwrap();
+    session.close().expect("test operation should succeed");
     assert_eq!(
         super::super::subagents::is_running("native-event-child"),
         None
@@ -73,8 +73,9 @@ fn interactions_read_child_turn_status_and_discard_superseded_reads() {
             "agentThreadId": child, "agentPath": "/root/reviewer", "kind": "interacted"
         }));
         let mut line = String::new();
-        sent.read_line(&mut line).unwrap();
-        let request: Value = serde_json::from_str(&line).unwrap();
+        sent.read_line(&mut line)
+            .expect("test operation should succeed");
+        let request: Value = serde_json::from_str(&line).expect("test operation should succeed");
         assert_eq!(request["method"], "thread/read");
         assert_eq!(
             request["params"],
@@ -126,7 +127,7 @@ fn interactions_read_child_turn_status_and_discard_superseded_reads() {
     ));
     assert_eq!(session.poll(), None);
     assert_eq!(super::super::subagents::is_running(child), Some(false));
-    session.close().unwrap();
+    session.close().expect("test operation should succeed");
 }
 
 fn test_session() -> CodexWorkerSession {

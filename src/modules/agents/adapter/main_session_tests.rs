@@ -15,7 +15,11 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
     use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
     let image = crate::protocol::PromptImage::new("AQID".into(), "image/png".into());
     let mut conversation = ConversationState::default();
-    conversation.push_local_user_with_prompt_images(String::new(), &[image.clone()], false);
+    conversation.push_local_user_with_prompt_images(
+        String::new(),
+        std::slice::from_ref(&image),
+        false,
+    );
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
         "claude",
@@ -24,7 +28,7 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
         MainSessionMetadata::default(),
         None,
     )
-    .unwrap();
+    .expect("test operation should succeed");
     transport.enqueue_worker_event(WorkerEvent::Activity(
         WorkerActivity::InputDeliveredWithImages {
             mode: WorkerSendMode::Prompt,
@@ -114,7 +118,7 @@ fn neutral_metadata_events_refresh_session_state_and_modes() {
         MainSessionMetadata::default(),
         None,
     )
-    .unwrap();
+    .expect("test operation should succeed");
     transport.enqueue_activity(WorkerActivity::TitleChanged("Generated title".into()));
     assert_eq!(transport.state()["sessionName"], "Generated title");
     assert!(
@@ -179,7 +183,7 @@ fn native_child_activity_carries_a_backend_locator_without_discovery() {
         MainSessionMetadata::default(),
         None,
     )
-    .unwrap();
+    .expect("test operation should succeed");
     transport.enqueue_worker_event(WorkerEvent::Activity(
         WorkerActivity::ChildSessionsChanged {
             id: "child".into(),

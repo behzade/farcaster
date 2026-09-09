@@ -17,7 +17,7 @@ fn fixture_binary() -> &'static std::path::Path {
     static BINARY: OnceLock<tempfile::TempDir> = OnceLock::new();
     BINARY
         .get_or_init(|| {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = tempfile::tempdir().expect("test operation should succeed");
             let output = Command::new("rustc")
                 .arg("--edition=2024")
                 .arg(concat!(
@@ -41,7 +41,13 @@ fn fixture_binary() -> &'static std::path::Path {
 /// Re-exec only this test before changing HOME/PATH. Parallel tests and real
 /// credentials cannot leak into the supervisor's global environment or caches.
 fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
-    let test_name = format!("{}::{name}", module_path!().split_once("::").unwrap().1);
+    let test_name = format!(
+        "{}::{name}",
+        module_path!()
+            .split_once("::")
+            .expect("test operation should succeed")
+            .1
+    );
     if std::env::var(CHILD_MARKER).as_deref() == Ok(test_name.as_str()) {
         run();
         return;
@@ -49,18 +55,19 @@ fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
     let dir = tempfile::Builder::new()
         .prefix("fc-cat-")
         .tempdir_in("/tmp")
-        .unwrap();
+        .expect("test operation should succeed");
     for backend in backends {
-        fs::copy(fixture_binary().join("agent"), dir.path().join(backend)).unwrap();
+        fs::copy(fixture_binary().join("agent"), dir.path().join(backend))
+            .expect("test operation should succeed");
     }
     // The ACP adapter checks that this sibling exists. The relay never invokes it.
     fs::copy(
         fixture_binary().join("agent"),
         dir.path().join("localharness_external"),
     )
-    .unwrap();
-    let log = fs::File::create(dir.path().join("test.log")).unwrap();
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    .expect("test operation should succeed");
+    let log = fs::File::create(dir.path().join("test.log")).expect("test operation should succeed");
+    let mut command = Command::new(std::env::current_exe().expect("test operation should succeed"));
     command
         .args(["--exact", &test_name, "--nocapture"])
         .env_clear()
@@ -71,7 +78,7 @@ fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
         .env("SHELL", "/bin/sh")
         .current_dir(dir.path())
         .stdin(Stdio::null())
-        .stdout(log.try_clone().unwrap())
+        .stdout(log.try_clone().expect("test operation should succeed"))
         .stderr(log);
     for (backend, variable) in [
         ("claude", "FARCASTER_CLAUDE_PATH"),
@@ -80,23 +87,25 @@ fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
     ] {
         command.env(variable, dir.path().join(backend));
     }
-    let mut child = command.spawn().unwrap();
+    let mut child = command.spawn().expect("test operation should succeed");
     let deadline = Instant::now() + Duration::from_secs(15);
     let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
+        if let Some(status) = child.try_wait().expect("test operation should succeed") {
             break status;
         }
         if Instant::now() >= deadline {
-            child.kill().unwrap();
-            child.wait().unwrap();
+            child.kill().expect("test operation should succeed");
+            child.wait().expect("test operation should succeed");
             panic!(
                 "catalog test watchdog expired:\n{}",
-                fs::read_to_string(dir.path().join("test.log")).unwrap()
+                fs::read_to_string(dir.path().join("test.log"))
+                    .expect("test operation should succeed")
             );
         }
         thread::sleep(Duration::from_millis(5));
     };
-    let output = fs::read_to_string(dir.path().join("test.log")).unwrap();
+    let output =
+        fs::read_to_string(dir.path().join("test.log")).expect("test operation should succeed");
     assert!(status.success(), "isolated catalog test failed:\n{output}");
     assert!(
         output.contains("1 passed"),
@@ -112,9 +121,12 @@ struct Harness {
 
 impl Harness {
     fn start() -> Self {
-        let project = std::env::current_dir().unwrap();
-        let listener = UnixListener::bind(project.join("control.sock")).unwrap();
-        listener.set_nonblocking(true).unwrap();
+        let project = std::env::current_dir().expect("test operation should succeed");
+        let listener = UnixListener::bind(project.join("control.sock"))
+            .expect("test operation should succeed");
+        listener
+            .set_nonblocking(true)
+            .expect("test operation should succeed");
         // Unlike RuntimeHandle::spawn_with, do not disable catalog discovery.
         let runtime = RuntimeHandle::spawn_with_configuration_refresh(
             project.clone(),
@@ -137,7 +149,7 @@ impl Harness {
                 harness: backend.into(),
                 project: self.project.clone(),
             })
-            .unwrap();
+            .expect("test operation should succeed");
     }
 
     fn accept(&self, timeout: Duration) -> Option<Peer> {
@@ -189,12 +201,23 @@ struct Peer {
 
 impl Peer {
     fn new(stream: UnixStream) -> Self {
-        stream.set_nonblocking(false).unwrap();
-        stream.set_read_timeout(Some(WAIT)).unwrap();
-        stream.set_write_timeout(Some(WAIT)).unwrap();
+        stream
+            .set_nonblocking(false)
+            .expect("test operation should succeed");
+        stream
+            .set_read_timeout(Some(WAIT))
+            .expect("test operation should succeed");
+        stream
+            .set_write_timeout(Some(WAIT))
+            .expect("test operation should succeed");
         let mut reader = BufReader::new(stream);
         let mut backend = String::new();
-        assert!(reader.read_line(&mut backend).unwrap() > 0);
+        assert!(
+            reader
+                .read_line(&mut backend)
+                .expect("test operation should succeed")
+                > 0
+        );
         Self {
             reader,
             backend: backend.trim().into(),
@@ -211,7 +234,7 @@ impl Peer {
             "{} closed before {method}",
             self.backend
         );
-        let value: Value = serde_json::from_str(&line).unwrap();
+        let value: Value = serde_json::from_str(&line).expect("test operation should succeed");
         let actual = if self.backend == "claude" {
             &value["request"]["subtype"]
         } else {
@@ -226,7 +249,7 @@ impl Peer {
     }
 
     fn write(&mut self, value: Value) {
-        writeln!(self.reader.get_mut(), "{value}").unwrap();
+        writeln!(self.reader.get_mut(), "{value}").expect("test operation should succeed");
     }
 
     fn reply(&mut self, request: &Value, result: Value) {
@@ -319,7 +342,12 @@ fn claude_cached_models_survive_failed_refresh_after_restart() {
         || {
             round_trip("claude");
             // Keep the same on-disk application state but replace the supervisor.
-            fs::remove_file(std::env::current_dir().unwrap().join("control.sock")).unwrap();
+            fs::remove_file(
+                std::env::current_dir()
+                    .expect("test operation should succeed")
+                    .join("control.sock"),
+            )
+            .expect("test operation should succeed");
             let harness = Harness::start();
             harness.select("claude", "restored");
             let mut peer = harness.accept(WAIT).expect("refresh did not start");
@@ -443,7 +471,7 @@ fn picker_request_retries_failed_catalog_and_coalesces_repeated_requests() {
                         harness: "claude".into(),
                         project: harness.project.clone(),
                     })
-                    .unwrap();
+                    .expect("test operation should succeed");
             }
             let mut retry = harness.accept(WAIT).expect("picker request did not retry");
             harness.snapshot("claude", |s| {

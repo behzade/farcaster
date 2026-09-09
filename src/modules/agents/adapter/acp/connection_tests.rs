@@ -5,18 +5,30 @@ fn frames_are_bounded_individually_before_parsing() {
     futures::executor::block_on(async {
         let mut reader = futures::io::Cursor::new(b"abc\nxyz\n");
         assert_eq!(
-            read_frame(&mut reader, 4).await.unwrap(),
+            read_frame(&mut reader, 4)
+                .await
+                .expect("test operation should succeed"),
             Some("abc".into())
         );
         assert_eq!(
-            read_frame(&mut reader, 4).await.unwrap(),
+            read_frame(&mut reader, 4)
+                .await
+                .expect("test operation should succeed"),
             Some("xyz".into())
         );
-        assert_eq!(read_frame(&mut reader, 4).await.unwrap(), None);
+        assert_eq!(
+            read_frame(&mut reader, 4)
+                .await
+                .expect("test operation should succeed"),
+            None
+        );
         for bytes in [b"abcde".as_slice(), b"abcde\n".as_slice()] {
             let mut reader = BufReader::with_capacity(2, futures::io::Cursor::new(bytes));
             assert_eq!(
-                read_frame(&mut reader, 4).await.unwrap_err().kind(),
+                read_frame(&mut reader, 4)
+                    .await
+                    .expect_err("invalid test input must fail")
+                    .kind(),
                 io::ErrorKind::InvalidData
             );
         }
@@ -29,11 +41,15 @@ fn frames_preserve_unicode_and_accept_crlf() {
         let mut reader =
             BufReader::with_capacity(1, futures::io::Cursor::new("سلام\r\nlast".as_bytes()));
         assert_eq!(
-            read_frame(&mut reader, 32).await.unwrap(),
+            read_frame(&mut reader, 32)
+                .await
+                .expect("test operation should succeed"),
             Some("سلام".into())
         );
         assert_eq!(
-            read_frame(&mut reader, 32).await.unwrap(),
+            read_frame(&mut reader, 32)
+                .await
+                .expect("test operation should succeed"),
             Some("last".into())
         );
     });
@@ -64,13 +80,21 @@ mod exchange {
     impl Peer {
         fn read(&mut self) -> Value {
             let mut line = String::new();
-            assert!(self.0.read_line(&mut line).unwrap() > 0);
-            serde_json::from_str(&line).unwrap()
+            assert!(
+                self.0
+                    .read_line(&mut line)
+                    .expect("test operation should succeed")
+                    > 0
+            );
+            serde_json::from_str(&line).expect("test operation should succeed")
         }
 
         fn write(&mut self, value: Value) {
-            writeln!(self.0.get_mut(), "{value}").unwrap();
-            self.0.get_mut().flush().unwrap();
+            writeln!(self.0.get_mut(), "{value}").expect("test operation should succeed");
+            self.0
+                .get_mut()
+                .flush()
+                .expect("test operation should succeed");
         }
 
         fn reply(&mut self, request: &Value, result: Value) {
@@ -96,16 +120,17 @@ mod exchange {
     }
 
     fn connect(run: impl FnOnce(Peer) + Send + 'static) -> (AcpConnection, thread::JoinHandle<()>) {
-        let (client, peer) = UnixStream::pair().unwrap();
-        peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let (client, peer) = UnixStream::pair().expect("test operation should succeed");
+        peer.set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("test operation should succeed");
         peer.set_write_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
+            .expect("test operation should succeed");
         let connection = AcpConnection::new(
-            blocking::Unblock::new(client.try_clone().unwrap()),
+            blocking::Unblock::new(client.try_clone().expect("test operation should succeed")),
             blocking::Unblock::new(client),
             None,
         )
-        .unwrap();
+        .expect("test operation should succeed");
         let peer = thread::spawn(move || run(Peer(std::io::BufReader::new(peer))));
         (connection, peer)
     }
@@ -114,7 +139,7 @@ mod exchange {
         connection
             .incoming
             .recv_timeout(Duration::from_secs(3))
-            .unwrap()
+            .expect("test operation should succeed")
     }
 
     #[test]
@@ -136,7 +161,9 @@ mod exchange {
             assert_eq!(peer.read()["method"], "session/cancel");
         });
         assert_eq!(
-            connection.initialize(&PROFILE).unwrap()["protocolVersion"],
+            connection
+                .initialize(&PROFILE)
+                .expect("test operation should succeed")["protocolVersion"],
             1
         );
         let result = connection
@@ -144,17 +171,19 @@ mod exchange {
                 "session/load",
                 json!({"sessionId":"one", "cwd":"/project", "mcpServers":[]}),
             )
-            .unwrap();
+            .expect("test operation should succeed");
         assert_eq!(result["cursorExtra"], "retained");
-        let replay = connection.drain_queued().unwrap();
+        let replay = connection
+            .drain_queued()
+            .expect("test operation should succeed");
         assert_eq!(replay.len(), 1);
         assert!(
             matches!(&replay[0], AcpInbound::Notification {params,..} if params["update"]["cursorExtra"] == 42)
         );
         connection
             .notify("session/cancel", json!({"sessionId":"one"}))
-            .unwrap();
-        peer.join().unwrap();
+            .expect("test operation should succeed");
+        peer.join().expect("test operation should succeed");
     }
 
     #[test]
@@ -172,27 +201,31 @@ mod exchange {
             assert_eq!(answer["result"]["outcome"]["optionId"], "allow-once-7");
             peer.reply(&prompt, json!({"stopReason":"end_turn"}));
         });
-        connection.initialize(&PROFILE).unwrap();
+        connection
+            .initialize(&PROFILE)
+            .expect("test operation should succeed");
         let prompt_id = connection
             .send_request("session/prompt", json!({"sessionId":"one", "prompt":[]}))
-            .unwrap();
-        let AcpInbound::AgentRequest { id, method, .. } = next(&connection).unwrap() else {
+            .expect("test operation should succeed");
+        let AcpInbound::AgentRequest { id, method, .. } =
+            next(&connection).expect("test operation should succeed")
+        else {
             panic!("expected permission");
         };
         assert_eq!(method, "session/request_permission");
         assert!(
-            matches!(next(&connection).unwrap(), AcpInbound::Notification {method,..} if method == "cursor/task")
+            matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Notification {method,..} if method == "cursor/task")
         );
         connection
             .respond(
                 &id,
                 json!({"outcome":{"outcome":"selected", "optionId":"allow-once-7"}}),
             )
-            .unwrap();
+            .expect("test operation should succeed");
         assert!(
-            matches!(next(&connection).unwrap(), AcpInbound::Response {id,..} if id == prompt_id)
+            matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Response {id,..} if id == prompt_id)
         );
-        peer.join().unwrap();
+        peer.join().expect("test operation should succeed");
     }
 
     #[test]
@@ -202,18 +235,20 @@ mod exchange {
             let request = peer.read();
             peer.write(json!({"jsonrpc":"2.0", "id":request["id"], "error":{"code":-32602, "message":"bad model", "data":{"model":"missing"}}}));
         });
-        connection.initialize(&PROFILE).unwrap();
+        connection
+            .initialize(&PROFILE)
+            .expect("test operation should succeed");
         let id = connection
             .send_request(
                 "session/set_config_option",
                 json!({"sessionId":"one", "configId":"model", "value":"missing"}),
             )
-            .unwrap();
+            .expect("test operation should succeed");
         assert!(
-            matches!(next(&connection).unwrap(), AcpInbound::Error {id: response_id, message} if response_id == id && message.contains("bad model"))
+            matches!(next(&connection).expect("test operation should succeed"), AcpInbound::Error {id: response_id, message} if response_id == id && message.contains("bad model"))
         );
         assert!(next(&connection).is_err());
-        peer.join().unwrap();
+        peer.join().expect("test operation should succeed");
     }
 
     #[test]
@@ -230,11 +265,15 @@ mod exchange {
             peer.reply(&request, json!({"sessionId":"one"}));
             assert_eq!(peer.read()["method"], "session/cancel");
         });
-        connection.initialize(&PROFILE).unwrap();
+        connection
+            .initialize(&PROFILE)
+            .expect("test operation should succeed");
         connection
             .request_blocking("session/new", json!({"cwd":"/project", "mcpServers":[]}))
-            .unwrap();
-        let queued = connection.drain_queued().unwrap();
+            .expect("test operation should succeed");
+        let queued = connection
+            .drain_queued()
+            .expect("test operation should succeed");
         assert_eq!(queued.len(), 1);
         assert!(super::super::super::translate::commands_from_update(&queued[0], "one").is_some());
         connection.restore_queued(queued);
@@ -245,8 +284,8 @@ mod exchange {
         assert!(connection.poll().is_none());
         connection
             .notify("session/cancel", json!({"sessionId":"one"}))
-            .unwrap();
-        peer.join().unwrap();
+            .expect("test operation should succeed");
+        peer.join().expect("test operation should succeed");
     }
 
     #[test]
@@ -255,12 +294,14 @@ mod exchange {
             peer.initialize();
             let _ = peer.read();
         });
-        connection.initialize(&PROFILE).unwrap();
+        connection
+            .initialize(&PROFILE)
+            .expect("test operation should succeed");
         assert!(
             connection
                 .request_blocking("session/new", json!({"cwd":"/project", "mcpServers":[]}))
                 .is_err()
         );
-        peer.join().unwrap();
+        peer.join().expect("test operation should succeed");
     }
 }

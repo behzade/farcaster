@@ -3,14 +3,24 @@ use super::*;
 #[test]
 fn multi_file_edits_keep_independent_net_counts() {
     let mut first = super::super::tests::write_item();
-    let details = Arc::make_mut(first.tool_details.as_mut().unwrap());
+    let details = Arc::make_mut(
+        first
+            .tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    );
     details.metadata.targets = vec!["src/main.rs".into(), "src/other.rs".into()];
     details.arguments = serde_json::json!({"changes":[
         {"path":"src/main.rs", "diff":"@@ -1 +1 @@\n-old\n+middle"},
         {"path":"src/other.rs", "diff":"@@ -0,0 +1,2 @@\n+one\n+two"}
     ]});
     let mut second = first.clone();
-    let details = Arc::make_mut(second.tool_details.as_mut().unwrap());
+    let details = Arc::make_mut(
+        second
+            .tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    );
     details.metadata.targets = vec!["src/main.rs".into()];
     details.arguments = serde_json::json!({"changes":[
         {"path":"/repo/src/main.rs", "diff":"@@ -1 +1 @@\n-middle\n+final"}
@@ -30,7 +40,12 @@ fn multi_file_edits_keep_independent_net_counts() {
 fn repeated_files_keep_history_without_summing_patch_counts() {
     let first = super::super::tests::write_item();
     let mut second = first.clone();
-    let details = Arc::make_mut(second.tool_details.as_mut().unwrap());
+    let details = Arc::make_mut(
+        second
+            .tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    );
     details.metadata.targets = vec!["/repo/src/main.rs".into(), "src/other.rs".into()];
     let files = collect(
         [(7, &first), (9, &second)].into_iter(),

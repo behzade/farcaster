@@ -117,8 +117,7 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
 }
 
 fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
-    let shortcuts = rows
-        .iter()
+    rows.iter()
         .filter_map(|row| match row {
             ActiveSessionItem::Draft(draft) if draft.submitted => Some(draft.app_session_id),
             ActiveSessionItem::Session(item) => Some(item.session.app_session_id),
@@ -128,8 +127,7 @@ fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
         .take(9)
         .enumerate()
         .map(|(index, id)| (id, (index + 1) as u8))
-        .collect::<HashMap<_, _>>();
-    shortcuts
+        .collect::<HashMap<_, _>>()
 }
 
 impl FarcasterApp {

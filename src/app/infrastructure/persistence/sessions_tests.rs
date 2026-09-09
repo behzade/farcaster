@@ -23,12 +23,19 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
 
 #[test]
 fn live_metadata_preserves_archive_identity_and_other_sessions() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
+    let temp = tempfile::tempdir().expect("test operation should succeed");
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))
+        .expect("test operation should succeed");
     let mut update = metadata("parent");
-    let parent = store.update_session_metadata(&update).unwrap();
-    store.set_session_archived(&parent.path, true).unwrap();
-    let other = store.update_session_metadata(&metadata("other")).unwrap();
+    let parent = store
+        .update_session_metadata(&update)
+        .expect("test operation should succeed");
+    store
+        .set_session_archived(&parent.path, true)
+        .expect("test operation should succeed");
+    let other = store
+        .update_session_metadata(&metadata("other"))
+        .expect("test operation should succeed");
     update.title = Some("Renamed".into());
     update.first_user_message = Some("First prompt".into());
     update.model = Some(("provider".into(), "model".into()));
@@ -39,7 +46,9 @@ fn live_metadata_preserves_archive_identity_and_other_sessions() {
         total: 12,
         ..Default::default()
     });
-    let updated = store.update_session_metadata(&update).unwrap();
+    let updated = store
+        .update_session_metadata(&update)
+        .expect("test operation should succeed");
     assert!(updated.archived);
     assert_eq!(updated.app_session_id, parent.app_session_id);
     assert_eq!(updated.title, "Renamed");
@@ -52,28 +61,40 @@ fn live_metadata_preserves_archive_identity_and_other_sessions() {
             [updated.app_session_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(saved, ("model".into(), Some("priority".into())));
-    let cached = store.cached_sessions("").unwrap();
+    let cached = store
+        .cached_sessions("")
+        .expect("test operation should succeed");
     assert_eq!(cached.len(), 2);
-    let unchanged = cached.iter().find(|s| s.id == "other").unwrap();
+    let unchanged = cached
+        .iter()
+        .find(|s| s.id == "other")
+        .expect("test operation should succeed");
     assert_eq!(unchanged.modified, other.modified);
     assert_eq!(unchanged.title, other.title);
 }
 
 #[test]
 fn child_events_preserve_family_and_metadata_on_completion() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
-    store.update_session_metadata(&metadata("parent")).unwrap();
+    let temp = tempfile::tempdir().expect("test operation should succeed");
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))
+        .expect("test operation should succeed");
+    store
+        .update_session_metadata(&metadata("parent"))
+        .expect("test operation should succeed");
     let mut child = metadata("child");
     child.parent_session = Some("parent".into());
-    let started = store.update_session_metadata(&child).unwrap();
+    let started = store
+        .update_session_metadata(&child)
+        .expect("test operation should succeed");
     assert!(started.is_running);
     child.is_running = false;
     child.title = None;
     child.message_count = None;
-    let ended = store.update_session_metadata(&child).unwrap();
+    let ended = store
+        .update_session_metadata(&child)
+        .expect("test operation should succeed");
     assert!(!ended.is_running);
     assert_eq!(ended.app_session_id, started.app_session_id);
     assert_eq!(ended.title, "child");
@@ -83,58 +104,84 @@ fn child_events_preserve_family_and_metadata_on_completion() {
 
 #[test]
 fn failed_live_update_rolls_back_without_changing_archive_state() {
-    let temp = tempfile::tempdir().unwrap();
-    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap();
+    let temp = tempfile::tempdir().expect("test operation should succeed");
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))
+        .expect("test operation should succeed");
     let update = metadata("archived");
-    store.update_session_metadata(&update).unwrap();
-    store.set_session_archived(&update.path, true).unwrap();
-    let before = store.cached_sessions("").unwrap();
+    store
+        .update_session_metadata(&update)
+        .expect("test operation should succeed");
+    store
+        .set_session_archived(&update.path, true)
+        .expect("test operation should succeed");
+    let before = store
+        .cached_sessions("")
+        .expect("test operation should succeed");
     store
         .connection
         .execute_batch(
             "CREATE TRIGGER fail_update BEFORE UPDATE ON sessions
         BEGIN SELECT RAISE(ABORT, 'test write failure'); END;",
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert!(store.update_session_metadata(&update).is_err());
-    assert_eq!(store.cached_sessions("").unwrap(), before);
+    assert_eq!(
+        store
+            .cached_sessions("")
+            .expect("test operation should succeed"),
+        before
+    );
 }
 
 #[cfg(unix)]
 #[test]
 fn live_metadata_rekeys_a_legacy_project_alias() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = tempfile::tempdir().expect("test operation should succeed");
     let database = temp.path().join("state.sqlite3");
     let project = temp.path().join("project");
     let alias = temp.path().join("project-alias");
     let session_path = temp.path().join("session.jsonl");
     let raw_locator = temp.path().join("synthetic/../session.jsonl");
-    fs::create_dir(&project).unwrap();
-    fs::write(&session_path, "{}").unwrap();
-    symlink(&project, &alias).unwrap();
-    let project = project.canonicalize().unwrap();
+    fs::create_dir(&project).expect("test operation should succeed");
+    fs::write(&session_path, "{}").expect("test operation should succeed");
+    symlink(&project, &alias).expect("test operation should succeed");
+    let project = project
+        .canonicalize()
+        .expect("test operation should succeed");
     let mut update = metadata("legacy");
     update.project = project.clone();
-    update.path = session_path.canonicalize().unwrap();
-    let mut store = StateStore::open_at(&database).unwrap();
-    store.update_session_metadata(&update).unwrap();
+    update.path = session_path
+        .canonicalize()
+        .expect("test operation should succeed");
+    let mut store = StateStore::open_at(&database).expect("test operation should succeed");
+    store
+        .update_session_metadata(&update)
+        .expect("test operation should succeed");
     store
         .connection
         .execute(
             "UPDATE sessions SET locator=?1",
             [raw_locator.to_string_lossy()],
         )
-        .unwrap();
+        .expect("test operation should succeed");
     store
         .connection
         .execute(
             "UPDATE projects SET path=?1 WHERE path=?2",
             params![alias.to_string_lossy(), project.to_string_lossy()],
         )
-        .unwrap();
+        .expect("test operation should succeed");
 
-    assert_eq!(store.cached_sessions("").unwrap()[0].project, project);
-    store.update_session_metadata(&update).unwrap();
+    assert_eq!(
+        store
+            .cached_sessions("")
+            .expect("test operation should succeed")[0]
+            .project,
+        project
+    );
+    store
+        .update_session_metadata(&update)
+        .expect("test operation should succeed");
     let stored_project: String = store
         .connection
         .query_row(
@@ -142,12 +189,12 @@ fn live_metadata_rekeys_a_legacy_project_alias() {
             [],
             |row| row.get(0),
         )
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(stored_project, project.to_string_lossy());
     let stored_locator: String = store
         .connection
         .query_row("SELECT locator FROM sessions", [], |row| row.get(0))
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(stored_locator, update.path.to_string_lossy());
 }
 

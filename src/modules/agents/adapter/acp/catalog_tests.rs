@@ -10,7 +10,7 @@ fn catalog_exchange_times_out_when_agent_stalls() {
         let _ = stalled.recv();
         Ok(())
     })
-    .unwrap_err();
+    .expect_err("invalid test input must fail");
     assert!(error.contains("timed out loading configuration"));
     drop(release);
 }

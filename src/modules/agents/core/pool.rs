@@ -155,11 +155,11 @@ impl WorkerPool {
             effort: request.effort,
             ephemeral: false,
         })?;
-        if let Some(assignment) = assignment {
-            if let Err(error) = super::CallerRegistry::shared().set_assignment(&id, assignment) {
-                let _ = session.close();
-                return Err(error);
-            }
+        if let Some(assignment) = assignment
+            && let Err(error) = super::CallerRegistry::shared().set_assignment(&id, assignment)
+        {
+            let _ = session.close();
+            return Err(error);
         }
         let prompt = if parent.is_some() {
             format!(

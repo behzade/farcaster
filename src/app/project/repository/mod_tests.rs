@@ -77,13 +77,17 @@ fn invalidation_rejects_in_flight_work_without_starting_another_command() {
 #[test]
 fn project_change_rejects_old_scan_and_starts_pending_scan() {
     let mut gate = RefreshGate::default();
-    let old = gate.request().unwrap();
+    let old = gate.request().expect("test operation should succeed");
     gate.invalidate();
     assert!(gate.request().is_none());
-    let completion = gate.finish(old).unwrap();
+    let completion = gate.finish(old).expect("test operation should succeed");
     assert!(!completion.publish);
-    let current = completion.next.unwrap();
-    assert!(gate.finish(current).unwrap().publish);
+    let current = completion.next.expect("test operation should succeed");
+    assert!(
+        gate.finish(current)
+            .expect("test operation should succeed")
+            .publish
+    );
 }
 
 #[test]

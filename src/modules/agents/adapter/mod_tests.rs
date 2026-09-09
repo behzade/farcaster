@@ -35,7 +35,7 @@ fn access_modes_require_both_backend_and_model_support() {
     let mut model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
         "id":"model", "name":"Model", "provider":"claude"
     }))
-    .unwrap();
+    .expect("test operation should succeed");
     assert_eq!(
         available_access_modes("claude", Some(&model)),
         [Sandboxed, Full]

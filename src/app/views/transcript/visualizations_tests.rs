@@ -38,17 +38,23 @@ fn visualization_title_is_visible_and_cannot_inject_markdown() {
 
 #[test]
 fn preview_wraps_fragment_without_changing_source() {
-    let source = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+    let source = tempfile::Builder::new()
+        .suffix(".html")
+        .tempfile()
+        .expect("test operation should succeed");
     let fragment = "<h1>Demo</h1><script>document.body.dataset.ready = 'yes';</script><!-- \"</iframe><script>parent.bad = true</script> -->";
-    std::fs::write(source.path(), fragment).unwrap();
+    std::fs::write(source.path(), fragment).expect("test operation should succeed");
     let output = prepare_visualization(&rendered_link(source.path()))
-        .unwrap()
+        .expect("test operation should succeed")
         .to_file_path()
-        .unwrap();
+        .expect("test operation should succeed");
     assert_ne!(output, source.path());
-    let document = std::fs::read_to_string(&output).unwrap();
-    std::fs::remove_file(output).unwrap();
-    assert_eq!(std::fs::read_to_string(source.path()).unwrap(), fragment);
+    let document = std::fs::read_to_string(&output).expect("test operation should succeed");
+    std::fs::remove_file(output).expect("test operation should succeed");
+    assert_eq!(
+        std::fs::read_to_string(source.path()).expect("test operation should succeed"),
+        fragment
+    );
     assert!(document.contains("sandbox=\"allow-scripts\""));
     assert!(!document.contains("allow-same-origin"));
     assert_eq!(document.matches("</iframe>").count(), 1);
@@ -60,18 +66,22 @@ fn preview_wraps_fragment_without_changing_source() {
 
 #[test]
 fn preview_rejects_missing_files_directories_and_large_files() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().expect("test operation should succeed");
     let source = directory.path().join("demo.html");
     let link = rendered_link(&source);
     assert!(prepare_visualization(&link).is_err());
-    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&source).expect("test operation should succeed");
     assert!(prepare_visualization(&link).is_err());
-    std::fs::remove_dir(&source).unwrap();
+    std::fs::remove_dir(&source).expect("test operation should succeed");
     std::fs::File::create(&source)
-        .unwrap()
+        .expect("test operation should succeed")
         .set_len(8 * 1024 * 1024 + 1)
-        .unwrap();
-    assert!(prepare_visualization(&link).unwrap_err().contains("8 MiB"));
+        .expect("test operation should succeed");
+    assert!(
+        prepare_visualization(&link)
+            .expect_err("invalid test input must fail")
+            .contains("8 MiB")
+    );
 }
 
 #[test]

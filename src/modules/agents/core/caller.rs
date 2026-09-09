@@ -117,10 +117,10 @@ impl CallerRegistry {
             })
         })();
         let sink = self.family_sink.lock().ok().and_then(|sink| sink.clone());
-        if let (Some(link), Some(sink)) = (link, sink) {
-            if let Err(error) = sink(&link) {
-                zlog::warn!("Persist worker family: {error}");
-            }
+        if let (Some(link), Some(sink)) = (link, sink)
+            && let Err(error) = sink(&link)
+        {
+            zlog::warn!("Persist worker family: {error}");
         }
     }
 

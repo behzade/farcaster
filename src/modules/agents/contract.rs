@@ -248,6 +248,10 @@ pub(crate) enum SessionCommand {
     SelectServiceTier {
         tier: String,
     },
+    #[allow(
+        dead_code,
+        reason = "Native mode selection remains part of the adapter contract."
+    )]
     SelectMode {
         mode: String,
     },

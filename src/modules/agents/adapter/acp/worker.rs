@@ -119,15 +119,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     command: &AgentLaunchConfig,
     profile: &AcpProfile,
     launch: &crate::agents::SessionLaunch,
-) -> Result<
-    (
-        Box<dyn WorkerSession>,
-        String,
-        super::super::main_session::MainSessionMetadata,
-        Option<crate::agents::DiscoveredHistory>,
-    ),
-    String,
-> {
+) -> Result<super::MainSession, String> {
     let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(
         &launch.project,
         crate::modules::agents::core::CallerProfile {

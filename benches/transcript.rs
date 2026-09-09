@@ -11,6 +11,7 @@ use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
 mod app {
+    gpui::actions!(farcaster_bench, [OpenTranscriptScratch]);
     #[derive(Clone, Debug, Eq, PartialEq, gpui::Action)]
     #[action(namespace = farcaster_bench, no_json)]
     pub(crate) struct RemoveProject {
@@ -28,7 +29,10 @@ mod app {
     }
 
     pub(crate) mod ui {
-        pub(crate) use crate::assets;
+        pub(crate) use crate::{assets, change_tree, file_icons};
+        pub(crate) mod keyboard {
+            gpui::actions!(farcaster_bench, [CopySelection]);
+        }
         pub(crate) use crate::persistent_vec;
         pub(crate) use crate::primitives;
         pub(crate) use crate::theme;
@@ -37,6 +41,7 @@ mod app {
     pub(crate) mod views {
         pub(crate) use crate::attachment_cards as attachments;
         pub(crate) mod transcript {
+            pub(crate) use crate::{net_changes, visualizations};
             pub(crate) mod attachments {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
@@ -77,9 +82,45 @@ mod app {
         }
     }
 
-    pub(crate) struct FarcasterApp;
+    pub(crate) struct FarcasterApp {
+        pub(crate) expand_transcript_folders: bool,
+    }
 
     impl FarcasterApp {
+        pub(crate) fn workspace_project(&self) -> std::path::PathBuf {
+            std::path::PathBuf::from("/benchmark")
+        }
+        pub(crate) fn notify_workspace_error(
+            &mut self,
+            _: &str,
+            _: String,
+            _: &mut gpui::Context<Self>,
+        ) {
+        }
+        pub(crate) fn toggle_transcript_folder(
+            &mut self,
+            _: usize,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &mut gpui::Context<Self>,
+        ) {
+        }
+        pub(crate) fn open_file_editor_with_diff(
+            &mut self,
+            _: std::path::PathBuf,
+            _: Option<u64>,
+            _: bool,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) {
+        }
+        pub(crate) fn open_transcript_scratch(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) {
+        }
+
         pub(crate) fn jump_to_latest(&mut self, _: &mut gpui::Context<Self>) {}
 
         pub(crate) fn set_transcript_item_expanded(
@@ -191,8 +232,41 @@ pub(crate) mod attachment_cards;
 mod performance;
 #[path = "../src/app/ui/persistent_vec.rs"]
 mod persistent_vec;
-#[path = "../src/app/ui/primitives/mod.rs"]
-mod primitives;
+// Use the real transcript primitives without app-wide dialog dependencies.
+mod primitives {
+    pub(crate) use crate::bench_button::*;
+    pub(crate) use crate::bench_content::*;
+    pub(crate) use crate::bench_context_menu::*;
+    pub(crate) use crate::bench_disclosure::*;
+    pub(crate) use crate::bench_icon::*;
+}
+#[path = "../src/app/ui/primitives/button.rs"]
+mod bench_button;
+#[path = "../src/app/ui/primitives/content.rs"]
+mod bench_content;
+#[path = "../src/app/ui/primitives/context_menu.rs"]
+mod bench_context_menu;
+#[path = "../src/app/ui/primitives/disclosure.rs"]
+mod bench_disclosure;
+#[path = "../src/app/ui/primitives/icon.rs"]
+mod bench_icon;
+use primitives::{AppIconSize, activates_button, app_icon, icon_control, preserve_pointer_focus};
+#[path = "../src/app/ui/change_tree.rs"]
+pub(crate) mod change_tree;
+#[path = "../src/app/ui/file_icons.rs"]
+pub(crate) mod file_icons;
+#[path = "../src/app/views/transcript/net_changes.rs"]
+pub(crate) mod net_changes;
+#[path = "../src/app/views/transcript/visualizations.rs"]
+pub(crate) mod visualizations;
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum HarnessAccessMode {
+    Full,
+    Sandboxed,
+    Auto,
+}
 #[path = "../src/app/composer/prompt_fragments.rs"]
 pub(crate) mod prompt_fragments;
 #[path = "../src/modules/agents/contract/extensions.rs"]
@@ -293,8 +367,8 @@ impl Render for TranscriptBenchView {
             self.rows.clone(),
             self.conversation.clone(),
             HashMap::new(),
+            HashMap::new(),
             self.markdown_cache.clone(),
-            "Assistant".into(),
             WeakEntity::<app::FarcasterApp>::new_invalid(),
         )
         .into_any_element()

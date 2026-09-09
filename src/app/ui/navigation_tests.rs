@@ -1,7 +1,7 @@
 use super::*;
 
 fn activated(state: &mut Activation, key: &str, now: Instant) -> ActivatedKey {
-    let stroke = gpui::Keystroke::parse(key).unwrap();
+    let stroke = gpui::Keystroke::parse(key).expect("test operation should succeed");
     state.key(&stroke.key, stroke.modifiers, now)
 }
 

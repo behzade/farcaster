@@ -74,15 +74,27 @@ fn code_capture_preserves_normal_visual_and_unsaved_buffer_state() -> Result<(),
     lua(
         "assert(vim.fn.mode() == 'v'); assert(vim.bo.modified); assert(vim.api.nvim_buf_get_lines(0, 1, 2, false)[1] == 'αβγ world'); vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.api.nvim_buf_set_lines(0, 0, -1, false, {string.rep('x', 131073)})",
     )?;
-    assert!(capture().unwrap_err().contains("128 KiB"));
+    assert!(
+        capture()
+            .expect_err("invalid test input must fail")
+            .contains("128 KiB")
+    );
     lua(
         "vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.fn['repeat']({'x'}, 2001)); vim.api.nvim_win_set_cursor(0, {1, 0}); vim.cmd('normal! V2000j')",
     )?;
-    assert!(capture().unwrap_err().contains("2,000 lines"));
+    assert!(
+        capture()
+            .expect_err("invalid test input must fail")
+            .contains("2,000 lines")
+    );
     lua(
         "vim.cmd('normal! ' .. vim.api.nvim_replace_termcodes('<Esc>', true, false, true)); vim.bo.buftype = 'nofile'",
     )?;
-    assert!(capture().unwrap_err().contains("Open a file buffer"));
+    assert!(
+        capture()
+            .expect_err("invalid test input must fail")
+            .contains("Open a file buffer")
+    );
     assert!(!directory.path().join("capture.rs").exists());
     Ok(())
 }

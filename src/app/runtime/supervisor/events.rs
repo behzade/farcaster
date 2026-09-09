@@ -282,7 +282,7 @@ impl Supervisor {
                 }
                 match route_session_discovery(&key, &self.catalog_key, event) {
                     SupervisorSessionAction::Publish(event) => {
-                        let _ = self.event_tx.send(event);
+                        let _ = self.event_tx.send(*event);
                     }
                     SupervisorSessionAction::RefreshCatalog => {
                         if let Some(catalog) = self.actors.get(&self.catalog_key) {

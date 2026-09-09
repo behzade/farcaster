@@ -78,11 +78,13 @@ impl FarcasterApp {
         } else if self.image_preview.is_some() {
             Some(self.image_preview_focus.clone())
         } else if let Some(pending) = &self.repository.edits.pending {
-            Some(if pending.action == crate::repository::RepositoryEdit::Commit {
-                pending.input.read(cx).focus_handle(cx)
-            } else {
-                pending.focus.clone()
-            })
+            Some(
+                if pending.action == crate::repository::RepositoryEdit::Commit {
+                    pending.input.read(cx).focus_handle(cx)
+                } else {
+                    pending.focus.clone()
+                },
+            )
         } else if let Some(pending) = &self.repository.pending_jj_init {
             Some(pending.focus.clone())
         } else if let Some(pending) = &self.pending_delete {

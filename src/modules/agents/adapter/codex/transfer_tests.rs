@@ -54,12 +54,13 @@ fn family_preflight_rejects_pending_work() {
         results.extend(child);
         let mut wire = Vec::new();
         for (index, result) in results.into_iter().enumerate() {
-            writeln!(wire, "{}", json!({"id":index+1,"result":result})).unwrap();
+            writeln!(wire, "{}", json!({"id":index+1,"result":result}))
+                .expect("test operation should succeed");
         }
         let mut connection = CodexConnection::new(Cursor::new(wire), Vec::new());
         assert!(
             inspect_family(&mut connection, &family())
-                .unwrap_err()
+                .expect_err("invalid test input must fail")
                 .contains(expected)
         );
     }

@@ -34,7 +34,7 @@ impl ChangeTreeState {
     }
 
     pub(crate) fn is_open(&self, project: &Path, folder: &Path) -> bool {
-        self.projects.get(project).map_or(true, |state| {
+        self.projects.get(project).is_none_or(|state| {
             state
                 .overrides
                 .get(folder)
@@ -160,7 +160,10 @@ fn flatten(
     for (mut label, mut child) in node.folders {
         let mut path = parent.join(&label);
         while child.files.is_empty() && child.folders.len() == 1 {
-            let (name, next) = child.folders.pop_first().unwrap();
+            let (name, next) = child
+                .folders
+                .pop_first()
+                .expect("single folder checked above");
             path.push(&name);
             if !label.ends_with('/') {
                 label.push('/');

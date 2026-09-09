@@ -104,7 +104,7 @@ impl Render for RunPanelView {
             self.search_project = Some(project.clone());
             self.search
                 .as_ref()
-                .unwrap()
+                .expect("search input initialized above")
                 .update(cx, |input, cx| input.set_value("", window, cx));
             self.reset_scroll();
         }
@@ -115,7 +115,10 @@ impl Render for RunPanelView {
             .as_ref()
             .map_or(0, |snapshot| snapshot.changes.len());
         self.changes.observe(&project, count);
-        let search = self.search.as_ref().unwrap();
+        let search = self
+            .search
+            .as_ref()
+            .expect("search input initialized above");
         let query = search.read(cx).value().to_string();
         app.read(cx)
             .render_run_panel(

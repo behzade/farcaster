@@ -73,7 +73,7 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
     let send = tools
         .iter()
         .find(|tool| tool.name == "worker_send")
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(
         send.input_schema["properties"]["profile"]["enum"],
         serde_json::json!(["audit"])
@@ -81,7 +81,7 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
     assert!(
         send.input_schema["properties"]["profile"]["description"]
             .as_str()
-            .unwrap()
+            .expect("test operation should succeed")
             .contains(&format!("audit: {}", tasks.profiles[0].description))
     );
     for name in ["task", "judgment", "effort", "model"] {
@@ -91,10 +91,10 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
     let properties = child
         .iter()
         .find(|tool| tool.name == "worker_send")
-        .unwrap()
+        .expect("test operation should succeed")
         .input_schema["properties"]
         .as_object()
-        .unwrap();
+        .expect("test operation should succeed");
     for name in ["to", "profile", "task", "judgment"] {
         assert!(!properties.contains_key(name));
     }
@@ -104,7 +104,7 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
         tools
             .iter()
             .find(|tool| tool.name == "worker_send")
-            .unwrap()
+            .expect("test operation should succeed")
             .input_schema["properties"]["profile"],
         serde_json::json!(false)
     );
@@ -140,7 +140,9 @@ fn workgraph_schemas_do_not_accept_caller_identity() {
         .iter()
         .filter(|tool| tool.name.starts_with("workgraph_"))
     {
-        let properties = tool.input_schema["properties"].as_object().unwrap();
+        let properties = tool.input_schema["properties"]
+            .as_object()
+            .expect("test operation should succeed");
         for forbidden in ["project", "sessionId", "sessionPath", "next"] {
             assert!(
                 !properties.contains_key(forbidden),

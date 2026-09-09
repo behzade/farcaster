@@ -22,8 +22,8 @@ use super::super::contract::{
 };
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
-    use CapabilitySupport::Available;
     use crate::agents::HarnessAccessMode::{Full, Sandboxed};
+    use CapabilitySupport::Available;
 
     AgentBackendDescriptor {
         id: AgentBackendId::new("opencode2").expect("OpenCode backend id is valid"),

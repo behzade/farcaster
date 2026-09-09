@@ -10,7 +10,7 @@ fn synthetic_image_has_change_metadata_and_target() {
             "filePath":"art/cover.png"
         }),
     )
-    .unwrap();
+    .expect("test operation should succeed");
     let WorkerEvent::Activity(WorkerActivity::ToolStarted { metadata, .. }) = started else {
         panic!("expected tool start");
     };

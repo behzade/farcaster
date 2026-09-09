@@ -54,7 +54,6 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::Antigravity,
         AppIcon::Archive,
         AppIcon::ArrowsClockwise,
-        AppIcon::ArrowsOut,
         AppIcon::ArrowCounterClockwise,
         AppIcon::ArrowDown,
         AppIcon::ArrowUp,

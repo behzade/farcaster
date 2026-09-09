@@ -72,9 +72,12 @@ fn forced_backend_never_falls_back() {
     let temp = TestDirectory::new("forced");
     fs::create_dir(temp.path().join(".jj")).expect("create JJ marker");
 
-    let parent_git = discover_available(temp.path().parent().unwrap(), BackendPreference::Git)
-        .ok()
-        .flatten();
+    let parent_git = discover_available(
+        temp.path().parent().expect("test operation should succeed"),
+        BackendPreference::Git,
+    )
+    .ok()
+    .flatten();
     match parent_git {
         Some(parent) => {
             let git = discover_available(temp.path(), BackendPreference::Git)
@@ -133,9 +136,11 @@ fn unavailable_backend_is_ignored_for_auto_and_stale_preference() {
 #[test]
 fn no_repository_is_distinct_from_failure() {
     let temp = TestDirectory::new("none");
-    let parent =
-        RepositoryBackend::discover(temp.path().parent().unwrap(), BackendPreference::Auto)
-            .expect("discover enclosing repository");
+    let parent = RepositoryBackend::discover(
+        temp.path().parent().expect("test operation should succeed"),
+        BackendPreference::Auto,
+    )
+    .expect("discover enclosing repository");
     let result = RepositoryBackend::discover(temp.path(), BackendPreference::Auto)
         .expect("marker scan should succeed");
     assert_eq!(
@@ -323,7 +328,7 @@ fn git_snapshot_and_lazy_diff_use_separate_layers() {
             .changes
             .iter()
             .find(|change| change.layer == layer)
-            .unwrap();
+            .expect("test operation should succeed");
         assert_eq!(change.counts, Some(counts));
     }
     assert_eq!(
@@ -496,15 +501,15 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
     let repository = temp.path().join("repo");
     let home = temp.path().join("home");
     let config = temp.path().join("config");
-    fs::create_dir_all(&home).unwrap();
-    fs::create_dir_all(&config).unwrap();
+    fs::create_dir_all(&home).expect("test operation should succeed");
+    fs::create_dir_all(&config).expect("test operation should succeed");
     run_jj(
         temp.path(),
         &home,
         &config,
         &["git", "init", "--colocate", "repo"],
     );
-    fs::write(repository.join("file.txt"), "working\n").unwrap();
+    fs::write(repository.join("file.txt"), "working\n").expect("test operation should succeed");
     let backend = RepositoryBackend::discover_with_options(
         &repository,
         BackendPreference::Jujutsu,
@@ -513,11 +518,12 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
             ..RepositoryOptions::default()
         },
     )
-    .unwrap()
-    .unwrap();
-    let initial = backend.snapshot().unwrap();
+    .expect("test operation should succeed")
+    .expect("test operation should succeed");
+    let initial = backend.snapshot().expect("test operation should succeed");
     assert_eq!(initial.changes.len(), 1);
-    let (_watcher, events) = RepositoryWatcher::start(backend.location()).unwrap();
+    let (_watcher, events) =
+        RepositoryWatcher::start(backend.location()).expect("test operation should succeed");
 
     let assert_quiet = || {
         std::thread::sleep(Duration::from_millis(200));
@@ -526,7 +532,7 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
             "snapshot caused another refresh"
         );
     };
-    backend.snapshot().unwrap();
+    backend.snapshot().expect("test operation should succeed");
     assert_quiet();
     run_git(&repository, &home, &config, &["add", "file.txt"]);
     // Staging does not change JJ's working-copy view.
@@ -570,14 +576,14 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
             assert!(Instant::now() < deadline, "missed {program} commit");
             std::thread::sleep(Duration::from_millis(10));
         }
-        let refreshed = backend.snapshot().unwrap();
+        let refreshed = backend.snapshot().expect("test operation should succeed");
         assert!(refreshed.changes.is_empty());
         assert_ne!(refreshed.identity, initial.identity);
         // Importing a Git commit may publish one JJ operation. Once imported,
         // repeated reads must stop producing watcher events.
         std::thread::sleep(Duration::from_millis(200));
         while events.try_recv().is_ok() {}
-        backend.snapshot().unwrap();
+        backend.snapshot().expect("test operation should succeed");
         assert_quiet();
     }
 }

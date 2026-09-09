@@ -195,7 +195,7 @@ impl FarcasterApp {
                             &session.title,
                             Some(session.project.display().to_string()),
                             None,
-                            &session.search_text(),
+                            session.search_text(),
                         )
                     })
                     .collect()

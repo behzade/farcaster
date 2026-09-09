@@ -17,9 +17,13 @@ fn long_labels_and_multi_chord_keys_fit_narrow_help(cx: &mut gpui::TestAppContex
                     ))
                 },
             );
-            let row = cx.debug_bounds("shortcut-row").unwrap();
+            let row = cx
+                .debug_bounds("shortcut-row")
+                .expect("test operation should succeed");
             for selector in ["shortcut-keys", "shortcut-label"] {
-                let bounds = cx.debug_bounds(selector).unwrap();
+                let bounds = cx
+                    .debug_bounds(selector)
+                    .expect("test operation should succeed");
                 assert!(bounds.left() >= row.left());
                 assert!(
                     bounds.right() <= row.right(),

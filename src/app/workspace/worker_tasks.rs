@@ -309,7 +309,10 @@ impl FarcasterApp {
             let valid = route.validate().is_ok();
             let result = self.worker_profile_editor.persist_route(target);
             if valid && result.is_err() {
-                *self.worker_profile_editor.route_mut(target).unwrap() = previous;
+                *self
+                    .worker_profile_editor
+                    .route_mut(target)
+                    .expect("persisting a route preserves its identity") = previous;
             }
             self.worker_profile_editor.error = result.err();
         }
@@ -433,7 +436,13 @@ impl FarcasterApp {
                         saved[index].name = editor.profiles[index].name.clone();
                         saved[index].description = editor.profiles[index].description.clone();
                     } else {
-                        saved.push(editor.profiles.last().unwrap().clone());
+                        saved.push(
+                            editor
+                                .profiles
+                                .last()
+                                .expect("save_name added the new profile")
+                                .clone(),
+                        );
                     }
                     editor.persist(saved)?;
                     if let Some(WorkerProfileEdit::Name { profile, .. }) = &mut editor.edit {

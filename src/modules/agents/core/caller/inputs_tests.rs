@@ -54,7 +54,7 @@ fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(),
         cancel: false,
     })?;
     assert_eq!(
-        receiver.try_recv().unwrap(),
+        receiver.try_recv().expect("test operation should succeed"),
         WorkerInputResponse {
             id: "same-id".into(),
             value: Some("Two".into()),
@@ -66,7 +66,12 @@ fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(),
         value: None,
         cancel: true,
     })?;
-    assert!(receiver.try_recv().unwrap().cancel);
+    assert!(
+        receiver
+            .try_recv()
+            .expect("test operation should succeed")
+            .cancel
+    );
     assert!(
         registry
             .respond_to_child_input(WorkerInputResponse {

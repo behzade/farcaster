@@ -221,8 +221,13 @@ fn commands_render_directly_until_multiple_calls_share_a_group() {
     let previous = state.items.clone();
     let mut completed = state.items[1].as_ref().clone();
     completed.is_error = false;
-    Arc::make_mut(completed.tool_details.as_mut().unwrap()).state =
-        conversation::ToolExecutionState::Succeeded;
+    Arc::make_mut(
+        completed
+            .tool_details
+            .as_mut()
+            .expect("test operation should succeed"),
+    )
+    .state = conversation::ToolExecutionState::Succeeded;
     state.items.set(1, Arc::new(completed));
     let grouped = update_rows_from(&rows, &previous, &state.items, Some(1));
     assert_eq!(grouped, project_rows(&state.items));

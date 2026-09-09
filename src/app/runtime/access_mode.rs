@@ -63,7 +63,10 @@ impl AccessModeChangeState {
 
 impl RuntimeOwner {
     pub(super) fn available_access_modes(&self) -> Vec<HarnessAccessMode> {
-        crate::agents::available_access_modes(&self.harness, self.active_snapshot().access_mode_model())
+        crate::agents::available_access_modes(
+            &self.harness,
+            self.active_snapshot().access_mode_model(),
+        )
     }
 
     pub(super) fn access_mode_change_ready(&self) -> bool {

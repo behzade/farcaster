@@ -157,16 +157,19 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
             Ok(())
         }
     }
-    let temp = tempdir().unwrap();
+    let temp = tempdir().expect("test operation should succeed");
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
-    owner.state = Some(StateStore::open_at(&temp.path().join("state.sqlite3")).unwrap());
+    owner.state = Some(
+        StateStore::open_at(&temp.path().join("state.sqlite3"))
+            .expect("test operation should succeed"),
+    );
     owner.snapshot.session = Some(
         serde_json::from_value(json!({
             "model": null, "thinkingLevel": "off", "sessionName": "Model test",
             "isStreaming": false, "isCompacting": false, "sessionId": "test",
             "autoCompactionEnabled": true, "messageCount": 0, "pendingMessageCount": 0
         }))
-        .unwrap(),
+        .expect("test operation should succeed"),
     );
     let commands = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
     owner.process = Some(Box::new(Recorder(commands.clone())));
@@ -176,7 +179,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
     let model: Model = serde_json::from_value(json!({
         "id": "astra", "name": "Astra", "provider": "openai-codex", "reasoning": false
     }))
-    .unwrap();
+    .expect("test operation should succeed");
     owner.set_model(model.clone());
     owner.send_prompt(
         "draft:test".into(),
@@ -237,7 +240,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         id: Some(id),
         operation: SessionOperation::SelectModel,
         success: true,
-        data: serde_json::to_value(model).unwrap(),
+        data: serde_json::to_value(model).expect("test operation should succeed"),
         error: None,
     });
     owner.maybe_send_deferred_prompt();
@@ -990,9 +993,12 @@ fn catalog_discovery_is_the_authoritative_generation_namespace() {
         },
     );
 
+    let SupervisorSessionAction::Publish(event) = action else {
+        panic!("the catalog actor must publish its result");
+    };
     assert!(matches!(
-        action,
-        SupervisorSessionAction::Publish(RuntimeEvent::Sessions { generation: 7, .. })
+        *event,
+        RuntimeEvent::Sessions { generation: 7, .. }
     ));
 }
 
@@ -1470,7 +1476,9 @@ fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
 
 #[test]
 fn first_session_path_publishes_metadata_without_a_catalog_refresh() {
-    let project = std::env::temp_dir().canonicalize().unwrap();
+    let project = std::env::temp_dir()
+        .canonicalize()
+        .expect("test operation should succeed");
     let session = project.join("new-session.jsonl");
     let (mut owner, events) = owner_without_process(project);
 

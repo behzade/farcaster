@@ -52,7 +52,7 @@ fn back_restores_search_selection_scroll_and_parent_history(cx: &mut gpui::TestA
         child.previous = Some(Box::new(page));
         assert!(child.has_ancestor(&PickerScope::Providers));
         assert!(!child.has_ancestor(&PickerScope::Actions));
-        let mut restored = child.pop_previous().unwrap();
+        let mut restored = child.pop_previous().expect("test operation should succeed");
         assert_eq!(restored.list.entity_id(), list_id);
         assert_eq!(&*restored.query.borrow(), "Model");
         assert_eq!(restored.list.read(cx).selected_index(), Some(selected));
@@ -66,7 +66,10 @@ fn back_restores_search_selection_scroll_and_parent_history(cx: &mut gpui::TestA
             offset
         );
         assert_eq!(
-            restored.pop_previous().unwrap().scope,
+            restored
+                .pop_previous()
+                .expect("test operation should succeed")
+                .scope,
             PickerScope::Providers
         );
         assert!(restored.pop_previous().is_none());

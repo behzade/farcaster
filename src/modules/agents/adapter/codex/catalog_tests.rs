@@ -45,9 +45,9 @@ fn discovers_previewless_descendants_across_pages_without_duplicates() -> Result
     assert!(sessions[2].model.is_none());
     assert_eq!(sessions[2].parent_session.as_deref(), Some("child"));
     let requests = String::from_utf8(requests)
-        .unwrap()
+        .expect("test operation should succeed")
         .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .map(|line| serde_json::from_str::<Value>(line).expect("test operation should succeed"))
         .collect::<Vec<_>>();
     assert_eq!(requests[4]["params"]["ancestorThreadId"], "root");
     assert_eq!(requests[5]["params"]["cursor"], "page-2");

@@ -943,7 +943,10 @@ fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
         "args":{"command":"python3 - <<'PY'\nprint('hello')\nPY"},
         "toolMetadata":{"category":"execute", "native":{"original":true}}
     }));
-    let details = state.items[0].tool_details.as_ref().unwrap();
+    let details = state.items[0]
+        .tool_details
+        .as_ref()
+        .expect("test operation should succeed");
     assert_eq!(details.summary(), "python3 - <<'PY'…");
     assert_eq!(details.state, ToolExecutionState::Running);
     let args = details.arguments.clone();
@@ -952,7 +955,10 @@ fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
         "toolMetadata":{"category":"execute", "title":"Run attachment tests", "native":{"original":true, "status":"running"}}
     }));
     assert_eq!(state.items.len(), 1);
-    let details = state.items[0].tool_details.as_ref().unwrap();
+    let details = state.items[0]
+        .tool_details
+        .as_ref()
+        .expect("test operation should succeed");
     assert_eq!(details.arguments, args);
     assert_eq!(details.summary(), "python3 - <<'PY'…");
     assert_eq!(details.state, ToolExecutionState::Running);
@@ -960,7 +966,10 @@ fn tool_metadata_updates_preserve_lifecycle_and_raw_arguments() {
         "type":"tool_execution_end", "toolCallId":"t", "isError":false,
         "result":{"content":[]}
     }));
-    let details = state.items[0].tool_details.as_ref().unwrap();
+    let details = state.items[0]
+        .tool_details
+        .as_ref()
+        .expect("test operation should succeed");
     assert_eq!(details.state, ToolExecutionState::Succeeded);
     assert_eq!(details.result, Some(json!({"content":[]})));
     assert!(details.inspection_text().contains("python3"));
@@ -983,8 +992,14 @@ fn tool_metadata_is_identical_in_live_and_history_projection() {
         json!({"role":"assistant", "content":[{"type":"toolCall", "id":"s", "name":"grep", "arguments":args, "toolMetadata":metadata}]}),
         json!({"role":"toolResult", "toolCallId":"s", "toolName":"grep", "content":[{"type":"text","text":"found"}], "isError":false}),
     ]);
-    let left = live.items[0].tool_details.as_ref().unwrap();
-    let right = history.items[0].tool_details.as_ref().unwrap();
+    let left = live.items[0]
+        .tool_details
+        .as_ref()
+        .expect("test operation should succeed");
+    let right = history.items[0]
+        .tool_details
+        .as_ref()
+        .expect("test operation should succeed");
     assert_eq!(left.metadata, right.metadata);
     assert_eq!(left.arguments, right.arguments);
     assert_eq!(left.state, right.state);

@@ -1447,7 +1447,10 @@ fn deleting_session_state_removes_the_family_and_preserves_other_sessions()
     for path in [&root, &child, &other] {
         fs::write(path, "{}")?;
         sessions.push(SessionSummary::from_cached(
-            path.file_stem().unwrap().to_string_lossy().into_owned(),
+            path.file_stem()
+                .expect("test operation should succeed")
+                .to_string_lossy()
+                .into_owned(),
             path.clone(),
             project.clone(),
             "Title".into(),
@@ -1542,7 +1545,7 @@ fn parent_identity_survives_child_first_and_partial_indexing()
     let cached_child = cached
         .iter()
         .find(|s| s.path == crate::sessions::normalize_session_path(&child.path))
-        .unwrap();
+        .expect("test operation should succeed");
     assert_eq!(cached_child.id, "child");
     assert_eq!(cached_child.parent_session.as_deref(), Some("root"));
     let connection = Connection::open(&database)?;
@@ -1667,7 +1670,12 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
     registry.drafts[0].session_path = Some(temp.path().join("bound.jsonl"));
     store.save_registry(&registry)?;
     assert_eq!(
-        store.prompt_presentations(registry.drafts[0].session_path.as_ref().unwrap())?[0]
+        store.prompt_presentations(
+            registry.drafts[0]
+                .session_path
+                .as_ref()
+                .expect("test operation should succeed")
+        )?[0]
             .display_message,
         "display"
     );
@@ -1981,7 +1989,10 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     assert_eq!(cached[0].thinking_level, None);
 
     let mut legacy = serde_json::to_value(&link).map_err(|error| error.to_string())?;
-    legacy.as_object_mut().unwrap().remove("execution");
+    legacy
+        .as_object_mut()
+        .expect("test operation should succeed")
+        .remove("execution");
     let legacy: crate::agents::WorkerFamilyLink =
         serde_json::from_value(legacy).map_err(|error| error.to_string())?;
     assert!(legacy.execution.is_none());

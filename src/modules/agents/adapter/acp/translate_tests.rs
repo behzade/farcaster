@@ -83,9 +83,18 @@ fn tool_metadata_merges_partial_acp_updates() {
     assert_eq!(metadata.title.as_deref(), Some("Read file"));
     assert_eq!(metadata.targets, ["src/main.rs"]);
     assert_eq!(tool_args(&metadata), json!({"path":"src/main.rs"}));
-    assert_eq!(metadata.native.as_ref().unwrap()["kind"], "read");
     assert_eq!(
-        metadata.native.as_ref().unwrap()["rawInput"]["path"],
+        metadata
+            .native
+            .as_ref()
+            .expect("test operation should succeed")["kind"],
+        "read"
+    );
+    assert_eq!(
+        metadata
+            .native
+            .as_ref()
+            .expect("test operation should succeed")["rawInput"]["path"],
         "src/main.rs"
     );
 }

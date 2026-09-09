@@ -113,6 +113,7 @@ impl StateStore {
         transaction.commit().map_err(|error| error.to_string())
     }
 
+    #[cfg(test)]
     pub(crate) fn load_worker_families(
         &self,
     ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {

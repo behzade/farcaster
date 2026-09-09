@@ -7,7 +7,7 @@ fn queued_search_edits_only_load_the_latest_query() {
     for query in ["c", "co", "cod", "code", ""] {
         sender
             .send(RuntimeCommand::LoadSessions(query.into()))
-            .unwrap();
+            .expect("test operation should succeed");
     }
     let mut pending = None;
     assert!(matches!(
@@ -30,7 +30,7 @@ fn search_coalescing_preserves_other_commands_and_disconnect_order() {
         RuntimeCommand::LoadSessions("new".into()),
         RuntimeCommand::Shutdown,
     ] {
-        sender.send(command).unwrap();
+        sender.send(command).expect("test operation should succeed");
     }
     drop(sender);
     let mut pending = None;
