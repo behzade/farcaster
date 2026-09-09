@@ -1271,7 +1271,9 @@ impl CodexWorkerSession {
                     },
                 );
             }
-            Err(error) => zlog::warn!("Codex child status could not be requested: {error}"),
+            Err(error) => {
+                zlog::warn!("Codex child status could not be requested: {error}");
+            }
         }
         None
     }

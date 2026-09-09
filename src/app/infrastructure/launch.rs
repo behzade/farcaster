@@ -1,7 +1,7 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 
 #[cfg(target_os = "linux")]
-use std::fs;
+use std::{fs, sync::Arc};
 
 use crate::{
     app::FarcasterApp,

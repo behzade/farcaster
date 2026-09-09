@@ -16,7 +16,6 @@ use gpui_component::{
 };
 
 use crate::{
-    app::ui::assets::AppIcon,
     app::ui::persistent_vec::{Indexed, PersistentVec},
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
