@@ -24,6 +24,17 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_file_editor_with_diff(path, line, false, window, cx);
+    }
+
+    pub(crate) fn open_file_editor_with_diff(
+        &mut self,
+        path: PathBuf,
+        line: Option<u64>,
+        diff: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.overlays.run {
             self.close_sheet(window, cx);
         }
@@ -35,7 +46,12 @@ impl FarcasterApp {
                 return;
             }
         };
-        self.activate_editor_tab(project, EditorTarget::File(path, line), window, cx);
+        let target = if diff {
+            EditorTarget::Diff(path, line)
+        } else {
+            EditorTarget::File(path, line)
+        };
+        self.activate_editor_tab(project, target, window, cx);
     }
 
     pub(in crate::app) fn show_editor_surface(

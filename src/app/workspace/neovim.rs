@@ -17,9 +17,14 @@ const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const SESSION_VIEW: &str = include_str!("neovim_session.lua");
 
+#[path = "neovim_diff.rs"]
+mod diff;
+use diff::head_contents;
+
 pub(super) enum EditorTarget {
     Resume,
     File(PathBuf, Option<u64>),
+    Diff(PathBuf, Option<u64>),
     Transcript(String),
 }
 
@@ -173,6 +178,20 @@ fn open_target(
     let (expression, _transfer) = match target {
         EditorTarget::Resume => (session_expression(tab, None, None), None),
         EditorTarget::File(path, line) => (session_expression(tab, Some(&path), line), None),
+        EditorTarget::Diff(path, line) => {
+            let mut file =
+                tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
+            file.write_all(&head_contents(&path)?)
+                .map_err(|error| error.to_string())?;
+            let expression = format!(
+                "luaeval({}, [{tab}, {}, {}, v:null, {}])",
+                vim_string(SESSION_VIEW),
+                vim_string(&path.to_string_lossy()),
+                line.map_or_else(|| "v:null".to_owned(), |line| line.max(1).to_string()),
+                vim_string(&file.path().to_string_lossy()),
+            );
+            (expression, Some(file))
+        }
         EditorTarget::Transcript(text) => {
             let mut file =
                 tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;

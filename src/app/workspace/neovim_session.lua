@@ -1,5 +1,5 @@
 (function()
-  local id, path, line, scratch = unpack(_A)
+  local id, path, line, scratch, diff = unpack(_A)
   local state = rawget(_G, 'farcaster_session_views')
   if not state then
     state = { tabs = {} }
@@ -19,6 +19,26 @@
     vim.api.nvim_set_current_tabpage(tab)
   end
 
+  state.diffs = state.diffs or {}
+  if path ~= nil and path ~= vim.NIL or scratch ~= nil and scratch ~= vim.NIL then
+    local previous = state.diffs[tab]
+    if previous then
+      if vim.api.nvim_win_is_valid(previous.work) then
+        vim.api.nvim_set_current_win(previous.work)
+        vim.cmd('diffoff')
+      end
+      if vim.api.nvim_win_is_valid(previous.base)
+          and vim.api.nvim_win_get_buf(previous.base) == previous.buffer then
+        if #vim.api.nvim_tabpage_list_wins(tab) > 1 then
+          vim.api.nvim_win_close(previous.base, true)
+        else
+          vim.cmd('diffoff')
+        end
+      end
+      state.diffs[tab] = nil
+    end
+  end
+
   if scratch ~= nil and scratch ~= vim.NIL then
     local lines = vim.fn.readfile(scratch)
     local buf = vim.api.nvim_create_buf(false, true)
@@ -31,9 +51,34 @@
     vim.bo[buf].modified = false
     vim.api.nvim_win_set_cursor(0, {1, 0})
   elseif path ~= nil and path ~= vim.NIL then
-    vim.cmd('hide edit ' .. vim.fn.fnameescape(path))
+    local existing = vim.fn.bufnr(path)
+    if existing ~= -1 then
+      vim.cmd('hide buffer ' .. existing)
+    else
+      vim.cmd('hide edit ' .. vim.fn.fnameescape(path))
+    end
     if line ~= nil and line ~= vim.NIL then
       vim.fn.cursor(line, 1)
+    end
+    if diff ~= nil and diff ~= vim.NIL then
+      local work = vim.api.nvim_get_current_win()
+      local filetype = vim.bo.filetype
+      local lines = vim.fn.readfile(diff)
+      vim.cmd('leftabove vnew')
+      local base = vim.api.nvim_get_current_win()
+      vim.bo.buftype = 'nofile'
+      vim.bo.bufhidden = 'wipe'
+      vim.bo.swapfile = false
+      vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+      vim.api.nvim_buf_set_name(0, 'farcaster://HEAD/' .. id .. '/' .. vim.api.nvim_get_current_buf() .. '/' .. vim.fn.fnamemodify(path, ':t'))
+      vim.bo.filetype = filetype
+      vim.bo.modified = false
+      vim.bo.modifiable = false
+      vim.bo.readonly = true
+      vim.cmd('diffthis')
+      vim.api.nvim_set_current_win(work)
+      vim.cmd('diffthis')
+      state.diffs[tab] = { work = work, base = base, buffer = vim.api.nvim_win_get_buf(base) }
     end
   end
   return 0

@@ -220,12 +220,13 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
         .into_owned();
     let path = file.path.clone();
     let line = file.line;
-    tool_changes::title_row(
+    tool_changes::file_row(
         format!("change-file-{key}-{path}"),
         format!("Edit {}", file.label),
-        move |window, cx| {
+        true,
+        move |diff, window, cx| {
             let _ = entity.update(cx, |this, cx| {
-                this.open_file_editor_at_line(path.clone().into(), line, window, cx);
+                this.open_file_editor_with_diff(path.clone().into(), line, diff, window, cx);
             });
         },
     )

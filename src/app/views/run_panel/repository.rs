@@ -303,7 +303,7 @@ impl FarcasterApp {
         let key_entity = entity;
         let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
-        let full_path = display_change_path(change);
+        let full_path = format!("{} · ⌥ Open diff", display_change_path(change));
         let (filename, _) = file_path_labels(&change.relative_path);
         let status = change_status_label(change).to_owned();
         let layer = group_title(change.layer);
@@ -332,9 +332,15 @@ impl FarcasterApp {
             .hover(|row| row.bg(THEME.colors.hover))
             .focus(|row| row.bg(THEME.colors.selection))
             .cursor_pointer()
-            .on_click(move |_, window, cx| {
+            .on_click(move |event, window, cx| {
                 let _ = click_entity.update(cx, |this, cx| {
-                    this.open_file_editor(click_path.clone(), window, cx);
+                    this.open_file_editor_with_diff(
+                        click_path.clone(),
+                        None,
+                        event.modifiers().alt,
+                        window,
+                        cx,
+                    );
                 });
             })
             .on_key_down(move |event, window, cx| {

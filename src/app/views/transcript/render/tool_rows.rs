@@ -274,12 +274,16 @@ fn file_links(
             let entity = entity.clone();
             let label = format!("Open current file: {path}");
             let line = file_target_line(item, &path, project);
-            tool_changes::title_row(
+            let diff_enabled = item.tool_details.as_ref().is_some_and(|details| {
+                details.metadata.category == Some(crate::agents::ToolCategory::Change)
+            });
+            tool_changes::file_row(
                 format!("tool-file-{key}-{offset}"),
                 label.clone(),
-                move |window, cx| {
+                diff_enabled,
+                move |diff, window, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.open_file_editor_at_line(path.clone().into(), line, window, cx)
+                        this.open_file_editor_with_diff(path.clone().into(), line, diff, window, cx)
                     });
                 },
             )
