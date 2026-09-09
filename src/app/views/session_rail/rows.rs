@@ -55,7 +55,8 @@ pub(super) fn session_badge(
 
 fn normalized_session_status(status: &str) -> Option<String> {
     match status {
-        "" | "Idle" | "Ready" => None,
+        "" | "Idle" => None,
+        "Ready" => Some("Done".into()),
         status => Some(status.into()),
     }
 }

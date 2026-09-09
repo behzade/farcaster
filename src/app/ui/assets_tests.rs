@@ -33,6 +33,11 @@ fn harnesses_use_their_brand_icons() {
     assert_eq!(AppIcon::for_harness("codex-cli"), AppIcon::Codex);
     assert_eq!(AppIcon::for_harness("cursor-cli"), AppIcon::Cursor);
     assert_eq!(AppIcon::for_harness("opencode2"), AppIcon::OpenCode);
+    assert_eq!(AppIcon::for_harness("claude-acp"), AppIcon::Claude);
+    assert_eq!(
+        AppIcon::for_harness("antigravity-acp"),
+        AppIcon::Antigravity
+    );
     assert_eq!(AppIcon::for_harness("unknown"), AppIcon::Code);
 }
 
@@ -46,6 +51,7 @@ fn asset_source_serves_only_themeable_icons() {
     );
 
     for icon in [
+        AppIcon::Antigravity,
         AppIcon::Archive,
         AppIcon::ArrowsClockwise,
         AppIcon::ArrowsOut,
@@ -58,6 +64,7 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::ChatCircle,
         AppIcon::ChatCircleDots,
         AppIcon::CheckCircle,
+        AppIcon::Claude,
         AppIcon::Code,
         AppIcon::Codex,
         AppIcon::Copy,

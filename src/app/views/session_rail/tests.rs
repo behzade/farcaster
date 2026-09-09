@@ -90,6 +90,23 @@ fn archived_sessions_suppress_done_but_keep_active_states() {
 }
 
 #[test]
+fn settled_status_overrides_stale_catalog_activity() {
+    let running = item("running", 1, "/project", SessionRailKind::Project, true);
+    assert_eq!(
+        session_badge(&running, Some("Ready"), None, "", false),
+        Some("Done".into()),
+    );
+    assert_eq!(
+        session_badge(&running, None, Some("running"), "Ready", false),
+        Some("Done".into()),
+    );
+    assert_eq!(
+        session_badge(&running, Some("Ready"), None, "", true),
+        Some("Waiting".into()),
+    );
+}
+
+#[test]
 fn completed_parent_waits_while_a_descendant_is_running() {
     let parent = item("parent", 2, "/project", SessionRailKind::Project, false);
     let mut child = item("child", 1, "/project", SessionRailKind::Project, true).session;

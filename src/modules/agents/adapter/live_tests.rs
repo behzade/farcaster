@@ -25,7 +25,14 @@ use super::{
 
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-const LIVE_HARNESSES: [&str; 4] = ["pi", "codex-cli", "cursor-cli", "opencode2"];
+const LIVE_HARNESSES: [&str; 6] = [
+    "pi",
+    "codex-cli",
+    "cursor-cli",
+    "opencode2",
+    "claude-acp",
+    "antigravity-acp",
+];
 const TEST_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4EKBBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULACvxoEydbL2eAAAAAElFTkSuQmCC";
 
 struct McpGuard;
@@ -117,7 +124,7 @@ fn descriptor(harness: &str) -> Result<AgentBackendDescriptor, String> {
 }
 
 #[test]
-#[ignore = "runs Pi, Codex, Cursor, and OpenCode against their configured live LLM accounts"]
+#[ignore = "runs all six backends against live LLM accounts; consumes usage and retains sessions when deletion is unsupported"]
 fn live_harnesses_conform_to_session_outcomes() -> Result<(), String> {
     let _mcp = McpGuard::disabled();
     let selected = std::env::var("FARCASTER_E2E_HARNESS").ok();
@@ -158,6 +165,12 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
     };
     let mut session = spawn_session(&config, launch(SessionStart::New, None))?;
     let path = session_path(&mut *session)?;
+    if !coverage.delete {
+        eprintln!(
+            "{harness}: live test session {} will remain because deletion is unsupported",
+            path.display()
+        );
+    }
 
     let outcome = (|| {
         exercise_catalog(&mut *session, coverage)?;
@@ -979,6 +992,13 @@ mod tests {
     #[test]
     fn live_harness_selector_is_strict() -> Result<(), String> {
         assert_eq!(select_harnesses(None)?, LIVE_HARNESSES);
+        assert_eq!(
+            known_backend_descriptors()
+                .iter()
+                .map(|descriptor| descriptor.id.as_str())
+                .collect::<Vec<_>>(),
+            LIVE_HARNESSES,
+        );
         for harness in LIVE_HARNESSES {
             assert_eq!(select_harnesses(Some(harness))?, [harness]);
         }

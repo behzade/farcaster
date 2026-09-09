@@ -21,6 +21,15 @@ const BIND_ADDRESS: &str = "127.0.0.1:8765";
 const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
 
+type JsonObject = serde_json::Map<String, serde_json::Value>;
+
+fn json_object(value: serde_json::Value) -> Result<Json<JsonObject>, String> {
+    match value {
+        serde_json::Value::Object(object) => Ok(Json(object)),
+        _ => Err("MCP tool output must be an object".into()),
+    }
+}
+
 fn server_config() -> StreamableHttpServerConfig {
     // Per-request protocol metadata (SEP-2575) is deliberately not required:
     // the harnesses served here (OpenCode, Codex, ACP, Pi) are 2025-era MCP
@@ -64,7 +73,7 @@ impl FarcasterMcp {
             P,
         ) -> Result<serde_json::Value, String>,
         mutates: bool,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         let token = caller_token(&parts)
             .ok_or_else(|| "workgraph requires a registered Farcaster caller".to_owned())?;
         let database = self.database.clone();
@@ -77,7 +86,7 @@ impl FarcasterMcp {
         if mutates {
             notify_workgraph_changed(&self.workgraph_updates);
         }
-        Ok(Json(result))
+        json_object(result)
     }
 }
 
@@ -91,7 +100,7 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<workers::SendParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         let caller_token = caller_token(&parts);
         let pool = self.workers.clone();
         let database = self.database.clone();
@@ -110,7 +119,7 @@ impl FarcasterMcp {
         })
         .await
         .map_err(|error| format!("worker send task failed: {error}"))??;
-        Ok(Json(value))
+        json_object(value)
     }
 
     #[tool(
@@ -142,7 +151,7 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<workgraph::SearchParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         self.workgraph_call(parts, params, workgraph::search, false)
             .await
     }
@@ -155,7 +164,7 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<workgraph::PatchParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         self.workgraph_call(parts, params, workgraph::patch, true)
             .await
     }
@@ -168,7 +177,7 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<workgraph::TaskParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         self.workgraph_call(parts, params, workgraph::claim, true)
             .await
     }
@@ -181,7 +190,7 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<workgraph::TaskParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         self.workgraph_call(parts, params, workgraph::release, true)
             .await
     }
@@ -194,7 +203,7 @@ impl FarcasterMcp {
         &self,
         Parameters(params): Parameters<workgraph::CompleteParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
-    ) -> Result<Json<serde_json::Value>, String> {
+    ) -> Result<Json<JsonObject>, String> {
         self.workgraph_call(parts, params, workgraph::complete, true)
             .await
     }

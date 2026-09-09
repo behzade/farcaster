@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 51] = [
+const ICON_PATHS: [&str; 53] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -50,6 +50,8 @@ const ICON_PATHS: [&str; 51] = [
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
     "icons/phosphor/x-circle.svg",
+    "icons/workbench/antigravity.svg",
+    "icons/workbench/claude.svg",
     "icons/workbench/codex.svg",
     "icons/workbench/cursor.svg",
     "icons/workbench/ghostty.svg",
@@ -258,6 +260,12 @@ impl AssetSource for AppAssets {
             "icons/workbench/cursor.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/cursor.svg"))
             }
+            "icons/workbench/claude.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/claude.svg"))
+            }
+            "icons/workbench/antigravity.svg" => Some(include_bytes!(
+                "../../../assets/workbench-icons/antigravity.svg"
+            )),
             "icons/workbench/ghostty.svg" => Some(include_bytes!(
                 "../../../assets/workbench-icons/ghostty.svg"
             )),
@@ -287,6 +295,7 @@ impl AssetSource for AppAssets {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AppIcon {
+    Antigravity,
     Archive,
     ArrowsClockwise,
     ArrowsOut,
@@ -299,6 +308,7 @@ pub(crate) enum AppIcon {
     ChatCircle,
     ChatCircleDots,
     CheckCircle,
+    Claude,
     Code,
     Codex,
     Copy,
@@ -336,6 +346,8 @@ impl AppIcon {
             "codex-cli" => Self::Codex,
             "cursor-cli" => Self::Cursor,
             "opencode2" => Self::OpenCode,
+            "claude-acp" => Self::Claude,
+            "antigravity-acp" => Self::Antigravity,
             _ => Self::Code,
         }
     }
@@ -344,6 +356,7 @@ impl AppIcon {
 impl IconNamed for AppIcon {
     fn path(self) -> SharedString {
         let name = match self {
+            Self::Antigravity => return "icons/workbench/antigravity.svg".into(),
             Self::Archive => "archive",
             Self::ArrowsClockwise => "arrows-clockwise",
             Self::ArrowsOut => "arrows-out",
@@ -356,6 +369,7 @@ impl IconNamed for AppIcon {
             Self::ChatCircle => "chat-circle",
             Self::ChatCircleDots => "chat-circle-dots",
             Self::CheckCircle => "check-circle",
+            Self::Claude => return "icons/workbench/claude.svg".into(),
             Self::Code => "code",
             Self::Codex => return "icons/workbench/codex.svg".into(),
             Self::Copy => "copy",
