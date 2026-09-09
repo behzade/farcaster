@@ -257,7 +257,7 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "Farcaster provides worker coordination and durable work graphs."
+    instructions = "You are running inside Farcaster, a GUI app for multiple agent harnesses. Use Farcaster MCP by default to keep substantial work in a persistent task graph the user can inspect, coordinate with concurrent agents through workspace notices, and delegate independent work to predefined subagent profiles across harnesses for cost and visibility."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
