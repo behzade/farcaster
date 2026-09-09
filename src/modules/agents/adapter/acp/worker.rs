@@ -12,8 +12,8 @@ use super::{
     events::{AcpInbound, AcpRequestId},
     translate::{
         ConfigIds, commands_from_update, commands_from_value, content_text, find_permission_option,
-        is_acceptance, merge_tool_metadata, metadata_from_options, metadata_from_session,
-        normalize_content, normalize_tool_name, tool_args, tool_result, usage_update,
+        is_acceptance, merge_tool_metadata, normalize_content, normalize_tool_name, tool_args,
+        tool_result, usage_update,
     },
 };
 use crate::{
@@ -279,7 +279,8 @@ fn setup_connection(
         .or(resume)
         .ok_or_else(|| format!("{} ACP agent did not provide a session id", profile.name))?
         .to_owned();
-    let (mut metadata, config_ids) = metadata_from_session(profile, &response);
+    let (mut metadata, config_ids) =
+        super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
     let queued = connection.drain_queued()?;
     if let Some(commands) = queued
         .iter()
@@ -289,7 +290,16 @@ fn setup_connection(
         metadata.commands = commands;
     }
     let history = resume.is_some().then(|| {
-        super::catalog::discovered_history(profile, queued.iter().cloned(), &response, &session_id)
+        let mut history = super::catalog::discovered_history(
+            profile,
+            queued.iter().cloned(),
+            &response,
+            &session_id,
+        );
+        if let Some(model) = &config_ids.selected_model {
+            history.model = Some((profile.backend.into(), model.clone()));
+        }
+        history
     });
     if resume.is_none() {
         connection.restore_queued(queued);
@@ -456,7 +466,58 @@ impl AcpWorkerSession {
     }
 
     fn request_and_wait(&mut self, method: &str, params: Value) -> Result<(), String> {
-        self.connection.request_blocking(method, params).map(|_| ())
+        let response = self.connection.request_blocking(method, params)?;
+        if response.get("configOptions").is_some() {
+            self.refresh_configuration(&response);
+        }
+        Ok(())
+    }
+
+    fn refresh_configuration(&mut self, response: &Value) {
+        let (metadata, ids) = super::configuration::metadata(
+            &self.profile,
+            response,
+            self.config_ids.catalog.clone(),
+        );
+        let selected_model = metadata
+            .models
+            .iter()
+            .find(|model| model.get("id").and_then(Value::as_str) == ids.selected_model.as_deref())
+            .cloned();
+        let current_value = |id: Option<&str>| {
+            response
+                .get("configOptions")
+                .and_then(Value::as_array)
+                .and_then(|options| {
+                    options
+                        .iter()
+                        .find(|option| option.get("id").and_then(Value::as_str) == id)
+                })
+                .and_then(|option| option.get("currentValue"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let selected_effort = current_value(ids.effort.as_deref());
+        let selected_mode = current_value(ids.mode.as_deref());
+        self.config_ids = ids;
+        self.events
+            .push_back(WorkerEvent::Activity(WorkerActivity::ServiceTierChanged {
+                selected: metadata.service_tier,
+                options: metadata.service_tiers,
+            }));
+        self.events.push_back(WorkerEvent::Activity(
+            WorkerActivity::ConfigurationChanged {
+                models: metadata.models,
+                efforts: metadata.efforts,
+                modes: metadata.modes,
+                selected_model,
+                selected_effort,
+            },
+        ));
+        if let Some(mode) = selected_mode {
+            self.events
+                .push_back(WorkerEvent::Activity(WorkerActivity::ModeChanged(mode)));
+        }
     }
 
     fn update(&mut self, params: Value) -> Option<WorkerEvent> {
@@ -486,6 +547,58 @@ impl AcpWorkerSession {
             return None;
         };
         match update_type {
+            "current_mode_update" => update
+                .get("currentModeId")
+                .and_then(Value::as_str)
+                .map(|mode| WorkerEvent::Activity(WorkerActivity::ModeChanged(mode.into()))),
+            "session_info_update" => update
+                .get("title")
+                .and_then(Value::as_str)
+                .map(|title| WorkerEvent::Activity(WorkerActivity::TitleChanged(title.into()))),
+            "plan" => {
+                let todos = update
+                    .get("entries")?
+                    .as_array()?
+                    .iter()
+                    .enumerate()
+                    .map(|(index, entry)| {
+                        json!({"id": index.to_string(), "content": entry.get("content"),
+                        "status": entry.get("status"), "priority": entry.get("priority")})
+                    })
+                    .collect::<Vec<_>>();
+                let summary = todos
+                    .iter()
+                    .map(|todo| {
+                        format!(
+                            "{}: {}",
+                            todo.get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("pending"),
+                            todo.get("content")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let id = format!(
+                    "plan-{}",
+                    self.current_prompt
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default()
+                );
+                // Each plan snapshot replaces the previous result in the same
+                // tool row, including revisions after an earlier completion.
+                if let Some(state) = self.tool_states.get_mut(&id) {
+                    state.finished = false;
+                }
+                self.tool_update(
+                    &json!({"toolCallId":id,"title":"Update plan","kind":"other",
+                    "status":"completed","rawInput":{"todos":todos},
+                    "content":[{"type":"content","content":{"type":"text","text":summary}}]}),
+                )
+            }
             "agent_message_chunk" => {
                 let text = content_text(update.get("content")?)?;
                 self.output.push_str(&text);
@@ -510,16 +623,9 @@ impl AcpWorkerSession {
                 WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands })
             }),
             "config_option_update" => {
-                let options = update.get("configOptions")?.as_array()?;
-                let (metadata, ids) = metadata_from_options(&self.profile, options);
-                self.config_ids = ids;
-                Some(WorkerEvent::Activity(
-                    WorkerActivity::ConfigurationChanged {
-                        models: metadata.models,
-                        efforts: metadata.efforts,
-                        modes: metadata.modes,
-                    },
-                ))
+                update.get("configOptions")?.as_array()?;
+                self.refresh_configuration(update);
+                self.events.pop_front()
             }
             _ => {
                 log_bad_acp_message(
@@ -900,16 +1006,35 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn select_model(&mut self, _provider: &str, model: &str) -> Result<(), String> {
+        let service_tier = self.config_ids.selected_service_tier.clone();
         let config_id = self.config_ids.model.clone().ok_or_else(|| {
             format!(
                 "{} did not advertise an ACP model option",
                 self.profile.name
             )
         })?;
+        let selection = self.config_ids.selections.get(model).cloned();
+        let base = selection
+            .as_ref()
+            .map_or(model, |selection| selection.model.as_str());
         self.request_and_wait(
             "session/set_config_option",
-            json!({"sessionId": self.session_id, "configId": config_id, "value": model}),
-        )
+            json!({"sessionId": self.session_id, "configId": config_id, "value": base}),
+        )?;
+        if let Some(selection) = selection {
+            for (config_id, value) in selection.parameters {
+                self.request_and_wait(
+                    "session/set_config_option",
+                    json!({"sessionId":self.session_id,"configId":config_id,"value":value}),
+                )?;
+            }
+        }
+        if let Some(tier) = service_tier
+            && self.config_ids.service_tiers.contains(&tier)
+        {
+            self.select_service_tier(&tier)?;
+        }
+        Ok(())
     }
 
     fn select_effort(&mut self, effort: &str) -> Result<(), String> {
@@ -922,6 +1047,33 @@ impl WorkerSession for AcpWorkerSession {
         self.request_and_wait(
             "session/set_config_option",
             json!({"sessionId": self.session_id, "configId": config_id, "value": effort}),
+        )
+    }
+
+    fn select_service_tier(&mut self, tier: &str) -> Result<(), String> {
+        if !self
+            .config_ids
+            .service_tiers
+            .iter()
+            .any(|option| option == tier)
+        {
+            return Err(format!(
+                "Service tier is not available for this model: {tier}"
+            ));
+        }
+        let config_id = self
+            .config_ids
+            .service_tier
+            .clone()
+            .ok_or("Agent did not advertise a service tier option")?;
+        let value = super::configuration::CURSOR_SERVICE_TIERS
+            .iter()
+            .find(|(candidate, _)| *candidate == tier)
+            .map(|(_, value)| *value)
+            .ok_or_else(|| format!("Unknown service tier: {tier}"))?;
+        self.request_and_wait(
+            "session/set_config_option",
+            json!({"sessionId":self.session_id,"configId":config_id,"value":value}),
         )
     }
 

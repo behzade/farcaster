@@ -14,6 +14,8 @@ use crate::agents::{
 
 #[derive(Default)]
 pub(super) struct MainSessionMetadata {
+    pub service_tier: Option<String>,
+    pub service_tiers: Vec<String>,
     pub models: Vec<Value>,
     pub efforts: Vec<String>,
     pub commands: Vec<Value>,
@@ -178,6 +180,8 @@ impl WorkerSessionTransport {
         });
         json!({
             "model": model,
+            "serviceTier": self.metadata.service_tier,
+            "serviceTiers": self.metadata.service_tiers,
             "thinkingLevel": self.effort.clone(),
             "isStreaming": self.running,
             "isCompacting": false,
@@ -373,11 +377,44 @@ impl WorkerSessionTransport {
                 );
                 return;
             }
+            WorkerActivity::TitleChanged(title) => {
+                self.session_name = Some(title);
+                self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
+                return;
+            }
+            WorkerActivity::ServiceTierChanged { selected, options } => {
+                self.metadata.service_tier = selected;
+                self.metadata.service_tiers = options;
+                self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
+                return;
+            }
+            WorkerActivity::ModeChanged(mode) => {
+                self.selected_mode = Some(mode);
+                self.enqueue_catalog_response(
+                    SessionOperation::ListModes,
+                    json!({"modes": self.metadata.modes, "selected": self.selected_mode}),
+                );
+                return;
+            }
             WorkerActivity::ConfigurationChanged {
                 models,
                 efforts,
                 modes,
+                selected_model,
+                selected_effort,
             } => {
+                if let Some(model) = selected_model {
+                    self.model = model
+                        .get("provider")
+                        .and_then(Value::as_str)
+                        .zip(model.get("id").and_then(Value::as_str))
+                        .map(|(provider, id)| (provider.into(), id.into()));
+                    self.usage.context_window = model
+                        .get("contextWindow")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                }
+                self.effort = selected_effort;
                 self.metadata.models.clone_from(&models);
                 self.metadata.efforts.clone_from(&efforts);
                 self.metadata.modes.clone_from(&modes);
@@ -393,6 +430,7 @@ impl WorkerSessionTransport {
                     SessionOperation::ListModes,
                     json!({"modes": modes, "selected": self.selected_mode}),
                 );
+                self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
                 return;
             }
             WorkerActivity::ServiceStatusChanged {
@@ -602,6 +640,14 @@ impl SessionTransport for WorkerSessionTransport {
             SessionCommand::SelectReasoning { level } => {
                 self.worker.select_effort(&level)?;
                 self.effort = Some(level);
+                self.response(id.clone(), operation, json!({}));
+            }
+            SessionCommand::SelectServiceTier { tier } => {
+                if !self.metadata.service_tiers.contains(&tier) {
+                    return Err("Service tier is not available for the selected model".into());
+                }
+                self.worker.select_service_tier(&tier)?;
+                self.metadata.service_tier = Some(tier);
                 self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::SelectMode { mode } => {

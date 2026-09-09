@@ -10,6 +10,144 @@ const PROFILE: AcpProfile = AcpProfile {
     force_argument: Some("--force"),
 };
 
+#[cfg(unix)]
+fn inert_session() -> AcpWorkerSession {
+    AcpWorkerSession {
+        profile: PROFILE.clone(),
+        child: std::process::Command::new("true").spawn().unwrap(),
+        connection: AcpConnection::new(
+            futures::io::Cursor::new(Vec::<u8>::new()),
+            futures::io::Cursor::new(Vec::<u8>::new()),
+            None,
+        )
+        .unwrap(),
+        session_id: "one".into(),
+        current_prompt: Some(AcpRequestId::Number(1)),
+        pending_steers: HashMap::new(),
+        queued_prompts: VecDeque::new(),
+        output: String::new(),
+        thought_started: false,
+        pending_inputs: HashMap::new(),
+        tool_states: HashMap::new(),
+        peer_messages: VecDeque::new(),
+        events: VecDeque::new(),
+        config_ids: ConfigIds::default(),
+        features: AcpFeatures {
+            steering: false,
+            close: false,
+        },
+        caller_identity: None,
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn model_and_service_tier_are_sent_independently() {
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::net::UnixStream;
+    let (client, peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .unwrap();
+    let peer = thread::spawn(move || {
+        let mut peer = std::io::BufReader::new(peer);
+        for (config, value) in [
+            ("model", "base"),
+            ("context", "1m"),
+            ("fast", "true"),
+            ("fast", "false"),
+        ] {
+            let mut line = String::new();
+            peer.read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(request["method"], "session/set_config_option");
+            assert_eq!(request["params"]["configId"], config);
+            assert_eq!(request["params"]["value"], value);
+            let response = json!({"jsonrpc":"2.0","id":request["id"],"result":{"configOptions":[
+                {"id":"model","category":"model","currentValue":"base","options":[{"value":"base"}]},
+                {"id":"context","category":"model_config","currentValue":if config == "model" {"272k"} else {"1m"}},
+                {"id":"fast","category":"model_config","currentValue":if config == "fast" {value} else {"false"},"options":[{"value":"false"},{"value":"true"}]},
+                {"id":"effort","category":"thought_level","currentValue":"high","options":[{"value":"high"}]}
+            ]}});
+            writeln!(peer.get_mut(), "{response}").unwrap();
+            peer.get_mut().flush().unwrap();
+        }
+    });
+    let mut session = inert_session();
+    session.profile = super::super::super::cursor::PROFILE;
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().unwrap()),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .unwrap();
+    session.config_ids.model = Some("model".into());
+    session.config_ids.service_tier = Some("fast".into());
+    session.config_ids.selected_service_tier = Some("priority".into());
+    session.config_ids.catalog = vec![json!({"value":"base","configOptions":[
+        {"id":"context","category":"model_config","options":[{"value":"272k"},{"value":"1m"}]},
+        {"id":"fast","category":"model_config","options":[{"value":"false"},{"value":"true"}]}
+    ]})];
+    session.config_ids.selections.insert(
+        "base[context=1m]".into(),
+        super::super::configuration::ModelSelection {
+            model: "base".into(),
+            parameters: vec![("context".into(), "1m".into())],
+        },
+    );
+    session
+        .select_model("cursor-cli", "base[context=1m]")
+        .unwrap();
+    assert_eq!(
+        session.config_ids.selected_service_tier.as_deref(),
+        Some("priority")
+    );
+    let model = session.config_ids.selected_model.clone();
+    session.select_service_tier("standard").unwrap();
+    assert_eq!(session.config_ids.selected_model, model);
+    assert_eq!(model.as_deref(), Some("base[context=1m]"));
+    assert_eq!(
+        session.config_ids.selected_service_tier.as_deref(),
+        Some("standard")
+    );
+    assert!(session.events.iter().any(|event| matches!(event,
+        WorkerEvent::Activity(WorkerActivity::ServiceTierChanged {selected:Some(tier),options})
+            if tier == "priority" && options == &["standard", "priority"])));
+    peer.join().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
+    let mut session = inert_session();
+    assert!(
+        matches!(session.update(json!({"sessionId":"one","update":{"sessionUpdate":"current_mode_update","currentModeId":"ask"}})),
+        Some(WorkerEvent::Activity(WorkerActivity::ModeChanged(mode))) if mode == "ask")
+    );
+    assert!(
+        matches!(session.update(json!({"sessionId":"one","update":{"sessionUpdate":"session_info_update","title":"Named"}})),
+        Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(title))) if title == "Named")
+    );
+    assert!(session.update(json!({"sessionId":"other","update":{"sessionUpdate":"session_info_update","title":"Wrong"}})).is_none());
+    for (index, status) in ["pending", "completed"].into_iter().enumerate() {
+        let event = session.update(json!({"sessionId":"one","update":{"sessionUpdate":"plan","entries":[{"content":"Check","status":status,"priority":"high"}]}})).unwrap();
+        if index == 0 {
+            assert!(matches!(
+                event,
+                WorkerEvent::Activity(WorkerActivity::ToolStarted { .. })
+            ));
+        } else {
+            assert!(matches!(
+                event,
+                WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged { .. })
+            ));
+        }
+        assert!(
+            matches!(session.events.pop_front(), Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {result,..})) if result.to_string().contains(status))
+        );
+        assert!(session.events.is_empty());
+    }
+}
+
 #[test]
 fn full_access_uses_the_profile_escape_hatch() {
     let mut command = std::process::Command::new("agent");
@@ -21,4 +159,232 @@ fn full_access_uses_the_profile_escape_hatch() {
             .collect::<Vec<_>>(),
         ["--force", "acp"]
     );
+}
+
+#[test]
+#[ignore = "requires signed-in Cursor and network; creates a scratch session"]
+fn live_cursor_configuration_and_listing() {
+    let project = tempfile::tempdir().unwrap();
+    let command = AgentLaunchConfig {
+        program: "agent".into(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Auto,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let profile = &super::super::super::cursor::PROFILE;
+    let (mut session, metadata, _) =
+        spawn_session(&command, profile, project.path(), None, None, None).unwrap();
+    assert!(!metadata.models.is_empty());
+    assert!(
+        metadata
+            .models
+            .iter()
+            .all(|model| model["id"].as_str().is_some_and(|id| !id.contains("fast=")))
+    );
+    assert!(
+        metadata
+            .models
+            .iter()
+            .any(|model| model["contextWindow"].as_u64() == Some(1_000_000))
+    );
+    assert!(metadata.models.iter().any(|model| {
+        model["efforts"]
+            .as_array()
+            .is_some_and(|efforts| !efforts.is_empty())
+    }));
+    let original_mode = metadata.modes.first().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    if let Some(tier) = &metadata.service_tier {
+        let original_model = session.config_ids.selected_model.clone();
+        session.select_service_tier(tier).unwrap();
+        assert_eq!(session.config_ids.selected_model, original_model);
+        assert_eq!(
+            session.config_ids.selected_service_tier.as_ref(),
+            Some(tier)
+        );
+        eprintln!("Service tier {tier} confirmed without changing model identity");
+    }
+    session.select_mode("ask").unwrap();
+    assert!(session.events.iter().any(|event| matches!(event,
+        WorkerEvent::Activity(WorkerActivity::ModeChanged(mode)) if mode == "ask")));
+    assert!(session.events.iter().any(|event| matches!(
+        event,
+        WorkerEvent::Activity(WorkerActivity::ConfigurationChanged {
+            selected_model: Some(_),
+            ..
+        })
+    )));
+    session.select_mode(&original_mode).unwrap();
+    session.close().unwrap();
+    assert!(session.child.try_wait().unwrap().is_some());
+    let sessions = super::super::catalog::list_sessions(profile).unwrap();
+    assert!(
+        sessions
+            .iter()
+            .all(|entry| entry["sessionId"].is_string() && entry["cwd"].is_string())
+    );
+    eprintln!(
+        "Live configuration: {} model choices; service tier excluded from model IDs; context/effort present; mode response refreshed; listing returned {} sessions",
+        metadata.models.len(),
+        sessions.len()
+    );
+}
+
+/// Uses the installed, signed-in Cursor CLI and makes real model requests.
+#[test]
+#[ignore = "requires Cursor login and network; consumes model usage"]
+fn live_cursor_session_round_trip() {
+    use std::time::{Duration, Instant};
+
+    fn settle(session: &mut AcpWorkerSession) -> String {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            match session.poll() {
+                Some(WorkerEvent::Settled { output }) => return output,
+                Some(WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands })) => {
+                    eprintln!("Live command update: {} commands", commands.len());
+                }
+                Some(WorkerEvent::Failed(error)) => panic!("Cursor failed: {error}"),
+                Some(WorkerEvent::NeedsInput(input)) => {
+                    session
+                        .respond(WorkerInputResponse {
+                            id: input.id,
+                            value: None,
+                            cancel: true,
+                        })
+                        .unwrap();
+                    panic!("no-tool prompt unexpectedly requested permission");
+                }
+                _ => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        panic!("Cursor did not settle within 60 seconds");
+    }
+
+    fn permission_turn(session: &mut AcpWorkerSession, action: &str) {
+        session.send(
+            "Use the shell tool exactly once to run `printf FARCASTER_PERMISSION_CHECK`. Do not read or change files or run any other command. If denied, do not retry; just reply DENIED.".into(),
+            WorkerSendMode::Prompt,
+        ).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut permissions = 0;
+        let mut approvals = 0;
+        while Instant::now() < deadline {
+            match session.poll() {
+                Some(WorkerEvent::NeedsInput(input)) => {
+                    permissions += 1;
+                    if action == "cancel" {
+                        session.abort().unwrap();
+                    } else {
+                        // Only approve the harmless command named by this test.
+                        let approved = action == "allow"
+                            && input.prompt.contains("printf FARCASTER_PERMISSION_CHECK");
+                        approvals += usize::from(approved);
+                        session
+                            .respond(WorkerInputResponse {
+                                id: input.id,
+                                value: Some(if approved { "Allow" } else { "Decline" }.into()),
+                                cancel: false,
+                            })
+                            .unwrap();
+                    }
+                }
+                Some(WorkerEvent::Settled { .. }) => {
+                    eprintln!(
+                        "Permission phase {action}: {permissions} requests, {approvals} approved; settled"
+                    );
+                    assert!(session.pending_inputs.is_empty());
+                    assert!(session.current_prompt.is_none());
+                    return;
+                }
+                Some(WorkerEvent::Failed(error)) => panic!("permission phase {action}: {error}"),
+                _ => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        panic!("permission phase {action} did not settle");
+    }
+
+    let project = tempfile::tempdir().unwrap();
+    let command = AgentLaunchConfig {
+        program: "agent".into(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Auto,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let profile = &super::super::super::cursor::PROFILE;
+    let (mut session, metadata, history) = spawn_session(
+        &command,
+        profile,
+        project.path(),
+        None,
+        None,
+        Some(thread::current()),
+    )
+    .expect("create live Cursor session");
+    assert!(history.is_none());
+    eprintln!(
+        "Cursor session created; commands: {}, models: {}",
+        metadata.commands.len(),
+        metadata.models.len()
+    );
+    session
+        .send(
+            "Do not call tools or access files. Reply with exactly FARCASTER_ACP_LIVE_OK.".into(),
+            WorkerSendMode::Queue,
+        )
+        .unwrap();
+    assert!(settle(&mut session).contains("FARCASTER_ACP_LIVE_OK"));
+    let locator = session.session_id.clone();
+    session.close().unwrap();
+    assert!(session.child.try_wait().unwrap().is_some());
+    eprintln!("Prompt settled and original process reaped");
+
+    let (mut resumed, _, history) = spawn_session(
+        &command,
+        profile,
+        project.path(),
+        Some(&locator),
+        None,
+        Some(thread::current()),
+    )
+    .expect("resume live Cursor session");
+    let history = history.expect("resume history");
+    assert_eq!(
+        history.messages.len(),
+        2,
+        "expected one user and one assistant message"
+    );
+    eprintln!("Resume loaded {} history messages", history.messages.len());
+    resumed
+        .send(
+            "Do not call tools. Reply with exactly FARCASTER_ACP_RESUMED_OK.".into(),
+            WorkerSendMode::Queue,
+        )
+        .unwrap();
+    let output = settle(&mut resumed);
+    assert!(
+        output.contains("FARCASTER_ACP_RESUMED_OK"),
+        "resumed output: {output:?}"
+    );
+    for action in ["allow", "deny", "cancel"] {
+        permission_turn(&mut resumed, action);
+    }
+    // Cancel independently of whether Cursor asks permission for printf.
+    resumed
+        .send(
+            "Do not use tools. Count from one to one hundred.".into(),
+            WorkerSendMode::Prompt,
+        )
+        .unwrap();
+    resumed.abort().unwrap();
+    let _ = settle(&mut resumed);
+    assert!(resumed.current_prompt.is_none());
+    eprintln!("Immediate cancellation settled");
+    resumed.close().unwrap();
+    assert!(resumed.child.try_wait().unwrap().is_some());
+    eprintln!("Resumed prompt settled and process reaped");
 }

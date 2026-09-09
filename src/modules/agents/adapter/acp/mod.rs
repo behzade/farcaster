@@ -1,4 +1,5 @@
 mod catalog;
+mod configuration;
 mod connection;
 mod cursor_extension;
 mod events;
@@ -7,7 +8,9 @@ mod worker;
 
 use std::path::PathBuf;
 
-pub(in crate::modules::agents::adapter) use catalog::{load_configuration, load_history};
+pub(in crate::modules::agents::adapter) use catalog::{
+    list_sessions, load_configuration, load_history,
+};
 pub(in crate::modules::agents::adapter) use worker::{AcpWorkerFactory, spawn_main};
 
 #[derive(Clone, Debug)]

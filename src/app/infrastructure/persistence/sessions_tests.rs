@@ -12,6 +12,7 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
         message_count: Some(1),
         model: None,
         thinking_level: None,
+        service_tier: None,
         usage: None,
         is_running: true,
     }
@@ -29,6 +30,7 @@ fn live_metadata_preserves_archive_identity_and_other_sessions() {
     update.first_user_message = Some("First prompt".into());
     update.model = Some(("provider".into(), "model".into()));
     update.thinking_level = Some("high".into());
+    update.service_tier = Some("priority".into());
     update.usage = Some(crate::agents::DiscoveredUsage {
         input: 12,
         total: 12,
@@ -40,6 +42,15 @@ fn live_metadata_preserves_archive_identity_and_other_sessions() {
     assert_eq!(updated.title, "Renamed");
     assert_eq!(updated.usage.total, 12);
     assert_eq!(updated.model, update.model);
+    let saved: (String, Option<String>) = store
+        .connection
+        .query_row(
+            "SELECT model,service_tier FROM session_models WHERE session_id=?1",
+            [updated.app_session_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(saved, ("model".into(), Some("priority".into())));
     let cached = store.cached_sessions("").unwrap();
     assert_eq!(cached.len(), 2);
     let unchanged = cached.iter().find(|s| s.id == "other").unwrap();

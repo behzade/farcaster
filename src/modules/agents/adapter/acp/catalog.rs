@@ -14,14 +14,49 @@ use super::{
     connection::AcpConnection,
     events::AcpInbound,
     translate::{
-        commands_from_update, merge_tool_metadata, metadata_from_session, normalize_tool_name,
-        tool_args, tool_metadata, tool_result,
+        commands_from_update, merge_tool_metadata, normalize_tool_name, tool_args, tool_metadata,
+        tool_result,
     },
     worker::configure_command,
 };
 use crate::agents::{AgentLaunchConfig, DiscoveredHistory, HarnessAccessMode, ToolMetadata};
 
 use super::super::{child_stderr, main_session};
+
+pub(in crate::modules::agents::adapter) fn list_sessions(
+    profile: &AcpProfile,
+) -> Result<Vec<Value>, String> {
+    let project = std::env::current_dir().map_err(|error| error.to_string())?;
+    with_connection_kind(profile, &project, "listing", |connection, _, _| {
+        let mut sessions = Vec::new();
+        let mut cursor = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let params = cursor
+                .as_ref()
+                .map_or_else(|| json!({}), |cursor: &String| json!({"cursor":cursor}));
+            let response = connection.request_blocking("session/list", params)?;
+            sessions.extend(
+                response
+                    .get("sessions")
+                    .and_then(Value::as_array)
+                    .ok_or("ACP session/list omitted sessions")?
+                    .iter()
+                    .cloned(),
+            );
+            cursor = response
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let Some(next) = &cursor else {
+                return Ok(sessions);
+            };
+            if !seen.insert(next.clone()) || seen.len() > 100 {
+                return Err("ACP session/list returned invalid pagination".into());
+            }
+        }
+    })
+}
 
 pub(in crate::modules::agents::adapter) fn load_configuration(
     profile: &AcpProfile,
@@ -36,7 +71,8 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
             .get("sessionId")
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{} did not provide an ACP session id", profile.name))?;
-        let (mut metadata, _) = metadata_from_session(profile, &response);
+        let (mut metadata, _) =
+            super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
         if let Some(commands) = connection
             .drain_queued()?
             .iter()
@@ -73,7 +109,12 @@ pub(in crate::modules::agents::adapter) fn load_history(
             }),
         )?;
         let queued = connection.drain_queued()?;
-        let history = discovered_history(profile, queued, &response, &locator);
+        let mut history = discovered_history(profile, queued, &response, &locator);
+        let (_, ids) =
+            super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
+        if let Some(model) = ids.selected_model {
+            history.model = Some((profile.backend.into(), model));
+        }
         close_session(connection, &locator);
         Ok(history)
     })
@@ -112,8 +153,9 @@ fn catalog_is_reusable(existing_project: &Path, project: &Path, running: bool) -
     running && existing_project == project
 }
 
-fn catalog_processes() -> &'static Mutex<HashMap<&'static str, CatalogProcess>> {
-    static PROCESSES: OnceLock<Mutex<HashMap<&'static str, CatalogProcess>>> = OnceLock::new();
+fn catalog_processes() -> &'static Mutex<HashMap<(&'static str, &'static str), CatalogProcess>> {
+    static PROCESSES: OnceLock<Mutex<HashMap<(&'static str, &'static str), CatalogProcess>>> =
+        OnceLock::new();
     PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -122,10 +164,22 @@ fn with_connection<T: Send + 'static>(
     project: &Path,
     operation: impl FnOnce(&mut AcpConnection, &AcpProfile, &Path) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
+    with_connection_kind(profile, project, "session", operation)
+}
+
+// Listing has its own connection so catalog-only sessions created for model
+// discovery cannot appear as live sessions in the server's listing response.
+fn with_connection_kind<T: Send + 'static>(
+    profile: &AcpProfile,
+    project: &Path,
+    kind: &'static str,
+    operation: impl FnOnce(&mut AcpConnection, &AcpProfile, &Path) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let key = (profile.backend, kind);
     let mut processes = catalog_processes()
         .lock()
         .map_err(|error| format!("{} ACP catalog lock: {error}", profile.name))?;
-    let reused = processes.remove(profile.backend).and_then(|mut process| {
+    let reused = processes.remove(&key).and_then(|mut process| {
         let running = matches!(process.child.as_mut().map(Child::try_wait), Some(Ok(None)));
         if catalog_is_reusable(&process.project, project, running) {
             process.take_parts()
@@ -155,7 +209,7 @@ fn with_connection<T: Send + 'static>(
     match result {
         Ok((Ok(value), connection)) => {
             processes.insert(
-                profile.backend,
+                key,
                 CatalogProcess {
                     child: Some(child),
                     connection: Some(connection),

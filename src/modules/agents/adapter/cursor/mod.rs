@@ -48,7 +48,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
             configuration: ConfigurationCapabilities {
                 models: Available,
                 select_model: Available,
-                reasoning_effort: Unsupported,
+                reasoning_effort: Available,
                 modes: Available,
                 commands: Available,
                 mcp_servers: Available,

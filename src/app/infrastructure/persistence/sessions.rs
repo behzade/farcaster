@@ -94,9 +94,9 @@ impl StateStore {
         .map_err(|error| error.to_string())?;
         if let Some((provider, model)) = &update.model {
             tx.execute(
-                "INSERT INTO session_models(session_id,provider,model,effort) VALUES(?1,?2,?3,?4)
-                 ON CONFLICT(session_id) DO UPDATE SET provider=excluded.provider,model=excluded.model,effort=excluded.effort",
-                params![id, provider, model, update.thinking_level],
+                "INSERT INTO session_models(session_id,provider,model,effort,service_tier) VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(session_id) DO UPDATE SET provider=excluded.provider,model=excluded.model,effort=excluded.effort,service_tier=excluded.service_tier",
+                params![id, provider, model, update.thinking_level, update.service_tier],
             ).map_err(|error| error.to_string())?;
         }
         if let Some(usage) = update.usage {

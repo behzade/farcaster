@@ -70,6 +70,11 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn set_service_tier(&mut self, tier: String, cx: &mut Context<Self>) {
+        self.send(RuntimeCommand::SetServiceTier(tier), cx);
+        cx.notify();
+    }
+
     pub(in crate::app) fn set_access_mode(
         &mut self,
         level: crate::runtime::HarnessAccessMode,

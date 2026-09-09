@@ -161,10 +161,18 @@ pub(crate) enum WorkerActivity {
     CommandsChanged {
         commands: Vec<Value>,
     },
+    ModeChanged(String),
+    TitleChanged(String),
+    ServiceTierChanged {
+        selected: Option<String>,
+        options: Vec<String>,
+    },
     ConfigurationChanged {
         models: Vec<Value>,
         efforts: Vec<String>,
         modes: Vec<Value>,
+        selected_model: Option<Value>,
+        selected_effort: Option<String>,
     },
     ServiceStatusChanged {
         name: String,
@@ -232,6 +240,9 @@ pub(crate) trait WorkerSession: Send {
     }
     fn select_effort(&mut self, _effort: &str) -> Result<(), String> {
         Err("worker backend does not support effort selection".into())
+    }
+    fn select_service_tier(&mut self, _tier: &str) -> Result<(), String> {
+        Err("worker backend does not support service tier selection".into())
     }
     fn select_mode(&mut self, _mode: &str) -> Result<(), String> {
         Err("worker backend does not support mode selection".into())

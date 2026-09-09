@@ -5,6 +5,12 @@ use crate::agents::{CommonTool, TokenUsage, ToolCategory, ToolMetadata, WorkerUs
 
 #[derive(Clone, Default)]
 pub(super) struct ConfigIds {
+    pub service_tier: Option<String>,
+    pub selected_service_tier: Option<String>,
+    pub service_tiers: Vec<String>,
+    pub selected_model: Option<String>,
+    pub catalog: Vec<Value>,
+    pub selections: std::collections::HashMap<String, super::configuration::ModelSelection>,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub mode: Option<String>,
@@ -19,7 +25,7 @@ pub(super) fn metadata_from_session(
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    let (mut metadata, ids) = metadata_from_options(profile, options);
+    let (mut metadata, mut ids) = metadata_from_options(profile, options);
     if metadata.modes.is_empty()
         && let Some(modes) = response
             .pointer("/modes/availableModes")
@@ -45,6 +51,34 @@ pub(super) fn metadata_from_session(
                 .position(|mode| mode.get("id").and_then(Value::as_str) == Some(current))
         {
             metadata.modes.swap(0, index);
+        }
+    }
+    for option in options {
+        let Some(current) = option.get("currentValue").and_then(Value::as_str) else {
+            continue;
+        };
+        let id = option.get("id").and_then(Value::as_str);
+        if id == ids.model.as_deref() {
+            ids.selected_model = Some(current.into());
+            if let Some(index) = metadata
+                .models
+                .iter()
+                .position(|model| model.get("id").and_then(Value::as_str) == Some(current))
+            {
+                metadata.models.swap(0, index);
+            }
+        } else if id == ids.mode.as_deref() {
+            if let Some(index) = metadata
+                .modes
+                .iter()
+                .position(|mode| mode.get("id").and_then(Value::as_str) == Some(current))
+            {
+                metadata.modes.swap(0, index);
+            }
+        } else if id == ids.effort.as_deref() {
+            if let Some(index) = metadata.efforts.iter().position(|effort| effort == current) {
+                metadata.efforts.swap(0, index);
+            }
         }
     }
     (metadata, ids)

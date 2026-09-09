@@ -229,6 +229,14 @@ pub(in crate::app) fn composer_snapshot_changed(
         || previous.stats != next.stats
         || previous.pending_question != next.pending_question
         || previous.session_identity() != next.session_identity()
+        || previous
+            .session
+            .as_ref()
+            .map(|state| (&state.service_tier, &state.service_tiers))
+            != next
+                .session
+                .as_ref()
+                .map(|state| (&state.service_tier, &state.service_tiers))
         || previous.models != next.models
         || previous.thinking_levels != next.thinking_levels
         || previous.configuration_status != next.configuration_status

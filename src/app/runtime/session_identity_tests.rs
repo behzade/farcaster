@@ -120,16 +120,16 @@ fn unsupported_reasoning_is_not_restored_or_cached() {
     let mut defaults = HarnessConfigurationStore::default();
     defaults.restore(vec![
         crate::app::infrastructure::persistence::CachedSessionControlDefaults {
-            harness: "cursor-cli".into(),
+            harness: "unknown".into(),
             model: None,
             effort: Some("off".into()),
         },
     ]);
-    assert_eq!(defaults.effort("cursor-cli"), None);
-    assert!(!defaults.set_effort("cursor-cli", "high".into()));
+    assert_eq!(defaults.effort("unknown"), None);
+    assert!(!defaults.set_effort("unknown", "high".into()));
 
     let mut ready = RuntimeSnapshot {
-        harness: "cursor-cli".into(),
+        harness: "unknown".into(),
         session: Some(
             serde_json::from_value(serde_json::json!({
                 "thinkingLevel": "off",
@@ -145,11 +145,11 @@ fn unsupported_reasoning_is_not_restored_or_cached() {
         ..RuntimeSnapshot::default()
     };
     defaults.reconcile_snapshot(&mut ready, true);
-    assert_eq!(defaults.effort("cursor-cli"), None);
+    assert_eq!(defaults.effort("unknown"), None);
     assert!(defaults.cached().is_empty());
 
     let mut draft = RuntimeSnapshot {
-        harness: "cursor-cli".into(),
+        harness: "unknown".into(),
         ..RuntimeSnapshot::default()
     };
     defaults.reconcile_snapshot(&mut draft, true);

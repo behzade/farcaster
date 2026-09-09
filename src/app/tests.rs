@@ -341,6 +341,25 @@ fn composer_variant_tracks_empty_to_nonempty_conversations() {
 }
 
 #[test]
+fn service_tier_changes_refresh_controls_without_changing_model_identity() {
+    let previous = RuntimeSnapshot {
+        session: Some(
+            serde_json::from_value(serde_json::json!({
+                "sessionId":"one","isStreaming":false,"isCompacting":false,
+                "autoCompactionEnabled":false,"messageCount":0,"pendingMessageCount":0,
+                "serviceTier":"standard","serviceTiers":["standard","priority"]
+            }))
+            .unwrap(),
+        ),
+        ..RuntimeSnapshot::default()
+    };
+    let mut next = previous.clone();
+    next.session.as_mut().unwrap().service_tier = Some("priority".into());
+    assert_eq!(previous.session_identity(), next.session_identity());
+    assert!(composer_snapshot_changed(&previous, &next));
+}
+
+#[test]
 fn restored_questions_invalidate_the_composer() {
     let previous = RuntimeSnapshot::default();
     let next = RuntimeSnapshot {

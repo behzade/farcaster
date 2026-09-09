@@ -152,53 +152,53 @@ fn rename_at(directory: &Path, name: &str) -> Result<(), String> {
 }
 
 pub(super) fn discover(locator_root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {
-    discover_at(&session_root()?, locator_root, query)
-}
-
-fn discover_at(
-    root: &Path,
-    locator_root: &Path,
-    query: &str,
-) -> Result<Vec<DiscoveredSession>, String> {
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("read Cursor sessions: {error}")),
-    };
     let query = query.to_ascii_lowercase();
-    Ok(entries
-        .flatten()
-        .filter_map(|entry| {
-            let id = entry.file_name().into_string().ok()?;
-            let directory = find_session_at(root, &id).ok()?;
-            read_session(locator_root, &query, &directory)
-        })
+    Ok(super::super::acp::list_sessions(&PROFILE)?
+        .iter()
+        .filter_map(|session| listed_session(locator_root, &query, session))
         .collect())
 }
 
-fn read_session(locator_root: &Path, query: &str, directory: &Path) -> Option<DiscoveredSession> {
-    let (meta, unpersisted) = session_data(directory).ok()?;
-    if unpersisted {
+fn listed_session(
+    locator_root: &Path,
+    query: &str,
+    value: &serde_json::Value,
+) -> Option<DiscoveredSession> {
+    let id = value.get("sessionId")?.as_str()?.to_owned();
+    if id.is_empty()
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
         return None;
     }
-    let project = meta.cwd;
-    if !project.is_dir() || crate::projects::is_temporary_project(&project) {
+    let project = PathBuf::from(value.get("cwd")?.as_str()?);
+    if !project.is_absolute()
+        || !project.is_dir()
+        || crate::projects::is_temporary_project(&project)
+    {
         return None;
     }
-    let id = directory.file_name()?.to_str()?.to_owned();
-    let title = meta
-        .title
+    let title = value
+        .get("title")
+        .and_then(serde_json::Value::as_str)
         .filter(|title| !title.trim().is_empty())
-        .unwrap_or_else(|| "New Cursor session".into());
+        .unwrap_or("New Cursor session")
+        .to_owned();
     let search = format!("{title} {} {}", project.display(), PROFILE.name);
     if !query.is_empty() && !search.to_ascii_lowercase().contains(query) {
         return None;
     }
-    let modified = ["store.db", "store.db-wal", "meta.json"]
-        .into_iter()
-        .filter_map(|name| directory.join(name).metadata().ok()?.modified().ok())
-        .max()
-        .unwrap_or(UNIX_EPOCH);
+    let timestamp = value
+        .get("updatedAt")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let modified =
+        time::OffsetDateTime::parse(&timestamp, &time::format_description::well_known::Rfc3339)
+            .ok()
+            .map(std::time::SystemTime::from)
+            .unwrap_or(UNIX_EPOCH);
     Some(DiscoveredSession {
         path: super::super::main_session::external_session_path(locator_root, PROFILE.backend, &id),
         parent_session: crate::modules::agents::core::CallerRegistry::shared()
@@ -208,7 +208,7 @@ fn read_session(locator_root: &Path, query: &str, directory: &Path) -> Option<Di
         project,
         title,
         first_user_message: String::new(),
-        timestamp: String::new(),
+        timestamp,
         modified,
         message_count: 0,
         usage: DiscoveredUsage::default(),

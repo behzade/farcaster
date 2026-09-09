@@ -142,6 +142,7 @@ impl AcpConnection {
         let initialized = self.request_blocking("initialize", json!({
             "protocolVersion": 1,
             "clientCapabilities": {
+                "_meta": {"parameterizedModelPicker": profile.backend == "cursor-cli"},
                 "fs": {"readTextFile": false, "writeTextFile": false},
                 "terminal": false,
             },
@@ -187,6 +188,18 @@ impl AcpConnection {
             .recv_timeout(REQUEST_TIMEOUT)
             .map_err(|error| format!("wait for ACP {method}: {error}"))?
             .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn model_catalog(&self, profile: &AcpProfile) -> Result<Vec<Value>, String> {
+        if profile.backend != "cursor-cli" {
+            return Ok(Vec::new());
+        }
+        let result = self.request_blocking("cursor/list_available_models", json!({}))?;
+        result
+            .get("models")
+            .and_then(Value::as_array)
+            .cloned()
+            .ok_or_else(|| "Cursor model catalog omitted models".into())
     }
 
     pub(super) fn send_request(&self, method: &str, params: Value) -> Result<AcpRequestId, String> {

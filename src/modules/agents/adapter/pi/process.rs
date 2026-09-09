@@ -323,7 +323,7 @@ impl PiRpcProcess {
             }
             _ => {}
         }
-        let id = self.send_command(super::protocol::encode_request(request))?;
+        let id = self.send_command(super::protocol::encode_request(request)?)?;
         if starts_run {
             self.set_activity(WorkerActivityState::Starting);
         }

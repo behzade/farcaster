@@ -6,8 +6,11 @@ use crate::{
     agents::{SessionCommand, SessionEvent, SessionTransport},
 };
 
-pub(super) fn encode_request(request: SessionCommand) -> Value {
-    match request {
+pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
+    Ok(match request {
+        SessionCommand::SelectServiceTier { .. } => {
+            return Err("Pi does not advertise service tier selection".into());
+        }
         SessionCommand::ConfigureSteering => json!({
             "type": "set_steering_mode",
             "mode": "all",
@@ -60,7 +63,7 @@ pub(super) fn encode_request(request: SessionCommand) -> Value {
             json!({"type": "set_thinking_level", "level": level})
         }
         SessionCommand::SelectMode { mode } => json!({"type": "set_mode", "mode": mode}),
-    }
+    })
 }
 
 impl SessionTransport for PiRpcProcess {

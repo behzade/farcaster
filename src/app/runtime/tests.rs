@@ -1236,15 +1236,18 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
 }
 
 #[test]
-fn unsupported_reasoning_does_not_queue_a_cursor_startup_command() {
+fn cursor_reasoning_is_deferred_without_starting_the_harness() {
     let (mut owner, _events) = owner_without_process(PathBuf::from("/cursor-project"));
     owner.harness = "cursor-cli".into();
     owner.snapshot.harness = "cursor-cli".into();
 
     for level in ["off", "high"] {
         owner.set_thinking(level.into());
-        assert!(owner.pending_session_controls.is_empty());
-        assert!(owner.snapshot.prefill_thinking_level.is_none());
+        assert!(!owner.pending_session_controls.is_empty());
+        assert_eq!(
+            owner.snapshot.prefill_thinking_level.as_deref(),
+            Some(level)
+        );
         assert!(owner.process.is_none());
     }
 }

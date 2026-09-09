@@ -3,6 +3,52 @@ use super::*;
 struct IdleWorker;
 
 #[test]
+fn neutral_metadata_events_refresh_session_state_and_modes() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "example",
+        "session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .unwrap();
+    transport.enqueue_activity(WorkerActivity::TitleChanged("Generated title".into()));
+    assert_eq!(transport.state()["sessionName"], "Generated title");
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.operation == SessionOperation::LoadState)
+    );
+    transport.enqueue_activity(WorkerActivity::ModeChanged("plan".into()));
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.data["selected"] == "plan")
+    );
+    transport.enqueue_activity(WorkerActivity::ConfigurationChanged {
+        models: vec![json!({"id":"model-fast","provider":"example"})],
+        efforts: vec!["high".into()],
+        modes: Vec::new(),
+        selected_model: Some(
+            json!({"id":"model-fast","provider":"example","contextWindow":1000000}),
+        ),
+        selected_effort: Some("high".into()),
+    });
+    assert_eq!(transport.state()["model"]["id"], "model-fast");
+    assert_eq!(transport.state()["model"]["contextWindow"], 1000000);
+    assert_eq!(transport.state()["thinkingLevel"], "high");
+    transport.enqueue_activity(WorkerActivity::ServiceTierChanged {
+        selected: Some("priority".into()),
+        options: vec!["standard".into(), "priority".into()],
+    });
+    assert_eq!(transport.state()["serviceTier"], "priority");
+    assert_eq!(transport.state()["model"]["id"], "model-fast");
+    transport.enqueue_activity(WorkerActivity::ServiceTierChanged {
+        selected: None,
+        options: Vec::new(),
+    });
+    assert!(transport.state()["serviceTier"].is_null());
+    assert_eq!(transport.state()["serviceTiers"], json!([]));
+}
+
+#[test]
 fn two_choice_questions_preserve_their_options() {
     let options = vec!["TypeScript".into(), "Rust".into()];
     assert_eq!(

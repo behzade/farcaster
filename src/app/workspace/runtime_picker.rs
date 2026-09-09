@@ -139,6 +139,17 @@ impl FarcasterApp {
                     .unwrap_or(&self.snapshot.thinking_levels)
             })
             .unwrap_or(&[]);
+        let service_tiers = self
+            .snapshot
+            .session
+            .as_ref()
+            .map(|session| session.service_tiers.as_slice())
+            .unwrap_or(&[]);
+        let selected_tier = self
+            .snapshot
+            .session
+            .as_ref()
+            .and_then(|session| session.service_tier.as_deref());
         let provider_entity = entity.clone();
         let keyboard_entity = entity.clone();
         let keyboard_models = models.clone();
@@ -320,6 +331,41 @@ impl FarcasterApp {
                                     move |_, cx| {
                                         let _ = entity.update(cx, |app, cx| {
                                             app.set_thinking_level(level.clone(), cx)
+                                        });
+                                    },
+                                )
+                            }),
+                        )),
+                )
+            })
+            .when(!service_tiers.is_empty(), |panel| {
+                panel.child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(THEME.space.sm)
+                        .p(THEME.space.sm)
+                        .border_t(THEME.border)
+                        .border_color(THEME.colors.border)
+                        .child(div().text_color(THEME.colors.muted).child("Service tier"))
+                        .child(div().flex().flex_wrap().gap(THEME.space.xs).children(
+                            service_tiers.iter().enumerate().map(|(index, tier)| {
+                                let entity = entity.clone();
+                                let tier = tier.clone();
+                                button(
+                                    ("runtime-service-tier", index),
+                                    tier.clone(),
+                                    if selected_tier == Some(tier.as_str()) {
+                                        ButtonTone::Accent
+                                    } else {
+                                        ButtonTone::Quiet
+                                    },
+                                    true,
+                                    move |_, cx| {
+                                        let _ = entity.update(cx, |app, cx| {
+                                            app.set_service_tier(tier.clone(), cx)
                                         });
                                     },
                                 )

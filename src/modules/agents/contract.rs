@@ -54,6 +54,8 @@ pub(crate) struct SessionMetadata {
     pub message_count: Option<usize>,
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
     pub usage: Option<DiscoveredUsage>,
     pub is_running: bool,
 }
@@ -243,6 +245,9 @@ pub(crate) enum SessionCommand {
     SelectReasoning {
         level: String,
     },
+    SelectServiceTier {
+        tier: String,
+    },
     SelectMode {
         mode: String,
     },
@@ -268,6 +273,7 @@ impl SessionCommand {
             Self::ForkAt { .. } => SessionOperation::ForkAt,
             Self::SelectModel { .. } => SessionOperation::SelectModel,
             Self::SelectReasoning { .. } => SessionOperation::SelectReasoning,
+            Self::SelectServiceTier { .. } => SessionOperation::SelectServiceTier,
             Self::SelectMode { .. } => SessionOperation::SelectMode,
         }
     }
@@ -295,6 +301,7 @@ impl SessionCommand {
             Self::ForkAt { .. } => "fork session",
             Self::SelectModel { .. } => "select model",
             Self::SelectReasoning { .. } => "select reasoning",
+            Self::SelectServiceTier { .. } => "select service tier",
             Self::SelectMode { .. } => "select mode",
         }
     }
@@ -319,6 +326,7 @@ pub(crate) enum SessionOperation {
     ForkAt,
     SelectModel,
     SelectReasoning,
+    SelectServiceTier,
     SelectMode,
     Other,
 }

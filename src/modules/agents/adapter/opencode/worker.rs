@@ -383,6 +383,7 @@ fn load_main_metadata(
             efforts,
             commands,
             modes,
+            ..Default::default()
         },
     )
 }

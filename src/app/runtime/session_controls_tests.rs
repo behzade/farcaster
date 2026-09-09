@@ -4,11 +4,13 @@ use super::*;
 fn pending_controls_coalesce_and_apply_model_before_effort() {
     let mut pending = PendingSessionControls::default();
     pending.set(SessionControl::Thinking("low".into()));
+    pending.set(SessionControl::ServiceTier("standard".into()));
     pending.set(SessionControl::Model(
         "old-provider".into(),
         "old-model".into(),
     ));
     pending.set(SessionControl::Thinking("high".into()));
+    pending.set(SessionControl::ServiceTier("priority".into()));
     pending.set(SessionControl::Model(
         "new-provider".into(),
         "new-model".into(),
@@ -29,6 +31,9 @@ fn pending_controls_coalesce_and_apply_model_before_effort() {
             },
             SessionCommand::SelectReasoning {
                 level: "high".into(),
+            },
+            SessionCommand::SelectServiceTier {
+                tier: "priority".into()
             },
         ]
     );

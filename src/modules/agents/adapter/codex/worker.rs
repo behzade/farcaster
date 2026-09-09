@@ -466,6 +466,7 @@ fn load_main_metadata(
             efforts,
             commands: Vec::new(),
             modes,
+            ..Default::default()
         },
     )
 }

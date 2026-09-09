@@ -70,6 +70,7 @@ impl RuntimeOwner {
                         message_count: None,
                         model: None,
                         thinking_level: None,
+                        service_tier: None,
                         usage: None,
                         is_running: false,
                     }),
@@ -135,6 +136,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetModel(model) => self.set_model(model),
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
+            RuntimeCommand::SetServiceTier(tier) => self.set_service_tier(tier),
             RuntimeCommand::SetAccessMode(mode) => self.set_access_mode(mode),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ExtensionResponse(response) => {

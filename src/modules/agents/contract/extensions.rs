@@ -26,6 +26,10 @@ pub(crate) struct BackgroundJob {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionState {
     #[serde(default)]
+    pub service_tier: Option<String>,
+    #[serde(default)]
+    pub service_tiers: Vec<String>,
+    #[serde(default)]
     pub model: Option<Model>,
     #[serde(default)]
     pub thinking_level: Option<String>,

@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct PendingSessionControls {
     model: Option<(String, String)>,
     thinking: Option<String>,
+    service_tier: Option<String>,
     model_requests: std::collections::HashSet<String>,
     sent_model: Option<(String, String)>,
     model_error: Option<String>,
@@ -50,7 +51,7 @@ impl PendingSessionControls {
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.model.is_none() && self.thinking.is_none()
+        self.model.is_none() && self.thinking.is_none() && self.service_tier.is_none()
     }
 
     fn set(&mut self, control: SessionControl) {
@@ -60,6 +61,7 @@ impl PendingSessionControls {
                 self.model_error = None;
             }
             SessionControl::Thinking(level) => self.thinking = Some(level),
+            SessionControl::ServiceTier(tier) => self.service_tier = Some(tier),
         }
     }
 
@@ -71,6 +73,9 @@ impl PendingSessionControls {
         if let Some(level) = self.thinking.take() {
             controls.push(SessionControl::Thinking(level));
         }
+        if let Some(tier) = self.service_tier.take() {
+            controls.push(SessionControl::ServiceTier(tier));
+        }
         controls
     }
 }
@@ -78,6 +83,7 @@ impl PendingSessionControls {
 enum SessionControl {
     Model(String, String),
     Thinking(String),
+    ServiceTier(String),
 }
 
 impl SessionControl {
@@ -89,6 +95,7 @@ impl SessionControl {
         match self {
             Self::Model(..) => "set_model",
             Self::Thinking(_) => "set_thinking_level",
+            Self::ServiceTier(_) => "set_service_tier",
         }
     }
 
@@ -96,6 +103,7 @@ impl SessionControl {
         match self {
             Self::Model(provider, model_id) => SessionCommand::SelectModel { provider, model_id },
             Self::Thinking(level) => SessionCommand::SelectReasoning { level },
+            Self::ServiceTier(tier) => SessionCommand::SelectServiceTier { tier },
         }
     }
 }
@@ -131,6 +139,22 @@ impl RuntimeOwner {
         self.send_session_control(SessionControl::Thinking(level));
     }
 
+    pub(super) fn set_service_tier(&mut self, tier: String) {
+        if !self
+            .snapshot
+            .session
+            .as_ref()
+            .is_some_and(|state| state.service_tiers.contains(&tier))
+        {
+            self.command_not_sent(
+                "set_service_tier",
+                "Service tier is not available for this model",
+            );
+            return;
+        }
+        self.send_session_control(SessionControl::ServiceTier(tier));
+    }
+
     fn send_session_control(&mut self, control: SessionControl) {
         if !control.supported_by(&self.harness) {
             return;
@@ -155,6 +179,7 @@ impl RuntimeOwner {
                 SessionControl::Thinking(level) => {
                     self.snapshot.prefill_thinking_level = Some(level.clone());
                 }
+                SessionControl::ServiceTier(_) => {}
             }
             self.pending_session_controls.set(control);
             self.publish();

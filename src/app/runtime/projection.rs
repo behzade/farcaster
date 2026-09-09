@@ -314,7 +314,7 @@ impl RuntimeOwner {
                 self.send(SessionCommand::ListReasoningLevels);
                 self.send(SessionCommand::LoadState);
             }
-            SessionOperation::SelectReasoning => {
+            SessionOperation::SelectReasoning | SessionOperation::SelectServiceTier => {
                 self.send(SessionCommand::LoadState);
             }
             SessionOperation::SelectMode => {

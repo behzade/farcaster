@@ -45,20 +45,21 @@ fn config_directory_matches_cursor_precedence() {
 }
 
 #[test]
-fn acp_catalog_excludes_unpersisted_drafts_and_uses_sidecar() {
+fn acp_catalog_maps_protocol_entries_and_keeps_storage_checks_scoped() {
     let root = tempfile::tempdir().unwrap();
     fixture(root.path(), "persisted", true);
     let draft = fixture(root.path(), "draft", false);
     assert!(session_data(&draft).unwrap().1);
-    let sessions = discover_at(root.path(), root.path(), "ACP fixture").unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].id, "persisted");
-    assert_eq!(sessions[0].project, std::env::current_dir().unwrap());
-    assert!(
-        discover_at(root.path(), root.path(), "does-not-match")
-            .unwrap()
-            .is_empty()
-    );
+    let entry = serde_json::json!({"sessionId":"persisted","cwd":std::env::current_dir().unwrap(),
+        "title":"ACP fixture","updatedAt":"2026-09-09T10:00:00Z"});
+    let session = listed_session(root.path(), "acp fixture", &entry).unwrap();
+    assert_eq!(session.id, "persisted");
+    assert_eq!(session.project, std::env::current_dir().unwrap());
+    assert!(session.modified > UNIX_EPOCH);
+    assert!(listed_session(root.path(), "does-not-match", &entry).is_none());
+    let mut invalid = entry.clone();
+    invalid["sessionId"] = "../escape".into();
+    assert!(listed_session(root.path(), "", &invalid).is_none());
     assert!(find_session_at(root.path(), "missing").is_err());
     assert!(find_session_at(root.path(), "../escape").is_err());
     std::fs::write(draft.join("meta.json"), b"broken").unwrap();
