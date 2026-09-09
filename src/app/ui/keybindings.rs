@@ -219,6 +219,14 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
         shortcut!(
             "Workspace",
+            "Open transcript in Neovim",
+            "ctrl-g v",
+            crate::app::OpenTranscriptScratch,
+            Some(APP_SHORTCUT_CONTEXT)
+        )
+        .in_picker(true),
+        shortcut!(
+            "Workspace",
             "Open Neovim",
             "f2",
             ShowEditor,

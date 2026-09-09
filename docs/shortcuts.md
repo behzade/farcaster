@@ -81,3 +81,12 @@ These keys require focus in the composer:
 | Esc | Apply queued steering during a run, or press twice to abort when no steering is queued. |
 
 In dialogs, Tab and Shift+Tab move focus and Esc dismisses the dialog. In the action picker, Tab/Shift+Tab and Ctrl+N/P select items; Enter chooses one. In project work, navigation keys such as `j`, `k`, and `/` require focus outside the search input; Esc also works within search. The in-app shortcut help groups keys by where they work.
+
+## Transcript scratch buffer
+
+Press `Ctrl-G v`, choose **Open transcript in Neovim** in the action picker,
+or use the transcript context menu to open a snapshot in a Markdown scratch
+buffer. Use Neovim search, movement, and yank commands; `"+y` copies a selection
+to the system clipboard when your Neovim clipboard provider is available.
+The buffer does not write to the conversation or a project file. Open the action
+again for a fresh snapshot. `Ctrl-G Ctrl-G` returns to the composer.

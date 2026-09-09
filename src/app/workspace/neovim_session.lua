@@ -1,5 +1,5 @@
 (function()
-  local id, path, line = unpack(_A)
+  local id, path, line, scratch = unpack(_A)
   local state = rawget(_G, 'farcaster_session_views')
   if not state then
     state = { tabs = {} }
@@ -19,7 +19,18 @@
     vim.api.nvim_set_current_tabpage(tab)
   end
 
-  if path ~= nil and path ~= vim.NIL then
+  if scratch ~= nil and scratch ~= vim.NIL then
+    local lines = vim.fn.readfile(scratch)
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = 'hide'
+    vim.bo[buf].swapfile = false
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.api.nvim_buf_set_name(buf, 'farcaster://transcript/' .. id .. '/' .. buf .. '.md')
+    vim.cmd('hide buffer ' .. buf)
+    vim.bo[buf].filetype = 'markdown'
+    vim.bo[buf].modified = false
+    vim.api.nvim_win_set_cursor(0, {1, 0})
+  elseif path ~= nil and path ~= vim.NIL then
     vim.cmd('hide edit ' .. vim.fn.fnameescape(path))
     if line ~= nil and line ~= vim.NIL then
       vim.fn.cursor(line, 1)

@@ -104,6 +104,7 @@ actions!(
         FocusSessionSearch,
         FocusComposer,
         ShowEditor,
+        OpenTranscriptScratch,
         ShowTerminal,
         PreviousSession,
         NextSession,

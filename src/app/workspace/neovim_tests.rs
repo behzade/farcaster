@@ -92,6 +92,44 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
     )?;
     drop(server_b);
     lua(a.path(), "assert(vim.g.session_marker == 'a')")?;
+    lua(
+        a.path(),
+        "vim.g.original_buffer = vim.api.nvim_get_current_buf()",
+    )?;
+    let scratch = |text: &str| {
+        open_target(
+            &executable,
+            project.path(),
+            a.path(),
+            11,
+            EditorTarget::Transcript(text.to_owned()),
+        )
+    };
+    scratch("# User\n\nIt's `code` | سلام\n")?;
+    lua(
+        a.path(),
+        r#"
+        assert(vim.bo.buftype == 'nofile')
+        assert(vim.bo.filetype == 'markdown')
+        assert(not vim.bo.swapfile and not vim.bo.buflisted)
+        assert(not vim.bo.modified)
+        assert(vim.api.nvim_buf_get_lines(0, 2, 3, false)[1] == "It's `code` | سلام")
+        vim.g.first_scratch = vim.api.nvim_get_current_buf()
+        vim.api.nvim_buf_set_lines(0, 0, 1, false, {'scratch edit'})
+    "#,
+    )?;
+    scratch("# Latest snapshot")?;
+    lua(
+        a.path(),
+        r#"
+        assert(vim.api.nvim_get_current_buf() ~= vim.g.first_scratch)
+        assert(vim.api.nvim_buf_get_lines(vim.g.first_scratch, 0, 1, false)[1] == 'scratch edit')
+        assert(vim.api.nvim_get_current_line() == '# Latest snapshot')
+        assert(vim.api.nvim_buf_get_lines(vim.g.original_buffer, 0, 1, false)[1] == 'unsaved a')
+    "#,
+    )?;
+    scratch("")?;
+    lua(a.path(), "assert(vim.api.nvim_get_current_line() == '')")?;
     assert!(lua(a.path(), "error('expected test error')").is_err());
     assert_eq!(
         std::fs::read_to_string(path).map_err(|error| error.to_string())?,

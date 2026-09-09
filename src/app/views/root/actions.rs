@@ -81,6 +81,11 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &ShowEditor, window, cx| {
         this.show_editor_surface(window, cx);
     }))
+    .on_action(
+        cx.listener(|this, _: &crate::app::OpenTranscriptScratch, window, cx| {
+            this.open_transcript_scratch(window, cx);
+        }),
+    )
     .on_action(cx.listener(|this, _: &ShowTerminal, window, cx| {
         this.show_terminal_surface(window, cx);
     }))

@@ -93,6 +93,7 @@ fn activation_routes_bare_surfaces_and_transcript_boundaries() {
     for (key, command) in [
         ("space", Command::Actions),
         ("e", Command::Editor),
+        ("v", Command::TranscriptScratch),
         ("t", Command::Terminal),
         ("p", Command::AddProject),
         ("s", Command::Sandbox),

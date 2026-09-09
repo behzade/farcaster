@@ -265,6 +265,7 @@ impl FarcasterApp {
                 window.dispatch_action(Box::new(crate::app::RestoreSession), cx)
             }
             Command::Editor => self.show_editor_surface(window, cx),
+            Command::TranscriptScratch => self.open_transcript_scratch(window, cx),
             Command::Terminal => self.show_terminal_surface(window, cx),
             Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),
             Command::NewSession => self.open_picker(

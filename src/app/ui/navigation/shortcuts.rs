@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
     Editor,
+    TranscriptScratch,
     Terminal,
     RelativeSession(isize),
     Session(usize),
@@ -45,6 +46,7 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ("space", "Open action picker", Command::Actions),
     ("/", "Search sessions", Command::SearchSessions),
     ("e", "Open editor", Command::Editor),
+    ("v", "Open transcript in Neovim", Command::TranscriptScratch),
     ("t", "Open terminal", Command::Terminal),
     ("n", "New session", Command::NewSession),
     ("p", "Add project", Command::AddProject),

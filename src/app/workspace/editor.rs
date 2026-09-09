@@ -4,7 +4,7 @@ use gpui::{AppContext as _, Context, Window};
 
 use super::{
     AppSurface, FarcasterApp,
-    neovim::{NvimEditor, new_session_tab},
+    neovim::{EditorTarget, NvimEditor, new_session_tab},
 };
 
 impl FarcasterApp {
@@ -35,7 +35,7 @@ impl FarcasterApp {
                 return;
             }
         };
-        self.activate_editor_tab(project, Some(path), line, window, cx);
+        self.activate_editor_tab(project, EditorTarget::File(path, line), window, cx);
     }
 
     pub(in crate::app) fn show_editor_surface(
@@ -49,20 +49,40 @@ impl FarcasterApp {
         self.activate_editor_for_project(self.workspace_project(), window, cx);
     }
 
+    pub(in crate::app) fn open_transcript_scratch(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.center_surface_switch_blocked() {
+            return;
+        }
+        let items = &self.snapshot.conversation.items;
+        let text = crate::app::views::transcript::copy_transcript_items(
+            items,
+            0..=items.len().saturating_sub(1),
+        );
+        self.activate_editor_tab(
+            self.workspace_project(),
+            EditorTarget::Transcript(text),
+            window,
+            cx,
+        );
+    }
+
     pub(in crate::app) fn activate_editor_for_project(
         &mut self,
         project: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.activate_editor_tab(project, None, None, window, cx);
+        self.activate_editor_tab(project, EditorTarget::Resume, window, cx);
     }
 
     fn activate_editor_tab(
         &mut self,
         project: PathBuf,
-        path: Option<PathBuf>,
-        line: Option<u64>,
+        editor_target: EditorTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -102,7 +122,7 @@ impl FarcasterApp {
         self.editor_ready = true;
         self.reveal_native_center_surface(AppSurface::Editor, window, cx);
         let generation = self.editor_request_generation;
-        let opened = editor.update(cx, |editor, cx| editor.activate_tab(tab, path, line, cx));
+        let opened = editor.update(cx, |editor, cx| editor.activate_tab(tab, editor_target, cx));
         cx.spawn_in(window, async move |weak, cx| {
             let Err(error) = opened.await else {
                 return;

@@ -1,5 +1,5 @@
 use std::{
-    io::{Read as _, Seek as _},
+    io::{Read as _, Seek as _, Write as _},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -16,6 +16,12 @@ static NEXT_TAB: AtomicU64 = AtomicU64::new(1);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const SESSION_VIEW: &str = include_str!("neovim_session.lua");
+
+pub(super) enum EditorTarget {
+    Resume,
+    File(PathBuf, Option<u64>),
+    Transcript(String),
+}
 
 pub(super) fn new_session_tab() -> u64 {
     NEXT_TAB.fetch_add(1, Ordering::Relaxed)
@@ -82,11 +88,9 @@ impl NvimEditor {
     pub(super) fn activate_tab(
         &mut self,
         tab: u64,
-        path: Option<PathBuf>,
-        line: Option<u64>,
+        target: EditorTarget,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
-        let expression = session_expression(tab, path.as_deref(), line);
         let executable = self.executable.clone();
         let project = self.project.clone();
         let socket_dir = self.socket_dir.clone();
@@ -96,12 +100,7 @@ impl NvimEditor {
             if let Some(previous) = previous {
                 previous.await;
             }
-            let result = run_remote(
-                &executable,
-                &project,
-                &socket_dir.path().join("nvim.sock"),
-                &expression,
-            );
+            let result = open_target(&executable, &project, socket_dir.path(), tab, target);
             let _ = send.send(result).await;
         }));
         cx.background_executor().spawn(async move {
@@ -151,6 +150,42 @@ fn session_expression(tab: u64, path: Option<&Path>, line: Option<u64>) -> Strin
     format!(
         "luaeval({}, [{tab}, {path}, {line}])",
         vim_string(SESSION_VIEW)
+    )
+}
+
+fn scratch_expression(tab: u64, path: &Path) -> String {
+    format!(
+        "luaeval({}, [{tab}, v:null, v:null, {}])",
+        vim_string(SESSION_VIEW),
+        vim_string(&path.to_string_lossy()),
+    )
+}
+
+fn open_target(
+    executable: &Path,
+    project: &Path,
+    state_dir: &Path,
+    tab: u64,
+    target: EditorTarget,
+) -> Result<(), String> {
+    // Keep large transcripts out of the command line. Hold the transfer file
+    // until Neovim has read it, then let it drop.
+    let (expression, _transfer) = match target {
+        EditorTarget::Resume => (session_expression(tab, None, None), None),
+        EditorTarget::File(path, line) => (session_expression(tab, Some(&path), line), None),
+        EditorTarget::Transcript(text) => {
+            let mut file =
+                tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
+            file.write_all(text.as_bytes())
+                .map_err(|error| error.to_string())?;
+            (scratch_expression(tab, file.path()), Some(file))
+        }
+    };
+    run_remote(
+        executable,
+        project,
+        &state_dir.join("nvim.sock"),
+        &expression,
     )
 }
 

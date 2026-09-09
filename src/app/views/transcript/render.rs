@@ -135,7 +135,7 @@ pub(super) fn copy_transcript_row_range(
     copy_transcript_items(items, *range.start()..=end)
 }
 
-pub(super) fn copy_transcript_items(
+pub(in crate::app) fn copy_transcript_items(
     items: &PersistentVec<Arc<TranscriptItem>>,
     range: std::ops::RangeInclusive<usize>,
 ) -> String {
@@ -344,6 +344,7 @@ fn transcript_context_menu(
             let row_text = copy_transcript_items(&items, row.item_start()..=row.item_end() - 1);
             let all_text =
                 (!items.is_empty()).then(|| copy_transcript_items(&items, 0..=items.len() - 1));
+            let entity = entity.clone();
             menu.item(
                 PopupMenuItem::new(if matches!(row, TranscriptRow::ActivityGroup { .. }) {
                     "Copy tool group"
@@ -362,6 +363,15 @@ fn transcript_context_menu(
                         if let Some(text) = &all_text {
                             cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
                         }
+                    }),
+            )
+            .item(
+                PopupMenuItem::new("Open transcript in Neovim")
+                    .action(Box::new(crate::app::OpenTranscriptScratch))
+                    .on_click(move |_, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.open_transcript_scratch(window, cx);
+                        });
                     }),
             )
         })
