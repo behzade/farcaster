@@ -4,7 +4,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 50] = [
+const ICON_PATHS: [&str; 51] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -21,6 +21,7 @@ const ICON_PATHS: [&str; 50] = [
     "icons/phosphor/check.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/code.svg",
+    "icons/phosphor/copy.svg",
     "icons/phosphor/dots-six-vertical.svg",
     "icons/phosphor/eye.svg",
     "icons/phosphor/eye-slash.svg",
@@ -160,6 +161,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/code.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/code.svg"))
             }
+            "icons/phosphor/copy.svg" => {
+                Some(include_bytes!("../../../assets/phosphor-icons/copy.svg"))
+            }
             "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/dots-six-vertical.svg"
             )),
@@ -297,6 +301,7 @@ pub(crate) enum AppIcon {
     CheckCircle,
     Code,
     Codex,
+    Copy,
     Cursor,
     Eye,
     Folder,
@@ -353,6 +358,7 @@ impl IconNamed for AppIcon {
             Self::CheckCircle => "check-circle",
             Self::Code => "code",
             Self::Codex => return "icons/workbench/codex.svg".into(),
+            Self::Copy => "copy",
             Self::Cursor => return "icons/workbench/cursor.svg".into(),
             Self::Eye => "eye",
             Self::Folder => "folder",

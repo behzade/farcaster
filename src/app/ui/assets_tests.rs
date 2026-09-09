@@ -60,6 +60,7 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::CheckCircle,
         AppIcon::Code,
         AppIcon::Codex,
+        AppIcon::Copy,
         AppIcon::Cursor,
         AppIcon::Eye,
         AppIcon::Folder,

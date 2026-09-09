@@ -16,9 +16,11 @@ use gpui_component::{
 };
 
 use crate::{
+    app::ui::assets::AppIcon,
     app::ui::persistent_vec::{Indexed, PersistentVec},
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
+        icon_button,
     },
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     app::{
@@ -572,6 +574,19 @@ fn selectable_text_state(state: &Entity<TextViewState>) -> TextView {
 
 fn styled_selectable_text(text: TextView) -> TextView {
     text.style(transcript_markdown_style())
+        .code_block_actions(|block, _, _| {
+            let code = block.code();
+            icon_button(
+                "copy-code",
+                AppIcon::Copy,
+                "Copy code",
+                ButtonTone::Quiet,
+                move |_, cx| {
+                    cx.stop_propagation();
+                    cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
+                },
+            )
+        })
         .selectable(true)
         .focusable(false)
         .w_full()
@@ -618,6 +633,7 @@ pub(super) fn invocation_transcript_markdown_style(resolved: &str) -> TextViewSt
 
 fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> TextViewStyle {
     let mut code_block = StyleRefinement::default();
+    code_block.padding.top = Some((THEME.controls.icon_button + px(16.0)).into());
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
