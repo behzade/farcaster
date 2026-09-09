@@ -3,6 +3,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _,
 };
+use gpui_component::tooltip::Tooltip;
 
 use crate::{
     app::ui::assets::AppIcon,
@@ -17,7 +18,10 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         mode: crate::app::ui::layout::LayoutMode,
     ) -> impl IntoElement {
-        let project = project_label(&self.workspace_project());
+        let project_path = self.workspace_project();
+        let project = project_label(&project_path);
+        let project_hint = format!("New session in {project}");
+        let project_entity = entity.clone();
         let selected_path = self.snapshot.selected_session.as_deref();
         let session = selected_path.and_then(|path| {
             self.all_sessions
@@ -66,7 +70,26 @@ impl FarcasterApp {
                         app_icon(AppIcon::Folder, AppIconSize::Inline)
                             .text_color(THEME.colors.subtle),
                     )
-                    .child(div().text_color(THEME.colors.muted).child(project))
+                    .child(
+                        div()
+                            .id("workspace-project-new-session")
+                            .role(gpui::Role::Button)
+                            .aria_label(project_hint.clone())
+                            .tab_index(0)
+                            .cursor_pointer()
+                            .text_color(THEME.colors.muted)
+                            .hover(|link| link.text_color(THEME.colors.text))
+                            .focus_visible(|link| link.text_color(THEME.colors.accent))
+                            .tooltip(move |window, cx| {
+                                Tooltip::new(project_hint.clone()).build(window, cx)
+                            })
+                            .child(project)
+                            .on_click(move |_, window, cx| {
+                                let _ = project_entity.update(cx, |app, cx| {
+                                    app.new_session(project_path.clone(), window, cx);
+                                });
+                            }),
+                    )
                     .when_some(title, |workspace, title| {
                         workspace
                             .child(div().text_color(THEME.colors.subtle).child("/"))

@@ -681,6 +681,7 @@ pub(super) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
         "Waiting" => Some((AppIcon::Hourglass, THEME.colors.accent)),
         "Failed" => Some((AppIcon::XCircle, THEME.colors.error)),
         "Working" => Some((AppIcon::SpinnerGap, THEME.colors.accent)),
+        "Compacting" => Some((AppIcon::ArrowsClockwise, THEME.colors.accent)),
         _ => Some((AppIcon::Question, THEME.colors.subtle)),
     }
 }
