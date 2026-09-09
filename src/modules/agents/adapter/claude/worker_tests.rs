@@ -194,7 +194,7 @@ fn cli_round_trip_streams_once_preserves_arguments_and_queues_turns() {
     assert!(session.select_effort("max").is_err());
     assert!(session.select_mode("bypassPermissions").is_err());
     session
-        .select_mode("plan")
+        .select_mode("acceptEdits")
         .expect("test operation should succeed");
     session
         .send("hello".into(), WorkerSendMode::Prompt)
@@ -403,6 +403,40 @@ fn cancelling_an_approval_denies_without_changing_tool_input() {
         .expect("test operation should succeed");
     assert!(requests.contains("\"behavior\":\"deny\""));
     assert!(!requests.contains("\"behavior\":\"allow\""));
+}
+
+#[test]
+fn permission_modes_match_launch_access_and_exclude_plan() {
+    for (access, initial) in [
+        (HarnessAccessMode::Sandboxed, "default"),
+        (HarnessAccessMode::Auto, "auto"),
+        (HarnessAccessMode::Full, "bypassPermissions"),
+    ] {
+        let (directory, mut command) = setup();
+        command.access_mode = access;
+        let mut session = session(&command, directory.path());
+        // The transport uses the first advertised mode as the initial selection.
+        assert_eq!(session.modes[0]["id"], initial);
+        assert!(session.select_mode("plan").is_err());
+        let expected = if access == HarnessAccessMode::Auto {
+            session.select_mode("default").expect("ask permissions");
+            session.select_mode("auto").expect("restore auto mode");
+            vec![json!("default"), json!("auto")]
+        } else {
+            assert!(session.select_mode("auto").is_err());
+            Vec::new()
+        };
+        session.close().expect("close fixture session");
+        let requests = std::fs::read_to_string(directory.path().join("claude-fixture.requests"))
+            .expect("read fixture requests");
+        let modes: Vec<Value> = requests
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("parse fixture request"))
+            .filter(|frame| frame["request"]["subtype"] == "set_permission_mode")
+            .map(|frame| frame["request"]["mode"].clone())
+            .collect();
+        assert_eq!(modes, expected);
+    }
 }
 
 #[test]

@@ -7,7 +7,7 @@ use super::super::main_session::{self, MainSessionMetadata};
 use super::{
     BACKEND,
     events::{Events, string},
-    process::{Process, decode},
+    process::{Process, decode, permission_mode},
 };
 use crate::agents::{
     AgentLaunchConfig, CallerProfile, CallerRegistry, HarnessAccessMode, PeerMessage,
@@ -176,10 +176,14 @@ fn initialize(
     let mut modes = vec![
         json!({"id":"default","name":"Ask permissions"}),
         json!({"id":"acceptEdits","name":"Accept edits"}),
-        json!({"id":"plan","name":"Plan"}),
     ];
-    if access == HarnessAccessMode::Full {
-        modes.insert(0, json!({"id":"bypassPermissions","name":"Full access"}));
+    let name = match access {
+        HarnessAccessMode::Auto => Some("Auto"),
+        HarnessAccessMode::Full => Some("Full access"),
+        HarnessAccessMode::Sandboxed => None,
+    };
+    if let Some(name) = name {
+        modes.insert(0, json!({"id":permission_mode(access),"name":name}));
     }
     Ok(MainSessionMetadata {
         models,
