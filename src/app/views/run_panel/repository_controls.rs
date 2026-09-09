@@ -7,7 +7,10 @@ use crate::{
         RunPanelView,
         ui::{
             assets::AppIcon,
-            primitives::{ButtonTone, dropdown_button, icon_button, section_heading},
+            primitives::{
+                ButtonTone, activates_button, button, dropdown_button, icon_button, icon_control,
+                section_heading,
+            },
             theme::{MONO_FONT_FAMILY, THEME},
         },
     },
@@ -17,9 +20,31 @@ use crate::{
     },
 };
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
+    AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
+
+pub(super) fn file_action(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let press = std::rc::Rc::new(on_press);
+    let click = press.clone();
+    icon_control(id, label)
+        .size(px(20.0))
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            click(window, cx);
+        })
+        .on_key_down(move |event, window, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                press(window, cx);
+            }
+        })
+}
 use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
     tooltip::Tooltip,
@@ -33,6 +58,7 @@ pub(super) fn repository_header(
     filtering: bool,
 ) -> AnyElement {
     let refresh = entity.clone();
+    let select = entity.clone();
     let enabled = app.repository.execution_allowed;
     let syncing = app.repository.sync.action;
     let count = snapshot.map_or(0, |snapshot| {
@@ -75,6 +101,22 @@ pub(super) fn repository_header(
                         },
                     ))
                 })
+                .child(button(
+                    "select-repository-files",
+                    if app.repository.edits.selection.active {
+                        "Cancel"
+                    } else {
+                        "Select"
+                    },
+                    ButtonTone::Quiet,
+                    enabled
+                        && (count > 0 || app.repository.edits.selection.active)
+                        && syncing.is_none()
+                        && app.repository.edits.pending.is_none(),
+                    move |_, cx| {
+                        let _ = select.update(cx, |this, cx| this.toggle_repository_selection(cx));
+                    },
+                ))
                 .child(menu),
         )
         .child(

@@ -8,7 +8,7 @@ use gpui_component::tooltip::Tooltip;
 use super::repository_controls::selected_backend;
 use super::{
     super::super::FarcasterApp,
-    repository_controls::repository_header,
+    repository_controls::{file_action, repository_header},
     repository_presentation::{
         accessible_change_path, bounded_message, change_color, change_kind_label,
         change_status_label, display_change_path, file_path_labels, group_title, repository_row_id,
@@ -21,9 +21,9 @@ use crate::{
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
-        primitives::{AppIconSize, activates_button, app_icon},
+        primitives::{AppIconSize, ButtonTone, activates_button, app_icon, button},
     },
-    repository::{RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
+    repository::{RepositoryEdit, RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };
 
 use super::{
@@ -117,6 +117,41 @@ impl FarcasterApp {
                             .aria_label("Filter changed files")
                             .prefix(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline)),
                     )
+                    .when(self.repository.edits.selection.active, |section| {
+                        let commit = entity.clone();
+                        let count = self.repository.edits.selection.paths.len();
+                        section.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(THEME.space.sm)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_size(THEME.type_scale.caption)
+                                        .text_color(THEME.colors.muted)
+                                        .child(format!("{count} selected")),
+                                )
+                                .child(button(
+                                    "commit-selected-files",
+                                    "Commit…",
+                                    ButtonTone::Accent,
+                                    count > 0
+                                        && self.repository.sync.action.is_none()
+                                        && self.repository.edits.pending.is_none(),
+                                    move |window, cx| {
+                                        let _ = commit.update(cx, |this, cx| {
+                                            this.review_repository_edit(
+                                                RepositoryEdit::Commit,
+                                                None,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    },
+                                )),
+                        )
+                    })
                     .child(self.repository_changes(
                         snapshot,
                         entity.clone(),
@@ -300,9 +335,24 @@ impl FarcasterApp {
         let focus = self.repository.row_focus.get(&change.target.key)?.clone();
         let click_entity = entity.clone();
         let click_path = change.target.absolute_path();
-        let key_entity = entity;
+        let key_entity = entity.clone();
         let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
+        let action_group: gpui::SharedString = format!("repository-actions-{row_id}").into();
+        let selecting = self.repository.edits.selection.active;
+        let selected = self
+            .repository
+            .edits
+            .selection
+            .paths
+            .contains(&change.relative_path);
+        let select_entity = entity.clone();
+        let select_path = change.relative_path.clone();
+        let discard_path = change.relative_path.clone();
+        let editable = self.repository.execution_allowed
+            && self.repository.sync.action.is_none()
+            && self.repository.edits.pending.is_none()
+            && change.kind != crate::repository::ChangeKind::Conflict;
         let full_path = format!("{} · ⌥ Open diff", display_change_path(change));
         let (filename, _) = file_path_labels(&change.relative_path);
         let status = change_status_label(change).to_owned();
@@ -312,6 +362,7 @@ impl FarcasterApp {
         let accessible = format!("Edit {layer} {state} file {accessible_path} in Neovim");
         let target = div()
             .id(("repository-change", row_id))
+            .group(action_group.clone())
             .track_focus(&focus)
             .role(Role::Button)
             .aria_label(accessible)
@@ -330,6 +381,7 @@ impl FarcasterApp {
             .items_center()
             .gap(THEME.space.xs)
             .hover(|row| row.bg(THEME.colors.hover))
+            .when(selecting && selected, |row| row.bg(THEME.colors.selection))
             .focus(|row| row.bg(THEME.colors.selection))
             .cursor_pointer()
             .on_click(move |event, window, cx| {
@@ -351,18 +403,48 @@ impl FarcasterApp {
                     });
                 }
             })
-            .child(
-                div()
-                    .w(px(14.0))
-                    .flex_none()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(if change.kind == crate::repository::ChangeKind::Modified {
-                        THEME.colors.subtle
+            .when(selecting, |row| {
+                row.child(
+                    file_action(
+                        ("select-repository-file", row_id),
+                        format!(
+                            "{} {} for commit",
+                            if selected { "Deselect" } else { "Select" },
+                            change.relative_path.display()
+                        ),
+                        move |_, cx| {
+                            if editable {
+                                let _ = select_entity.update(cx, |this, cx| {
+                                    this.toggle_repository_file(select_path.clone(), cx)
+                                });
+                            }
+                        },
+                    )
+                    .role(Role::CheckBox)
+                    .aria_toggled(if selected {
+                        gpui::Toggled::True
                     } else {
-                        change_color(&change.kind)
+                        gpui::Toggled::False
                     })
-                    .child(status),
-            )
+                    .when(!editable, |control| control.opacity(0.4))
+                    .child(
+                        div()
+                            .size(px(14.0))
+                            .border(THEME.border)
+                            .border_color(THEME.colors.muted)
+                            .rounded(px(2.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(selected, |checkbox| {
+                                checkbox.bg(THEME.colors.accent).child(
+                                    app_icon(AppIcon::Check, AppIconSize::Inline)
+                                        .text_color(THEME.colors.surface),
+                                )
+                            }),
+                    ),
+                )
+            })
             .child(
                 div()
                     .min_w_0()
@@ -391,6 +473,56 @@ impl FarcasterApp {
                             )
                         },
                     ),
+            )
+            .child(
+                div()
+                    .w(px(14.0))
+                    .flex_none()
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(if change.kind == crate::repository::ChangeKind::Modified {
+                        THEME.colors.subtle
+                    } else {
+                        change_color(&change.kind)
+                    })
+                    .child(status),
+            )
+            .child(
+                div()
+                    .w(px(20.0))
+                    .flex_none()
+                    .when(!selecting && editable, |slot| {
+                        slot.child(
+                            file_action(
+                                ("discard-repository-file", row_id),
+                                if matches!(
+                                    change.kind,
+                                    crate::repository::ChangeKind::Added
+                                        | crate::repository::ChangeKind::Untracked
+                                ) {
+                                    "Delete file…"
+                                } else {
+                                    "Discard file changes…"
+                                },
+                                move |window, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.review_repository_edit(
+                                            RepositoryEdit::Discard,
+                                            Some(discard_path.clone()),
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                },
+                            )
+                            .opacity(0.0)
+                            .group_hover(action_group, |control| control.opacity(1.0))
+                            .focus_visible(|control| control.opacity(1.0))
+                            .child(app_icon(
+                                AppIcon::ArrowCounterClockwise,
+                                AppIconSize::Inline,
+                            )),
+                        )
+                    }),
             );
         Some(target.into_any_element())
     }

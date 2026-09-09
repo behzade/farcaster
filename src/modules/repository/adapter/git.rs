@@ -11,6 +11,16 @@ use super::super::{
 pub(super) struct GitOperations;
 
 impl RepositoryOperations for GitOperations {
+    fn edit(
+        &self,
+        backend: &RepositoryBackend,
+        review: &crate::repository::RepositoryEditReview,
+        action: crate::repository::RepositoryEdit,
+        message: &str,
+    ) -> Result<(), RepositoryError> {
+        super::git_edit::apply(backend, review, action, message)
+    }
+
     fn snapshot(
         &self,
         backend: &RepositoryBackend,

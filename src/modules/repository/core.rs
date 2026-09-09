@@ -1,8 +1,10 @@
+mod edit;
 mod file_counts;
 pub(super) mod port;
 mod preferences;
 mod sync;
 
+pub(crate) use edit::{RepositoryEdit, RepositoryEditReview};
 pub(crate) use preferences::{PreferenceStore, load as load_preferences, save as save_preferences};
 
 use super::{

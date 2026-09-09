@@ -1,3 +1,4 @@
+mod edits;
 mod watching;
 
 use std::{collections::BTreeMap, path::PathBuf};
@@ -95,6 +96,7 @@ pub(in crate::app) struct RepositoryState {
     pub(in crate::app) pending_jj_init: Option<PendingJjInit>,
     jj_init_in_flight: bool,
     pub(in crate::app) sync: RepositorySyncState,
+    pub(in crate::app) edits: edits::RepositoryEditState,
     pub(in crate::app) additions: Option<u64>,
     pub(in crate::app) deletions: Option<u64>,
     pub(in crate::app) row_focus: std::collections::HashMap<DiffTargetKey, FocusHandle>,
@@ -130,6 +132,7 @@ impl RepositoryState {
             pending_jj_init: None,
             jj_init_in_flight: false,
             sync: RepositorySyncState::default(),
+            edits: Default::default(),
             additions: None,
             deletions: None,
             row_focus: std::collections::HashMap::new(),
@@ -178,6 +181,7 @@ impl RepositoryState {
         self.error = None;
         self.watcher_error = None;
         self.sync.clear();
+        self.edits.clear();
         self.additions = None;
         self.deletions = None;
         self.row_focus.clear();
@@ -330,7 +334,10 @@ impl FarcasterApp {
         action: RepositorySyncAction,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.execution_allowed || self.repository.sync.action.is_some() {
+        if !self.repository.execution_allowed
+            || self.repository.sync.action.is_some()
+            || self.repository.edits.pending.is_some()
+        {
             return;
         }
         let (Some(backend), Some(snapshot)) = (
@@ -430,6 +437,7 @@ impl FarcasterApp {
                                 }
                             }
                             let location = snapshot.location.clone();
+                            this.repository.edits.selection.retain(&snapshot);
                             this.repository.backend = Some(backend);
                             this.repository.snapshot = Some(snapshot);
                             this.repository.additions = additions;

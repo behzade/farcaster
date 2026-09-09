@@ -11,6 +11,9 @@ use std::{
 
 use super::*;
 
+#[path = "edit_tests.rs"]
+mod edit_tests;
+
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestDirectory(PathBuf);

@@ -1,4 +1,5 @@
 pub(super) mod git;
+mod git_edit;
 pub(super) mod jj;
 pub(super) mod process;
 pub(super) mod watcher;

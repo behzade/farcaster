@@ -2,7 +2,8 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
 use super::super::{
     ChangeKind, ChangeLayer, DiffResult, DiffTarget, JujutsuIdentity, RepositoryBackend,
-    RepositoryError, RepositoryKind, SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change,
+    RepositoryEdit, RepositoryEditReview, RepositoryError, RepositoryKind, SnapshotIdentity,
+    SnapshotToken, WorkingCopySnapshot, change, command_failed,
     core::port::{CommandOutput, RepositoryOperations},
     diff_result, require_complete_stdout,
 };
@@ -10,6 +11,30 @@ use super::super::{
 pub(super) struct JujutsuOperations;
 
 impl RepositoryOperations for JujutsuOperations {
+    fn edit(
+        &self,
+        backend: &RepositoryBackend,
+        review: &RepositoryEditReview,
+        action: RepositoryEdit,
+        message: &str,
+    ) -> Result<(), RepositoryError> {
+        let mut args = ["--no-pager", "--color=never"].map(OsString::from).to_vec();
+        match action {
+            RepositoryEdit::Commit => args.extend(["commit", "-m", message].map(OsString::from)),
+            RepositoryEdit::Discard => args.push("restore".into()),
+        }
+        args.push("--".into());
+        for path in review.paths() {
+            args.push(literal_fileset(path)?.into());
+        }
+        let output = backend.run_sync(&args)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(command_failed(backend.executable(), &output))
+        }
+    }
+
     fn snapshot(
         &self,
         backend: &RepositoryBackend,

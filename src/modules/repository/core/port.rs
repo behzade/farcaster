@@ -34,6 +34,14 @@ pub(in crate::modules::repository) trait CommandExecutor:
 pub(in crate::modules::repository) trait RepositoryOperations:
     Send + Sync
 {
+    fn edit(
+        &self,
+        backend: &RepositoryBackend,
+        review: &super::RepositoryEditReview,
+        action: super::RepositoryEdit,
+        message: &str,
+    ) -> Result<(), RepositoryError>;
+
     fn snapshot(&self, backend: &RepositoryBackend)
     -> Result<WorkingCopySnapshot, RepositoryError>;
 
