@@ -50,6 +50,9 @@ fn emit_line(label: &str, line: &str) {
 }
 
 fn structured_level(line: &str) -> Option<Level> {
+    if let Some(level) = glog_level(line) {
+        return Some(level);
+    }
     if let Ok(Value::Object(fields)) = serde_json::from_str(line)
         && let Some(level) = fields
             .iter()
@@ -61,6 +64,48 @@ fn structured_level(line: &str) -> Option<Level> {
         let (key, value) = pair.ok()?;
         level_from_field(key.as_ref(), value.as_ref())
     })
+}
+
+fn glog_level(line: &str) -> Option<Level> {
+    let (header, message) = line.split_once("] ")?;
+    let mut fields = header.split_whitespace();
+    let stamp = fields.next()?.as_bytes();
+    if stamp.len() != 5 || !stamp[1..].iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let level = match stamp[0] {
+        b'I' => Level::Info,
+        b'W' => Level::Warn,
+        b'E' | b'F' => Level::Error,
+        _ => return None,
+    };
+    let time = fields.next()?.as_bytes();
+    if time.len() != 15
+        || !time
+            .iter()
+            .zip(b"00:00:00.000000")
+            .all(|(byte, pattern)| match pattern {
+                b'0' => byte.is_ascii_digit(),
+                _ => byte == pattern,
+            })
+    {
+        return None;
+    }
+    if !fields.next()?.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let (_, line_number) = fields.next()?.rsplit_once(':')?;
+    if line_number.is_empty()
+        || !line_number.bytes().all(|byte| byte.is_ascii_digit())
+        || fields.next().is_some()
+    {
+        return None;
+    }
+    // Antigravity's raw payloads repeat accumulated text on every update.
+    if level == Level::Info && message.starts_with("RAW WS MSG: ") {
+        return Some(Level::Debug);
+    }
+    Some(level)
 }
 
 fn level_from_field(key: &str, value: &str) -> Option<Level> {
