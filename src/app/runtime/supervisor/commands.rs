@@ -1,10 +1,53 @@
 use super::*;
 
 impl Supervisor {
+    fn request_configuration(&mut self, harness: String, project: PathBuf) {
+        let Some(sender) = &self.configuration_tx else {
+            return;
+        };
+        if harness.is_empty()
+            || !self
+                .configuration_requests
+                .insert((harness.clone(), project.clone()))
+        {
+            return;
+        }
+        self.configurations
+            .set_catalog_loading(harness.clone(), project.clone());
+        let request_harness = harness.clone();
+        let request_project = project.clone();
+        let process_command = self.process_command.clone();
+        let supervisor = self.supervisor_thread.clone();
+        let updates = sender.clone();
+        if let Err(error) = thread::Builder::new()
+            .name(format!("farcaster-{harness}-catalog"))
+            .spawn(move || {
+                let result = agents::load_configuration_catalog(
+                    &process_command,
+                    &request_harness,
+                    &request_project,
+                );
+                let _ = updates.send((request_harness, request_project, result));
+                supervisor.unpark();
+            })
+        {
+            let _ = sender.send((
+                harness.clone(),
+                project.clone(),
+                Err(format!("start catalog request: {error}")),
+            ));
+        }
+        self.publish_configuration_snapshots(&harness, &project);
+    }
+
     pub(super) fn process_next_command(&mut self) -> bool {
         match self.command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
+                if let RuntimeCommand::LoadConfiguration { harness, project } = &command {
+                    self.request_configuration(harness.clone(), project.clone());
+                    return true;
+                }
                 if self.handle_session_family_command(&command) {
                     return true;
                 }
@@ -76,16 +119,7 @@ impl Supervisor {
                 }
                 let next = command_target(&command);
                 if let Some((requested_key, project, harness)) = next {
-                    if let Some(sender) = &self.configuration_tx
-                        && self.configuration_projects.insert(project.clone())
-                    {
-                        refresh_configuration_catalogs(
-                            project.clone(),
-                            self.process_command.clone(),
-                            self.supervisor_thread.clone(),
-                            sender.clone(),
-                        );
-                    }
+                    self.request_configuration(harness.clone(), project.clone());
                     let _selection_timing = is_view_only_selection(&command).then(|| {
                         crate::app::infrastructure::performance::Timing::new("switch.runtime_route")
                     });

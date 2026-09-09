@@ -21,6 +21,10 @@ pub(crate) enum RuntimeCommand {
         path: PathBuf,
     },
     Reload,
+    LoadConfiguration {
+        harness: String,
+        project: PathBuf,
+    },
     Compact {
         custom_instructions: Option<String>,
     },

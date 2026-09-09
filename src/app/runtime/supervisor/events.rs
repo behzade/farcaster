@@ -1,4 +1,5 @@
 use super::*;
+use std::path::Path;
 
 impl Supervisor {
     pub(super) fn drain_configuration_updates(&mut self) {
@@ -21,21 +22,27 @@ impl Supervisor {
                     }
                 }
                 Err(error) => {
+                    self.configuration_requests
+                        .remove(&(harness.clone(), project.clone()));
                     zlog::warn!("Failed to refresh {harness} catalog: {error}");
                     self.configurations
                         .set_catalog_error(harness.clone(), project.clone(), error);
                 }
             }
-            for (key, snapshot) in &mut self.latest {
-                if snapshot.harness == harness && snapshot.project == project {
-                    self.configurations
-                        .refresh_snapshot_catalog(Arc::make_mut(snapshot));
-                    if key == &self.selected {
-                        let _ = self.event_tx.send(RuntimeEvent::Snapshot {
-                            generation: self.generation,
-                            snapshot: snapshot.clone(),
-                        });
-                    }
+            self.publish_configuration_snapshots(&harness, &project);
+        }
+    }
+
+    pub(super) fn publish_configuration_snapshots(&mut self, harness: &str, project: &Path) {
+        for (key, snapshot) in &mut self.latest {
+            if snapshot.harness == harness && snapshot.project == project {
+                self.configurations
+                    .refresh_snapshot_catalog(Arc::make_mut(snapshot));
+                if key == &self.selected {
+                    let _ = self.event_tx.send(RuntimeEvent::Snapshot {
+                        generation: self.generation,
+                        snapshot: snapshot.clone(),
+                    });
                 }
             }
         }

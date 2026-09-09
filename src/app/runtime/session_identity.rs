@@ -199,6 +199,10 @@ impl HarnessConfigurationStore {
         cached.status = ConfigurationStatus::Loaded;
     }
 
+    pub fn set_catalog_loading(&mut self, harness: String, project: PathBuf) {
+        self.catalogs.entry((harness, project)).or_default().status = ConfigurationStatus::Loading;
+    }
+
     pub fn set_catalog_error(&mut self, harness: String, project: PathBuf, error: String) {
         self.catalogs.entry((harness, project)).or_default().status =
             ConfigurationStatus::Failed(error);

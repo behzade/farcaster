@@ -32,6 +32,13 @@ impl FarcasterApp {
     ) {
         self.runtime_picker.open = open;
         if open {
+            self.send(
+                RuntimeCommand::LoadConfiguration {
+                    harness: self.snapshot.harness.clone(),
+                    project: self.snapshot.project.clone(),
+                },
+                cx,
+            );
             self.runtime_picker.highlighted = 0;
             self.runtime_picker.scroll = gpui::UniformListScrollHandle::new();
             self.runtime_picker.provider =

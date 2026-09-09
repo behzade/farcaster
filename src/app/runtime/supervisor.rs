@@ -328,32 +328,6 @@ type ConfigurationUpdate = (
     Result<crate::agents::ConfigurationCatalog, String>,
 );
 
-fn refresh_configuration_catalogs(
-    project: PathBuf,
-    process_command: AgentLaunchConfig,
-    supervisor: thread::Thread,
-    sender: mpsc::Sender<ConfigurationUpdate>,
-) {
-    for backend in agents::backend_statuses()
-        .into_iter()
-        .filter(|backend| backend.available)
-    {
-        let project = project.clone();
-        let process_command = process_command.clone();
-        let supervisor = supervisor.clone();
-        let sender = sender.clone();
-        let harness = backend.id;
-        let _ = thread::Builder::new()
-            .name(format!("farcaster-{harness}-catalog"))
-            .spawn(move || {
-                let result =
-                    agents::load_configuration_catalog(&process_command, &harness, &project);
-                let _ = sender.send((harness, project, result));
-                supervisor.unpark();
-            });
-    }
-}
-
 struct Supervisor {
     process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
@@ -380,7 +354,9 @@ struct Supervisor {
         Vec<crate::app::infrastructure::persistence::CachedConfigurationCatalog>,
     configuration_rx: mpsc::Receiver<ConfigurationUpdate>,
     configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
-    configuration_projects: HashSet<PathBuf>,
+    // Coalesce in-flight requests and keep successful loads for this app run.
+    // A failed result removes its key so the next selection can retry.
+    configuration_requests: HashSet<(String, PathBuf)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
 }
 
@@ -493,14 +469,6 @@ impl Supervisor {
             send_configured_command(actor, initial_command, &configurations);
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
-        if refresh_configuration {
-            refresh_configuration_catalogs(
-                initial_project.clone(),
-                process_command.clone(),
-                supervisor_thread.clone(),
-                configuration_tx.clone(),
-            );
-        }
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
         if let Ok(state) = StateStore::open()
             && let Ok(prompts) = agents::queued_prompts(&state)
@@ -544,7 +512,7 @@ impl Supervisor {
             configuration_catalogs,
             configuration_rx,
             configuration_tx: refresh_configuration.then_some(configuration_tx),
-            configuration_projects: HashSet::from([initial_project]),
+            configuration_requests: HashSet::new(),
             published_statuses,
         }
     }
@@ -710,3 +678,7 @@ pub(super) fn actor_key_for_command(
 #[cfg(test)]
 #[path = "supervisor_tests.rs"]
 mod harness_birth_tests;
+
+#[cfg(test)]
+#[path = "catalog_lifecycle_tests.rs"]
+mod catalog_lifecycle_tests;

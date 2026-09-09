@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     process::{Child, Stdio},
-    sync::{Mutex, OnceLock, mpsc},
+    sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
 };
@@ -153,9 +153,11 @@ fn catalog_is_reusable(existing_project: &Path, project: &Path, running: bool) -
     running && existing_project == project
 }
 
-fn catalog_processes() -> &'static Mutex<HashMap<(&'static str, &'static str), CatalogProcess>> {
-    static PROCESSES: OnceLock<Mutex<HashMap<(&'static str, &'static str), CatalogProcess>>> =
-        OnceLock::new();
+type CatalogKey = (&'static str, &'static str);
+type CatalogSlot = Arc<Mutex<Option<CatalogProcess>>>;
+
+fn catalog_processes() -> &'static Mutex<HashMap<CatalogKey, CatalogSlot>> {
+    static PROCESSES: OnceLock<Mutex<HashMap<CatalogKey, CatalogSlot>>> = OnceLock::new();
     PROCESSES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -176,10 +178,18 @@ fn with_connection_kind<T: Send + 'static>(
     operation: impl FnOnce(&mut AcpConnection, &AcpProfile, &Path) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let key = (profile.backend, kind);
-    let mut processes = catalog_processes()
+    // Only map access holds the global lock. Each backend/connection kind owns
+    // its exchange lock, so a stalled agent cannot block another backend.
+    let slot = {
+        let mut processes = catalog_processes()
+            .lock()
+            .map_err(|error| format!("{} ACP catalog map lock: {error}", profile.name))?;
+        Arc::clone(processes.entry(key).or_default())
+    };
+    let mut cached = slot
         .lock()
         .map_err(|error| format!("{} ACP catalog lock: {error}", profile.name))?;
-    let reused = processes.remove(&key).and_then(|mut process| {
+    let reused = cached.take().and_then(|mut process| {
         let running = matches!(process.child.as_mut().map(Child::try_wait), Some(Ok(None)));
         if catalog_is_reusable(&process.project, project, running) {
             process.take_parts()
@@ -208,14 +218,11 @@ fn with_connection_kind<T: Send + 'static>(
     });
     match result {
         Ok((Ok(value), connection)) => {
-            processes.insert(
-                key,
-                CatalogProcess {
-                    child: Some(child),
-                    connection: Some(connection),
-                    project: project.to_owned(),
-                },
-            );
+            *cached = Some(CatalogProcess {
+                child: Some(child),
+                connection: Some(connection),
+                project: project.to_owned(),
+            });
             Ok(value)
         }
         Ok((Err(error), _)) => {
