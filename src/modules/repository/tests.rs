@@ -485,6 +485,103 @@ fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
     assert!(diff.patch.contains("diff --git a/a|b.txt b/a|b.txt"));
 }
 
+#[test]
+fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
+    use std::time::{Duration, Instant};
+
+    if Command::new("jj").arg("--version").output().is_err() {
+        return;
+    }
+    let temp = TestDirectory::new("jj-watch-commits");
+    let repository = temp.path().join("repo");
+    let home = temp.path().join("home");
+    let config = temp.path().join("config");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&config).unwrap();
+    run_jj(
+        temp.path(),
+        &home,
+        &config,
+        &["git", "init", "--colocate", "repo"],
+    );
+    fs::write(repository.join("file.txt"), "working\n").unwrap();
+    let backend = RepositoryBackend::discover_with_options(
+        &repository,
+        BackendPreference::Jujutsu,
+        RepositoryOptions {
+            environment: isolated_environment(&home, &config),
+            ..RepositoryOptions::default()
+        },
+    )
+    .unwrap()
+    .unwrap();
+    let initial = backend.snapshot().unwrap();
+    assert_eq!(initial.changes.len(), 1);
+    let (_watcher, events) = RepositoryWatcher::start(backend.location()).unwrap();
+
+    let assert_quiet = || {
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            events.try_recv().is_err(),
+            "snapshot caused another refresh"
+        );
+    };
+    backend.snapshot().unwrap();
+    assert_quiet();
+    run_git(&repository, &home, &config, &["add", "file.txt"]);
+    // Staging does not change JJ's working-copy view.
+    assert_quiet();
+    for (program, arguments) in [
+        (
+            "git",
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                "external Git commit",
+            ][..],
+        ),
+        (
+            "jj",
+            &[
+                "--config",
+                "user.name='Test'",
+                "--config",
+                "user.email='test@example.com'",
+                "commit",
+                "-m",
+                "external JJ commit",
+            ][..],
+        ),
+    ] {
+        match program {
+            "git" => run_git(&repository, &home, &config, arguments),
+            _ => run_jj(&repository, &home, &config, arguments),
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(event) = events.try_recv() {
+                assert_eq!(event, RepositoryWatchEvent::Changed);
+                break;
+            }
+            assert!(Instant::now() < deadline, "missed {program} commit");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let refreshed = backend.snapshot().unwrap();
+        assert!(refreshed.changes.is_empty());
+        assert_ne!(refreshed.identity, initial.identity);
+        // Importing a Git commit may publish one JJ operation. Once imported,
+        // repeated reads must stop producing watcher events.
+        std::thread::sleep(Duration::from_millis(200));
+        while events.try_recv().is_ok() {}
+        backend.snapshot().unwrap();
+        assert_quiet();
+    }
+}
+
 fn run_git(repository: &Path, home: &Path, config: &Path, arguments: &[&str]) {
     let output = Command::new("git")
         .args(arguments)
