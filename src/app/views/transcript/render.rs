@@ -20,7 +20,6 @@ use crate::{
     app::ui::persistent_vec::{Indexed, PersistentVec},
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
-        icon_button,
     },
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
     app::{
@@ -36,6 +35,8 @@ use crate::{
 
 #[path = "render/chunking.rs"]
 mod chunking;
+#[path = "render/copy_code.rs"]
+mod copy_code;
 #[path = "render/detail_rows.rs"]
 mod detail_rows;
 #[path = "render/links.rs"]
@@ -625,19 +626,7 @@ fn selectable_text_state(state: &Entity<TextViewState>) -> TextView {
 
 fn styled_selectable_text(text: TextView) -> TextView {
     text.style(transcript_markdown_style())
-        .code_block_actions(|block, _, _| {
-            let code = block.code();
-            icon_button(
-                "copy-code",
-                AppIcon::Copy,
-                "Copy code",
-                ButtonTone::Quiet,
-                move |_, cx| {
-                    cx.stop_propagation();
-                    cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
-                },
-            )
-        })
+        .code_block_actions(|block, _, _| copy_code::CopyCodeButton::new(block.code()))
         .selectable(true)
         .focusable(false)
         .w_full()
