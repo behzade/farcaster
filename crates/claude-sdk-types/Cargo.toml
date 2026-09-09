@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 description = "Source-derived JSON types for the Claude Agent SDK and Claude CLI"
 
+[features]
+# CLI/provider streams omit nullable API metadata and optional usage detail.
+cli-compat = []
+
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

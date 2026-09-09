@@ -5,6 +5,10 @@ use crate::agents::{
 };
 use serde_json::{Value, json};
 
+#[cfg(test)]
+#[path = "events_tests.rs"]
+mod tests;
+
 pub(super) fn string<'a>(value: &'a Value, key: &str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
@@ -91,8 +95,8 @@ pub(super) struct Events {
     pub(super) output: String,
     streamed: HashMap<usize, String>,
     thinking: HashMap<usize, String>,
+    block_index: usize,
     tools: HashSet<String>,
-    session_usage: TokenUsage,
     context_usage: TokenUsage,
     compacting: bool,
 }
@@ -103,6 +107,7 @@ impl Events {
     }
 
     pub(super) fn start(&mut self) {
+        self.block_index = 0;
         self.output.clear();
         self.streamed.clear();
         self.thinking.clear();
@@ -147,10 +152,25 @@ impl Events {
                 let index = event["index"].as_u64().unwrap_or(0) as usize;
                 match string(event, "type") {
                     "message_start" => {
+                        self.block_index = 0;
                         self.streamed.clear(); self.thinking.clear();
                         self.context_usage = tokens(&event["message"]["usage"]);
                     }
+                    "message_delta" => {
+                        let usage = &event["usage"];
+                        for (field, count) in [
+                            ("input_tokens", &mut self.context_usage.input),
+                            ("output_tokens", &mut self.context_usage.output),
+                            ("cache_read_input_tokens", &mut self.context_usage.cache_read),
+                            ("cache_creation_input_tokens", &mut self.context_usage.cache_write),
+                        ] {
+                            if let Some(value) = usage[field].as_u64() {
+                                *count = value;
+                            }
+                        }
+                    }
                     "content_block_start" => {
+                        self.block_index = index;
                         let block = &event["content_block"];
                         match string(block,"type") {
                             "text" => self.delta(index, string(block,"text"), false),
@@ -172,7 +192,10 @@ impl Events {
             "assistant" => {
                 let message = &frame["message"];
                 self.context_usage = tokens(&message["usage"]);
-                for (index, block) in blocks(message).iter().enumerate() {
+                let content = blocks(message);
+                for (index, block) in content.iter().enumerate() {
+                    // Claude may emit one assistant envelope per streamed block.
+                    let index = if content.len() == 1 { self.block_index } else { index };
                     match string(block,"type") {
                         "text" | "thinking" => {
                             let thinking = block["type"] == "thinking";
@@ -195,7 +218,6 @@ impl Events {
                         _ => {},
                     }
                 }
-                self.streamed.clear(); self.thinking.clear();
             }
             "user" => {
                 for block in blocks(&frame["message"]) {
@@ -207,12 +229,19 @@ impl Events {
                 }
             }
             "result" => {
-                // result.usage is the query total, not the last API request's context size.
-                self.session_usage = self.session_usage.saturating_add(tokens(&frame["usage"]));
-                let context_window = frame["modelUsage"].as_object().into_iter().flat_map(|models| models.values())
-                    .filter_map(|usage| usage["contextWindow"].as_u64()).max().unwrap_or(0);
-                self.activity(WorkerActivity::Usage(WorkerUsage { turn:self.context_usage,
-                    session:self.session_usage, context_window }));
+                // modelUsage is cumulative and includes subagents and helper calls.
+                // result.usage covers only the main loop for this turn.
+                let mut usage = WorkerUsage { turn:self.context_usage, ..Default::default() };
+                for model in frame["modelUsage"].as_object().into_iter().flat_map(|models| models.values()) {
+                    usage.session = usage.session.saturating_add(TokenUsage {
+                        input: model["inputTokens"].as_u64().unwrap_or(0),
+                        output: model["outputTokens"].as_u64().unwrap_or(0),
+                        cache_read: model["cacheReadInputTokens"].as_u64().unwrap_or(0),
+                        cache_write: model["cacheCreationInputTokens"].as_u64().unwrap_or(0),
+                    });
+                    usage.context_window = usage.context_window.max(model["contextWindow"].as_u64().unwrap_or(0));
+                }
+                self.activity(WorkerActivity::Usage(usage));
             }
             "tool_progress" => self.activity(WorkerActivity::ToolUpdated {
                 id:string(frame,"tool_use_id").into(),

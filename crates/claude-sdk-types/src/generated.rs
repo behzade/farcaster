@@ -777,29 +777,69 @@ pub struct ModelUsage {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NonNullableUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation: Box<BetaCacheCreation>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation: crate::WireMetadata<Box<BetaCacheCreation>>,
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation_input_tokens: serde_json::Number,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation_input_tokens: crate::WireMetadata<serde_json::Number>,
     #[serde(deserialize_with = "crate::required")]
-    pub cache_read_input_tokens: serde_json::Number,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_read_input_tokens: crate::WireMetadata<serde_json::Number>,
     #[serde(deserialize_with = "crate::required")]
-    pub fallback_credit: Box<BetaFallbackCreditUsage>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub fallback_credit: crate::WireMetadata<Box<BetaFallbackCreditUsage>>,
     #[serde(deserialize_with = "crate::required")]
-    pub inference_geo: String,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub inference_geo: crate::WireMetadata<String>,
     #[serde(deserialize_with = "crate::required")]
     pub input_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub iterations: Vec<Box<NonNullableUsage_iterationsItem>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub iterations: crate::WireMetadata<Vec<Box<NonNullableUsage_iterationsItem>>>,
     #[serde(deserialize_with = "crate::required")]
     pub output_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub output_tokens_details: Box<BetaOutputTokensDetails>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub output_tokens_details: crate::WireMetadata<Box<BetaOutputTokensDetails>>,
     #[serde(deserialize_with = "crate::required")]
-    pub server_tool_use: Box<BetaServerToolUsage>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub server_tool_use: crate::WireMetadata<Box<BetaServerToolUsage>>,
     #[serde(deserialize_with = "crate::required")]
-    pub service_tier: Box<NonNullable>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub service_tier: crate::WireMetadata<Box<NonNullable>>,
     #[serde(deserialize_with = "crate::required")]
-    pub speed: Box<NonNullable2>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub speed: crate::WireMetadata<Box<NonNullable2>>,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -4715,23 +4755,47 @@ pub struct BetaMessage {
     #[serde(deserialize_with = "crate::required")]
     pub id: String,
     #[serde(deserialize_with = "crate::required")]
-    pub container: Option<Box<BetaContainer>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub container: crate::WireMetadata<Option<Box<BetaContainer>>>,
     #[serde(deserialize_with = "crate::required")]
     pub content: Vec<Box<BetaContentBlock>>,
     #[serde(deserialize_with = "crate::required")]
-    pub context_management: Option<Box<BetaContextManagementResponse>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub context_management: crate::WireMetadata<Option<Box<BetaContextManagementResponse>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub diagnostics: Option<Box<BetaDiagnostics>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub diagnostics: crate::WireMetadata<Option<Box<BetaDiagnostics>>>,
     #[serde(deserialize_with = "crate::required")]
     pub model: Box<Model>,
     #[serde(deserialize_with = "crate::required")]
     pub role: Box<SDKAssistantMessage_type>,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_details: Option<Box<BetaRefusalStopDetails>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_details: crate::WireMetadata<Option<Box<BetaRefusalStopDetails>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_reason: Option<Box<BetaMessage_stop_reasonValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_reason: crate::WireMetadata<Option<Box<BetaMessage_stop_reasonValue>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_sequence: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_sequence: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaMessage_type>,
     #[serde(deserialize_with = "crate::required")]
@@ -6530,7 +6594,11 @@ pub enum BetaFallbackCreditUsage_status {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaMessageIterationUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation: Option<Box<BetaCacheCreation>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation: crate::WireMetadata<Option<Box<BetaCacheCreation>>>,
     #[serde(deserialize_with = "crate::required")]
     pub cache_creation_input_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -6550,7 +6618,11 @@ pub struct BetaMessageIterationUsage {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaAdvisorMessageIterationUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation: Option<Box<BetaCacheCreation>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation: crate::WireMetadata<Option<Box<BetaCacheCreation>>>,
     #[serde(deserialize_with = "crate::required")]
     pub cache_creation_input_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -6570,7 +6642,11 @@ pub struct BetaAdvisorMessageIterationUsage {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaFallbackMessageIterationUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation: Option<Box<BetaCacheCreation>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation: crate::WireMetadata<Option<Box<BetaCacheCreation>>>,
     #[serde(deserialize_with = "crate::required")]
     pub cache_creation_input_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -6590,7 +6666,11 @@ pub struct BetaFallbackMessageIterationUsage {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaCompactionIterationUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation: Option<Box<BetaCacheCreation>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation: crate::WireMetadata<Option<Box<BetaCacheCreation>>>,
     #[serde(deserialize_with = "crate::required")]
     pub cache_creation_input_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -6696,7 +6776,11 @@ pub struct BetaContainer {
     #[serde(deserialize_with = "crate::required")]
     pub expires_at: String,
     #[serde(deserialize_with = "crate::required")]
-    pub skills: Option<Vec<Box<BetaContainerSkill>>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub skills: crate::WireMetadata<Option<Vec<Box<BetaContainerSkill>>>>,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -6734,7 +6818,11 @@ pub struct BetaContextManagementResponse {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaDiagnostics {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_miss_reason: Option<Box<BetaDiagnostics_cache_miss_reasonValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_miss_reason: crate::WireMetadata<Option<Box<BetaDiagnostics_cache_miss_reasonValue>>>,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -6765,15 +6853,35 @@ pub enum Model {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaRefusalStopDetails {
     #[serde(deserialize_with = "crate::required")]
-    pub category: Option<Box<BetaRefusalStopDetails_categoryValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub category: crate::WireMetadata<Option<Box<BetaRefusalStopDetails_categoryValue>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub explanation: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub explanation: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
-    pub fallback_credit_token: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub fallback_credit_token: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
-    pub fallback_has_prefill_claim: Option<bool>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub fallback_has_prefill_claim: crate::WireMetadata<Option<bool>>,
     #[serde(deserialize_with = "crate::required")]
-    pub recommended_model: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub recommended_model: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<SDKModelRefusalFallbackMessage_trigger>,
     #[serde(flatten)]
@@ -6809,29 +6917,69 @@ pub enum BetaMessage_type {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation: Option<Box<BetaCacheCreation>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation: crate::WireMetadata<Option<Box<BetaCacheCreation>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation_input_tokens: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation_input_tokens: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub cache_read_input_tokens: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_read_input_tokens: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub fallback_credit: Option<Box<BetaFallbackCreditUsage>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub fallback_credit: crate::WireMetadata<Option<Box<BetaFallbackCreditUsage>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub inference_geo: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub inference_geo: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub input_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub iterations: Option<Vec<Box<NonNullableUsage_iterationsItem>>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub iterations: crate::WireMetadata<Option<Vec<Box<NonNullableUsage_iterationsItem>>>>,
     #[serde(deserialize_with = "crate::required")]
     pub output_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub output_tokens_details: Option<Box<BetaOutputTokensDetails>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub output_tokens_details: crate::WireMetadata<Option<Box<BetaOutputTokensDetails>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub server_tool_use: Option<Box<BetaServerToolUsage>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub server_tool_use: crate::WireMetadata<Option<Box<BetaServerToolUsage>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub service_tier: Option<Box<BetaUsage_service_tierValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub service_tier: crate::WireMetadata<Option<Box<BetaUsage_service_tierValue>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub speed: Option<Box<BetaUsage_speedValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub speed: crate::WireMetadata<Option<Box<BetaUsage_speedValue>>>,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -7103,7 +7251,11 @@ pub enum SDKMemoryRecallMessage_memoriesItem_scope {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaRawMessageDeltaEvent {
     #[serde(deserialize_with = "crate::required")]
-    pub context_management: Option<Box<BetaContextManagementResponse>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub context_management: crate::WireMetadata<Option<Box<BetaContextManagementResponse>>>,
     #[serde(deserialize_with = "crate::required")]
     pub delta: Box<Delta>,
     #[serde(deserialize_with = "crate::required")]
@@ -7446,7 +7598,11 @@ pub struct BetaFallbackBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaTextBlock {
     #[serde(deserialize_with = "crate::required")]
-    pub citations: Option<Vec<Box<BetaTextCitation>>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub citations: crate::WireMetadata<Option<Vec<Box<BetaTextCitation>>>>,
     #[serde(deserialize_with = "crate::required")]
     pub text: String,
     #[serde(deserialize_with = "crate::required")]
@@ -7458,7 +7614,11 @@ pub struct BetaTextBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaThinkingBlock {
     #[serde(deserialize_with = "crate::required")]
-    pub signature: String,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub signature: crate::WireMetadata<String>,
     #[serde(deserialize_with = "crate::required")]
     pub thinking: String,
     #[serde(deserialize_with = "crate::required")]
@@ -7558,9 +7718,17 @@ pub struct BetaToolSearchToolResultBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaCompactionBlock {
     #[serde(deserialize_with = "crate::required")]
-    pub content: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub content: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
-    pub encrypted_content: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub encrypted_content: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaCompactionIterationUsage_type>,
     #[serde(flatten)]
@@ -7906,13 +8074,29 @@ pub struct JSONRPCMessageVariant3_error {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Delta {
     #[serde(deserialize_with = "crate::required")]
-    pub container: Option<Box<BetaContainer>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub container: crate::WireMetadata<Option<Box<BetaContainer>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_details: Option<Box<BetaRefusalStopDetails>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_details: crate::WireMetadata<Option<Box<BetaRefusalStopDetails>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_reason: Option<Box<BetaMessage_stop_reasonValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_reason: crate::WireMetadata<Option<Box<BetaMessage_stop_reasonValue>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_sequence: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_sequence: crate::WireMetadata<Option<String>>,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -7926,21 +8110,49 @@ pub enum BetaRawMessageDeltaEvent_type {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaMessageDeltaUsage {
     #[serde(deserialize_with = "crate::required")]
-    pub cache_creation_input_tokens: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_creation_input_tokens: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub cache_read_input_tokens: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub cache_read_input_tokens: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub fallback_credit: Option<Box<BetaFallbackCreditUsage>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub fallback_credit: crate::WireMetadata<Option<Box<BetaFallbackCreditUsage>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub input_tokens: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub input_tokens: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub iterations: Option<Vec<Box<NonNullableUsage_iterationsItem>>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub iterations: crate::WireMetadata<Option<Vec<Box<NonNullableUsage_iterationsItem>>>>,
     #[serde(deserialize_with = "crate::required")]
     pub output_tokens: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub output_tokens_details: Option<Box<BetaOutputTokensDetails>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub output_tokens_details: crate::WireMetadata<Option<Box<BetaOutputTokensDetails>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub server_tool_use: Option<Box<BetaServerToolUsage>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub server_tool_use: crate::WireMetadata<Option<Box<BetaServerToolUsage>>>,
     #[serde(flatten)]
     pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
@@ -8225,7 +8437,11 @@ pub struct BetaFallbackInfo {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaFallbackRefusalTrigger {
     #[serde(deserialize_with = "crate::required")]
-    pub category: Option<Box<BetaRefusalStopDetails_categoryValue>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub category: crate::WireMetadata<Option<Box<BetaRefusalStopDetails_categoryValue>>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<SDKModelRefusalFallbackMessage_trigger>,
     #[serde(flatten)]
@@ -8508,7 +8724,11 @@ pub struct JSONRPCMessageVariant2_params_meta {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaThinkingDelta {
     #[serde(deserialize_with = "crate::required")]
-    pub estimated_tokens: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub estimated_tokens: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
     pub thinking: String,
     #[serde(deserialize_with = "crate::required")]
@@ -8520,9 +8740,17 @@ pub struct BetaThinkingDelta {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaCompactionContentBlockDelta {
     #[serde(deserialize_with = "crate::required")]
-    pub content: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub content: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
-    pub encrypted_content: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub encrypted_content: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaCompactionContentBlockDelta_type>,
     #[serde(flatten)]
@@ -8846,11 +9074,19 @@ pub struct BetaCitationCharLocation {
     #[serde(deserialize_with = "crate::required")]
     pub document_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub document_title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub document_title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub end_char_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub file_id: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub file_id: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub start_char_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -8866,11 +9102,19 @@ pub struct BetaCitationPageLocation {
     #[serde(deserialize_with = "crate::required")]
     pub document_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub document_title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub document_title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub end_page_number: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub file_id: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub file_id: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub start_page_number: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -8886,11 +9130,19 @@ pub struct BetaCitationContentBlockLocation {
     #[serde(deserialize_with = "crate::required")]
     pub document_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub document_title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub document_title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub end_block_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub file_id: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub file_id: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub start_block_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -8912,7 +9164,11 @@ pub struct BetaCitationSearchResultLocation {
     #[serde(deserialize_with = "crate::required")]
     pub start_block_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaCitationSearchResultLocation_type>,
     #[serde(flatten)]
@@ -8926,7 +9182,11 @@ pub struct BetaCitationsWebSearchResultLocation {
     #[serde(deserialize_with = "crate::required")]
     pub encrypted_index: String,
     #[serde(deserialize_with = "crate::required")]
-    pub title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaCitationsWebSearchResultLocation_type>,
     #[serde(deserialize_with = "crate::required")]
@@ -8950,7 +9210,11 @@ pub struct BetaWebSearchResultBlock {
     #[serde(deserialize_with = "crate::required")]
     pub encrypted_content: String,
     #[serde(deserialize_with = "crate::required")]
-    pub page_age: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub page_age: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub title: String,
     #[serde(deserialize_with = "crate::required")]
@@ -8966,7 +9230,11 @@ pub struct BetaWebFetchBlock {
     #[serde(deserialize_with = "crate::required")]
     pub content: Box<BetaDocumentBlock>,
     #[serde(deserialize_with = "crate::required")]
-    pub retrieved_at: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub retrieved_at: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaWebFetchBlock_type>,
     #[serde(deserialize_with = "crate::required")]
@@ -8988,7 +9256,11 @@ pub struct BetaWebFetchToolResultErrorBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaAdvisorResultBlock {
     #[serde(deserialize_with = "crate::required")]
-    pub stop_reason: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_reason: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub text: String,
     #[serde(deserialize_with = "crate::required")]
@@ -9002,7 +9274,11 @@ pub struct BetaAdvisorRedactedResultBlock {
     #[serde(deserialize_with = "crate::required")]
     pub encrypted_content: String,
     #[serde(deserialize_with = "crate::required")]
-    pub stop_reason: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub stop_reason: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaAdvisorRedactedResultBlock_type>,
     #[serde(flatten)]
@@ -9094,11 +9370,23 @@ pub struct BetaTextEditorCodeExecutionViewResultBlock {
     #[serde(deserialize_with = "crate::required")]
     pub file_type: Box<BetaTextEditorCodeExecutionViewResultBlock_file_type>,
     #[serde(deserialize_with = "crate::required")]
-    pub num_lines: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub num_lines: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub start_line: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub start_line: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub total_lines: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub total_lines: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaTextEditorCodeExecutionViewResultBlock_type>,
     #[serde(flatten)]
@@ -9108,15 +9396,35 @@ pub struct BetaTextEditorCodeExecutionViewResultBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaTextEditorCodeExecutionStrReplaceResultBlock {
     #[serde(deserialize_with = "crate::required")]
-    pub lines: Option<Vec<String>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub lines: crate::WireMetadata<Option<Vec<String>>>,
     #[serde(deserialize_with = "crate::required")]
-    pub new_lines: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub new_lines: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub new_start: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub new_start: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub old_lines: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub old_lines: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
-    pub old_start: Option<serde_json::Number>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub old_start: crate::WireMetadata<Option<serde_json::Number>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaTextEditorCodeExecutionStrReplaceResultBlock_type>,
     #[serde(flatten)]
@@ -9128,7 +9436,11 @@ pub struct BetaTextEditorCodeExecutionToolResultError {
     #[serde(deserialize_with = "crate::required")]
     pub error_code: Box<BetaTextEditorCodeExecutionToolResultError_error_code>,
     #[serde(deserialize_with = "crate::required")]
-    pub error_message: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub error_message: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaTextEditorCodeExecutionToolResultError_type>,
     #[serde(flatten)]
@@ -9150,7 +9462,11 @@ pub struct BetaToolSearchToolResultError {
     #[serde(deserialize_with = "crate::required")]
     pub error_code: Box<BetaToolSearchToolResultError_error_code>,
     #[serde(deserialize_with = "crate::required")]
-    pub error_message: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub error_message: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaToolSearchToolResultError_type>,
     #[serde(flatten)]
@@ -9527,11 +9843,19 @@ pub enum BetaWebSearchResultBlock_type {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BetaDocumentBlock {
     #[serde(deserialize_with = "crate::required")]
-    pub citations: Option<Box<BetaCitationConfig>>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub citations: crate::WireMetadata<Option<Box<BetaCitationConfig>>>,
     #[serde(deserialize_with = "crate::required")]
     pub source: Box<BetaDocumentBlock_source>,
     #[serde(deserialize_with = "crate::required")]
-    pub title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<DocumentBlockParam_type>,
     #[serde(flatten)]
@@ -10011,7 +10335,11 @@ pub struct CitationSearchResultLocationParam {
     #[serde(deserialize_with = "crate::required")]
     pub start_block_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaCitationSearchResultLocation_type>,
     #[serde(flatten)]
@@ -10025,7 +10353,11 @@ pub struct CitationCharLocationParam {
     #[serde(deserialize_with = "crate::required")]
     pub document_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub document_title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub document_title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub end_char_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -10043,7 +10375,11 @@ pub struct CitationPageLocationParam {
     #[serde(deserialize_with = "crate::required")]
     pub document_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub document_title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub document_title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub end_page_number: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -10061,7 +10397,11 @@ pub struct CitationContentBlockLocationParam {
     #[serde(deserialize_with = "crate::required")]
     pub document_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
-    pub document_title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub document_title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub end_block_index: serde_json::Number,
     #[serde(deserialize_with = "crate::required")]
@@ -10079,7 +10419,11 @@ pub struct CitationWebSearchResultLocationParam {
     #[serde(deserialize_with = "crate::required")]
     pub encrypted_index: String,
     #[serde(deserialize_with = "crate::required")]
-    pub title: Option<String>,
+    #[cfg_attr(
+        feature = "cli-compat",
+        serde(default, skip_serializing_if = "crate::Presence::is_missing")
+    )]
+    pub title: crate::WireMetadata<Option<String>>,
     #[serde(deserialize_with = "crate::required")]
     pub r#type: Box<BetaCitationsWebSearchResultLocation_type>,
     #[serde(deserialize_with = "crate::required")]

@@ -117,6 +117,11 @@ pub(crate) enum WorkerActivity {
         mode: WorkerSendMode,
         message: String,
     },
+    InputDeliveredWithImages {
+        mode: WorkerSendMode,
+        message: String,
+        images: Vec<crate::protocol::PromptImage>,
+    },
     PeerInputDelivered {
         message: PeerMessage,
     },

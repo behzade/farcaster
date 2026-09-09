@@ -235,19 +235,15 @@ impl WorkerSessionTransport {
     fn enqueue_activity(&mut self, worker_activity: WorkerActivity) {
         let event = match worker_activity {
             WorkerActivity::InputDelivered { mode, message } => {
-                self.acknowledge_delivery(mode, &message);
-                self.finish_assistant_message(None);
-                let message = json!({
-                    "role": "user",
-                    "content": message,
-                    "queued": mode != WorkerSendMode::Prompt,
-                });
-                for event_type in ["message_start", "message_end"] {
-                    self.pending.push_back(activity(json!({
-                        "type": event_type,
-                        "message": message,
-                    })));
-                }
+                self.input_delivered(mode, &message, json!(message));
+                return;
+            }
+            WorkerActivity::InputDeliveredWithImages { mode, message, images } => {
+                let mut content = vec![json!({"type":"text","text":message})];
+                content.extend(images.into_iter().map(|image| json!({
+                    "type":"image", "data":image.data, "mimeType":image.mime_type,
+                })));
+                self.input_delivered(mode, &message, json!(content));
                 return;
             }
             WorkerActivity::PeerInputDelivered { message } => json!({
@@ -480,6 +476,15 @@ impl WorkerSessionTransport {
                 data,
                 error: None,
             }));
+    }
+
+    fn input_delivered(&mut self, mode: WorkerSendMode, text: &str, content: Value) {
+        self.acknowledge_delivery(mode, text);
+        self.finish_assistant_message(None);
+        let message = json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
+        for event_type in ["message_start", "message_end"] {
+            self.pending.push_back(activity(json!({"type":event_type, "message":message})));
+        }
     }
 
     fn start_assistant_message(&mut self) {

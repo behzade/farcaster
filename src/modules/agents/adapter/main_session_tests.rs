@@ -4,6 +4,25 @@ use super::*;
 
 struct IdleWorker;
 
+#[test]
+fn delivered_image_only_prompt_survives_transcript_finalization() {
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    let image = crate::protocol::PromptImage::new("AQID".into(), "image/png".into());
+    let mut conversation = ConversationState::default();
+    conversation.push_local_user_with_prompt_images(String::new(), &[image.clone()], false);
+    let mut transport = WorkerSessionTransport::new(std::path::Path::new("/locators"),
+        "claude", "one".into(), Box::new(IdleWorker), MainSessionMetadata::default(), None).unwrap();
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDeliveredWithImages {
+        mode:WorkerSendMode::Prompt, message:String::new(), images:vec![image],
+    }));
+    for event in &transport.pending {
+        if let SessionEvent::Activity(event) = event {conversation.reduce(event.value());}
+    }
+    let users = conversation.items.iter().filter(|item| item.kind == TranscriptKind::User).collect::<Vec<_>>();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].images.len(), 1);
+}
+
 struct RejectAfterWriteWorker {
     events: VecDeque<WorkerEvent>,
 }

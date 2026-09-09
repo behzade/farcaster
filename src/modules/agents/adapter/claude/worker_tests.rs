@@ -5,6 +5,43 @@ use std::time::{Duration, Instant};
 const FIXTURES: &str =
     include_str!("../../../../../crates/claude-sdk-types/fixtures/protocol.json");
 
+#[test]
+fn cancellation_receipt_settles_only_the_named_active_prompt() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session.send("hold".into(), WorkerSendMode::Prompt).unwrap();
+    let active = session.active_uuid.clone().unwrap();
+    for (request, cancelled, settled) in [("wrong", "another-prompt", false), ("right", active.as_str(), true)] {
+        session.interrupts.insert(request.into());
+        session.receive(decode(json!({"type":"control_response","response":{
+            "subtype":"success","request_id":request,
+            "response":{"still_queued":[],"cancelled":[cancelled]}
+        }})).unwrap()).unwrap();
+        assert_eq!(!session.active, settled);
+    }
+    assert_eq!(session.events.pending.iter().filter(|event| matches!(event, WorkerEvent::Settled {..})).count(), 1);
+    session.close().unwrap();
+}
+
+#[test]
+fn interrupted_result_settles_but_real_execution_errors_fail() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    for (reason, stopped) in [("aborted_streaming", true), ("aborted_tools", true), ("api_error", false)] {
+        session.send("hold".into(), WorkerSendMode::Prompt).unwrap();
+        session.events.pending.clear();
+        let mut result = fixture("SDKResultSuccess");
+        result["subtype"] = json!("error_during_execution");
+        result["is_error"] = json!(true);
+        result["errors"] = json!(["execution stopped"]);
+        result["terminal_reason"] = json!(reason);
+        session.receive(decode(result).unwrap()).unwrap();
+        assert_eq!(session.events.pending.iter().any(|event| matches!(event, WorkerEvent::Settled {..})), stopped);
+        assert_eq!(session.events.pending.iter().any(|event| matches!(event, WorkerEvent::Failed(_))), !stopped);
+    }
+    session.close().unwrap();
+}
+
 fn fixture(name: &str) -> Value {
     serde_json::from_str::<Vec<Value>>(FIXTURES)
         .unwrap()

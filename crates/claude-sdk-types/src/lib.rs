@@ -6,6 +6,14 @@
 mod generated;
 pub use generated::*;
 
+/// The strict declarations require these metadata fields. Older CLI/provider
+/// streams omit them. Compatibility mode preserves absence rather than inventing
+/// metadata values; present fields still use their source-derived types.
+#[cfg(feature = "cli-compat")]
+pub type WireMetadata<T> = Presence<T>;
+#[cfg(not(feature = "cli-compat"))]
+pub type WireMetadata<T> = T;
+
 /// An optional property. Unlike `Option`, this preserves absent versus JSON null.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Presence<T> {

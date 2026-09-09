@@ -15,6 +15,40 @@ fn user_message() -> Value {
 }
 
 #[test]
+fn cli_compatibility_only_relaxes_absent_metadata() {
+    let mut text = json!({"type":"text","text":"hello"});
+    let usage = json!({"input_tokens":2,"output_tokens":1});
+    let thinking = json!({"type":"thinking","thinking":""});
+    #[cfg(feature = "cli-compat")]
+    {
+        round_trip::<BetaTextBlock>(&text);
+        round_trip::<NonNullableUsage>(&usage);
+        round_trip::<BetaThinkingBlock>(&thinking);
+    }
+    #[cfg(not(feature = "cli-compat"))]
+    {
+        assert!(serde_json::from_value::<BetaTextBlock>(text.clone()).is_err());
+        assert!(serde_json::from_value::<NonNullableUsage>(usage).is_err());
+        assert!(serde_json::from_value::<BetaThinkingBlock>(thinking).is_err());
+    }
+    text["citations"] = json!(905);
+    assert!(
+        serde_json::from_value::<BetaThinkingBlock>(
+            json!({"type":"thinking","thinking":"","signature":905})
+        )
+        .is_err()
+    );
+    assert!(serde_json::from_value::<BetaTextBlock>(text.clone()).is_err());
+    text["citations"] = Value::Null;
+    text.as_object_mut().unwrap().remove("text");
+    assert!(serde_json::from_value::<BetaTextBlock>(text).is_err());
+    assert!(
+        serde_json::from_value::<NonNullableUsage>(json!({"input_tokens":"bad","output_tokens":1}))
+            .is_err()
+    );
+}
+
+#[test]
 fn source_checked_fixtures_round_trip_without_losing_fields() {
     let fixtures: Value = serde_json::from_str(include_str!("../fixtures/protocol.json")).unwrap();
     for fixture in fixtures.as_array().unwrap() {

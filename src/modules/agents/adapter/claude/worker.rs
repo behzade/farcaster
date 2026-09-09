@@ -17,7 +17,8 @@ use crate::agents::{
 };
 use crate::modules::agents::core::CallerIdentity;
 use claude_sdk_types::{
-    PermissionResult, SDKControlInitializeResponse, SDKUserMessage, StdoutMessage,
+    PermissionResult, Presence, SDKControlInitializeResponse, SDKControlInterruptResponse,
+    SDKUserMessage, StdoutMessage,
 };
 use serde_json::{Value, json};
 
@@ -198,6 +199,7 @@ fn attach(
         id: id.into(),
         events: Events::default(),
         active: false,
+        active_uuid: None,
         closed: false,
         queued: VecDeque::new(),
         permissions: HashMap::new(),
@@ -221,6 +223,7 @@ struct ClaudeSession {
     id: String,
     events: Events,
     active: bool,
+    active_uuid: Option<String>,
     closed: bool,
     queued: VecDeque<Prompt>,
     permissions: HashMap<String, Value>,
@@ -248,6 +251,13 @@ fn prompt(
 }
 
 impl ClaudeSession {
+    fn idle(&mut self) {
+        self.active = false;
+        self.active_uuid = None;
+        self.permissions.clear();
+        self.caller.set_activity(WorkerActivityState::Idle);
+    }
+
     fn admit(&mut self, prompt: Prompt, mode: WorkerSendMode) -> Result<(), String> {
         if self.closed {
             return Err("Claude session is closed".into());
@@ -264,7 +274,12 @@ impl ClaudeSession {
     }
 
     fn deliver(&mut self, prompt: Prompt) -> Result<(), String> {
+        let active_uuid = match &prompt.message.uuid {
+            Presence::Present(uuid) => Some(uuid.clone()),
+            Presence::Missing => None,
+        };
         self.process.prompt(prompt.message)?;
+        self.active_uuid = active_uuid;
         self.active = true;
         self.caller.set_activity(WorkerActivityState::Working);
         self.events.start();
@@ -333,18 +348,33 @@ impl ClaudeSession {
             }
             "control_response" => {
                 let response = &frame["response"];
-                if self.interrupts.remove(string(response, "request_id"))
-                    && response["subtype"] == "error"
-                {
-                    return Err(format!("Claude interrupt: {}", string(response, "error")));
+                if self.interrupts.remove(string(response, "request_id")) {
+                    if response["subtype"] == "error" {
+                        return Err(format!("Claude interrupt: {}", string(response, "error")));
+                    }
+                    // A prompt cancelled before execution has no result frame.
+                    // Only settle when the typed receipt names our active prompt.
+                    if response["response"].get("cancelled").is_some() {
+                        let receipt: SDKControlInterruptResponse =
+                            decode(response["response"].clone())?;
+                        if let Presence::Present(cancelled) = receipt.cancelled
+                            && self.active_uuid.as_ref().is_some_and(|id| cancelled.contains(id))
+                        {
+                            self.idle();
+                            self.events.pending.push_back(WorkerEvent::Settled {
+                                output: String::new(),
+                            });
+                        }
+                    }
                 }
             }
             "result" if self.active => {
                 self.events.message(&frame);
-                self.active = false;
-                self.permissions.clear();
-                self.caller.set_activity(WorkerActivityState::Idle);
-                if frame["is_error"] == true || frame["subtype"] != "success" {
+                self.idle();
+                let interrupted = matches!(
+                    string(&frame, "terminal_reason"), "aborted_streaming" | "aborted_tools"
+                );
+                if !interrupted && (frame["is_error"] == true || frame["subtype"] != "success") {
                     self.queued.clear();
                     self.events.pending.push_back(WorkerEvent::Failed(
                         frame["errors"]
@@ -434,9 +464,16 @@ impl WorkerSession for ClaudeSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
+        let images = images.into_iter()
+            .map(crate::protocol::PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?;
         let prompt = Prompt {
-            message: prompt(&self.id, &message, images)?,
-            delivery: WorkerActivity::InputDelivered { mode, message },
+            message: prompt(&self.id, &message, images.clone())?,
+            delivery: if images.is_empty() {
+                WorkerActivity::InputDelivered { mode, message }
+            } else {
+                WorkerActivity::InputDeliveredWithImages { mode, message, images }
+            },
         };
         self.admit(prompt, mode)
     }
@@ -514,11 +551,9 @@ impl WorkerSession for ClaudeSession {
     }
     fn close(&mut self) -> Result<(), String> {
         self.closed = true;
-        self.active = false;
+        self.idle();
         self.queued.clear();
-        self.permissions.clear();
         self.events.pending.clear();
-        self.caller.set_activity(WorkerActivityState::Idle);
         self.process.close()
     }
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {

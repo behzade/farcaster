@@ -3,6 +3,9 @@ mod events;
 mod process;
 mod worker;
 
+#[cfg(test)]
+mod live_tests;
+
 pub(super) use catalog::{discover, load_history};
 pub(super) use worker::{ClaudeWorkerFactory, load_configuration, spawn_main};
 

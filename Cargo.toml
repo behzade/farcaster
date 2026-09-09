@@ -43,7 +43,7 @@ async-channel = "2.5.0"
 axum = "0.8.8"
 base64 = "0.22.1"
 blocking = "1.6.2"
-claude-sdk-types = { path = "crates/claude-sdk-types" }
+claude-sdk-types = { path = "crates/claude-sdk-types", features = ["cli-compat"] }
 futures = "0.3.32"
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profiler"] }
 gpui-base = { path = "third_party/gpui-component-bd83329/base" }

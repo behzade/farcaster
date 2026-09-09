@@ -225,6 +225,19 @@ function emit(type, name) {
         // serde_json::Value and Option accept absent fields by default; the SDK
         // requires the property itself even when its value can be null.
         attrs += '    #[serde(deserialize_with = "crate::required")]\n';
+        // The public API declares nullable metadata as required, while CLI and
+        // provider streams omit it. Result usage also drops optional details
+        // despite the SDK's NonNullable mapping. Keep strict types by default;
+        // opt-in CLI decoding preserves missing metadata without fabricating it.
+        const apiMetadata = property.declarations?.some(declaration =>
+          declaration.getSourceFile().fileName.includes('/@anthropic-ai/sdk/'));
+        // A thinking block starts before its signature_delta arrives.
+        if ((apiMetadata && ty.startsWith('Option<')) ||
+            (name === 'BetaThinkingBlock' && key === 'signature') ||
+            (name === 'NonNullableUsage' && !['input_tokens', 'output_tokens'].includes(key))) {
+          attrs += '    #[cfg_attr(feature = "cli-compat", serde(default, skip_serializing_if = "crate::Presence::is_missing"))]\n';
+          ty = `crate::WireMetadata<${ty}>`;
+        }
       }
       return `${attrs}    pub ${field}: ${ty},`;
     });

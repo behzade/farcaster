@@ -53,13 +53,23 @@ The data types include:
 - `SDKMessage`, assistant content and stream-event types from the Anthropic API.
 - Hook and permission messages, plus named control-response bodies.
 
-Types preserve the source's property names and literal discriminants. Required
-nullable fields must exist. `Presence<T>` distinguishes an absent optional
+Types preserve the source's property names and literal discriminants. By default,
+required nullable fields must exist. `Presence<T>` distinguishes an absent optional
 property from a present value, including `null` where the source allows it.
 Numbers use `serde_json::Number`; open JSON fields use `Value` only where the
 source declares `any` or `unknown`. Each such slot appears in the manifest.
 Typed record values retain their types. Extra object properties survive a
 decode/encode round trip, while unknown enum values fail to decode.
+
+Farcaster enables the crate's `cli-compat` feature. Real CLI/provider output can
+omit nullable Anthropic API metadata (`citations`, container details, usage
+details), including fields the SDK makes required through `NonNullableUsage`.
+Thinking blocks may also omit their signature until a later streaming delta.
+The generator marks these source-derived fields with `WireMetadata<T>`: strict
+builds keep `T`; compatibility builds use `Presence<T>`. Missing values stay
+missing, with no fabricated metadata. Present values still use their declared
+types. Input/output token counts, message content, discriminants, and control
+envelopes remain required.
 
 Structural unions try more specific shapes first. This matters for user replay
 messages, whose shape extends ordinary user messages. Some SDK unions have
@@ -68,10 +78,11 @@ source type does not express. The adapter reports decoding failures and leaves
 native session files intact for recovery. The adapter ignores `command_lifecycle` native
 queue-status frames, which the SDK documents on `SDKControlInterruptRequest`
 but omits from `StdoutMessage`. Farcaster queues prompts locally; it does not
-use those frames for turn completion or permission decisions. All other frames
-still go through the typed decoder. These bindings follow
-the declarations strictly; they do not prove that every CLI version emits exactly
-those declarations.
+use those frames for turn completion or permission decisions. A typed interrupt
+receipt that cancels the active prompt before execution settles that turn, since
+Claude sends no result for such a prompt. All other frames
+still go through the typed decoder. The strict declarations alone do not prove
+runtime compatibility; test the adapter against the installed CLI too.
 
 Tool arguments remain untrusted data. A `Read` tool-use message can carry
 `{"file_path":905}` because the SDK types its input as unknown. The adapter checks
@@ -115,17 +126,38 @@ Use the active Cargo target directory:
 
 ```sh
 cargo test --manifest-path crates/claude-sdk-types/Cargo.toml --offline
+cargo test --manifest-path crates/claude-sdk-types/Cargo.toml --features cli-compat --offline
 cargo fmt --manifest-path crates/claude-sdk-types/Cargo.toml -- --check
 cargo test --bin farcaster modules::agents::adapter::claude --offline
 git diff --check
 ```
+
+The ignored live conformance test runs only Claude when selected explicitly:
+
+```sh
+FARCASTER_E2E_HARNESS=claude cargo test --bin farcaster \
+  live_harnesses_conform_to_session_outcomes --offline -- --ignored --nocapture
+```
+
+Claude-specific live checks cover exact-once rendered text, image retention,
+nonzero token usage, Read,
+queued prompts, native Agent delegation, history/resume, steering rejection,
+and interrupt/recovery before execution and during a Bash tool:
+
+```sh
+cargo test --bin farcaster real_claude_ --offline -- --ignored --nocapture --test-threads=1
+```
+
+This consumes real model usage and leaves test sessions in Claude's native store.
+`adapter/claude/fixtures/cli-2.1.236.jsonl` preserves a real minimal turn's stream,
+assistant message and result, with session/message identifiers replaced.
 
 Fixtures exercise initialization, permissions, control errors, user replay,
 partial JSON, assistant tool use, and result usage. Rust tests
 also check absent/null distinctions, literal validation, extra fields, and
 malformed control-request paths. Regeneration follows only the selected protocol
 roots. This is declaration and serialization coverage, not live CLI
-or Farcaster UI coverage. Adapter tests use a local shell fixture for initialization,
+or Farcaster UI coverage. Non-live adapter tests use a local shell fixture for initialization,
 permissions, streaming, queueing, interrupt, process failure, configuration and
 resume launch; they do not call Claude or a model API. Storage tests cover branch
 selection, preserved compaction segments, bounded catalog reads and partial final
