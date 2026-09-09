@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use super::*;
-use crate::modules::agents::adapter::acp::wire::AcpInbound;
+use crate::modules::agents::adapter::acp::events::AcpInbound;
 
 #[test]
 fn catalog_exchange_times_out_when_agent_stalls() {

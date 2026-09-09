@@ -156,7 +156,7 @@ fn execute_kind_does_not_guess_bash() {
 
 #[test]
 fn available_commands_update_becomes_prompt_commands() {
-    let message = super::super::wire::AcpInbound::Notification {
+    let message = super::super::events::AcpInbound::Notification {
         method: "session/update".into(),
         params: json!({
             "sessionId": "one",

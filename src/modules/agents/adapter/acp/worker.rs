@@ -1,23 +1,20 @@
 use std::{
     collections::{HashMap, VecDeque},
-    io::{BufReader, Write as _},
-    process::{Child, ChildStdin, Stdio},
-    sync::mpsc,
+    process::{Child, Stdio},
     thread,
-    time::Duration,
 };
 
 use serde_json::{Value, json};
 
 use super::{
     AcpProfile,
-    connection::{AcpConnection, read_message},
+    connection::AcpConnection,
+    events::{AcpInbound, AcpRequestId},
     translate::{
         ConfigIds, commands_from_update, commands_from_value, content_text, find_permission_option,
         is_acceptance, merge_tool_metadata, metadata_from_options, metadata_from_session,
         normalize_content, normalize_tool_name, tool_args, tool_result, usage_update,
     },
-    wire::{AcpInbound, AcpRequestId, encode_notification, encode_request, encode_response},
 };
 use crate::{
     agents::{
@@ -194,16 +191,13 @@ fn spawn_session(
         .map_err(|error| format!("start {} ACP agent: {error}", profile.name))?;
     child_stderr::capture(&mut child, "acp-agent")?;
     let AcpSetup {
-        mut reader,
-        writer,
-        queued,
-        next_id,
+        connection,
         session_id,
         metadata,
         config_ids,
         features,
         history,
-    } = match setup_connection(&mut child, profile, project, resume, caller_token) {
+    } = match setup_connection(&mut child, profile, project, resume, caller_token, wake) {
         Ok(setup) => setup,
         Err(error) => {
             let _ = child.kill();
@@ -211,34 +205,12 @@ fn spawn_session(
             return Err(error);
         }
     };
-    let (sender, incoming) = mpsc::channel();
-    let reader_name = session_id.clone();
-    thread::Builder::new()
-        .name(format!("acp-session-{reader_name}"))
-        .spawn(move || {
-            for message in queued {
-                if send_and_wake(&sender, Ok(message), wake.as_ref()).is_err() {
-                    return;
-                }
-            }
-            loop {
-                let message = read_message(&mut reader);
-                let failed = message.is_err();
-                if send_and_wake(&sender, message, wake.as_ref()).is_err() || failed {
-                    return;
-                }
-            }
-        })
-        .map_err(|error| format!("read {} ACP events: {error}", profile.name))?;
     Ok((
         AcpWorkerSession {
             profile: profile.clone(),
             child,
-            writer,
-            incoming,
-            deferred: VecDeque::new(),
+            connection,
             session_id,
-            next_id,
             current_prompt: None,
             pending_steers: HashMap::new(),
             queued_prompts: VecDeque::new(),
@@ -257,23 +229,8 @@ fn spawn_session(
     ))
 }
 
-fn send_and_wake<T>(
-    sender: &mpsc::Sender<T>,
-    message: T,
-    wake: Option<&thread::Thread>,
-) -> Result<(), mpsc::SendError<T>> {
-    sender.send(message)?;
-    if let Some(wake) = wake {
-        wake.unpark();
-    }
-    Ok(())
-}
-
 struct AcpSetup {
-    reader: BufReader<std::process::ChildStdout>,
-    writer: ChildStdin,
-    queued: VecDeque<AcpInbound>,
-    next_id: i64,
+    connection: AcpConnection,
     session_id: String,
     metadata: super::super::main_session::MainSessionMetadata,
     config_ids: ConfigIds,
@@ -287,6 +244,7 @@ fn setup_connection(
     project: &std::path::Path,
     resume: Option<&str>,
     caller_token: Option<&str>,
+    wake: Option<thread::Thread>,
 ) -> Result<AcpSetup, String> {
     let stdin = child
         .stdin
@@ -296,28 +254,25 @@ fn setup_connection(
         .stdout
         .take()
         .ok_or_else(|| format!("{} ACP stdout must be piped", profile.name))?;
-    let mut connection = AcpConnection::new(BufReader::new(stdout), stdin);
+    let mut connection = AcpConnection::new(
+        blocking::Unblock::new(stdout),
+        blocking::Unblock::new(stdin),
+        wake,
+    )?;
     let initialized = connection.initialize(profile)?;
-    if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
-        return Err(format!(
-            "{} ACP agent did not negotiate protocol version 1",
-            profile.name
-        ));
-    }
     let features = AcpFeatures::from_initialize(&initialized);
     let params = json!({
         "cwd": project.to_string_lossy(),
         "mcpServers": acp_mcp_servers(caller_token),
     });
-    let id = if let Some(session_id) = resume {
-        connection.send_request(
+    let response = if let Some(session_id) = resume {
+        connection.request_blocking(
             "session/load",
             merge(params, "sessionId", Value::String(session_id.into())),
         )?
     } else {
-        connection.send_request("session/new", params)?
+        connection.request_blocking("session/new", params)?
     };
-    let response = connection.wait_response(&id)?;
     let session_id = response
         .get("sessionId")
         .and_then(Value::as_str)
@@ -325,7 +280,7 @@ fn setup_connection(
         .ok_or_else(|| format!("{} ACP agent did not provide a session id", profile.name))?
         .to_owned();
     let (mut metadata, config_ids) = metadata_from_session(profile, &response);
-    let (reader, writer, mut queued, next_id) = connection.into_parts();
+    let queued = connection.drain_queued()?;
     if let Some(commands) = queued
         .iter()
         .filter_map(|message| commands_from_update(message, &session_id))
@@ -336,14 +291,11 @@ fn setup_connection(
     let history = resume.is_some().then(|| {
         super::catalog::discovered_history(profile, queued.iter().cloned(), &response, &session_id)
     });
-    if resume.is_some() {
-        queued.clear();
+    if resume.is_none() {
+        connection.restore_queued(queued);
     }
     Ok(AcpSetup {
-        reader,
-        writer,
-        queued,
-        next_id,
+        connection,
         session_id,
         metadata,
         config_ids,
@@ -457,11 +409,8 @@ struct ToolState {
 struct AcpWorkerSession {
     profile: AcpProfile,
     child: Child,
-    writer: ChildStdin,
-    incoming: mpsc::Receiver<Result<AcpInbound, String>>,
-    deferred: VecDeque<Result<AcpInbound, String>>,
+    connection: AcpConnection,
     session_id: String,
-    next_id: i64,
     current_prompt: Option<AcpRequestId>,
     pending_steers: HashMap<AcpRequestId, (String, Vec<crate::protocol::PromptImage>)>,
     queued_prompts: VecDeque<(WorkerSendMode, String, Vec<crate::protocol::PromptImage>)>,
@@ -483,16 +432,7 @@ impl AcpWorkerSession {
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<AcpRequestId, String> {
-        self.next_id = self
-            .next_id
-            .checked_add(1)
-            .ok_or_else(|| "ACP request id overflow".to_owned())?;
-        let id = AcpRequestId::Number(self.next_id);
-        self.writer
-            .write_all(&encode_request(&id, method, params)?)
-            .and_then(|()| self.writer.flush())
-            .map_err(|error| format!("write {} ACP request: {error}", self.profile.name))?;
-        Ok(id)
+        self.connection.send_request(method, params)
     }
 
     fn start_prompt_request(
@@ -516,21 +456,7 @@ impl AcpWorkerSession {
     }
 
     fn request_and_wait(&mut self, method: &str, params: Value) -> Result<(), String> {
-        let expected = self.request(method, params)?;
-        loop {
-            let message = self
-                .incoming
-                .recv_timeout(Duration::from_secs(15))
-                .map_err(|error| format!("wait for {} ACP response: {error}", self.profile.name))?;
-            match message {
-                Ok(AcpInbound::Response { id, .. }) if id == expected => return Ok(()),
-                Ok(AcpInbound::Error { id, code, message }) if id == expected => {
-                    return Err(format!("{} ACP error {code}: {message}", self.profile.name));
-                }
-                Err(error) => return Err(error),
-                other => self.deferred.push_back(other),
-            }
-        }
+        self.connection.request_blocking(method, params).map(|_| ())
     }
 
     fn update(&mut self, params: Value) -> Option<WorkerEvent> {
@@ -663,7 +589,7 @@ impl AcpWorkerSession {
             return None;
         }
         let options = params.get("options")?.as_array()?;
-        let input_id = request_id_string(id);
+        let input_id = id.to_string();
         let choices = options
             .iter()
             .filter_map(|option| {
@@ -764,13 +690,8 @@ impl AcpWorkerSession {
     }
 
     fn reject_request(&mut self, id: &AcpRequestId) -> Result<(), String> {
-        self.writer
-            .write_all(&encode_response(
-                id,
-                json!({"outcome": {"outcome": "cancelled"}}),
-            )?)
-            .and_then(|()| self.writer.flush())
-            .map_err(|error| format!("reject {} ACP request: {error}", self.profile.name))
+        self.connection
+            .respond(id, json!({"outcome": {"outcome": "cancelled"}}))
     }
 }
 
@@ -945,29 +866,19 @@ impl WorkerSession for AcpWorkerSession {
                 }
             }
         };
-        self.writer
-            .write_all(&encode_response(&request, result)?)
-            .and_then(|()| self.writer.flush())
-            .map_err(|error| format!("answer {} ACP request: {error}", self.profile.name))
+        self.connection.respond(&request, result)
     }
 
     fn abort(&mut self) -> Result<(), String> {
         self.queued_prompts.clear();
         for pending in self.pending_inputs.drain().map(|(_, pending)| pending) {
-            self.writer
-                .write_all(&encode_response(
-                    &pending.request,
-                    json!({"outcome": {"outcome": "cancelled"}}),
-                )?)
-                .map_err(|error| format!("cancel {} ACP permission: {error}", self.profile.name))?;
+            self.connection.respond(
+                &pending.request,
+                json!({"outcome": {"outcome": "cancelled"}}),
+            )?;
         }
-        self.writer
-            .write_all(&encode_notification(
-                "session/cancel",
-                json!({"sessionId": self.session_id}),
-            )?)
-            .and_then(|()| self.writer.flush())
-            .map_err(|error| format!("cancel {} ACP prompt: {error}", self.profile.name))
+        self.connection
+            .notify("session/cancel", json!({"sessionId": self.session_id}))
     }
 
     fn compact(&mut self) -> Result<(), String> {
@@ -1052,10 +963,7 @@ impl WorkerSession for AcpWorkerSession {
             });
         }
         loop {
-            let incoming = self
-                .deferred
-                .pop_front()
-                .or_else(|| self.incoming.try_recv().ok())?;
+            let incoming = self.connection.poll()?;
             match incoming {
                 Ok(AcpInbound::Response { id, result })
                     if let Some((message, images)) = self.pending_steers.remove(&id) =>
@@ -1091,7 +999,7 @@ impl WorkerSession for AcpWorkerSession {
                     });
                 }
                 Ok(AcpInbound::Response { .. }) => {}
-                Ok(AcpInbound::Error { id, code, message }) => {
+                Ok(AcpInbound::Error { id, message }) => {
                     self.pending_steers.remove(&id);
                     if self.current_prompt.as_ref() == Some(&id) {
                         self.current_prompt = None;
@@ -1100,7 +1008,7 @@ impl WorkerSession for AcpWorkerSession {
                         }
                     }
                     return Some(WorkerEvent::Failed(format!(
-                        "{} ACP error {code}: {message}",
+                        "{} ACP error: {message}",
                         self.profile.name
                     )));
                 }
@@ -1181,14 +1089,6 @@ fn log_bad_acp_message(profile: &str, method: &str, params: &Value, reason: &str
     zlog::warn!(
         "{profile} ACP message was not mapped correctly ({reason}): method={method} params={params}"
     );
-}
-
-fn request_id_string(id: &AcpRequestId) -> String {
-    match id {
-        AcpRequestId::Number(value) => value.to_string(),
-        AcpRequestId::String(value) => value.clone(),
-        AcpRequestId::Null => "null".into(),
-    }
 }
 
 #[cfg(test)]

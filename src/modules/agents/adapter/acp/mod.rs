@@ -1,8 +1,8 @@
 mod catalog;
 mod connection;
 mod cursor_extension;
+mod events;
 mod translate;
-mod wire;
 mod worker;
 
 use std::path::PathBuf;

@@ -107,10 +107,10 @@ pub(super) fn metadata_from_options(
 }
 
 pub(super) fn commands_from_update(
-    message: &super::wire::AcpInbound,
+    message: &super::events::AcpInbound,
     session_id: &str,
 ) -> Option<Vec<Value>> {
-    let super::wire::AcpInbound::Notification { method, params } = message else {
+    let super::events::AcpInbound::Notification { method, params } = message else {
         return None;
     };
     if method != "session/update"

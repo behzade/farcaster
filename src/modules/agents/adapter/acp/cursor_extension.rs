@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 
 use crate::agents::{ToolCategory, ToolMetadata, WorkerActivity, WorkerEvent, WorkerInput};
 
-use super::wire::AcpRequestId;
+use super::events::AcpRequestId;
 
 pub(super) enum CursorRequest {
     Questions {
@@ -107,10 +107,7 @@ pub(super) fn question_input(
         )
     };
     WorkerInput {
-        id: format!(
-            "cursor-question:{}:{index}:{option_index}",
-            request_id(request)
-        ),
+        id: format!("cursor-question:{request}:{index}:{option_index}"),
         prompt,
         options,
         secret: false,
@@ -119,7 +116,7 @@ pub(super) fn question_input(
 
 pub(super) fn plan_input(request: &AcpRequestId, prompt: String) -> WorkerInput {
     WorkerInput {
-        id: format!("cursor-plan:{}", request_id(request)),
+        id: format!("cursor-plan:{request}"),
         prompt,
         options: vec!["Accept".into(), "Reject".into()],
         secret: false,
@@ -196,11 +193,3 @@ pub(super) fn notification(method: &str, params: &Value) -> Option<(WorkerEvent,
 #[cfg(test)]
 #[path = "cursor_extension_tests.rs"]
 mod tests;
-
-fn request_id(id: &AcpRequestId) -> String {
-    match id {
-        AcpRequestId::Number(value) => value.to_string(),
-        AcpRequestId::String(value) => value.clone(),
-        AcpRequestId::Null => "null".into(),
-    }
-}

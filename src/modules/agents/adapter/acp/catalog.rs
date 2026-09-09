@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    io::BufReader,
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, ChildStdout, Stdio},
+    process::{Child, Stdio},
     sync::{Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
@@ -13,11 +12,11 @@ use serde_json::{Value, json};
 use super::{
     AcpProfile,
     connection::AcpConnection,
+    events::AcpInbound,
     translate::{
         commands_from_update, merge_tool_metadata, metadata_from_session, normalize_tool_name,
         tool_args, tool_metadata, tool_result,
     },
-    wire::AcpInbound,
     worker::configure_command,
 };
 use crate::agents::{AgentLaunchConfig, DiscoveredHistory, HarnessAccessMode, ToolMetadata};
@@ -29,18 +28,17 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
     project: &Path,
 ) -> Result<(main_session::MainSessionMetadata, String), String> {
     with_connection(profile, project, |connection, profile, project| {
-        let id = connection.send_request(
+        let response = connection.request_blocking(
             "session/new",
             json!({"cwd": project.to_string_lossy(), "mcpServers": []}),
         )?;
-        let response = connection.wait_response(&id)?;
         let session_id = response
             .get("sessionId")
             .and_then(Value::as_str)
             .ok_or_else(|| format!("{} did not provide an ACP session id", profile.name))?;
         let (mut metadata, _) = metadata_from_session(profile, &response);
         if let Some(commands) = connection
-            .drain_queued()
+            .drain_queued()?
             .iter()
             .filter_map(|message| commands_from_update(message, session_id))
             .next_back()
@@ -66,7 +64,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
             )
         })?;
     with_connection(profile, project, move |connection, profile, project| {
-        let id = connection.send_request(
+        let response = connection.request_blocking(
             "session/load",
             json!({
                 "sessionId": locator,
@@ -74,24 +72,21 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 "mcpServers": [],
             }),
         )?;
-        let response = connection.wait_response(&id)?;
-        let queued = connection.drain_queued();
+        let queued = connection.drain_queued()?;
         let history = discovered_history(profile, queued, &response, &locator);
         close_session(connection, &locator);
         Ok(history)
     })
 }
 
-type CatalogConnection = AcpConnection<BufReader<ChildStdout>, ChildStdin>;
-
 struct CatalogProcess {
     child: Option<Child>,
-    connection: Option<CatalogConnection>,
+    connection: Option<AcpConnection>,
     project: PathBuf,
 }
 
 impl CatalogProcess {
-    fn take_parts(mut self) -> Option<(Child, CatalogConnection)> {
+    fn take_parts(mut self) -> Option<(Child, AcpConnection)> {
         match (self.child.take(), self.connection.take()) {
             (Some(child), Some(connection)) => Some((child, connection)),
             (Some(mut child), None) => {
@@ -125,9 +120,7 @@ fn catalog_processes() -> &'static Mutex<HashMap<&'static str, CatalogProcess>> 
 fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
     project: &Path,
-    operation: impl FnOnce(&mut CatalogConnection, &AcpProfile, &Path) -> Result<T, String>
-    + Send
-    + 'static,
+    operation: impl FnOnce(&mut AcpConnection, &AcpProfile, &Path) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let mut processes = catalog_processes()
         .lock()
@@ -151,15 +144,9 @@ fn with_connection<T: Send + 'static>(
         let mut connection = connection;
         let result = (|| {
             if !initialized {
-                let initialized = connection.initialize(&profile_owned)?;
-                if initialized.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
-                    return Err(format!(
-                        "{} did not negotiate ACP version 1",
-                        profile_owned.name
-                    ));
-                }
+                connection.initialize(&profile_owned)?;
             } else {
-                let _ = connection.drain_queued();
+                connection.drain_queued()?;
             }
             operation(&mut connection, &profile_owned, &project_owned)
         })();
@@ -193,7 +180,7 @@ fn with_connection<T: Send + 'static>(
 fn spawn_catalog_child(
     profile: &AcpProfile,
     project: &Path,
-) -> Result<(Child, CatalogConnection), String> {
+) -> Result<(Child, AcpConnection), String> {
     let config = AgentLaunchConfig {
         program: profile.program(),
         access_mode: HarnessAccessMode::Sandboxed,
@@ -224,19 +211,28 @@ fn spawn_catalog_child(
             return Err(format!("{} ACP catalog stdout must be piped", profile.name));
         }
     };
-    Ok((child, AcpConnection::new(BufReader::new(stdout), stdin)))
+    match AcpConnection::new(
+        blocking::Unblock::new(stdout),
+        blocking::Unblock::new(stdin),
+        None,
+    ) {
+        Ok(connection) => Ok((child, connection)),
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(error)
+        }
+    }
 }
 
-fn close_session(connection: &mut CatalogConnection, session_id: &str) {
-    if let Ok(id) = connection.send_request("session/close", json!({"sessionId": session_id})) {
-        let _ = connection.wait_response(&id);
-    }
+fn close_session(connection: &mut AcpConnection, session_id: &str) {
+    let _ = connection.request_blocking("session/close", json!({"sessionId": session_id}));
 }
 
 fn run_catalog_operation<T: Send + 'static>(
     timeout: Duration,
-    operation: impl FnOnce() -> (Result<T, String>, CatalogConnection) + Send + 'static,
-) -> Result<(Result<T, String>, CatalogConnection), String> {
+    operation: impl FnOnce() -> (Result<T, String>, AcpConnection) + Send + 'static,
+) -> Result<(Result<T, String>, AcpConnection), String> {
     let (sender, receiver) = mpsc::channel();
     thread::Builder::new()
         .name("acp-catalog-handshake".into())
