@@ -6,7 +6,7 @@ use url::Url;
 
 use crate::{
     app::FarcasterApp,
-    app::views::transcript::visualizations::{is_visualization_link, visualization_target},
+    app::views::transcript::visualizations::{is_visualization_link, prepare_visualization},
 };
 
 pub(super) fn with_file_links(text: TextView, entity: WeakEntity<FarcasterApp>) -> TextView {
@@ -22,8 +22,13 @@ pub(super) fn with_file_links(text: TextView, entity: WeakEntity<FarcasterApp>) 
             return;
         }
         if is_visualization_link(url) {
-            if let Some(visualization) = visualization_target(url) {
-                cx.open_url(visualization.as_str());
+            match prepare_visualization(url) {
+                Ok(visualization) => cx.open_url(visualization.as_str()),
+                Err(error) => {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.notify_workspace_error("Open visualization", error, cx);
+                    });
+                }
             }
             return;
         }

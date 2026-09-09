@@ -1,15 +1,16 @@
 use std::path::Path;
 
-use url::Url;
-
-use super::visualizations::{is_visualization_link, visualization_markdown, visualization_target};
+use super::visualizations::{
+    is_visualization_link, prepare_visualization, visualization_markdown, visualization_target,
+};
 
 fn rendered_link(path: &Path) -> String {
     let payload = serde_json::json!({ "path": path.to_string_lossy() });
     let marker = format!("\u{e200}visualize\u{e202}{payload}\u{e201}");
     let markdown = visualization_markdown(&marker);
     markdown
-        .strip_prefix("[↗](")
+        .split_once("](")
+        .map(|(_, link)| link)
         .and_then(|link| link.strip_suffix(" \"Open visualization\")"))
         .expect("valid marker becomes a link")
         .to_owned()
@@ -23,8 +24,54 @@ fn visualization_markers_become_explicit_links() {
 
     assert_eq!(
         rendered,
-        "Before [↗](farcaster-visualize://open?path=file%3A%2F%2F%2Fprivate%2Ftmp%2Fmodel%2520picker.html \"Open visualization\") after"
+        "Before [Visualization: model picker\\.html — Open in browser ↗](farcaster-visualize://open?path=file%3A%2F%2F%2Fprivate%2Ftmp%2Fmodel%2520picker.html \"Open visualization\") after"
     );
+}
+
+#[test]
+fn visualization_title_is_visible_and_cannot_inject_markdown() {
+    let payload = serde_json::json!({"path": "/private/tmp/demo.html", "title": "[Demo](https://example.com)\n<strong>"});
+    let marker = format!("\u{e200}visualize\u{e202}{payload}\u{e201}");
+    let rendered = visualization_markdown(&marker);
+    assert!(rendered.starts_with("[Visualization: \\[Demo\\]\\(https\\:\\/\\/example\\.com\\) \\<strong\\> — Open in browser ↗]("));
+}
+
+#[test]
+fn preview_wraps_fragment_without_changing_source() {
+    let source = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
+    let fragment = "<h1>Demo</h1><script>document.body.dataset.ready = 'yes';</script><!-- \"</iframe><script>parent.bad = true</script> -->";
+    std::fs::write(source.path(), fragment).unwrap();
+    let output = prepare_visualization(&rendered_link(source.path()))
+        .unwrap()
+        .to_file_path()
+        .unwrap();
+    assert_ne!(output, source.path());
+    let document = std::fs::read_to_string(&output).unwrap();
+    std::fs::remove_file(output).unwrap();
+    assert_eq!(std::fs::read_to_string(source.path()).unwrap(), fragment);
+    assert!(document.contains("sandbox=\"allow-scripts\""));
+    assert!(!document.contains("allow-same-origin"));
+    assert_eq!(document.matches("</iframe>").count(), 1);
+    assert!(document.contains("--viz-series-1:"));
+    assert!(document.contains("lucide@"));
+    assert!(document.contains("&lt;h1&gt;Demo&lt;/h1&gt;"));
+    assert!(document.contains("document.body.dataset.ready = &#39;yes&#39;;"));
+}
+
+#[test]
+fn preview_rejects_missing_files_directories_and_large_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("demo.html");
+    let link = rendered_link(&source);
+    assert!(prepare_visualization(&link).is_err());
+    std::fs::create_dir(&source).unwrap();
+    assert!(prepare_visualization(&link).is_err());
+    std::fs::remove_dir(&source).unwrap();
+    std::fs::File::create(&source)
+        .unwrap()
+        .set_len(8 * 1024 * 1024 + 1)
+        .unwrap();
+    assert!(prepare_visualization(&link).unwrap_err().contains("8 MiB"));
 }
 
 #[test]
@@ -49,7 +96,7 @@ fn visualization_target_resolves_only_one_safe_temporary_html_file() {
 
     assert_eq!(
         visualization_target(&link),
-        Url::from_file_path(file.path().canonicalize().expect("resolve temporary file")).ok()
+        Some(file.path().canonicalize().expect("resolve temporary file"))
     );
     assert_eq!(visualization_target(&format!("{link}&other=value")), None);
     assert_eq!(
