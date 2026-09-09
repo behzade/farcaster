@@ -54,7 +54,6 @@ pub(in crate::app) struct CodeComment {
     pub focus: FocusHandle,
     pub input: Entity<TextareaState>,
     pub context: CodeContext,
-    pub session_label: String,
     target: String,
     return_focus: Option<FocusHandle>,
     _subscription: Subscription,
@@ -98,9 +97,9 @@ impl FarcasterApp {
                 };
                 let input = cx.new(|cx| {
                     TextareaState::new(window, cx)
-                        .auto_grow(2, 8)
+                        .auto_grow(1, 8)
                         .submit_on_enter(true)
-                        .placeholder("What should the agent do with this code?")
+                        .placeholder("Comment…")
                 });
                 let subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
                     if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
@@ -108,20 +107,12 @@ impl FarcasterApp {
                     }
                     cx.notify();
                 });
-                let session_label = this
-                    .snapshot
-                    .session
-                    .as_ref()
-                    .and_then(|session| session.session_name.clone())
-                    .filter(|title| !title.is_empty())
-                    .unwrap_or_else(|| "Current session".into());
                 this.cover_native_workspace_surface(cx);
                 let input_focus = input.read(cx).focus_handle(cx);
                 this.code_comment = Some(CodeComment {
                     focus: cx.focus_handle(),
                     input,
                     context,
-                    session_label,
                     target,
                     return_focus,
                     _subscription: subscription,
