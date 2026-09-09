@@ -433,9 +433,10 @@ impl FarcasterApp {
             self.notify_session_rail(cx);
             return;
         }
-        if session.is_running {
+        if self.session_family_has_active_work(&path) {
             self.sessions_error = Some(
-                "Wait for the session to finish before moving it to another project".to_owned(),
+                "Wait for the session family to finish before moving it to another project"
+                    .to_owned(),
             );
             self.notify_session_rail(cx);
             return;

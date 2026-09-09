@@ -86,9 +86,7 @@ impl Supervisor {
                     .collect::<HashSet<_>>();
                 if family_actor_keys.iter().any(|key| {
                     self.latest.get(key).is_some_and(|snapshot| {
-                        snapshot.conversation.running
-                            || snapshot.conversation.compacting
-                            || self.needs_input.contains(key)
+                        session_actor_has_active_work(snapshot, self.needs_input.contains(key))
                     })
                 }) {
                     return Err(
@@ -205,9 +203,7 @@ impl Supervisor {
                     .collect::<HashSet<_>>();
                 if family_actor_keys.iter().any(|key| {
                     self.latest.get(key).is_some_and(|snapshot| {
-                        snapshot.conversation.running
-                            || snapshot.conversation.compacting
-                            || self.needs_input.contains(key)
+                        session_actor_has_active_work(snapshot, self.needs_input.contains(key))
                     })
                 }) {
                     return Err(
@@ -290,3 +286,14 @@ impl Supervisor {
         false
     }
 }
+
+fn session_actor_has_active_work(snapshot: &RuntimeSnapshot, needs_input: bool) -> bool {
+    snapshot.conversation.running
+        || snapshot.conversation.compacting
+        || snapshot.conversation.retrying
+        || needs_input
+}
+
+#[cfg(test)]
+#[path = "family_commands_tests.rs"]
+mod tests;

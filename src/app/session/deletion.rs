@@ -24,7 +24,7 @@ impl FarcasterApp {
             self.notify_session_rail(cx);
             return;
         };
-        if family.iter().any(|session| session.is_running) {
+        if self.session_family_has_active_work(&path) {
             self.sessions_error =
                 Some("Wait for the session family to finish before deleting it".to_owned());
             self.notify_session_rail(cx);

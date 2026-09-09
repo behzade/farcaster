@@ -1,7 +1,12 @@
 use std::{path::PathBuf, time::SystemTime};
 
 use super::*;
-use crate::sessions::UsageSummary;
+use crate::{
+    app::{
+        composer::submissions::PendingSubmission, session::activity::session_family_has_active_work,
+    },
+    sessions::UsageSummary,
+};
 
 fn session(id: &str, parent: Option<&str>, archived: bool, running: bool) -> SessionSummary {
     SessionSummary::from_cached(
@@ -31,7 +36,9 @@ fn active_work_includes_recursive_descendants() {
     assert!(session_family_has_active_work(
         &sessions,
         &root.path,
-        |_| false
+        &Default::default(),
+        &Default::default(),
+        &Default::default(),
     ));
     sessions[2].is_running = false;
     let statuses = std::collections::HashMap::from([(
@@ -39,18 +46,38 @@ fn active_work_includes_recursive_descendants() {
         "Needs input".to_owned(),
     )]);
     let snapshot = crate::runtime::RuntimeSnapshot::default();
-    let has_live_work =
-        |path: &Path| super::super::activity::session_has_live_work(path, &statuses, &snapshot);
     assert!(session_family_has_active_work(
         &sessions,
         &root.path,
-        has_live_work
+        &statuses,
+        &snapshot,
+        &Default::default(),
     ));
     let unrelated = session("unrelated", None, false, false);
     assert!(!session_family_has_active_work(
         &sessions,
         &unrelated.path,
-        has_live_work
+        &statuses,
+        &snapshot,
+        &Default::default(),
+    ));
+
+    let pending = std::collections::HashMap::from([(
+        session_target(&sessions[1].path),
+        PendingSubmission {
+            submitted_target: session_target(&sessions[1].path),
+            text: "pending child prompt".into(),
+            images: Vec::new(),
+            pastes: Vec::new(),
+            result: None,
+        },
+    )]);
+    assert!(session_family_has_active_work(
+        &sessions,
+        &root.path,
+        &Default::default(),
+        &crate::runtime::RuntimeSnapshot::default(),
+        &pending,
     ));
 }
 
