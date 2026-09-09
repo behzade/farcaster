@@ -22,10 +22,13 @@ const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
 
 fn server_config() -> StreamableHttpServerConfig {
+    // Per-request protocol metadata (SEP-2575) is deliberately not required:
+    // the harnesses served here (OpenCode, Codex, ACP, Pi) are 2025-era MCP
+    // clients. Re-enable rmcp's stateless_protocol_metadata_required once
+    // they adopt 2026-07-28 era negotiation.
     StreamableHttpServerConfig::default()
         .with_legacy_session_mode(false)
         .with_json_response(true)
-        .with_stateless_protocol_metadata_required(true)
 }
 
 #[derive(Clone)]

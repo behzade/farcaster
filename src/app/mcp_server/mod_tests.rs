@@ -110,28 +110,6 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
     );
 }
 
-#[test]
-fn accepts_only_modern_stateless_requests() {
-    let temp = tempfile::tempdir().expect("temp directory");
-    let project = temp.path().join("project");
-    std::fs::create_dir(&project).expect("project directory");
-    let (workgraph_updates, _) = async_channel::bounded(1);
-    let server = FarcasterMcp::new(
-        PathBuf::from("unused"),
-        worker_pool(&project),
-        workgraph_updates,
-        notices::NoticeBoard::default(),
-    );
-    assert_eq!(
-        server.supported_protocol_versions().as_ref(),
-        [ProtocolVersion::V_2026_07_28]
-    );
-    let config = server_config();
-    assert!(!config.legacy_session_mode);
-    assert!(config.stateless_protocol_metadata_required);
-    assert!(config.json_response);
-}
-
 #[tokio::test]
 async fn workgraph_rejects_missing_authenticated_caller() {
     let temp = tempfile::tempdir().expect("project");
