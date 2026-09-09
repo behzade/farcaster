@@ -106,16 +106,7 @@ pub(super) fn render_tool(
                 .as_ref()
                 .is_none_or(|details| details.metadata.targets.len() <= 1)
     });
-    let summary = item.tool_details.as_ref().map_or_else(
-        || {
-            if item.streaming && item.tool_call_id.is_none() {
-                "Preparing tool call".to_owned()
-            } else {
-                item.label.clone()
-            }
-        },
-        |details| details.summary(),
-    );
+    let summary = tool_summary(item);
     let read_target = direct_read_target(item).map(str::to_owned);
     let opens_file = read_target.is_some();
     let expanded = expanded && !opens_file;
@@ -195,7 +186,20 @@ pub(super) fn render_tool(
         .into_any_element()
 }
 
-fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
+pub(super) fn tool_summary(item: &TranscriptItem) -> String {
+    item.tool_details.as_ref().map_or_else(
+        || {
+            if item.streaming && item.tool_call_id.is_none() {
+                "Preparing tool call".to_owned()
+            } else {
+                item.label.clone()
+            }
+        },
+        |details| details.summary(),
+    )
+}
+
+pub(super) fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
     use crate::agents::ToolCategory;
     let mut counts = [0usize; 8];
     let mut calls = 0;

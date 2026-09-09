@@ -58,10 +58,7 @@ impl FarcasterApp {
             return;
         }
         let items = &self.snapshot.conversation.items;
-        let text = crate::app::views::transcript::copy_transcript_items(
-            items,
-            0..=items.len().saturating_sub(1),
-        );
+        let text = crate::app::views::transcript::transcript_scratch_text(items);
         self.activate_editor_tab(
             self.workspace_project(),
             EditorTarget::Transcript(text),

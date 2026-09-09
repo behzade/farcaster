@@ -25,6 +25,33 @@ fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
 }
 
 #[test]
+fn scratch_uses_visible_activity_summaries_instead_of_raw_tool_payloads() {
+    let mut state = conversation::ConversationState::default();
+    state.push_local_user_with_prompt_images("Read the file".into(), &[], false);
+    state.reduce(&serde_json::json!({
+        "type": "tool_execution_start", "toolCallId": "read", "toolName": "read",
+        "args": {"path": "src/main.rs", "raw_argument": "hidden input"},
+        "toolMetadata": {"category": "read", "targets": ["src/main.rs"]}
+    }));
+    state.reduce(&serde_json::json!({
+        "type": "tool_execution_end", "toolCallId": "read", "isError": false,
+        "result": {"content": [{"type": "text", "text": "hidden output"}]}
+    }));
+    let mut answer = item(TranscriptKind::Assistant, "", "Final line");
+    Arc::make_mut(&mut answer).streaming = true;
+    Arc::make_mut(&mut answer).stream_chunks = Arc::new(vec![Arc::from("First line\n")]);
+    state.items.push(answer);
+    let text = transcript_scratch_text(&state.items);
+    assert_eq!(
+        text,
+        "## You\n\nRead the file\n\n## Activity\n\n1 read\n\n## Assistant\n\nFirst line\nFinal line"
+    );
+    // Raw export remains an explicit, separate operation.
+    assert!(copy_transcript_items(&state.items, 0..=2).contains("hidden output"));
+    assert!(transcript_scratch_text(&PersistentVec::default()).is_empty());
+}
+
+#[test]
 fn transcript_copy_keeps_image_attachment_markers() {
     let mut attached = item(TranscriptKind::User, "", "look here");
     Arc::make_mut(&mut attached).images = Arc::new(vec![Arc::new(Image::from_bytes(
