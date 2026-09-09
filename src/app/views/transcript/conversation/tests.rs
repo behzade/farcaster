@@ -82,6 +82,46 @@ fn queued_input_after_an_unechoed_invocation_keeps_its_own_text() {
 }
 
 #[test]
+fn queued_deliveries_before_assistant_output_preserve_the_original_prompt() {
+    for invocation in [false, true] {
+        let mut state = ConversationState::default();
+        if invocation {
+            state.push_local_invocation("original".into(), 0, "expanded original".into());
+        } else {
+            state.push_local_user("original".into(), 0, false);
+        }
+        let original = state.items[0].clone();
+        state.reduce(&json!({"type": "agent_start"}));
+        // Identical text must also remain a separate delivery.
+        for text in ["first steer", "original", "third steer"] {
+            for kind in ["message_start", "message_end"] {
+                state.reduce(&json!({
+                    "type": kind,
+                    "message": {"role": "user", "content": text, "queued": true}
+                }));
+            }
+        }
+
+        assert!(Arc::ptr_eq(&state.items[0], &original));
+        assert_eq!(
+            state
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["original", "first steer", "original", "third steer"]
+        );
+        assert!(
+            state
+                .items
+                .iter()
+                .skip(1)
+                .all(|item| item.invocation.is_none())
+        );
+    }
+}
+
+#[test]
 fn saved_presentations_restore_compact_history_in_order() {
     let mut messages = vec![
         json!({"role":"user","content":"same expansion"}),

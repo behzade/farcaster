@@ -237,7 +237,11 @@ impl WorkerSessionTransport {
             WorkerActivity::InputDelivered { mode, message } => {
                 self.acknowledge_delivery(mode, &message);
                 self.finish_assistant_message(None);
-                let message = json!({"role": "user", "content": message});
+                let message = json!({
+                    "role": "user",
+                    "content": message,
+                    "queued": mode != WorkerSendMode::Prompt,
+                });
                 for event_type in ["message_start", "message_end"] {
                     self.pending.push_back(activity(json!({
                         "type": event_type,

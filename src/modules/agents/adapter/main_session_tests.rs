@@ -312,8 +312,8 @@ fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
     assert_eq!(
         delivered,
         [
-            json!({"type": "message_start", "message": {"role": "user", "content": "redirect"}}),
-            json!({"type": "message_end", "message": {"role": "user", "content": "redirect"}}),
+            json!({"type": "message_start", "message": {"role": "user", "content": "redirect", "queued": true}}),
+            json!({"type": "message_end", "message": {"role": "user", "content": "redirect", "queued": true}}),
         ]
     );
 }

@@ -155,6 +155,10 @@ impl ConversationState {
         if let Some(message) = message
             && message.get("role").and_then(Value::as_str) == Some("user")
         {
+            // Early queued deliveries must not replace the original local row.
+            if message.get("queued").and_then(Value::as_bool) == Some(true) {
+                self.optimistic_user = None;
+            }
             self.queue.acknowledge(&message_text(message));
         }
         if message.is_some_and(|message| {
