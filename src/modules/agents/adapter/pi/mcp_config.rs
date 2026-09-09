@@ -15,6 +15,8 @@ impl TransientMcpConfig {
                 "farcaster": {
                     "url": URL,
                     "protocolVersion": "2026-07-28",
+                    "lifecycle": "keep-alive",
+                    "directTools": true,
                     "headers": {
                         (CALLER_HEADER): caller_token
                     }
