@@ -19,7 +19,6 @@ use super::{
     mcp_config::TransientMcpConfig,
     wire::{PiWireMessage, parse_frame},
 };
-use crate::modules::agents::adapter::farcaster_mcp::INSTRUCTIONS;
 #[cfg(test)]
 use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
@@ -88,11 +87,7 @@ fn rpc_command(
     let mut prepared = command.command(project)?;
     prepared.args(["--mode", "rpc"]);
     if let Some(mcp_config) = mcp_config {
-        prepared
-            .arg("--mcp-config")
-            .arg(mcp_config)
-            .arg("--append-system-prompt")
-            .arg(INSTRUCTIONS);
+        prepared.arg("--mcp-config").arg(mcp_config);
     }
     prepared
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")

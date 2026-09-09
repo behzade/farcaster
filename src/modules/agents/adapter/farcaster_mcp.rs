@@ -9,4 +9,3 @@ pub(super) fn enabled() -> bool {
 pub(super) fn set_enabled(enabled: bool) {
     crate::builtin_mcp::set_enabled(enabled);
 }
-pub(crate) const INSTRUCTIONS: &str = "Farcaster provides parent-child workers, a coordination notice board, and durable work graphs.";
