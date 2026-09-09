@@ -84,6 +84,39 @@ fn cli_model_fallback_preserves_provider_and_nested_model_ids() {
 }
 
 #[test]
+fn session_updates_surface_titles() {
+    // `session.renamed` carries a flat title; this is what title generation
+    // and renames emit on the installed opencode2 server.
+    let renamed = json!({
+        "sessionID": "session-1",
+        "title": "Renamed probe title"
+    });
+    assert_eq!(
+        opencode_session_title(&renamed).as_deref(),
+        Some("Renamed probe title")
+    );
+
+    // `session.updated` nests the full session record under `info`.
+    let updated = json!({
+        "sessionID": "session-1",
+        "info": {"id": "session-1", "title": "Refactor adapter"}
+    });
+    assert_eq!(
+        opencode_session_title(&updated).as_deref(),
+        Some("Refactor adapter")
+    );
+
+    for data in [
+        json!({}),
+        json!({"title": ""}),
+        json!({"info": {}}),
+        json!({"info": {"title": ""}}),
+    ] {
+        assert!(opencode_session_title(&data).is_none(), "{data}");
+    }
+}
+
+#[test]
 fn current_opencode_events_and_tool_results_are_normalized() {
     assert_eq!(
         unversioned_opencode_event_type("session.next.step.ended.2"),

@@ -642,6 +642,11 @@ impl OpenCodeWorkerSession {
                         )));
                     }
                 }
+                "session.updated" | "session.renamed" => {
+                    if let Some(title) = opencode_session_title(&event.data) {
+                        return Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(title)));
+                    }
+                }
                 "session.inbox.delivered" => {
                     let Some(id) = event
                         .data
@@ -1250,6 +1255,15 @@ fn opencode_event_is_for_session(
             false
         }
     }
+}
+
+fn opencode_session_title(data: &Value) -> Option<String> {
+    data.get("title")
+        .or_else(|| data.pointer("/info/title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned)
 }
 
 fn unversioned_opencode_event_type(event_type: &str) -> &str {
