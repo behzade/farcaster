@@ -81,7 +81,12 @@ fn owning_connection_supplies_child_status_when_catalog_reports_not_loaded() -> 
         "preview": "", "parentThreadId": "catalog-native-parent",
         "source": {"subAgent": {"thread_spawn": {"agent_path": "/root/reviewer"}}},
         "status": {"type": "notLoaded"}});
-    for (kind, running) in [("started", true), ("completed", false)] {
+    for (kind, running) in [
+        ("started", true),
+        ("interacted", true),
+        ("completed", false),
+        ("interacted", false),
+    ] {
         super::super::subagents::observe(
             "catalog-native-parent",
             &json!({

@@ -488,10 +488,11 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
         .collect()
 }
 
-#[derive(Clone, Copy)]
 enum PendingRequest {
     StartTurn,
     LoadGoal,
+    ChildStatus { id: String, title: Option<String> },
+    ObsoleteChildStatus,
     Ignore,
 }
 
@@ -682,10 +683,30 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         }
                     }
-                    Some(PendingRequest::Ignore) | None => {}
+                    Some(PendingRequest::ChildStatus { id, title }) => {
+                        if let Some(is_running) = super::subagents::observe_thread(
+                            &self.thread_id,
+                            &id,
+                            &result["thread"],
+                        ) {
+                            return Some(WorkerEvent::Activity(
+                                WorkerActivity::ChildSessionsChanged {
+                                    id,
+                                    title,
+                                    is_running,
+                                },
+                            ));
+                        }
+                    }
+                    Some(PendingRequest::Ignore | PendingRequest::ObsoleteChildStatus) | None => {}
                 },
                 Ok(CodexInbound::Error { id, error }) => {
                     match self.pending.remove(&id) {
+                        Some(PendingRequest::ObsoleteChildStatus) => continue,
+                        Some(PendingRequest::ChildStatus { .. }) => {
+                            zlog::warn!("Codex child status could not be read: {}", error.message);
+                            continue;
+                        }
                         Some(PendingRequest::LoadGoal) => {
                             zlog::warn!(
                                 "Codex thread goal could not be read: {}: {}",
@@ -846,22 +867,12 @@ impl WorkerSession for CodexWorkerSession {
                                 && let Some(started) = codex_tool_start(&params)
                                 && let Some(finished) = codex_tool_end(&params)
                             {
-                                let event = if item_type == Some("subAgentActivity") {
-                                    super::subagents::observe(&self.thread_id, &params["item"]);
+                                let event = if item_type == Some("subAgentActivity")
+                                    && let Some(activity) =
+                                        self.observe_child_activity(&params["item"])
+                                {
                                     self.events.push_back(WorkerEvent::Activity(started));
-                                    WorkerActivity::ChildSessionsChanged {
-                                        id: params["item"]["agentThreadId"]
-                                            .as_str()
-                                            .unwrap_or_default()
-                                            .to_owned(),
-                                        title: params["item"]["agentPath"]
-                                            .as_str()
-                                            .map(str::to_owned),
-                                        is_running: matches!(
-                                            params["item"]["kind"].as_str(),
-                                            Some("started" | "interacted")
-                                        ),
-                                    }
+                                    activity
                                 } else {
                                     started
                                 };
@@ -1224,6 +1235,45 @@ impl CodexWorkerSession {
         self.caller_identity
             .set_activity(WorkerActivityState::Starting);
         Ok(())
+    }
+
+    fn observe_child_activity(&mut self, item: &Value) -> Option<WorkerActivity> {
+        let child = item["agentThreadId"].as_str()?;
+        let title = item["agentPath"].as_str().map(str::to_owned);
+        // A later lifecycle event supersedes any status read still in flight.
+        for pending in self.pending.values_mut() {
+            if matches!(pending, PendingRequest::ChildStatus { id, .. } if id == child) {
+                *pending = PendingRequest::ObsoleteChildStatus;
+            }
+        }
+        if let Some(is_running) = super::subagents::observe(&self.thread_id, item) {
+            return Some(WorkerActivity::ChildSessionsChanged {
+                id: child.to_owned(),
+                title,
+                is_running,
+            });
+        }
+        if item["kind"].as_str() != Some("interacted") {
+            return None;
+        }
+        // Both message delivery and follow-up turns emit interacted. Read the
+        // child's actual turn instead of assigning a lifecycle to that event.
+        match self.request(
+            "thread/read",
+            json!({"threadId": child, "includeTurns": true}),
+        ) {
+            Ok(request) => {
+                self.pending.insert(
+                    request,
+                    PendingRequest::ChildStatus {
+                        id: child.to_owned(),
+                        title,
+                    },
+                );
+            }
+            Err(error) => zlog::warn!("Codex child status could not be requested: {error}"),
+        }
+        None
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<CodexRequestId, String> {

@@ -4,7 +4,14 @@ use super::*;
 fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
     let mut session = test_session();
     session.thread_id = "native-parent".into();
-    for kind in ["started", "interacted", "interrupted", "completed"] {
+    for (kind, running) in [
+        ("interacted", None),
+        ("started", Some(true)),
+        ("interacted", Some(true)),
+        ("interrupted", Some(false)),
+        ("completed", Some(false)),
+        ("interacted", Some(false)),
+    ] {
         let item = json!({"type": "subAgentActivity", "id": kind,
             "kind": kind, "agentThreadId": "native-event-child", "agentPath": "/root/reviewer"});
         // A notification for another parent must not affect this session.
@@ -20,16 +27,18 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
                     params: json!({"threadId": thread, "item": item}),
                 }));
         }
-        assert_eq!(
-            session.poll(),
-            Some(WorkerEvent::Activity(
-                WorkerActivity::ChildSessionsChanged {
-                    id: "native-event-child".into(),
-                    title: Some("/root/reviewer".into()),
-                    is_running: matches!(kind, "started" | "interacted"),
-                }
-            ))
-        );
+        if kind != "interacted" {
+            assert_eq!(
+                session.poll(),
+                Some(WorkerEvent::Activity(
+                    WorkerActivity::ChildSessionsChanged {
+                        id: "native-event-child".into(),
+                        title: Some("/root/reviewer".into()),
+                        is_running: running.unwrap(),
+                    }
+                ))
+            );
+        }
         assert!(
             matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::ToolStarted { args, .. }))
             if args["agentThreadId"] == "native-event-child" && args["kind"] == kind)
@@ -42,7 +51,7 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
         assert!(session.queued_inbound.is_empty());
         assert_eq!(
             super::super::subagents::is_running("native-event-child"),
-            Some(matches!(kind, "started" | "interacted"))
+            running
         );
     }
     session.close().unwrap();
@@ -50,6 +59,74 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
         super::super::subagents::is_running("native-event-child"),
         None
     );
+}
+
+#[test]
+fn interactions_read_child_turn_status_and_discard_superseded_reads() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.thread_id = "interaction-read-parent".into();
+    let child = "interaction-read-child";
+    for status in ["completed", "inProgress", "completed"] {
+        session.observe_child_activity(&json!({
+            "agentThreadId": child, "agentPath": "/root/reviewer", "kind": "interacted"
+        }));
+        let mut line = String::new();
+        sent.read_line(&mut line).unwrap();
+        let request: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "thread/read");
+        assert_eq!(
+            request["params"],
+            json!({"threadId": child, "includeTurns": true})
+        );
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(session.next_id),
+            result: json!({"thread": {"status": {"type": "notLoaded"}, "turns": [{"status": status}]}}),
+        }));
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Activity(
+                WorkerActivity::ChildSessionsChanged {
+                    id: child.into(),
+                    title: Some("/root/reviewer".into()),
+                    is_running: status == "inProgress",
+                }
+            ))
+        );
+    }
+    session.observe_child_activity(&json!({"agentThreadId": child, "kind": "interacted"}));
+    let request = CodexRequestId::Number(session.next_id);
+    session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+        method: "item/completed".into(),
+        params: json!({"threadId": session.thread_id, "item": {
+            "type": "subAgentActivity", "id": "finished", "agentThreadId": child, "kind": "completed"
+        }}),
+    }));
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: request,
+        result: json!({"thread": {"status": {"type": "active"}}}),
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::ChildSessionsChanged {
+                is_running: false,
+                ..
+            }
+        ))
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolStarted { .. }))
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolFinished { .. }))
+    ));
+    assert_eq!(session.poll(), None);
+    assert_eq!(super::super::subagents::is_running(child), Some(false));
+    session.close().unwrap();
 }
 
 fn test_session() -> CodexWorkerSession {
