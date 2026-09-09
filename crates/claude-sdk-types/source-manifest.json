@@ -1,0 +1,1505 @@
+{
+  "package": "@anthropic-ai/claude-agent-sdk",
+  "version": "0.3.257",
+  "claudeCodeVersion": "2.1.257",
+  "upstream": "https://github.com/anthropics/claude-agent-sdk-typescript.git",
+  "upstreamReferenceRevision": "246f936602d5344f7efe560d9563acebab00a358",
+  "note": "CLI stdin/stdout message types and named control/callback response bodies, plus transitive dependencies. The public repository does not contain these declarations; the package hash pins the actual source.",
+  "roots": [
+    "StdoutMessage",
+    "SDKMessage",
+    "SDKUserMessage",
+    "SDKControlRequest",
+    "SDKControlResponse",
+    "SDKControlGetContextUsageResponse",
+    "SDKControlGetUsageResponse",
+    "SDKControlInitializeResponse",
+    "SDKControlInterruptResponse",
+    "SDKControlReadFileResponse",
+    "SDKControlReloadPluginsResponse",
+    "SDKControlReloadSkillsResponse",
+    "PermissionResult",
+    "HookJSONOutput",
+    "ElicitationResult",
+    "UserDialogResult",
+    "McpServerStatus",
+    "McpSetServersResult",
+    "RewindFilesResult"
+  ],
+  "typescriptVersion": "5.9.3",
+  "dependencyVersions": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.257",
+    "@anthropic-ai/sdk": "0.124.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@types/node": "22.18.6",
+    "json-schema-typed": "8.0.2",
+    "typescript": "5.9.3",
+    "undici-types": "6.21.0",
+    "zod": "4.5.4"
+  },
+  "sourceHashes": {
+    "sdk.d.ts": "b209ed293b63bb92bde59a49fe8a6e3b06f92afe0d1d4987c937a3cfea90b6dc"
+  },
+  "declarations": [
+    {
+      "source": "sdk.d.ts",
+      "line": 23,
+      "name": "AccountInfo",
+      "status": "generated",
+      "rust": "AccountInfo"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 38,
+      "name": "AgentDefinition",
+      "status": "generated",
+      "rust": "AgentDefinition"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 105,
+      "name": "AgentInfo",
+      "status": "generated",
+      "rust": "AgentInfo"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 120,
+      "name": "AgentMcpServerSpec",
+      "status": "generated",
+      "rust": "AgentMcpServerSpec"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 127,
+      "name": "ApiKeySource",
+      "status": "generated",
+      "rust": "ApiKeySource"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 129,
+      "name": "AsyncHookJSONOutput",
+      "status": "generated",
+      "rust": "AsyncHookJSONOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 134,
+      "name": "BackgroundTaskSummary",
+      "status": "generated",
+      "rust": "BackgroundTaskSummary"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 271,
+      "name": "ConfigChangeHookInput",
+      "status": "generated",
+      "rust": "ConfigChangeHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 285,
+      "name": "ControlErrorResponse",
+      "status": "generated",
+      "rust": "ControlErrorResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 308,
+      "name": "ControlResponse",
+      "status": "generated",
+      "rust": "ControlResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 543,
+      "name": "CwdChangedHookInput",
+      "status": "generated",
+      "rust": "CwdChangedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 549,
+      "name": "CwdChangedHookSpecificOutput",
+      "status": "generated",
+      "rust": "CwdChangedHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 570,
+      "name": "DirectoryAddedHookInput",
+      "status": "generated",
+      "rust": "DirectoryAddedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 596,
+      "name": "ElicitationHookInput",
+      "status": "generated",
+      "rust": "ElicitationHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 609,
+      "name": "ElicitationHookSpecificOutput",
+      "status": "generated",
+      "rust": "ElicitationHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 643,
+      "name": "ElicitationResult",
+      "status": "generated",
+      "rust": "ElicitationResult"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 648,
+      "name": "ElicitationResultHookInput",
+      "status": "generated",
+      "rust": "ElicitationResultHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 660,
+      "name": "ElicitationResultHookSpecificOutput",
+      "status": "generated",
+      "rust": "ElicitationResultHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 668,
+      "name": "ExitReason",
+      "status": "generated",
+      "rust": "ExitReason"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 680,
+      "name": "FileChangedHookInput",
+      "status": "generated",
+      "rust": "FileChangedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 686,
+      "name": "FileChangedHookSpecificOutput",
+      "status": "generated",
+      "rust": "FileChangedHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 875,
+      "name": "HookInput",
+      "status": "generated",
+      "rust": "HookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 877,
+      "name": "HookJSONOutput",
+      "status": "generated",
+      "rust": "HookJSONOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 958,
+      "name": "InstructionsLoadedHookInput",
+      "status": "generated",
+      "rust": "InstructionsLoadedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1063,
+      "name": "McpClaudeAIProxyServerConfig",
+      "status": "generated",
+      "rust": "McpClaudeAIProxyServerConfig"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1073,
+      "name": "McpHttpServerConfig",
+      "status": "generated",
+      "rust": "McpHttpServerConfig"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1090,
+      "name": "McpSdkServerConfig",
+      "status": "generated",
+      "rust": "McpSdkServerConfig"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1112,
+      "name": "McpServerConfigForProcessTransport",
+      "status": "generated",
+      "rust": "McpServerConfigForProcessTransport"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1117,
+      "name": "McpServerStatus",
+      "status": "generated",
+      "rust": "McpServerStatus"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1165,
+      "name": "McpServerToolPolicy",
+      "status": "generated",
+      "rust": "McpServerToolPolicy"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1177,
+      "name": "McpSetServersResult",
+      "status": "generated",
+      "rust": "McpSetServersResult"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1192,
+      "name": "McpSSEServerConfig",
+      "status": "generated",
+      "rust": "McpSSEServerConfig"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1209,
+      "name": "McpStdioServerConfig",
+      "status": "generated",
+      "rust": "McpStdioServerConfig"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1228,
+      "name": "MessageDisplayHookInput",
+      "status": "generated",
+      "rust": "MessageDisplayHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1255,
+      "name": "MessageDisplayHookSpecificOutput",
+      "status": "generated",
+      "rust": "MessageDisplayHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1266,
+      "name": "ModelInfo",
+      "status": "generated",
+      "rust": "ModelInfo"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1307,
+      "name": "ModelUsage",
+      "status": "generated",
+      "rust": "ModelUsage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1334,
+      "name": "NonNullableUsage",
+      "status": "generated",
+      "rust": "NonNullableUsage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1338,
+      "name": "NotificationHookInput",
+      "status": "generated",
+      "rust": "NotificationHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 1345,
+      "name": "NotificationHookSpecificOutput",
+      "status": "generated",
+      "rust": "NotificationHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2270,
+      "name": "PermissionBehavior",
+      "status": "generated",
+      "rust": "PermissionBehavior"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2277,
+      "name": "PermissionDeniedHookInput",
+      "status": "generated",
+      "rust": "PermissionDeniedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2285,
+      "name": "PermissionDeniedHookSpecificOutput",
+      "status": "generated",
+      "rust": "PermissionDeniedHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2293,
+      "name": "PermissionMode",
+      "status": "generated",
+      "rust": "PermissionMode"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2295,
+      "name": "PermissionRequestHookInput",
+      "status": "generated",
+      "rust": "PermissionRequestHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2302,
+      "name": "PermissionRequestHookSpecificOutput",
+      "status": "generated",
+      "rust": "PermissionRequestHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2315,
+      "name": "PermissionResult",
+      "status": "generated",
+      "rust": "PermissionResult"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2329,
+      "name": "PermissionRuleValue",
+      "status": "generated",
+      "rust": "PermissionRuleValue"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2334,
+      "name": "PermissionUpdate",
+      "status": "generated",
+      "rust": "PermissionUpdate"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2363,
+      "name": "PermissionUpdateDestination",
+      "status": "generated",
+      "rust": "PermissionUpdateDestination"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2371,
+      "name": "PostCompactHookInput",
+      "status": "generated",
+      "rust": "PostCompactHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2380,
+      "name": "PostModelSwitchHookInput",
+      "status": "generated",
+      "rust": "PostModelSwitchHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2418,
+      "name": "PostModelSwitchHookSpecificOutput",
+      "status": "generated",
+      "rust": "PostModelSwitchHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2429,
+      "name": "PostToolBatchHookInput",
+      "status": "generated",
+      "rust": "PostToolBatchHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2434,
+      "name": "PostToolBatchHookSpecificOutput",
+      "status": "generated",
+      "rust": "PostToolBatchHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2439,
+      "name": "PostToolBatchToolCall",
+      "status": "generated",
+      "rust": "PostToolBatchToolCall"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2446,
+      "name": "PostToolUseFailureHookInput",
+      "status": "generated",
+      "rust": "PostToolUseFailureHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2459,
+      "name": "PostToolUseFailureHookSpecificOutput",
+      "status": "generated",
+      "rust": "PostToolUseFailureHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2464,
+      "name": "PostToolUseHookInput",
+      "status": "generated",
+      "rust": "PostToolUseHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2476,
+      "name": "PostToolUseHookSpecificOutput",
+      "status": "generated",
+      "rust": "PostToolUseHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2493,
+      "name": "PreCompactHookInput",
+      "status": "generated",
+      "rust": "PreCompactHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2499,
+      "name": "PreModelSwitchHookInput",
+      "status": "generated",
+      "rust": "PreModelSwitchHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2537,
+      "name": "PreModelSwitchHookSpecificOutput",
+      "status": "generated",
+      "rust": "PreModelSwitchHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2546,
+      "name": "PreToolUseHookInput",
+      "status": "generated",
+      "rust": "PreToolUseHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 2553,
+      "name": "PreToolUseHookSpecificOutput",
+      "status": "generated",
+      "rust": "PreToolUseHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3019,
+      "name": "RewindFilesResult",
+      "status": "generated",
+      "rust": "RewindFilesResult"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3240,
+      "name": "SDKActiveGoalMessage",
+      "status": "generated",
+      "rust": "SDKActiveGoalMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3256,
+      "name": "SDKAPIRetryMessage",
+      "status": "generated",
+      "rust": "SDKAPIRetryMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3271,
+      "name": "SDKAssistantMessage",
+      "status": "generated",
+      "rust": "SDKAssistantMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3332,
+      "name": "SDKAssistantMessageError",
+      "status": "generated",
+      "rust": "SDKAssistantMessageError"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3334,
+      "name": "SDKAuthStatusMessage",
+      "status": "generated",
+      "rust": "SDKAuthStatusMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3346,
+      "name": "SDKBackgroundTasksChangedMessage",
+      "status": "generated",
+      "rust": "SDKBackgroundTasksChangedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3370,
+      "name": "SDKCommandsChangedMessage",
+      "status": "generated",
+      "rust": "SDKCommandsChangedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3378,
+      "name": "SDKCompactBoundaryMessage",
+      "status": "generated",
+      "rust": "SDKCompactBoundaryMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3416,
+      "name": "SDKContextUsage",
+      "status": "generated",
+      "rust": "SDKContextUsage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3482,
+      "name": "SDKContextUsageCategory",
+      "status": "generated",
+      "rust": "SDKContextUsageCategory"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3497,
+      "name": "SDKControlApplyFlagSettingsRequest",
+      "status": "generated",
+      "rust": "SDKControlApplyFlagSettingsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3505,
+      "name": "SDKControlBackgroundTasksRequest",
+      "status": "generated",
+      "rust": "SDKControlBackgroundTasksRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3516,
+      "name": "SDKControlCancelAsyncMessageRequest",
+      "status": "generated",
+      "rust": "SDKControlCancelAsyncMessageRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3524,
+      "name": "SDKControlCancelRequest",
+      "status": "generated",
+      "rust": "SDKControlCancelRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3535,
+      "name": "SDKControlElicitationRequest",
+      "status": "generated",
+      "rust": "SDKControlElicitationRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3560,
+      "name": "SDKControlFileSuggestionsRequest",
+      "status": "generated",
+      "rust": "SDKControlFileSuggestionsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3568,
+      "name": "SDKControlGetBinaryVersionRequest",
+      "status": "generated",
+      "rust": "SDKControlGetBinaryVersionRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3575,
+      "name": "SDKControlGetContextUsageRequest",
+      "status": "generated",
+      "rust": "SDKControlGetContextUsageRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3586,
+      "name": "SDKControlGetContextUsageResponse",
+      "status": "generated",
+      "rust": "SDKControlGetContextUsageResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3681,
+      "name": "SDKControlGetSessionCostRequest",
+      "status": "generated",
+      "rust": "SDKControlGetSessionCostRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3688,
+      "name": "SDKControlGetSettingsRequest",
+      "status": "generated",
+      "rust": "SDKControlGetSettingsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3695,
+      "name": "SDKControlGetUsageRequest",
+      "status": "generated",
+      "rust": "SDKControlGetUsageRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3702,
+      "name": "SDKControlGetUsageResponse",
+      "status": "generated",
+      "rust": "SDKControlGetUsageResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3915,
+      "name": "SDKControlInitializeRequest",
+      "status": "generated",
+      "rust": "SDKControlInitializeRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 3975,
+      "name": "SDKControlInitializeResponse",
+      "status": "generated",
+      "rust": "SDKControlInitializeResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4011,
+      "name": "SDKControlInterruptRequest",
+      "status": "generated",
+      "rust": "SDKControlInterruptRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4023,
+      "name": "SDKControlInterruptResponse",
+      "status": "generated",
+      "rust": "SDKControlInterruptResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4037,
+      "name": "SDKControlListModelsRequest",
+      "status": "generated",
+      "rust": "SDKControlListModelsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4044,
+      "name": "SDKControlMcpCallRequest",
+      "status": "generated",
+      "rust": "SDKControlMcpCallRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4094,
+      "name": "SDKControlMcpMessageRequest",
+      "status": "generated",
+      "rust": "SDKControlMcpMessageRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4106,
+      "name": "SDKControlMcpReconnectRequest",
+      "status": "generated",
+      "rust": "SDKControlMcpReconnectRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4114,
+      "name": "SDKControlMcpSetServersRequest",
+      "status": "generated",
+      "rust": "SDKControlMcpSetServersRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4122,
+      "name": "SDKControlMcpStatusRequest",
+      "status": "generated",
+      "rust": "SDKControlMcpStatusRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4129,
+      "name": "SDKControlMcpToggleRequest",
+      "status": "generated",
+      "rust": "SDKControlMcpToggleRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4138,
+      "name": "SDKControlPermissionRequest",
+      "status": "generated",
+      "rust": "SDKControlPermissionRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4186,
+      "name": "SDKControlReadFileRequest",
+      "status": "generated",
+      "rust": "SDKControlReadFileRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4199,
+      "name": "SDKControlReadFileResponse",
+      "status": "generated",
+      "rust": "SDKControlReadFileResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4212,
+      "name": "SDKControlRegisterRepoRootRequest",
+      "status": "generated",
+      "rust": "SDKControlRegisterRepoRootRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4223,
+      "name": "SDKControlReloadPluginsRequest",
+      "status": "generated",
+      "rust": "SDKControlReloadPluginsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4230,
+      "name": "SDKControlReloadPluginsResponse",
+      "status": "generated",
+      "rust": "SDKControlReloadPluginsResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4249,
+      "name": "SDKControlReloadSkillsRequest",
+      "status": "generated",
+      "rust": "SDKControlReloadSkillsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4256,
+      "name": "SDKControlReloadSkillsResponse",
+      "status": "generated",
+      "rust": "SDKControlReloadSkillsResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4263,
+      "name": "SDKControlRenameSessionRequest",
+      "status": "generated",
+      "rust": "SDKControlRenameSessionRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4271,
+      "name": "SDKControlRequest",
+      "status": "generated",
+      "rust": "SDKControlRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4280,
+      "name": "SDKControlRequestInner",
+      "status": "generated",
+      "rust": "SDKControlRequestInner"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4285,
+      "name": "SDKControlRequestProgressMessage",
+      "status": "generated",
+      "rust": "SDKControlRequestProgressMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4304,
+      "name": "SDKControlRequestUserDialogRequest",
+      "status": "generated",
+      "rust": "SDKControlRequestUserDialogRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4320,
+      "name": "SDKControlResponse",
+      "status": "generated",
+      "rust": "SDKControlResponse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4328,
+      "name": "SDKControlRewindFilesRequest",
+      "status": "generated",
+      "rust": "SDKControlRewindFilesRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4337,
+      "name": "SDKControlSeedReadStateRequest",
+      "status": "generated",
+      "rust": "SDKControlSeedReadStateRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4346,
+      "name": "SDKControlSetColorRequest",
+      "status": "generated",
+      "rust": "SDKControlSetColorRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4354,
+      "name": "SDKControlSetMaxThinkingTokensRequest",
+      "status": "generated",
+      "rust": "SDKControlSetMaxThinkingTokensRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4363,
+      "name": "SDKControlSetModelRequest",
+      "status": "generated",
+      "rust": "SDKControlSetModelRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4375,
+      "name": "SDKControlSetPermissionModeRequest",
+      "status": "generated",
+      "rust": "SDKControlSetPermissionModeRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4387,
+      "name": "SDKControlStopTaskRequest",
+      "status": "generated",
+      "rust": "SDKControlStopTaskRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4395,
+      "name": "SDKControlUpdateSettingsRequest",
+      "status": "generated",
+      "rust": "SDKControlUpdateSettingsRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4407,
+      "name": "SDKConversationResetMessage",
+      "status": "generated",
+      "rust": "SDKConversationResetMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4414,
+      "name": "SDKDeferredToolUse",
+      "status": "generated",
+      "rust": "SDKDeferredToolUse"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4423,
+      "name": "SDKElicitationCompleteMessage",
+      "status": "generated",
+      "rust": "SDKElicitationCompleteMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4432,
+      "name": "SDKFilesPersistedEvent",
+      "status": "generated",
+      "rust": "SDKFilesPersistedEvent"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4451,
+      "name": "SDKHookCallbackMatcher",
+      "status": "generated",
+      "rust": "SDKHookCallbackMatcher"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4463,
+      "name": "SDKHookCallbackRequest",
+      "status": "generated",
+      "rust": "SDKHookCallbackRequest"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4472,
+      "name": "SDKHookProgressMessage",
+      "status": "generated",
+      "rust": "SDKHookProgressMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4485,
+      "name": "SDKHookResponseMessage",
+      "status": "generated",
+      "rust": "SDKHookResponseMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4500,
+      "name": "SDKHookStartedMessage",
+      "status": "generated",
+      "rust": "SDKHookStartedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4513,
+      "name": "SDKInformationalMessage",
+      "status": "generated",
+      "rust": "SDKInformationalMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4536,
+      "name": "SDKKeepAliveMessage",
+      "status": "generated",
+      "rust": "SDKKeepAliveMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4543,
+      "name": "SDKLocalCommandOutputMessage",
+      "status": "generated",
+      "rust": "SDKLocalCommandOutputMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4551,
+      "name": "SDKMcpResourceLink",
+      "status": "generated",
+      "rust": "SDKMcpResourceLink"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4578,
+      "name": "SDKMemoryRecallMessage",
+      "status": "generated",
+      "rust": "SDKMemoryRecallMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4603,
+      "name": "SDKMessage",
+      "status": "generated",
+      "rust": "SDKMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4664,
+      "name": "SDKMirrorErrorMessage",
+      "status": "generated",
+      "rust": "SDKMirrorErrorMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4680,
+      "name": "SDKModelRefusalFallbackMessage",
+      "status": "generated",
+      "rust": "SDKModelRefusalFallbackMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4717,
+      "name": "SDKModelRefusalNoFallbackMessage",
+      "status": "generated",
+      "rust": "SDKModelRefusalNoFallbackMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4733,
+      "name": "SDKNotificationMessage",
+      "status": "generated",
+      "rust": "SDKNotificationMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4748,
+      "name": "SDKPartialAssistantMessage",
+      "status": "generated",
+      "rust": "SDKPartialAssistantMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4764,
+      "name": "SDKPermissionDenial",
+      "status": "generated",
+      "rust": "SDKPermissionDenial"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4773,
+      "name": "SDKPermissionDeniedMessage",
+      "status": "generated",
+      "rust": "SDKPermissionDeniedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4819,
+      "name": "SDKPluginInstallMessage",
+      "status": "generated",
+      "rust": "SDKPluginInstallMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4832,
+      "name": "SDKPromptSuggestionMessage",
+      "status": "generated",
+      "rust": "SDKPromptSuggestionMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4842,
+      "name": "SDKRateLimitEvent",
+      "status": "generated",
+      "rust": "SDKRateLimitEvent"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4855,
+      "name": "SDKRateLimitInfo",
+      "status": "generated",
+      "rust": "SDKRateLimitInfo"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4875,
+      "name": "SDKResultError",
+      "status": "generated",
+      "rust": "SDKResultError"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 4919,
+      "name": "SDKResultSuccess",
+      "status": "generated",
+      "rust": "SDKResultSuccess"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5014,
+      "name": "SDKSessionStateChangedMessage",
+      "status": "generated",
+      "rust": "SDKSessionStateChangedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5040,
+      "name": "SDKStatus",
+      "status": "generated",
+      "rust": "SDKStatus"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5042,
+      "name": "SDKStatusMessage",
+      "status": "generated",
+      "rust": "SDKStatusMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5057,
+      "name": "SDKSystemMessage",
+      "status": "generated",
+      "rust": "SDKSystemMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5119,
+      "name": "SDKTaskNotificationMessage",
+      "status": "generated",
+      "rust": "SDKTaskNotificationMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5145,
+      "name": "SDKTaskProgressMessage",
+      "status": "generated",
+      "rust": "SDKTaskProgressMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5167,
+      "name": "SDKTaskStartedMessage",
+      "status": "generated",
+      "rust": "SDKTaskStartedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5203,
+      "name": "SDKTaskUpdatedMessage",
+      "status": "generated",
+      "rust": "SDKTaskUpdatedMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5225,
+      "name": "SDKThinkingTokensMessage",
+      "status": "generated",
+      "rust": "SDKThinkingTokensMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5234,
+      "name": "SDKToolProgressMessage",
+      "status": "generated",
+      "rust": "SDKToolProgressMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5255,
+      "name": "SDKToolUseSummaryMessage",
+      "status": "generated",
+      "rust": "SDKToolUseSummaryMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5267,
+      "name": "SDKUserMessage",
+      "status": "generated",
+      "rust": "SDKUserMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5318,
+      "name": "SDKUserMessageReplay",
+      "status": "generated",
+      "rust": "SDKUserMessageReplay"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5366,
+      "name": "SDKWorkerShuttingDownMessage",
+      "status": "generated",
+      "rust": "SDKWorkerShuttingDownMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5377,
+      "name": "SessionCronSummary",
+      "status": "generated",
+      "rust": "SessionCronSummary"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5393,
+      "name": "SessionEndHookInput",
+      "status": "generated",
+      "rust": "SessionEndHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5454,
+      "name": "SessionStartHookInput",
+      "status": "generated",
+      "rust": "SessionStartHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 5478,
+      "name": "SessionStartHookSpecificOutput",
+      "status": "generated",
+      "rust": "SessionStartHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8159,
+      "name": "SetupHookInput",
+      "status": "generated",
+      "rust": "SetupHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8164,
+      "name": "SetupHookSpecificOutput",
+      "status": "generated",
+      "rust": "SetupHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8172,
+      "name": "SlashCommand",
+      "status": "generated",
+      "rust": "SlashCommand"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8296,
+      "name": "StdoutMessage",
+      "status": "generated",
+      "rust": "StdoutMessage"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8298,
+      "name": "StopFailureHookInput",
+      "status": "generated",
+      "rust": "StopFailureHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8305,
+      "name": "StopHookInput",
+      "status": "generated",
+      "rust": "StopHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8327,
+      "name": "StopHookSpecificOutput",
+      "status": "generated",
+      "rust": "StopHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8332,
+      "name": "SubagentStartHookInput",
+      "status": "generated",
+      "rust": "SubagentStartHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8338,
+      "name": "SubagentStartHookSpecificOutput",
+      "status": "generated",
+      "rust": "SubagentStartHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8343,
+      "name": "SubagentStopHookInput",
+      "status": "generated",
+      "rust": "SubagentStopHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8368,
+      "name": "SubagentStopHookSpecificOutput",
+      "status": "generated",
+      "rust": "SubagentStopHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8373,
+      "name": "SyncHookJSONOutput",
+      "status": "generated",
+      "rust": "SyncHookJSONOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8407,
+      "name": "TaskCompletedHookInput",
+      "status": "generated",
+      "rust": "TaskCompletedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8419,
+      "name": "TaskCreatedHookInput",
+      "status": "generated",
+      "rust": "TaskCreatedHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8431,
+      "name": "TeammateIdleHookInput",
+      "status": "generated",
+      "rust": "TeammateIdleHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8605,
+      "name": "UserDialogResult",
+      "status": "generated",
+      "rust": "UserDialogResult"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8612,
+      "name": "UserPromptExpansionHookInput",
+      "status": "generated",
+      "rust": "UserPromptExpansionHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8621,
+      "name": "UserPromptExpansionHookSpecificOutput",
+      "status": "generated",
+      "rust": "UserPromptExpansionHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8630,
+      "name": "UserPromptSubmitHookInput",
+      "status": "generated",
+      "rust": "UserPromptSubmitHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8640,
+      "name": "UserPromptSubmitHookSpecificOutput",
+      "status": "generated",
+      "rust": "UserPromptSubmitHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8669,
+      "name": "WorktreeCreateHookInput",
+      "status": "generated",
+      "rust": "WorktreeCreateHookInput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8677,
+      "name": "WorktreeCreateHookSpecificOutput",
+      "status": "generated",
+      "rust": "WorktreeCreateHookSpecificOutput"
+    },
+    {
+      "source": "sdk.d.ts",
+      "line": 8682,
+      "name": "WorktreeRemoveHookInput",
+      "status": "generated",
+      "rust": "WorktreeRemoveHookInput"
+    }
+  ],
+  "generatedTypes": 844,
+  "openJsonSlots": [
+    {
+      "path": "ElicitationResultExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "PermissionDeniedHookInput_tool_input",
+      "source": "unknown"
+    },
+    {
+      "path": "PermissionRequestHookInput_tool_input",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolBatchToolCall_tool_input",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolBatchToolCall_tool_response",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolUseFailureHookInput_tool_input",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolUseHookInput_tool_input",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolUseHookInput_tool_response",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolUseHookSpecificOutput_updatedToolOutput",
+      "source": "unknown"
+    },
+    {
+      "path": "PostToolUseHookSpecificOutput_updatedMCPToolOutput",
+      "source": "unknown"
+    },
+    {
+      "path": "PreToolUseHookInput_tool_input",
+      "source": "unknown"
+    },
+    {
+      "path": "SDKResultSuccess_structured_output",
+      "source": "unknown"
+    },
+    {
+      "path": "SDKUserMessage_tool_use_result",
+      "source": "unknown"
+    },
+    {
+      "path": "SDKUserMessageReplay_tool_use_result",
+      "source": "unknown"
+    },
+    {
+      "path": "SDKUserMessageReplay_file_attachmentsItem",
+      "source": "unknown"
+    },
+    {
+      "path": "Record2Extra",
+      "source": "unknown"
+    },
+    {
+      "path": "ElicitationResult_metaExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "UserDialogResultVariant0_result",
+      "source": "unknown"
+    },
+    {
+      "path": "BetaMCPToolUseBlock_input",
+      "source": "unknown"
+    },
+    {
+      "path": "BetaToolUseBlock_input",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant0_paramsExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant1_resultExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant2_paramsExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant3_error_data",
+      "source": "unknown"
+    },
+    {
+      "path": "BetaServerToolUseBlock_inputExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant0_params_metaExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant1_result_metaExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "JSONRPCMessageVariant2_params_metaExtra",
+      "source": "unknown"
+    },
+    {
+      "path": "ToolUseBlockParam_input",
+      "source": "unknown"
+    },
+    {
+      "path": "ServerToolUseBlockParam_input",
+      "source": "unknown"
+    }
+  ]
+}
