@@ -1246,6 +1246,22 @@ impl WindowSelectionState {
         if !self.is_selecting {
             return;
         }
+        // Match GPUI's drag threshold so pointer jitter during a click does not
+        // create a selection and suppress link activation. Apply this only
+        // while the selection is empty, preserving shifts and existing drags.
+        if let Some(anchor) = self
+            .anchor
+            .as_ref()
+            .and_then(|anchor| anchor.resolve(&self.participants))
+            && self
+                .cursor
+                .as_ref()
+                .and_then(|cursor| cursor.resolve(&self.participants))
+                == Some(anchor)
+            && (position - anchor).magnitude() <= 2.0
+        {
+            return;
+        }
         let endpoint = self.endpoint(position, window, cx);
         self.did_hit_text |= endpoint.inside_text;
         self.cursor = Some(endpoint);

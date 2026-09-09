@@ -113,6 +113,70 @@ fn wheel_events_coalesce_until_the_next_layout(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn web_link_opens_despite_pointer_jitter(cx: &mut TestAppContext) {
+    check_transcript_link_gesture(cx, 1.0, true);
+}
+
+#[gpui::test]
+fn dragging_link_selects_text_without_opening_browser(cx: &mut TestAppContext) {
+    check_transcript_link_gesture(cx, 35.0, false);
+}
+
+fn check_transcript_link_gesture(cx: &mut TestAppContext, movement: f32, opens: bool) {
+    struct LinkRow(
+        TranscriptListState,
+        gpui::Entity<gpui_component::text::TextViewState>,
+    );
+
+    impl Render for LinkRow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let text = self.1.clone();
+            div()
+                .w(px(240.))
+                .h(px(100.))
+                .child(gpui_base::TextSelectionLayer)
+                .child(transcript_list_grouped(
+                    self.0.clone(),
+                    |index| index,
+                    |_| String::new(),
+                    move |_, _, _| {
+                        gpui_component::text::TextView::new(&text)
+                            .selectable(true)
+                            .focusable(false)
+                            .into_any_element()
+                    },
+                ))
+        }
+    }
+
+    cx.update(gpui_component::init);
+    let (_, cx) = cx.add_window_view(|_, cx| {
+        LinkRow(
+            state_with_rows(1),
+            cx.new(|cx| {
+                gpui_component::text::TextViewState::markdown("[example](https://example.com)", cx)
+            }),
+        )
+    });
+    let start = point(px(10.), px(10.));
+    let end = point(px(10. + movement), px(10.));
+    cx.simulate_mouse_down(start, MouseButton::Left, Default::default());
+    cx.simulate_mouse_move(end, Some(MouseButton::Left), Default::default());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.simulate_mouse_up(end, MouseButton::Left, Default::default());
+    assert_eq!(
+        cx.opened_url(),
+        opens.then(|| "https://example.com".to_owned())
+    );
+    cx.update(|window, cx| {
+        assert_eq!(
+            gpui_base::TextSelection::selected_text(window, cx).is_empty(),
+            opens
+        );
+    });
+}
+
+#[gpui::test]
 fn copy_resolves_highlight_within_a_message(cx: &mut TestAppContext) {
     struct TextRows(
         TranscriptListState,
