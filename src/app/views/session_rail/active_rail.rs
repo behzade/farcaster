@@ -13,11 +13,9 @@ use gpui_component::{
 use super::{
     FarcasterApp, active_item_identity,
     draft_row::{DraftRow, DraftRowInput},
-    groups::{
-        ActiveSessionItem, SessionRailKind, roots_waiting_for_descendants, session_rail_lists,
-    },
+    groups::{ActiveSessionItem, roots_waiting_for_descendants, session_rail_lists},
     reconcile_list_rows,
-    rendering::{inactive_rail_style, session_section_drop_target, subagent_counts},
+    rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label, session_badge},
     visible_session_shortcuts,
 };
@@ -62,6 +60,10 @@ impl FarcasterApp {
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
+        let last_active_row = active_rows
+            .last()
+            .map(|item| (active_entry_count - 1, item.app_session_id()));
+        let active_drop_list = session_list.clone();
         let session_shortcuts = visible_session_shortcuts(&active_rows);
         reconcile_list_rows(
             &session_list,
@@ -298,14 +300,15 @@ impl FarcasterApp {
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
                     .when(!archived_expanded, |lists| {
-                        lists.child(session_section_drop_target(
+                        lists.child(active_session_drop_target(
                             div()
                                 .id("active-session-drop-area")
                                 .flex_1()
                                 .min_h_0()
                                 .overflow_y_hidden()
                                 .child(active_list),
-                            SessionRailKind::Project,
+                            active_drop_list,
+                            last_active_row,
                             active_drop_entity,
                         ))
                     })

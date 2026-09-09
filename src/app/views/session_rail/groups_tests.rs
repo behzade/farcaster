@@ -58,6 +58,10 @@ fn reorder_uses_before_and_after_insertion_gaps() {
         Some(vec![3, 2, 4, 1])
     );
     assert_eq!(
+        reordered_session_ids(&[4, 3, 2, 1], 4, 1, ReorderPosition::After),
+        Some(vec![3, 2, 1, 4])
+    );
+    assert_eq!(
         reordered_session_ids(&[4, 3, 2, 1], 1, 3, ReorderPosition::Before),
         Some(vec![4, 1, 3, 2])
     );
