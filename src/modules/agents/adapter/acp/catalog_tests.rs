@@ -221,6 +221,8 @@ fn resume_history_uses_the_session_load_replay() {
         arguments: &["acp"],
         auth_method: Some("cursor_login"),
         force_argument: Some("--force"),
+        resume_method: "session/load",
+        permission_modes: None,
     };
     let history = discovered_history(
         &profile,

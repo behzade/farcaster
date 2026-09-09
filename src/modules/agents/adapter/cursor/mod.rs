@@ -17,6 +17,8 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
     arguments: &["acp"],
     auth_method: Some("cursor_login"),
     force_argument: Some("--force"),
+    resume_method: "session/load",
+    permission_modes: None,
 };
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {

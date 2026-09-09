@@ -241,7 +241,7 @@ fn spawn_catalog_child(
         ..AgentLaunchConfig::default()
     };
     let mut command = config.command(project)?;
-    configure_command(&mut command, profile, config.access_mode);
+    configure_command(&mut command, profile, config.access_mode)?;
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

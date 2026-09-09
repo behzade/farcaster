@@ -83,14 +83,8 @@ impl RuntimeOwner {
         }
     }
 
-    pub(super) fn backend_name(&self) -> &str {
-        match self.harness.as_str() {
-            "pi" => "Pi",
-            "codex-cli" => "Codex",
-            "cursor-cli" => "Cursor",
-            "opencode2" => "OpenCode",
-            other => other,
-        }
+    pub(super) fn backend_name(&self) -> String {
+        agents::backend_display_name(&self.harness)
     }
 
     pub(super) fn start_process(&mut self, session: Option<PathBuf>) {

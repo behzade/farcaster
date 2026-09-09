@@ -182,7 +182,7 @@ fn spawn_session(
     String,
 > {
     let mut prepared = command.command(project)?;
-    configure_command(&mut prepared, profile, command.access_mode);
+    configure_command(&mut prepared, profile, command.access_mode)?;
     let mut child = prepared
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -193,7 +193,7 @@ fn spawn_session(
     let AcpSetup {
         connection,
         session_id,
-        metadata,
+        mut metadata,
         config_ids,
         features,
         history,
@@ -202,9 +202,40 @@ fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(error);
+            return Err(format!(
+                "{} ACP setup failed: {error}. Check the installed runtime and its authentication before retrying.",
+                profile.name
+            ));
         }
     };
+    if let Some(mode) = profile.permission_mode(command.access_mode) {
+        let (method, params) = if let Some(id) = &config_ids.mode {
+            (
+                "session/set_config_option",
+                json!({"sessionId":session_id,"configId":id,"value":mode}),
+            )
+        } else {
+            (
+                "session/set_mode",
+                json!({"sessionId":session_id,"modeId":mode}),
+            )
+        };
+        if let Err(error) = connection.request_blocking(method, params) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "{} could not apply access mode: {error}",
+                profile.name
+            ));
+        }
+        if let Some(index) = metadata
+            .modes
+            .iter()
+            .position(|entry| entry.get("id").and_then(Value::as_str) == Some(mode))
+        {
+            metadata.modes.swap(0, index);
+        }
+    }
     Ok((
         AcpWorkerSession {
             profile: profile.clone(),
@@ -267,7 +298,7 @@ fn setup_connection(
     });
     let response = if let Some(session_id) = resume {
         connection.request_blocking(
-            "session/load",
+            profile.resume_method,
             merge(params, "sessionId", Value::String(session_id.into())),
         )?
     } else {
@@ -340,13 +371,17 @@ pub(in crate::modules::agents::adapter) fn configure_command(
     command: &mut std::process::Command,
     profile: &AcpProfile,
     access_mode: HarnessAccessMode,
-) {
+) -> Result<(), String> {
+    if profile.backend == "antigravity-acp" {
+        super::super::antigravity::configure(command)?;
+    }
     if access_mode == HarnessAccessMode::Full
         && let Some(argument) = profile.force_argument
     {
         command.arg(argument);
     }
     command.args(profile.arguments);
+    Ok(())
 }
 
 fn acp_mcp_servers(caller_token: Option<&str>) -> Vec<Value> {
@@ -1007,12 +1042,14 @@ impl WorkerSession for AcpWorkerSession {
 
     fn select_model(&mut self, _provider: &str, model: &str) -> Result<(), String> {
         let service_tier = self.config_ids.selected_service_tier.clone();
-        let config_id = self.config_ids.model.clone().ok_or_else(|| {
-            format!(
-                "{} did not advertise an ACP model option",
-                self.profile.name
-            )
-        })?;
+        let Some(config_id) = self.config_ids.model.clone() else {
+            self.request_and_wait(
+                "session/set_model",
+                json!({"sessionId":self.session_id,"modelId":model}),
+            )?;
+            self.config_ids.selected_model = Some(model.into());
+            return Ok(());
+        };
         let selection = self.config_ids.selections.get(model).cloned();
         let base = selection
             .as_ref()

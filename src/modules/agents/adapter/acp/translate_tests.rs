@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn grouped_and_legacy_models_preserve_the_selected_model() {
+    let (metadata, ids) = metadata_from_session(
+        &PROFILE,
+        &json!({"configOptions":[
+            {"id":"model","category":"model","currentValue":"second","options":[
+                {"group":"models","name":"Models","options":[{"value":"first","name":"First"},{"value":"second","name":"Second"}]}
+            ]}
+        ]}),
+    );
+    assert_eq!(metadata.models.len(), 2);
+    assert_eq!(metadata.models[0]["id"], "second");
+    assert_eq!(ids.model.as_deref(), Some("model"));
+    let (metadata, ids) = metadata_from_session(
+        &PROFILE,
+        &json!({"models":{
+            "currentModelId":"second","availableModels":[{"modelId":"first","name":"First"},{"modelId":"second","name":"Second"}]
+        }}),
+    );
+    assert_eq!(metadata.models[0]["id"], "second");
+    assert_eq!(ids.selected_model.as_deref(), Some("second"));
+    assert!(ids.model.is_none());
+}
+
 const PROFILE: AcpProfile = AcpProfile {
     backend: "test-acp",
     name: "Test ACP",
@@ -8,6 +32,8 @@ const PROFILE: AcpProfile = AcpProfile {
     arguments: &["acp"],
     auth_method: None,
     force_argument: Some("--force"),
+    resume_method: "session/load",
+    permission_modes: None,
 };
 
 #[test]

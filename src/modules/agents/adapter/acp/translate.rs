@@ -26,6 +26,31 @@ pub(super) fn metadata_from_session(
         .map(Vec::as_slice)
         .unwrap_or_default();
     let (mut metadata, mut ids) = metadata_from_options(profile, options);
+    if metadata.models.is_empty()
+        && let Some(models) = response
+            .pointer("/models/availableModels")
+            .and_then(Value::as_array)
+    {
+        metadata.models = models
+            .iter()
+            .filter_map(|model| {
+                let id = model.get("modelId")?.as_str()?;
+                Some(
+                    json!({"id":id,"name":model.get("name").and_then(Value::as_str).unwrap_or(id),
+                "provider":profile.backend,"contextWindow":0,"reasoning":false}),
+                )
+            })
+            .collect();
+        ids.selected_model = response
+            .pointer("/models/currentModelId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(index) = metadata.models.iter().position(|model| {
+            model.get("id").and_then(Value::as_str) == ids.selected_model.as_deref()
+        }) {
+            metadata.models.swap(0, index);
+        }
+    }
     if metadata.modes.is_empty()
         && let Some(modes) = response
             .pointer("/modes/availableModes")
@@ -93,12 +118,21 @@ pub(super) fn metadata_from_options(
     for option in options {
         let category = option.get("category").and_then(Value::as_str).unwrap_or("");
         let id = option.get("id").and_then(Value::as_str).unwrap_or("");
-        let values = option.get("options").and_then(Value::as_array);
+        let values = option
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|value| {
+                value
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_else(|| std::slice::from_ref(value))
+            });
         if category == "model" || id == "model" {
             ids.model = Some(id.into());
             metadata.models = values
-                .into_iter()
-                .flatten()
                 .filter_map(|value| {
                     let id = value.get("value")?.as_str()?;
                     Some(json!({
@@ -113,8 +147,6 @@ pub(super) fn metadata_from_options(
         } else if category == "mode" || id == "mode" {
             ids.mode = Some(id.into());
             metadata.modes = values
-                .into_iter()
-                .flatten()
                 .filter_map(|value| {
                     let id = value.get("value")?.as_str()?;
                     Some(json!({
@@ -131,8 +163,6 @@ pub(super) fn metadata_from_options(
         {
             ids.effort = Some(id.into());
             metadata.efforts = values
-                .into_iter()
-                .flatten()
                 .filter_map(|value| value.get("value")?.as_str().map(str::to_owned))
                 .collect();
         }

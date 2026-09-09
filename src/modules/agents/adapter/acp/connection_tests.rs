@@ -55,6 +55,8 @@ mod exchange {
         arguments: &["acp"],
         auth_method: Some("login"),
         force_argument: None,
+        resume_method: "session/load",
+        permission_modes: None,
     };
 
     struct Peer(std::io::BufReader<UnixStream>);

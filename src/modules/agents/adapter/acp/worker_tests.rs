@@ -1,5 +1,104 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn external_acp_processes_apply_access_prompt_cancel_and_resume() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    const SCRIPT: &str = r#"#!/bin/sh
+reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$1"; }
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) reply '{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
+    *'"method":"authenticate"'*) reply '{}' ;;
+    *'"method":"session/new"'*|*'"method":"session/load"'*|*'"method":"session/resume"'*)
+      reply '{"sessionId":"one","configOptions":[{"id":"model","category":"model","currentValue":"base","options":[{"value":"base","name":"Base"}]},{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"bypassPermissions"},{"value":"yolo"}]}]}' ;;
+    *'"method":"session/set_mode"'*|*'"method":"session/set_config_option"'*) reply '{}' ;;
+    *'"method":"session/prompt"'*)
+      prompt_id=$id
+      case "$line" in
+        *'hold'*) ;;
+        *) printf '%s\n' '{"jsonrpc":"2.0","id":"approval","method":"session/request_permission","params":{"sessionId":"one","toolCall":{"toolCallId":"tool","title":"Read fixture","kind":"read","status":"pending"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Decline","kind":"reject_once"}]}}' ;;
+      esac ;;
+    *'"id":"approval"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"one","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fixture ok"}}}}'
+      id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
+    *'"method":"session/cancel"'*) id=$prompt_id; reply '{"stopReason":"cancelled"}' ;;
+    *'"method":"session/close"'*) reply '{}'; exit 0 ;;
+    *) exit 2 ;;
+  esac
+done
+"#;
+    fn settle(session: &mut AcpWorkerSession) -> (String, usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut approvals = 0;
+        while Instant::now() < deadline {
+            match session.poll() {
+                Some(WorkerEvent::NeedsInput(input)) => {
+                    approvals += 1;
+                    session
+                        .respond(WorkerInputResponse {
+                            id: input.id,
+                            value: Some("Allow".into()),
+                            cancel: false,
+                        })
+                        .unwrap();
+                }
+                Some(WorkerEvent::Settled { output }) => return (output, approvals),
+                Some(WorkerEvent::Failed(error)) => panic!("{error}"),
+                _ => thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        panic!("fixture did not settle");
+    }
+    for profile in [
+        &super::super::super::claude::PROFILE,
+        &super::super::super::antigravity::PROFILE,
+    ] {
+        for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
+            let project = tempfile::tempdir().unwrap();
+            let executable = project.path().join("agent");
+            std::fs::write(&executable, SCRIPT).unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::write(project.path().join("localharness_external"), "fixture").unwrap();
+            let command = AgentLaunchConfig {
+                program: executable.clone(),
+                prefix_args: vec![],
+                access_mode,
+                app_proxy: None,
+                session_locator_root: None,
+            };
+            let (mut session, metadata, _) =
+                spawn_session(&command, profile, project.path(), None, None, None).unwrap();
+            assert_eq!(
+                metadata.modes[0]["id"],
+                profile.permission_mode(access_mode).unwrap()
+            );
+            session
+                .send("hello".into(), WorkerSendMode::Prompt)
+                .unwrap();
+            assert_eq!(settle(&mut session), ("fixture ok".into(), 1));
+            session.send("hold".into(), WorkerSendMode::Prompt).unwrap();
+            session.abort().unwrap();
+            assert_eq!(settle(&mut session).1, 0);
+            session.close().unwrap();
+            assert!(session.child.try_wait().unwrap().is_some());
+            let (mut resumed, _, _) =
+                spawn_session(&command, profile, project.path(), Some("one"), None, None).unwrap();
+            resumed.close().unwrap();
+            let requests = std::fs::read_to_string(executable.with_extension("requests")).unwrap();
+            assert!(requests.contains(profile.resume_method));
+            assert_eq!(
+                requests.contains("authenticate"),
+                profile.auth_method.is_some()
+            );
+            assert!(requests.contains(profile.permission_mode(access_mode).unwrap()));
+        }
+    }
+}
+
 const PROFILE: AcpProfile = AcpProfile {
     backend: "test-acp",
     name: "Test ACP",
@@ -8,6 +107,8 @@ const PROFILE: AcpProfile = AcpProfile {
     arguments: &["acp"],
     auth_method: None,
     force_argument: Some("--force"),
+    resume_method: "session/load",
+    permission_modes: None,
 };
 
 #[cfg(unix)]
@@ -151,7 +252,7 @@ fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
 #[test]
 fn full_access_uses_the_profile_escape_hatch() {
     let mut command = std::process::Command::new("agent");
-    configure_command(&mut command, &PROFILE, HarnessAccessMode::Full);
+    configure_command(&mut command, &PROFILE, HarnessAccessMode::Full).unwrap();
     assert_eq!(
         command
             .get_args()
