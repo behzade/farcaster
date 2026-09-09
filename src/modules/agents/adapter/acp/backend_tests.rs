@@ -1,12 +1,11 @@
 use super::*;
-use crate::modules::agents::adapter::{
-    self, antigravity::PROFILE as ANTIGRAVITY, claude::PROFILE as CLAUDE,
-};
+use crate::modules::agents::adapter::{self, antigravity::PROFILE as ANTIGRAVITY};
+use std::path::Path;
 
 #[test]
 fn external_agents_have_registered_workers_and_valid_session_identities() {
     let (workers, _) = adapter::worker_factories(crate::agents::AgentLaunchConfig::default());
-    for profile in [&CLAUDE, &ANTIGRAVITY] {
+    for profile in [&ANTIGRAVITY] {
         assert!(workers.contains_key(profile.backend));
         let descriptor = adapter::known_backend_descriptors()
             .into_iter()

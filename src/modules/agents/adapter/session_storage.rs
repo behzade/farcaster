@@ -13,7 +13,7 @@ pub(super) fn validate_session_locator(harness: &str, path: &Path) -> Result<(),
 fn validated_locator(harness: &str, path: &Path) -> Result<Option<String>, String> {
     match harness {
         "pi" => pi::session_files::validate_session_file(path).map(|_| None),
-        "codex-cli" | "cursor-cli" | "opencode2" | "claude-acp" | "antigravity-acp" => {
+        "codex-cli" | "cursor-cli" | "opencode2" | "claude" | "antigravity-acp" => {
             external_session_locator(harness, path)
                 .map(Some)
                 .ok_or_else(|| format!("session locator does not belong to {harness}"))
@@ -94,7 +94,7 @@ pub(crate) fn delete_session_family(
     }
     for target in targets {
         validate_session_target(target)?;
-        if super::external_acp_profile(&target.harness).is_some() {
+        if target.harness == "claude" || super::external_acp_profile(&target.harness).is_some() {
             return Err(format!(
                 "Session deletion is not supported for {}",
                 target.harness
@@ -130,7 +130,7 @@ pub(crate) fn load_session_history(harness: &str, path: &Path) -> Result<LoadedH
                 "Antigravity ACP does not expose history replay through this adapter".into(),
             );
         }
-        "claude-acp" => super::acp::backend::load_history(&super::claude::PROFILE, path)?,
+        "claude" => super::claude::load_history(path)?,
         _ => return Err(format!("unsupported session harness: {harness}")),
     };
     Ok(LoadedHistory {

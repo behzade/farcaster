@@ -53,10 +53,7 @@ done
         }
         panic!("fixture did not settle");
     }
-    for profile in [
-        &super::super::super::claude::PROFILE,
-        &super::super::super::antigravity::PROFILE,
-    ] {
+    for profile in [&super::super::super::antigravity::PROFILE] {
         for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
             let project = tempfile::tempdir().unwrap();
             let executable = project.path().join("agent");

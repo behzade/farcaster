@@ -3,8 +3,24 @@
 `crates/claude-sdk-types` contains Rust JSON types for the Claude CLI's streaming
 stdin/stdout protocol, derived from Claude Agent SDK
 `0.3.257`, which reports Claude Code `2.1.257`. It is a standalone crate with only
-Serde dependencies. Farcaster still uses ACP; this change does not add a direct
-Claude worker, launch Claude, read credentials, or change authentication.
+Serde dependencies. Farcaster's `claude` adapter uses these types to run the
+regular Claude CLI with `-p` and bidirectional streaming JSON. It resolves
+`FARCASTER_CLAUDE_PATH` (default: `claude`) in the project environment and leaves
+authentication to Claude. It does not use `claude-agent-acp` or migrate saved
+`claude-acp` session identities.
+
+The adapter initializes and selects models, effort and permission modes through
+typed control messages. It streams text, thinking and tool results, queues prompts
+locally, and answers tool approvals over stdin. Full access requires the explicit
+full-access launch setting. Main sessions receive the Farcaster MCP caller token;
+child sessions do not. Catalog probes initialize an unpersisted process without
+sending a prompt. History and session discovery read native JSONL files without
+starting Claude or changing those files.
+
+Fork, rename, move, delete, steering, native notifications and interactive question tools are not
+supported. Unsupported control requests receive an error; unsupported interactive
+tools receive a denial. This backend uses a new `claude` identity, so it does not
+need to preserve ACP test-session compatibility.
 
 The source reference is
 <https://github.com/anthropics/claude-agent-sdk-typescript>, cloned at
@@ -48,14 +64,18 @@ decode/encode round trip, while unknown enum values fail to decode.
 Structural unions try more specific shapes first. This matters for user replay
 messages, whose shape extends ordinary user messages. Some SDK unions have
 overlapping shapes without a discriminator; Rust cannot infer an intent that the
-source type does not express. A future adapter must retain raw input when decoding
-fails and handle version drift without losing a session. These bindings follow
+source type does not express. The adapter reports decoding failures and leaves
+native session files intact for recovery. The adapter ignores `command_lifecycle` native
+queue-status frames, which the SDK documents on `SDKControlInterruptRequest`
+but omits from `StdoutMessage`. Farcaster queues prompts locally; it does not
+use those frames for turn completion or permission decisions. All other frames
+still go through the typed decoder. These bindings follow
 the declarations strictly; they do not prove that every CLI version emits exactly
 those declarations.
 
 Tool arguments remain untrusted data. A `Read` tool-use message can carry
-`{"file_path":905}` because the SDK types its input as unknown. A future adapter
-must check path values before using them. It does not need every built-in tool's
+`{"file_path":905}` because the SDK types its input as unknown. The adapter checks
+path values before using them. It does not need every built-in tool's
 input/output schema to exchange messages with Claude. A malformed tool argument
 must not prevent it from accepting the surrounding message.
 
@@ -96,6 +116,7 @@ Use the active Cargo target directory:
 ```sh
 cargo test --manifest-path crates/claude-sdk-types/Cargo.toml --offline
 cargo fmt --manifest-path crates/claude-sdk-types/Cargo.toml -- --check
+cargo test --bin farcaster modules::agents::adapter::claude --offline
 git diff --check
 ```
 
@@ -104,4 +125,8 @@ partial JSON, assistant tool use, and result usage. Rust tests
 also check absent/null distinctions, literal validation, extra fields, and
 malformed control-request paths. Regeneration follows only the selected protocol
 roots. This is declaration and serialization coverage, not live CLI
-or Farcaster UI coverage.
+or Farcaster UI coverage. Adapter tests use a local shell fixture for initialization,
+permissions, streaming, queueing, interrupt, process failure, configuration and
+resume launch; they do not call Claude or a model API. Storage tests cover branch
+selection, preserved compaction segments, bounded catalog reads and partial final
+records.

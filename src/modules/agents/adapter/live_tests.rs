@@ -30,7 +30,7 @@ const LIVE_HARNESSES: [&str; 6] = [
     "codex-cli",
     "cursor-cli",
     "opencode2",
-    "claude-acp",
+    "claude",
     "antigravity-acp",
 ];
 const TEST_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4EKBBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULACvxoEydbL2eAAAAAElFTkSuQmCC";

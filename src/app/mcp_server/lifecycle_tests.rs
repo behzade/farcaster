@@ -21,7 +21,7 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
     let caller = crate::agents::CallerRegistry::shared().issue(
         project.path(),
         crate::agents::CallerProfile {
-            backend: "claude-acp".into(),
+            backend: "claude".into(),
             provider: None,
             model: None,
             effort: None,

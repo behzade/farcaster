@@ -467,6 +467,7 @@ pub(crate) struct AgentBackendDescriptor {
 pub(crate) struct AgentBackendStatus {
     pub id: String,
     pub name: String,
+    pub program: std::path::PathBuf,
     pub available: bool,
     pub capabilities: AgentCapabilities,
 }

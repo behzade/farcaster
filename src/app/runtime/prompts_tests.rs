@@ -6,7 +6,7 @@ const HARNESSES: [&str; 6] = [
     "pi",
     "opencode2",
     "cursor-cli",
-    "claude-acp",
+    "claude",
     "antigravity-acp",
 ];
 

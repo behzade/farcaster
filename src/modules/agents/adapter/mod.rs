@@ -30,7 +30,6 @@ pub(crate) use shell_environment::{app_shell_environment, default_login_shell};
 
 fn external_acp_profile(harness: &str) -> Option<&'static acp::AcpProfile> {
     match harness {
-        "claude-acp" => Some(&claude::PROFILE),
         "antigravity-acp" => Some(&antigravity::PROFILE),
         _ => None,
     }
@@ -43,7 +42,7 @@ pub(crate) fn supported_access_modes(harness: &str) -> &'static [crate::agents::
         "codex-cli" => &[Sandboxed, Auto, Full],
         "cursor-cli" => &[Sandboxed, Full],
         "opencode2" => &[Sandboxed, Full],
-        "claude-acp" | "antigravity-acp" => &[Sandboxed, Full],
+        "claude" | "antigravity-acp" => &[Sandboxed, Full],
         _ => &[Full],
     }
 }
@@ -97,6 +96,7 @@ fn launch_configuration(
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "codex".into()),
         "cursor-cli" => cursor::PROFILE.program(),
+        "claude" => claude::program(),
         "opencode2" => std::env::var_os("FARCASTER_OPENCODE_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "opencode2".into()),
@@ -143,14 +143,19 @@ pub(crate) fn worker_factories(
             std::sync::Arc::new(opencode::OpenCodeWorkerFactory::new(opencode_config)) as _,
         ),
     ]);
-    for profile in [&claude::PROFILE, &antigravity::PROFILE] {
-        let mut command = config.clone();
-        command.program = profile.program();
-        factories.insert(
-            profile.backend.into(),
-            std::sync::Arc::new(acp::AcpWorkerFactory::new(command, profile.clone())) as _,
-        );
-    }
+    let mut claude_config = config.clone();
+    claude_config.program = claude::program();
+    factories.insert(
+        claude::BACKEND.into(),
+        std::sync::Arc::new(claude::ClaudeWorkerFactory::new(claude_config)) as _,
+    );
+    let profile = &antigravity::PROFILE;
+    let mut command = config;
+    command.program = profile.program();
+    factories.insert(
+        profile.backend.into(),
+        std::sync::Arc::new(acp::AcpWorkerFactory::new(command, profile.clone())) as _,
+    );
     (factories, default_backend)
 }
 
@@ -168,6 +173,10 @@ pub(crate) fn load_configuration_catalog(
         "opencode2" => {
             let command = launch_configuration(config, harness)?;
             opencode::load_configuration(&command, project).and_then(configuration_catalog)
+        }
+        "claude" => {
+            let command = launch_configuration(config, harness)?;
+            claude::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "pi" => load_pi_configuration(config, project),
         _ => {
@@ -309,17 +318,28 @@ pub(crate) fn spawn_session(
         )
         .map(|transport| Box::new(transport) as _);
     }
-    if launch.harness == "opencode2" {
-        let history = launch_history(&launch, opencode::load_history)?;
+    if matches!(launch.harness.as_str(), "opencode2" | "claude") {
+        let history = launch_history(
+            &launch,
+            if launch.harness == "claude" {
+                claude::load_history
+            } else {
+                opencode::load_history
+            },
+        )?;
         let command = launch_configuration(config, &launch.harness)?;
-        let (worker, locator, metadata) = opencode::spawn_main(&command, &launch)?;
+        let (worker, locator, metadata) = if launch.harness == "claude" {
+            claude::spawn_main(&command, &launch)?
+        } else {
+            opencode::spawn_main(&command, &launch)?
+        };
         let locator_root = config
             .session_locator_root
             .as_deref()
             .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
         return main_session::WorkerSessionTransport::new(
             locator_root,
-            "opencode2",
+            &launch.harness,
             locator,
             worker,
             metadata,
@@ -380,9 +400,9 @@ pub(crate) fn rename_session(
 }
 
 pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(&'static str, String)> {
-    for profile in [&claude::PROFILE, &antigravity::PROFILE] {
-        if let Some(locator) = main_session::external_session_locator(profile.backend, path) {
-            return Some((profile.backend, locator));
+    for backend in [claude::BACKEND, antigravity::PROFILE.backend] {
+        if let Some(locator) = main_session::external_session_locator(backend, path) {
+            return Some((backend, locator));
         }
     }
     if let Some(locator) = main_session::external_session_locator("codex-cli", path) {
@@ -417,7 +437,7 @@ pub(crate) fn discover_external_sessions_for(
         "cursor-cli" => cursor::discover(locator_root, query),
         "opencode2" => opencode::discover(locator_root, query),
         "antigravity-acp" => Ok(Vec::new()),
-        "claude-acp" => acp::backend::discover(&claude::PROFILE, locator_root, query),
+        "claude" => claude::discover(locator_root, query),
         _ => Err(format!("unsupported session harness: {harness}")),
     }
 }
@@ -439,7 +459,7 @@ pub(crate) fn load_external_history(
         "antigravity-acp" => {
             Err("Antigravity ACP does not expose history replay through this adapter".into())
         }
-        "claude-acp" => acp::backend::load_history(&claude::PROFILE, path),
+        "claude" => claude::load_history(path),
         _ => unreachable!("external session identity returned an unknown backend"),
     })
 }
@@ -490,7 +510,7 @@ pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
             codex_program,
             cursor_program,
             opencode_program,
-            claude::PROFILE.program(),
+            claude::program(),
             antigravity::PROFILE.program(),
         ])
         .map(
@@ -498,6 +518,7 @@ pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
                 id: descriptor.id.as_str().to_owned(),
                 name: descriptor.name,
                 available: program_available(&program),
+                program,
                 capabilities: descriptor.capabilities,
             },
         )
