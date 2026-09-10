@@ -23,6 +23,7 @@ mod+shift+m -> set provider/model/effort
 mod+shift+h -> set harness (unsubmitted draft)
 mod+shift+a -> restore session
 mod+shift+p -> open action picker
+mod+j/k -> prev/next session
 ```
 
 Workspace shortcuts use the same letters as the leader commands:

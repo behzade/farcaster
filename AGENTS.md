@@ -1,6 +1,6 @@
 # Agent Instructions
 
-Never edit `README.md` unless the user explicitly asks for README changes.
+Never edit `README.md` or any user facing file in `docs` unless explicitly requesed by the user.
 
 Keep Farcaster backend-neutral above its protocol adapters. Pi-specific session,
 transport, trust, and extension behavior belongs behind the Pi backend boundary.
