@@ -267,6 +267,9 @@ impl RuntimeOwner {
                         annotate_history_presentations(Some(state), session, &mut messages);
                     }
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
+                    // The replacement removed the local row. Let deferred delivery
+                    // restore it after history and state have both loaded.
+                    self.pending_prompt_item = None;
                 }
                 self.startup_history_loaded = true;
                 self.publish_session_metadata();
