@@ -373,8 +373,7 @@ fn normal_replay_waits_for_compaction_retry_or_pending_input() -> Result<(), Str
 }
 
 #[test]
-#[ignore = "audit regression: outbox must wait for native backend acknowledgement"]
-fn bridge_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), String> {
+fn unrelated_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
@@ -394,7 +393,7 @@ fn bridge_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), Strin
     );
     let request_id = owner.pending_prompt_id.clone().expect("prompt request");
     owner.apply_process_item(SessionEvent::Response(prompt_response(
-        &request_id,
+        "unrelated-request",
         PromptMode::Normal,
         true,
     )));
@@ -405,15 +404,23 @@ fn bridge_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), Strin
             row.get::<_, i64>(0)
         })
         .map_err(|error| error.to_string())?;
+    assert_eq!(rows, 1, "an unrelated response must not delete a prompt");
+    owner.apply_process_item(SessionEvent::Response(prompt_response(
+        &request_id,
+        PromptMode::Normal,
+        true,
+    )));
+    let rows: i64 = connection
+        .query_row("SELECT COUNT(*) FROM outbox", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
     assert_eq!(
-        rows, 1,
-        "a bridge-level response must not delete a prompt before a native acknowledgement"
+        rows, 0,
+        "the matching native acknowledgement completes the prompt"
     );
     Ok(())
 }
 
 #[test]
-#[ignore = "audit regression: unresolved prompts must block session deletion and moves"]
 fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
@@ -434,5 +441,54 @@ fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
         store.has_queued_prompts_for(&[path])?,
         "a sending row can still lack a native outcome and must guard deletion or moves"
     );
+    Ok(())
+}
+
+#[test]
+fn failed_acknowledgement_commit_retains_prompt_and_reports_failure() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    store.enqueue_prompt(
+        "draft:ack",
+        "pi",
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "keep me",
+        &[],
+    )?;
+    let prompt = store.queued_prompts()?.remove(0);
+    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_ack BEFORE INSERT ON session_events
+        BEGIN SELECT RAISE(ABORT, 'ack storage failed'); END;",
+        )
+        .map_err(|error| error.to_string())?;
+    let (mut owner, events) = owner_without_process(temp.path().to_owned());
+    owner.process = Some(Box::new(Recorder::default()));
+    owner.state = Some(store);
+    owner.active_session = Some(temp.path().join("resumed-session"));
+    owner.snapshot.session = Some(empty_session());
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.deliver_queued(prompt);
+    owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
+    let (message, state): (String, String) = connection
+        .query_row("SELECT message, state FROM outbox", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|error| error.to_string())?;
+    assert_eq!(message, "keep me");
+    assert_eq!(state, "failed");
+    let results = events
+        .try_iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::PromptResult { accepted, .. } => Some(accepted),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results, [false]);
     Ok(())
 }

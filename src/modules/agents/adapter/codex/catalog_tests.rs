@@ -307,3 +307,18 @@ fn translates_historical_file_changes_and_web_searches() {
         Some(&json!("Codex app-server"))
     );
 }
+
+#[test]
+fn reload_preserves_image_only_user_messages() {
+    let messages = history_messages(&json!({
+        "type":"userMessage", "content":[
+            {"type":"image", "url":"data:image/png;base64,aGVsbG8="}
+        ]
+    }));
+    assert_eq!(
+        messages,
+        vec![json!({"role":"user", "content":[
+            {"type":"image", "mimeType":"image/png", "data":"aGVsbG8="}
+        ]})]
+    );
+}

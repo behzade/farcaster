@@ -124,6 +124,7 @@ pub(crate) struct PiRpcProcess {
     stderr: String,
     parent_session: Option<String>,
     pending_parent_stamp: Option<PathBuf>,
+    expected_resume: Option<PathBuf>,
 }
 
 impl PiRpcProcess {
@@ -290,6 +291,10 @@ impl PiRpcProcess {
             stderr: String::new(),
             parent_session,
             pending_parent_stamp: None,
+            expected_resume: match launch {
+                SessionLaunch::Resume(path) => Some(crate::sessions::normalize_session_path(path)),
+                _ => None,
+            },
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
         Ok(rpc)
@@ -605,14 +610,27 @@ impl PiRpcProcess {
                 }
                 if response.success
                     && response.operation == crate::agents::SessionOperation::LoadState
-                    && let Some(session) = response.data["sessionFile"].as_str()
-                    // An inherited worker resumes the parent before forking it.
-                    && self.parent_session.as_deref() != Some(session)
                 {
-                    self.caller_identity.bind(session);
-                    if self.parent_session.is_some() {
-                        self.pending_parent_stamp = Some(PathBuf::from(session));
-                        self.retry_parent_stamp();
+                    let session = response.data["sessionFile"].as_str();
+                    if let Some(expected) = self.expected_resume.take() {
+                        let actual = session
+                            .map(|path| crate::sessions::normalize_session_path(Path::new(path)));
+                        if actual.as_ref() != Some(&expected) {
+                            return SessionEvent::Failure(format!(
+                                "Pi did not resume the requested session: {}",
+                                expected.display()
+                            ));
+                        }
+                    }
+                    if let Some(session) = session
+                        // An inherited worker resumes the parent before forking it.
+                        && self.parent_session.as_deref() != Some(session)
+                    {
+                        self.caller_identity.bind(session);
+                        if self.parent_session.is_some() {
+                            self.pending_parent_stamp = Some(PathBuf::from(session));
+                            self.retry_parent_stamp();
+                        }
                     }
                 }
                 SessionEvent::Response(response)

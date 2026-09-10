@@ -224,7 +224,7 @@ impl StateStore {
                     "SELECT EXISTS(
                        SELECT 1 FROM outbox o
                        JOIN sessions s ON s.id = o.session_id
-                      WHERE s.locator=?1 AND o.state='queued'
+                      WHERE s.locator=?1 AND o.state IN ('queued','sending')
                      )",
                     [locator.to_string_lossy()],
                     |row| row.get::<_, bool>(0),
@@ -243,7 +243,7 @@ impl StateStore {
             .prepare(
                 "SELECT s.locator FROM outbox o
                    JOIN sessions s ON s.id=o.session_id
-                  WHERE o.state='queued' AND s.locator IS NOT NULL",
+                  WHERE o.state IN ('queued','sending') AND s.locator IS NOT NULL",
             )
             .map_err(|error| format!("prepare legacy queued locator index: {error}"))?;
         let locators = statement

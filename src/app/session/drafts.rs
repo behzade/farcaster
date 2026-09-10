@@ -205,6 +205,7 @@ impl FarcasterApp {
             id,
             app_session_id,
             &self.project,
+            &self.snapshot.harness,
             has_content,
         );
         if changed {
@@ -229,6 +230,7 @@ impl FarcasterApp {
             let app_session_id = self.draft_session_ids.get(id).copied().unwrap_or_default();
             let mut draft = DraftSession::with_id(id.to_owned(), self.project.clone());
             draft.app_session_id = app_session_id;
+            draft.harness.clone_from(&self.snapshot.harness);
             self.drafts.insert(0, draft);
         }
         let draft = self
@@ -435,6 +437,7 @@ fn sync_materialized_draft(
     id: &str,
     app_session_id: i64,
     project: &std::path::Path,
+    harness: &str,
     has_content: bool,
 ) -> bool {
     let existing = drafts.iter().position(|draft| draft.id == id);
@@ -442,6 +445,7 @@ fn sync_materialized_draft(
         (None, true) => {
             let mut draft = DraftSession::with_id(id.to_owned(), project.to_path_buf());
             draft.app_session_id = app_session_id;
+            draft.harness = harness.to_owned();
             drafts.insert(0, draft);
             true
         }

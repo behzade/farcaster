@@ -197,3 +197,16 @@ fn server_requests_can_be_answered_without_normalizing_them() -> Result<(), Stri
     );
     Ok(())
 }
+
+#[test]
+fn resume_rejects_an_acknowledgement_for_a_different_thread() {
+    let input =
+        json!({"id":1,"result":{"thread":{"id":"wrong","cwd":"/project"}}}).to_string() + "\n";
+    let mut connection = CodexConnection::new(BufReader::new(Cursor::new(input)), Vec::<u8>::new());
+    assert!(
+        connection
+            .resume_thread("expected", HarnessAccessMode::Sandboxed)
+            .unwrap_err()
+            .contains("different thread")
+    );
+}

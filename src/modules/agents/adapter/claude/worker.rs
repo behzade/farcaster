@@ -365,7 +365,10 @@ impl ClaudeSession {
                 self.prompt_acks.push_back((ack, Ok(())));
             }
         }
-        if frame["type"] == "result" && self.active {
+        if frame["type"] == "result"
+            && self.active
+            && frame["session_id"].as_str() == Some(self.id.as_str())
+        {
             if let Some(ack) = self
                 .active_uuid
                 .as_ref()

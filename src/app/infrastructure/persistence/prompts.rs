@@ -171,6 +171,43 @@ impl StateStore {
             .collect()
     }
 
+    pub(crate) fn accepted_prompt_history(
+        &self,
+        session: &Path,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        #[derive(serde::Deserialize)]
+        struct AcceptedPrompt {
+            message: String,
+            images: Vec<super::images::StoredImage>,
+        }
+
+        let locator = crate::sessions::normalize_session_path(session);
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT e.body FROM session_events e JOIN sessions s ON s.id=e.session_id
+                  WHERE s.locator=?1 AND json_extract(e.body,'$.type')='accepted_prompt'
+                  ORDER BY e.seq",
+            )
+            .map_err(|error| format!("read accepted prompts: {error}"))?;
+        let rows = statement
+            .query_map([locator.to_string_lossy()], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("query accepted prompts: {error}"))?;
+        rows.map(|row| {
+            let body = row.map_err(|error| error.to_string())?;
+            let prompt: AcceptedPrompt = serde_json::from_str(&body)
+                .map_err(|error| format!("decode accepted prompt: {error}"))?;
+            let mut content = vec![serde_json::json!({"type":"text", "text":prompt.message})];
+            for image in prompt.images {
+                content.push(serde_json::json!(
+                    self.decode_prompt_image(image)?.into_inline()?
+                ));
+            }
+            Ok(serde_json::json!({"role":"user", "content":content}))
+        })
+        .collect()
+    }
+
     pub(crate) fn complete_prompt(
         &mut self,
         id: i64,
@@ -213,6 +250,18 @@ impl StateStore {
               WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
             [id],
         ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
+        // Transport acceptance can precede durable backend history. Keep the payload
+        // before removing it from the delivery queue, including image-only prompts.
+        transaction.execute(
+            "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+             SELECT o.session_id,
+                    (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                    o.created_ms, 1,
+                    json_object('type','accepted_prompt','message',o.message,
+                                'images',json(o.images_json))
+               FROM outbox o WHERE o.id=?1",
+            [id],
+        ).map_err(|error| format!("save accepted prompt {id}: {error}"))?;
         transaction
             .execute("DELETE FROM outbox WHERE id=?1", [id])
             .map_err(|error| format!("complete queued prompt {id}: {error}"))?;

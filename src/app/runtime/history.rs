@@ -257,10 +257,22 @@ impl RuntimeOwner {
 pub(super) fn annotate_history_presentations(
     state: Option<&StateStore>,
     session: &std::path::Path,
-    messages: &mut [Value],
+    messages: &mut Vec<Value>,
 ) {
     let Some(state) = state else { return };
+    if messages.is_empty() {
+        match state.accepted_prompt_history(session) {
+            Ok(saved) => messages.extend(saved),
+            Err(error) => {
+                zlog::error!("Restore accepted prompts: {error}");
+            }
+        }
+    }
     if let Ok(presentations) = state.prompt_presentations(session) {
         annotate_prompt_presentations(messages, &presentations);
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod tests;

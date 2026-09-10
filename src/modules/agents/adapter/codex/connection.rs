@@ -212,14 +212,15 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
                 "approvalsReviewer": approvals_reviewer(access_mode),
             }),
         )?;
-        self.wait_response::<ThreadResponse>(&id)
-            .map(|mut response| {
-                // Resume reports the effective cwd separately from stored thread metadata.
-                if let Some(cwd) = response.cwd {
-                    response.thread.cwd = cwd;
-                }
-                response.thread
-            })
+        let mut response = self.wait_response::<ThreadResponse>(&id)?;
+        if response.thread.id != thread_id {
+            return Err("Codex resumed a different thread than requested".into());
+        }
+        // Resume reports the effective cwd separately from stored thread metadata.
+        if let Some(cwd) = response.cwd {
+            response.thread.cwd = cwd;
+        }
+        Ok(response.thread)
     }
 
     pub(crate) fn start_turn(

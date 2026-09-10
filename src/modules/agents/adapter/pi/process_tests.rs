@@ -45,6 +45,11 @@ fn child_process_omits_farcaster_mcp() -> TestResult {
         SessionLaunch::Fork(Path::new("/sessions/parent.jsonl")),
     ] {
         let (temp, command) = fake("project-directory")?;
+        let resumed = temp.path().join("fake-session.jsonl");
+        let launch = match launch {
+            SessionLaunch::Resume(_) => SessionLaunch::Resume(&resumed),
+            other => other,
+        };
         let mut rpc = PiRpcProcess::spawn_worker(
             &command,
             temp.path(),
@@ -517,5 +522,17 @@ fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> Te
     );
     assert!(rpc.pending_parent_stamp.is_none());
     rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn resume_readiness_requires_the_requested_session_file() -> TestResult {
+    let (temp, command) = fake("project-directory")?;
+    let expected = temp.path().join("fake-session.jsonl");
+    let mut resumed = PiRpcProcess::spawn(&command, temp.path(), Some(&expected))?;
+    resumed.terminate()?;
+    let wrong = temp.path().join("different-session.jsonl");
+    let result = PiRpcProcess::spawn(&command, temp.path(), Some(&wrong));
+    assert!(matches!(result, Err(error) if error.contains("did not resume the requested session")));
     Ok(())
 }

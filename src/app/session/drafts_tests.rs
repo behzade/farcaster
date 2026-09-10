@@ -47,6 +47,7 @@ fn drafts_materialize_only_when_leaving_a_composer_with_content() {
         "ephemeral",
         42,
         &project,
+        "codex-cli",
         false,
     ));
     assert!(drafts.is_empty());
@@ -55,16 +56,19 @@ fn drafts_materialize_only_when_leaving_a_composer_with_content() {
         "ephemeral",
         42,
         &project,
+        "codex-cli",
         true,
     ));
     assert_eq!(drafts.len(), 1);
     assert_eq!(drafts[0].id, "ephemeral");
     assert_eq!(drafts[0].app_session_id, 42);
+    assert_eq!(drafts[0].harness, "codex-cli");
     assert!(!sync_materialized_draft(
         &mut drafts,
         "ephemeral",
         42,
         &project,
+        "codex-cli",
         true,
     ));
     assert!(sync_materialized_draft(
@@ -72,6 +76,7 @@ fn drafts_materialize_only_when_leaving_a_composer_with_content() {
         "ephemeral",
         42,
         &project,
+        "codex-cli",
         false,
     ));
     assert!(drafts.is_empty());
@@ -322,4 +327,34 @@ fn reconciliation_requires_an_exact_discovered_path() {
         )
         .is_empty()
     );
+}
+
+#[test]
+fn materialized_codex_draft_can_enqueue_without_a_duplicate_client_key()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::app::infrastructure::persistence::StateStore;
+    let temp = tempfile::tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let mut draft = DraftSession::with_id("codex-draft".into(), temp.path().to_owned());
+    draft.harness = "codex-cli".into();
+    let id = store.allocate_app_session_id(&draft)?;
+    let mut drafts = Vec::new();
+    sync_materialized_draft(&mut drafts, &draft.id, id, temp.path(), "codex-cli", true);
+    store.save_registry(&projects::Registry {
+        projects: vec![temp.path().to_owned()],
+        drafts,
+        ..Default::default()
+    })?;
+    store.enqueue_prompt(
+        &draft_target(&draft.id),
+        "codex-cli",
+        temp.path(),
+        None,
+        crate::protocol::PromptMode::Normal,
+        "fix this",
+        &[],
+    )?;
+    assert_eq!(store.queued_prompts()?.len(), 1);
+    assert_eq!(store.load_registry()?.drafts[0].harness, "codex-cli");
+    Ok(())
 }

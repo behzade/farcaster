@@ -417,7 +417,7 @@ fn history_messages(item: &Value) -> Vec<Value> {
     match item.get("type").and_then(Value::as_str) {
         Some("userMessage") => vec![json!({
             "role": "user",
-            "content": text_content(item.get("content")),
+            "content": user_content(item.get("content")),
         })],
         Some("agentMessage") => vec![json!({
             "role": "assistant",
@@ -498,12 +498,22 @@ fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
     vec![json!({"type": "text", "text": output})]
 }
 
-fn text_content(content: Option<&Value>) -> Vec<Value> {
+fn user_content(content: Option<&Value>) -> Vec<Value> {
     content
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|part| {
+            if part.get("type").and_then(Value::as_str) == Some("image") {
+                let (mime, data) = part
+                    .get("url")?
+                    .as_str()?
+                    .strip_prefix("data:")?
+                    .split_once(";base64,")?;
+                return mime
+                    .starts_with("image/")
+                    .then(|| json!({"type":"image", "mimeType":mime, "data":data}));
+            }
             let text = string(part, &["text"])?;
             Some(json!({"type": "text", "text": text}))
         })
