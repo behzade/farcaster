@@ -21,8 +21,13 @@ fn model_from(provider: &str, id: &str, reasoning: bool) -> Model {
 #[test]
 fn pi_title_command_is_isolated_from_session_transport() {
     let project = std::env::current_dir().expect("current project directory");
+    // Only construct the command; do not depend on a locally installed Pi.
+    let config = AgentLaunchConfig {
+        program: std::env::current_exe().expect("test executable"),
+        ..AgentLaunchConfig::default()
+    };
     let command = pi_title_command(
-        &AgentLaunchConfig::default(),
+        &config,
         &project,
         "Fix the transcript",
         None,

@@ -58,6 +58,10 @@ fi
 if [ "$case_name" = "normal" ]; then
   printf '{"type":"agent_start"}\n'
 fi
+# Deliberately ignore --session so readiness tests can detect a wrong resume.
+if [ "$case_name" = "fixed-session" ]; then
+  session_file="$PWD/fake-session.jsonl"
+fi
 if [ -z "$session_file" ]; then
   case "$case_name" in
     peer-delivery|deferred-session|project-directory) session_file="$PWD/fake-session.jsonl" ;;

@@ -107,10 +107,6 @@ impl FarcasterApp {
             );
             return;
         }
-        self.hide_editor(cx);
-        self.editor = None;
-        self.editor_ready = false;
-        self.editor_return_focus = window.focused(cx);
         self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
 
         let project = project.canonicalize().unwrap_or(project);
@@ -128,6 +124,15 @@ impl FarcasterApp {
         else {
             return;
         };
+        // Reusing the native terminal must not unmap/remap it: both file jumps
+        // and repeated Open editor commands come through this path.
+        let switching_editor = self.editor.as_ref() != Some(&editor);
+        if switching_editor {
+            self.hide_editor(cx);
+        }
+        if switching_editor || self.surface != AppSurface::Editor {
+            self.editor_return_focus = window.focused(cx);
+        }
         let review_request = matches!(
             &editor_target,
             EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }

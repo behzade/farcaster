@@ -42,12 +42,12 @@ mod detail_rows;
 mod links;
 #[path = "render/message_rows.rs"]
 mod message_rows;
-#[path = "render/rows.rs"]
-mod rows;
 #[path = "render/review.rs"]
 mod review;
 #[path = "render/review_artifact.rs"]
 mod review_artifact;
+#[path = "render/rows.rs"]
+mod rows;
 #[path = "render/tool_rows.rs"]
 mod tool_rows;
 
@@ -249,12 +249,17 @@ pub(crate) fn render(
     // Selection keys follow visual order, while disclosure keys retain source
     // identity. Reviews can move behind later messages without reversing a drag.
     let mut group_start = 0;
-    let selection_keys: Arc<Vec<usize>> = Arc::new(rows.iter().enumerate().map(|(index, row)| {
-        if index == 0 || rows[index - 1].key() != row.key() {
-            group_start = index;
-        }
-        group_start
-    }).collect());
+    let selection_keys: Arc<Vec<usize>> = Arc::new(
+        rows.iter()
+            .enumerate()
+            .map(|(index, row)| {
+                if index == 0 || rows[index - 1].key() != row.key() {
+                    group_start = index;
+                }
+                group_start
+            })
+            .collect(),
+    );
     let selection_groups = selection_keys.clone();
     let selection_copy_rows = rows.clone();
     let selection_items = conversation.items.clone();
@@ -284,9 +289,10 @@ pub(crate) fn render(
                 .child(
                     div()
                         .w_full()
-                        .when(selection_state.selection_contains(selection_keys[index]), |row| {
-                            row.bg(THEME.colors.selection)
-                        })
+                        .when(
+                            selection_state.selection_contains(selection_keys[index]),
+                            |row| row.bg(THEME.colors.selection),
+                        )
                         .child(div().w_full().child(render_row(
                             font_scale,
                             row,
@@ -495,12 +501,19 @@ fn render_row(
     let key = row.key();
     let follows_tool = message_follows_tool(row, items);
     match row {
-        TranscriptRow::Review { index, working, continued, .. } => {
-            review_artifact::from_item(&items[index]).map_or_else(
-                || div().into_any_element(),
-                |artifact| review::render(font_scale, key, artifact, expanded, working, continued, entity),
-            )
-        }
+        TranscriptRow::Review {
+            index,
+            working,
+            continued,
+            ..
+        } => review_artifact::from_item(&items[index]).map_or_else(
+            || div().into_any_element(),
+            |artifact| {
+                review::render(
+                    font_scale, key, artifact, expanded, working, continued, entity,
+                )
+            },
+        ),
         TranscriptRow::ActivityGroup { start, len, .. } => render_activity_group(
             font_scale,
             row.disclosure_key(),

@@ -224,7 +224,10 @@ impl TranscriptListState {
         let replacement_len = state.heights.splice(old_range.clone(), size_hints);
         // Selection uses visual row positions. A splice touching or preceding
         // it must not silently transfer the highlight to different content.
-        if state.selection_range().is_some_and(|range| *range.end() >= old_range.start) {
+        if state
+            .selection_range()
+            .is_some_and(|range| *range.end() >= old_range.start)
+        {
             state.clear_selection();
         }
 

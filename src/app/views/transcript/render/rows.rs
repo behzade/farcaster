@@ -30,7 +30,8 @@ pub(crate) fn estimated_row_height(
         {
             Some(item(index).text.as_str())
         }
-        TranscriptRow::Item { .. } | TranscriptRow::ActivityGroup { .. }
+        TranscriptRow::Item { .. }
+        | TranscriptRow::ActivityGroup { .. }
         | TranscriptRow::Review { .. } => None,
     };
     let Some(text) = text else {
@@ -105,7 +106,9 @@ impl TranscriptRow {
     pub(crate) fn same_position(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Item { index: left, .. }, Self::Item { index: right, .. })
-            | (Self::Review { index: left, .. }, Self::Review { index: right, .. }) => left == right,
+            | (Self::Review { index: left, .. }, Self::Review { index: right, .. }) => {
+                left == right
+            }
             (
                 Self::MessageChunk {
                     index: left_index,
@@ -203,7 +206,14 @@ pub(crate) fn update_conversation_rows(
     next: &conversation::ConversationState,
     changed_from: Option<usize>,
 ) -> TranscriptRowUpdate {
-    update_rows_with_run(previous_rows, &previous.items, &next.items, changed_from, next.active_run_start(), &next.completed_runs)
+    update_rows_with_run(
+        previous_rows,
+        &previous.items,
+        &next.items,
+        changed_from,
+        next.active_run_start(),
+        &next.completed_runs,
+    )
 }
 
 #[cfg(test)]
@@ -266,7 +276,14 @@ pub(crate) fn update_rows_incremental(
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
     changed_from: Option<usize>,
 ) -> TranscriptRowUpdate {
-    update_rows_with_run(previous_rows, previous_items, items, changed_from, None, &[])
+    update_rows_with_run(
+        previous_rows,
+        previous_items,
+        items,
+        changed_from,
+        None,
+        &[],
+    )
 }
 
 fn update_rows_with_run(
@@ -280,13 +297,26 @@ fn update_rows_with_run(
     // Review handoffs deliberately reorder source items. Keep the monotonic
     // incremental fast path for ordinary transcripts; compare visual rows for
     // review transcripts, including state-only settlement updates.
-    if previous_rows.iter().any(|row| matches!(row, TranscriptRow::Review { .. }))
+    if previous_rows
+        .iter()
+        .any(|row| matches!(row, TranscriptRow::Review { .. }))
         || (changed_from.unwrap_or(0)..items.len()).any(|index| {
-            items.get(index).is_some_and(|item| review_artifact::from_item(item).is_some())
+            items
+                .get(index)
+                .is_some_and(|item| review_artifact::from_item(item).is_some())
         })
     {
-        let rows = review_layout::arrange(project_rows_from(items, 0), items, active_start, completed_runs);
-        let prefix = previous_rows.iter().zip(rows.iter()).take_while(|(a, b)| a == b).count();
+        let rows = review_layout::arrange(
+            project_rows_from(items, 0),
+            items,
+            active_start,
+            completed_runs,
+        );
+        let prefix = previous_rows
+            .iter()
+            .zip(rows.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
         let unchanged = prefix == previous_rows.len() && prefix == rows.len();
         return TranscriptRowUpdate {
             rows: (!unchanged).then_some(rows),

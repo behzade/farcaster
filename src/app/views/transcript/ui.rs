@@ -1,8 +1,6 @@
 use gpui::Context;
 
-use super::{
-    TranscriptRowUpdate, conversation::TranscriptKind, update_conversation_rows,
-};
+use super::{TranscriptRowUpdate, conversation::TranscriptKind, update_conversation_rows};
 use crate::app::FarcasterApp;
 
 impl FarcasterApp {

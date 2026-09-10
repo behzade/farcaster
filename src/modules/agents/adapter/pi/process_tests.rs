@@ -527,13 +527,19 @@ fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> Te
 
 #[test]
 fn resume_readiness_requires_the_requested_session_file() -> TestResult {
-    let (temp, command) = fake("project-directory")?;
+    let (temp, command) = fake("fixed-session")?;
     let expected = temp.path().join("fake-session.jsonl");
     let mut resumed = PiRpcProcess::spawn(&command, temp.path(), Some(&expected))?;
     resumed.terminate()?;
     let wrong = temp.path().join("different-session.jsonl");
     let result = PiRpcProcess::spawn(&command, temp.path(), Some(&wrong));
-    assert!(matches!(result, Err(error) if error.contains("did not resume the requested session")));
+    match result {
+        Err(error) => assert!(error.contains("did not resume the requested session"), "{error}"),
+        Ok(mut process) => {
+            process.terminate()?;
+            panic!("readiness accepted a different session file");
+        }
+    }
     Ok(())
 }
 
