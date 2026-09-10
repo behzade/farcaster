@@ -89,7 +89,7 @@ fn automatic_title_requires_a_loaded_new_unnamed_session() {
 }
 
 #[test]
-fn resumed_empty_session_defers_prompt_without_starting_title_generation() {
+fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
     struct Recorder(std::rc::Rc<std::cell::RefCell<Vec<SessionCommand>>>);
     impl crate::agents::SessionTransport for Recorder {
         fn send(&mut self, command: SessionCommand) -> Result<String, String> {
@@ -110,12 +110,28 @@ fn resumed_empty_session_defers_prompt_without_starting_title_generation() {
         }
     }
 
-    for harness in HARNESSES {
+    for (harness, history_first, preserve) in HARNESSES.into_iter().flat_map(|harness| {
+        [false, true].into_iter().flat_map(move |history_first| {
+            [false, true].map(move |preserve| (harness, history_first, preserve))
+        })
+    }) {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());
         owner.harness = harness.into();
         let commands = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         owner.process = Some(Box::new(Recorder(commands.clone())));
         owner.active_session = Some(std::env::temp_dir().join("existing-session"));
+        let history = serde_json::json!([{"role": "user", "content": "Earlier task"}]);
+        if preserve {
+            conversation_mut(&mut owner.snapshot)
+                .replace_history(history.as_array().expect("history"));
+        }
+        owner.pending_prompt_item = Some(
+            conversation_mut(&mut owner.snapshot).push_local_user_with_prompt_images(
+                "Continue the task".into(),
+                &[],
+                false,
+            ),
+        );
         owner.dispatch_prompt(
             PromptMode::Normal,
             "Continue the task".into(),
@@ -127,10 +143,34 @@ fn resumed_empty_session_defers_prompt_without_starting_title_generation() {
 
         assert!(owner.deferred_prompt.is_some());
         assert!(commands.borrow().is_empty());
-        owner.snapshot.session = Some(empty_session());
-        owner.startup_state_loaded = true;
-        owner.startup_history_loaded = true;
-        owner.maybe_send_deferred_prompt();
+        let state = crate::agents::SessionResponse {
+            id: None,
+            operation: crate::agents::SessionOperation::LoadState,
+            success: true,
+            data: serde_json::to_value(empty_session()).expect("session state"),
+            error: None,
+        };
+        let history = crate::agents::SessionResponse {
+            id: None,
+            operation: crate::agents::SessionOperation::LoadHistory,
+            success: true,
+            data: serde_json::json!({"messages": history, "preserve": preserve}),
+            error: None,
+        };
+        let responses = if history_first {
+            [history, state]
+        } else {
+            [state, history]
+        };
+        for (index, response) in responses.into_iter().enumerate() {
+            owner.apply_response(response);
+            if index == 0 {
+                assert!(
+                    commands.borrow().is_empty(),
+                    "must await both startup responses"
+                );
+            }
+        }
 
         assert!(owner.deferred_prompt.is_none());
         assert!(!owner.title_generation.in_flight, "{harness}");
@@ -139,6 +179,17 @@ fn resumed_empty_session_defers_prompt_without_starting_title_generation() {
             commands.borrow().as_slice(),
             [SessionCommand::Prompt { .. }]
         ));
+        let texts = owner
+            .snapshot
+            .conversation
+            .items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(texts, ["Earlier task", "Continue the task"]);
+        owner.rollback_pending_prompt();
+        assert_eq!(owner.snapshot.conversation.items.len(), 1);
+        assert_eq!(owner.snapshot.conversation.items[0].text, "Earlier task");
     }
 }
 
