@@ -432,3 +432,36 @@ fn validate_repository_backend_preferences(
     }
     Ok(())
 }
+
+impl StateStore {
+    pub(crate) fn load_session_folders(
+        &self,
+    ) -> Result<crate::app::session_folders::SessionFolders, String> {
+        let json: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='session_folders'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("load session folders: {error}"))?;
+        json.map(|json| {
+            serde_json::from_str(&json).map_err(|error| format!("decode session folders: {error}"))
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
+    }
+
+    pub(crate) fn save_session_folders(
+        &self,
+        folders: &crate::app::session_folders::SessionFolders,
+    ) -> Result<(), String> {
+        let json = serde_json::to_string(folders)
+            .map_err(|error| format!("encode session folders: {error}"))?;
+        self.connection.execute(
+            "INSERT INTO meta(key,value) VALUES('session_folders',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [json]
+        ).map_err(|error| format!("save session folders: {error}"))?;
+        Ok(())
+    }
+}

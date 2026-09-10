@@ -71,6 +71,8 @@ impl FarcasterApp {
             background_jobs: Vec::new(),
             repository,
             session_order: persisted.session_order,
+            session_folders: persisted.session_folders,
+            editing_folder: None,
             session_drop_target: None,
             run_statuses: HashMap::new(),
             recent_completions: HashMap::new(),

@@ -1,6 +1,7 @@
 mod active_rail;
 mod draft_row;
 mod drag;
+mod folders;
 mod groups;
 mod hover;
 mod inactive_rail;
@@ -116,8 +117,10 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
     })
 }
 
-fn visible_session_shortcuts(rows: &[ActiveSessionItem]) -> HashMap<i64, u8> {
-    rows.iter()
+fn visible_session_shortcuts<'a>(
+    rows: impl IntoIterator<Item = &'a ActiveSessionItem>,
+) -> HashMap<i64, u8> {
+    rows.into_iter()
         .filter_map(|row| match row {
             ActiveSessionItem::Draft(draft) if draft.submitted => Some(draft.app_session_id),
             ActiveSessionItem::Session(item) => Some(item.session.app_session_id),
@@ -249,20 +252,25 @@ impl FarcasterApp {
     }
 
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
-        session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
+        folders::folder_rows(
+            session_rail_lists(
+                &self.sessions,
+                &self.drafts,
+                self.session_project_filter.as_deref(),
+                &self.session_order,
+            )
+            .active,
+            &self.session_folders,
         )
-        .active
         .into_iter()
         .filter_map(|row| match row {
-            ActiveSessionItem::Draft(draft) if draft.submitted => {
+            folders::FolderRow::Session(ActiveSessionItem::Draft(draft)) if draft.submitted => {
                 Some(VisibleSessionTarget::Draft(draft))
             }
-            ActiveSessionItem::Session(item) => Some(VisibleSessionTarget::Persisted(item.session)),
-            ActiveSessionItem::Draft(_) => None,
+            folders::FolderRow::Session(ActiveSessionItem::Session(item)) => {
+                Some(VisibleSessionTarget::Persisted(item.session))
+            }
+            _ => None,
         })
         .collect()
     }
@@ -345,6 +353,10 @@ impl FarcasterApp {
             self.clear_session_drop_target(cx);
             return;
         };
+        let target_folder = self.session_folders.folder_for(target);
+        if !self.assign_session_folder(drag.app_session_id, target_folder, cx) {
+            return;
+        }
         let visible = session_rail_lists(
             &self.sessions,
             &self.drafts,

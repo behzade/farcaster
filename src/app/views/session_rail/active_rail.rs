@@ -13,6 +13,7 @@ use gpui_component::{
 use super::{
     FarcasterApp, active_item_identity,
     draft_row::{DraftRow, DraftRowInput},
+    folders::{FolderRow, folder_drop_target, folder_header, folder_rows},
     groups::{ActiveSessionItem, roots_waiting_for_descendants, session_rail_lists},
     reconcile_list_rows,
     rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
@@ -60,15 +61,29 @@ impl FarcasterApp {
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
-        let last_active_row = active_rows
-            .last()
-            .map(|item| (active_entry_count - 1, item.app_session_id()));
+        let last_active_row = if self.session_folders.folders.is_empty() {
+            active_rows
+                .last()
+                .map(|item| (active_entry_count - 1, item.app_session_id()))
+        } else {
+            None
+        };
         let active_drop_list = session_list.clone();
-        let session_shortcuts = visible_session_shortcuts(&active_rows);
+        let active_rows = folder_rows(active_rows, &self.session_folders);
+        let session_shortcuts =
+            visible_session_shortcuts(active_rows.iter().filter_map(FolderRow::session));
+        let editing_folder = self.editing_folder.map(|edit| edit.id);
         reconcile_list_rows(
             &session_list,
             session_list_rows,
-            active_rows.iter().map(active_item_identity).collect(),
+            active_rows
+                .iter()
+                .map(|row| match row {
+                    FolderRow::Session(item) => active_item_identity(item),
+                    FolderRow::Header(id, _) => format!("folder:{id}"),
+                    FolderRow::New => "new-folder".to_owned(),
+                })
+                .collect(),
         );
 
         let selected_draft = self.selected_draft.clone();
@@ -87,7 +102,7 @@ impl FarcasterApp {
         let active_drop_target = self.session_drop_target;
         let active_list = list(session_list, move |index, _, _| {
             match active_rows.get(index) {
-                Some(ActiveSessionItem::Draft(draft)) => {
+                Some(FolderRow::Session(ActiveSessionItem::Draft(draft))) => {
                     let selected = selected_draft.as_deref() == Some(draft.id.as_str());
                     let status = crate::app::session::drafts::resolved_draft_status(
                         &draft.id,
@@ -110,7 +125,7 @@ impl FarcasterApp {
                     )
                     .into_any_element()
                 }
-                Some(ActiveSessionItem::Session(item)) => {
+                Some(FolderRow::Session(ActiveSessionItem::Session(item))) => {
                     let selected =
                         active_selected_root.as_deref() == Some(item.session.id.as_str());
                     let target = format!("session:{}", item.session.path.display());
@@ -143,6 +158,20 @@ impl FarcasterApp {
                     )
                     .into_any_element()
                 }
+                Some(FolderRow::Header(id, name)) => folder_header(
+                    Some(*id),
+                    name.clone(),
+                    editing_folder == Some(Some(*id)),
+                    active_title_input.clone(),
+                    active_row_entity.clone(),
+                ),
+                Some(FolderRow::New) => folder_header(
+                    None,
+                    "+ New folder".into(),
+                    editing_folder == Some(None),
+                    active_title_input.clone(),
+                    active_row_entity.clone(),
+                ),
                 None => div().into_any_element(),
             }
         })
@@ -299,6 +328,29 @@ impl FarcasterApp {
                         let _ = cancel_drop_out_entity
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
+                    .when(
+                        session_drag_active && !self.session_folders.folders.is_empty(),
+                        |lists| {
+                            let entity = entity.clone();
+                            lists.child(folder_drop_target(
+                                div()
+                                    .id("remove-session-folder")
+                                    .px(px(12.0))
+                                    .h(px(28.0))
+                                    .flex()
+                                    .items_center()
+                                    .text_size(THEME.type_scale.caption)
+                                    .text_color(THEME.colors.muted)
+                                    .child("Move to Active"),
+                                move |drag, _, cx| {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        this.assign_session_folder(drag.app_session_id, None, cx);
+                                        this.clear_session_drop_target(cx);
+                                    });
+                                },
+                            ))
+                        },
+                    )
                     .when(!archived_expanded, |lists| {
                         lists.child(active_session_drop_target(
                             div()

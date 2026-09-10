@@ -4,6 +4,7 @@ pub(super) struct PersistedState {
     pub(super) registry: projects::Registry,
     pub(super) error: Option<String>,
     pub(super) session_order: Vec<i64>,
+    pub(super) session_folders: crate::app::session_folders::SessionFolders,
     pub(super) selected_draft: String,
     pub(super) preferred_harness: String,
     pub(super) draft_session_ids: HashMap<String, i64>,
@@ -38,6 +39,15 @@ pub(super) fn load(project: &Path) -> PersistedState {
         }
     };
     drop(session_order_timing);
+    let session_folders = match crate::app::persistence::StateStore::open()
+        .and_then(|store| store.load_session_folders())
+    {
+        Ok(folders) => folders,
+        Err(load_error) => {
+            error.get_or_insert(load_error);
+            Default::default()
+        }
+    };
 
     let preferred_harness = match crate::app::infrastructure::persistence::StateStore::open()
         .and_then(|store| store.load_preferred_harness(project))
@@ -109,6 +119,7 @@ pub(super) fn load(project: &Path) -> PersistedState {
         registry,
         error,
         session_order,
+        session_folders,
         selected_draft,
         preferred_harness,
         draft_session_ids,

@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    Bounds, Div, DragMoveEvent, InteractiveElement as _, ListState, Pixels, Point, Stateful,
-    Styled as _, WeakEntity, px,
+    Bounds, Div, DragMoveEvent, FontWeight, InteractiveElement as _, ListState, Pixels, Point,
+    Stateful, Styled as _, WeakEntity, div, px,
 };
 
 use super::{
@@ -18,6 +18,20 @@ use crate::{
 
 pub(super) const INACTIVE_PREVIEW_LIMIT: usize = 5;
 pub(super) const ARCHIVED_LEADING_GAP: f32 = 34.0;
+
+pub(super) fn session_section_header() -> Div {
+    div()
+        .w_full()
+        .h(THEME.controls.utility_row)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_between()
+        .px(THEME.space.md)
+        .text_size(THEME.type_scale.caption)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(THEME.colors.muted)
+}
 
 fn session_list_end_target(
     viewport: Bounds<Pixels>,

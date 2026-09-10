@@ -10,16 +10,19 @@ const HARNESSES: [&str; 6] = [
     "antigravity-acp",
 ];
 
-fn empty_session() -> crate::protocol::SessionState {
-    serde_json::from_value(serde_json::json!({
+fn empty_session_json() -> serde_json::Value {
+    serde_json::json!({
         "sessionId": "test-session",
         "isStreaming": false,
         "isCompacting": false,
         "autoCompactionEnabled": true,
         "messageCount": 0,
         "pendingMessageCount": 0
-    }))
-    .expect("test operation should succeed")
+    })
+}
+
+fn empty_session() -> crate::protocol::SessionState {
+    serde_json::from_value(empty_session_json()).expect("test operation should succeed")
 }
 
 #[test]
@@ -147,7 +150,7 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
             id: None,
             operation: crate::agents::SessionOperation::LoadState,
             success: true,
-            data: serde_json::to_value(empty_session()).expect("session state"),
+            data: empty_session_json(),
             error: None,
         };
         let history = crate::agents::SessionResponse {

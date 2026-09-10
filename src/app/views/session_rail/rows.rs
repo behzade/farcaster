@@ -521,9 +521,10 @@ fn session_context_menu(
     let project = session.project.clone();
     let title = session.title.clone();
     let can_fork = crate::agents::supports_session_fork(&session.harness);
+    let app_session_id = session.app_session_id;
     ContextMenuTrigger::new(format!("session-context-trigger-{}", session.id), row)
         .size_full()
-        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
+        .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
             let rename_path = path.clone();
             let rename_project = project.clone();
             let rename_title = title.clone();
@@ -561,40 +562,50 @@ fn session_context_menu(
                     )
                 });
 
-            if kind == SessionRailKind::Project {
-                let archive_path = path.clone();
-                let archive_entity = entity.clone();
-                menu = menu.separator().item(
-                    PopupMenuItem::new("Archive")
-                        .icon(AppIcon::Archive)
-                        .on_click(move |_, window, cx| {
-                            let _ = archive_entity.update(cx, |this, cx| {
-                                this.request_session_archive(
-                                    archive_path.clone(),
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }),
-                );
-            } else {
-                let restore_path = path.clone();
-                let restore_entity = entity.clone();
-                menu = menu.separator().item(
-                    PopupMenuItem::new("Restore")
-                        .icon(AppIcon::ArrowCounterClockwise)
-                        .on_click(move |_, window, cx| {
-                            let _ = restore_entity.update(cx, |this, cx| {
-                                this.request_session_archive(
-                                    restore_path.clone(),
-                                    false,
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }),
-                );
+            let move_entity = entity.clone();
+            let move_path = path.clone();
+            menu =
+                menu.separator()
+                    .submenu("Move to folder", window, cx, move |mut menu, _, cx| {
+                        use crate::app::session_folders::FolderDestination;
+                        let Some(app) = move_entity.upgrade() else {
+                            return menu;
+                        };
+                        let folders = &app.read(cx).session_folders;
+                        let current =
+                            folders.destination(app_session_id, kind == SessionRailKind::Archived);
+                        for (destination, label) in folders.destinations() {
+                            let target_entity = move_entity.clone();
+                            let target_path = move_path.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(label)
+                                    .checked(destination == current)
+                                    .disabled(
+                                        destination == current
+                                            || (app_session_id <= 0
+                                                && matches!(
+                                                    destination,
+                                                    FolderDestination::Folder(_)
+                                                )),
+                                    )
+                                    .on_click(move |_, window, cx| {
+                                        let _ = target_entity.update(cx, |this, cx| {
+                                            this.move_session_to_folder(
+                                                app_session_id,
+                                                target_path.clone(),
+                                                destination,
+                                                kind == SessionRailKind::Archived,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    });
+
+            if kind == SessionRailKind::Archived {
                 let delete_path = path.clone();
                 let delete_entity = entity.clone();
                 menu = menu.separator().item(

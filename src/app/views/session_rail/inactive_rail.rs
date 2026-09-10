@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use gpui::{
-    FontWeight, InteractiveElement as _, IntoElement, ListState, ParentElement as _, Styled as _,
-    WeakEntity, div, list, prelude::FluentBuilder as _, px,
+    InteractiveElement as _, IntoElement, ListState, ParentElement as _, Styled as _, WeakEntity,
+    div, list, prelude::FluentBuilder as _, px,
 };
 
 use super::{
@@ -11,7 +11,7 @@ use super::{
     reconcile_list_rows,
     rendering::{
         ARCHIVED_LEADING_GAP, INACTIVE_PREVIEW_LIMIT, inactive_session_badge,
-        session_section_drop_target, subagent_counts,
+        session_section_drop_target, session_section_header, subagent_counts,
     },
     rows::{SessionRow, SessionRowInput},
     session_item_identity,
@@ -129,16 +129,7 @@ impl FarcasterApp {
             .flex_col()
             .when(!expanded, |section| section.pt(px(ARCHIVED_LEADING_GAP)))
             .child(
-                div()
-                    .h(THEME.controls.utility_row)
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(THEME.space.md)
-                    .text_size(THEME.type_scale.caption)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(THEME.colors.muted)
+                session_section_header()
                     .child(format!("Archived · {count}"))
                     .child(disclosure_button(
                         "toggle-archived-sessions",

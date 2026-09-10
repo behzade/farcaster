@@ -17,12 +17,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.editing_folder = None;
         self.editing_session_title = Some(SessionTitleEdit {
             path,
             project,
             original: title.clone(),
         });
         self.session_title_input.update(cx, |input, cx| {
+            input.set_placeholder("Session name", window, cx);
             input.set_value(title.clone(), window, cx);
             input.set_selected_range(0..title.len(), cx);
         });
@@ -36,6 +38,10 @@ impl FarcasterApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.editing_folder.is_some() {
+            self.commit_folder_edit(cx);
+            return;
+        }
         let Some(edit) = self.editing_session_title.take() else {
             return;
         };
@@ -84,7 +90,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn cancel_session_title_edit(&mut self, cx: &mut Context<Self>) {
-        if self.editing_session_title.take().is_some() {
+        if self.editing_folder.take().is_some() || self.editing_session_title.take().is_some() {
             self.notify_session_rail(cx);
             cx.notify();
         }

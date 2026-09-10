@@ -11,6 +11,7 @@ mod navigation;
 mod project;
 pub(crate) mod runtime;
 mod session;
+mod session_folders;
 pub(crate) mod ui;
 pub(crate) mod views;
 mod workspace;
@@ -176,6 +177,8 @@ pub(crate) struct FarcasterApp {
     background_jobs: Vec<BackgroundJob>,
     repository: repository::RepositoryState,
     session_order: Vec<i64>,
+    session_folders: session_folders::SessionFolders,
+    editing_folder: Option<session_folders::FolderEdit>,
     session_drop_target: Option<(i64, crate::app::ui::primitives::ReorderPosition)>,
     run_statuses: HashMap<String, String>,
     recent_completions: HashMap<String, Instant>,
