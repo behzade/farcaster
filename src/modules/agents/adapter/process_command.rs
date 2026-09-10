@@ -54,6 +54,9 @@ pub(super) fn resolve_agent_program(
     working_directory: &Path,
     search_path: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, String> {
+    if program.as_os_str().is_empty() {
+        return Err("agent executable is not configured".into());
+    }
     let candidate = if program.is_absolute() {
         Some(program.to_owned())
     } else if program

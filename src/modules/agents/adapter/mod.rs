@@ -99,7 +99,7 @@ fn launch_configuration(
 ) -> Result<crate::agents::AgentLaunchConfig, String> {
     let mut config = config.clone();
     config.program = match harness {
-        "pi" => return Ok(config),
+        "pi" => return Ok(pi::launch_configuration(&config)),
         "codex-cli" => std::env::var_os("FARCASTER_CODEX_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "codex".into()),
@@ -503,7 +503,7 @@ pub(crate) fn backend_display_name(harness: &str) -> String {
 }
 
 pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
-    let pi_program = crate::agents::AgentLaunchConfig::default().program;
+    let pi_program = pi::launch_configuration(&crate::agents::AgentLaunchConfig::default()).program;
     let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "codex".into());

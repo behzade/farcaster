@@ -107,7 +107,7 @@ pub(crate) struct PromptPresentation {
     pub(crate) invocation: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct AgentLaunchConfig {
     pub(crate) program: PathBuf,
     pub(crate) prefix_args: Vec<String>,

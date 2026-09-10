@@ -536,3 +536,21 @@ fn resume_readiness_requires_the_requested_session_file() -> TestResult {
     assert!(matches!(result, Err(error) if error.contains("did not resume the requested session")));
     Ok(())
 }
+
+#[test]
+fn only_the_pi_adapter_selects_the_pi_executable() {
+    let neutral = AgentLaunchConfig::default();
+    assert!(neutral.program.as_os_str().is_empty());
+    assert!(resolve_agent_program(&neutral.program, Path::new("/project"), None).is_err());
+    assert!(
+        !launch_configuration(&neutral)
+            .program
+            .as_os_str()
+            .is_empty()
+    );
+    let explicit = AgentLaunchConfig {
+        program: PathBuf::from("/custom/pi"),
+        ..neutral
+    };
+    assert_eq!(launch_configuration(&explicit).program, explicit.program);
+}

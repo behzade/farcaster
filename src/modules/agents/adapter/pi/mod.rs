@@ -10,7 +10,7 @@ pub(super) mod trust;
 mod wire;
 mod worker;
 
-pub(super) use process::PiRpcProcess;
+pub(super) use process::{PiRpcProcess, launch_configuration};
 pub(super) use tool::annotate_pi_message as annotate_history_message;
 pub(super) use worker::PiWorkerFactory;
 

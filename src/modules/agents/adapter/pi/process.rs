@@ -29,16 +29,14 @@ use crate::{
     },
 };
 
-impl Default for crate::agents::AgentLaunchConfig {
-    fn default() -> Self {
-        Self {
-            program: pi_program(std::env::var_os("FARCASTER_PI_PATH")),
-            prefix_args: Vec::new(),
-            access_mode: HarnessAccessMode::default(),
-            app_proxy: None,
-            session_locator_root: None,
-        }
+pub(in crate::modules::agents::adapter) fn launch_configuration(
+    config: &AgentLaunchConfig,
+) -> AgentLaunchConfig {
+    let mut config = config.clone();
+    if config.program.as_os_str().is_empty() {
+        config.program = pi_program(std::env::var_os("FARCASTER_PI_PATH"));
     }
+    config
 }
 
 fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
@@ -84,7 +82,7 @@ fn rpc_command(
     launch: SessionLaunch<'_>,
     mcp_config: Option<&Path>,
 ) -> Result<std::process::Command, String> {
-    let mut prepared = command.command(project)?;
+    let mut prepared = launch_configuration(command).command(project)?;
     prepared.args(["--mode", "rpc"]);
     if let Some(mcp_config) = mcp_config {
         prepared.arg("--mcp-config").arg(mcp_config);

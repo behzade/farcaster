@@ -38,7 +38,7 @@ pub(crate) fn generate_session_title(
     zlog::info!("Generating {harness} session title with {selected}");
     let output = match harness {
         "pi" => generate_pi_title(
-            config,
+            &super::pi::launch_configuration(config),
             project,
             first_prompt,
             selection.as_ref(),
