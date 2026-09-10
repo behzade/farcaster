@@ -118,6 +118,10 @@ impl FarcasterApp {
             crate::app::infrastructure::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && self.selected_draft.is_none()
+            && self
+                .pending_session_switch
+                .as_ref()
+                .is_none_or(|(pending, _)| pending == &path)
         {
             self.close_sessions_sheet_after_selection(window, cx);
             return;

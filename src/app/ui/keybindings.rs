@@ -394,8 +394,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "shift-i",
             ShowWorkGraph
         ),
-        application_shortcut!("Application", "Open action picker", "k", ShowActionPicker)
-            .in_picker(false),
         application_shortcut!(
             "Application",
             "Open action picker",
@@ -484,8 +482,23 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         application_shortcut!("Application", "Quit", "q", QuitApplication),
     ];
     shortcuts.extend(aliases);
-    if prefix == "ctrl" {
-        shortcuts.retain(|shortcut| !matches!(shortcut.keystroke.as_str(), "ctrl-j" | "ctrl-k"));
+    for modifier in ["ctrl", "cmd", "super"] {
+        shortcuts.extend([
+            shortcut!(
+                "Transcript",
+                "Next session (including archived)",
+                format!("{modifier}-j"),
+                crate::app::NextTranscriptSession,
+                Some(crate::app::TRANSCRIPT_KEY_CONTEXT)
+            ),
+            shortcut!(
+                "Transcript",
+                "Previous session (including archived)",
+                format!("{modifier}-k"),
+                crate::app::PreviousTranscriptSession,
+                Some(crate::app::TRANSCRIPT_KEY_CONTEXT)
+            ),
+        ]);
     }
     shortcuts
 }

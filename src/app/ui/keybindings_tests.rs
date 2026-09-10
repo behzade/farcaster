@@ -276,7 +276,14 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
     let native_contexts =
         [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("test operation should succeed")];
     for key in [
-        "cmd-n", "cmd-e", "cmd-t", "cmd-k", "cmd-g", "cmd--", "cmd-=", "cmd-+",
+        "cmd-n",
+        "cmd-e",
+        "cmd-t",
+        "cmd-shift-p",
+        "cmd-g",
+        "cmd--",
+        "cmd-=",
+        "cmd-+",
     ] {
         if key == "cmd-g" && !cfg!(target_os = "macos") {
             continue;
@@ -291,11 +298,6 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
             "{key} must not reach embedded views"
         );
     }
-    let (ctrl_j, _) = keymap.bindings_for_input(
-        &[gpui::Keystroke::parse("ctrl-j").expect("test operation should succeed")],
-        &app_contexts,
-    );
-    assert!(ctrl_j.is_empty(), "Ctrl+J must not open the terminal");
     for key in ["f1", "f2", "f3", "f4", "ctrl-tab", "ctrl-shift-tab"] {
         let stroke = gpui::Keystroke::parse(key).expect("test operation should succeed");
         let (native_bindings, _) =
@@ -307,22 +309,54 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
         let (app_bindings, _) = keymap.bindings_for_input(&[stroke], &app_contexts);
         assert!(!app_bindings.is_empty(), "{key} missing in app context");
     }
+}
 
-    let control_map = gpui::Keymap::new(
-        registry_for_platform("ctrl")
-            .into_iter()
-            .map(|shortcut| shortcut.binding)
-            .collect(),
-    );
-    for key in ["ctrl-j", "ctrl-k"] {
-        let (bindings, _) = control_map.bindings_for_input(
-            &[gpui::Keystroke::parse(key).expect("test operation should succeed")],
-            &app_contexts,
-        );
-        assert!(
-            bindings.is_empty(),
-            "{key} must stay available to chat input when Control is the modifier"
-        );
+#[test]
+fn modified_jk_navigates_sessions_only_in_the_transcript() {
+    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, TRANSCRIPT_KEY_CONTEXT};
+    let keymap = gpui::Keymap::new(bindings());
+    let contexts = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| gpui::KeyContext::parse(name).unwrap())
+            .collect::<Vec<_>>()
+    };
+    for modifier in ["ctrl", "cmd", "super"] {
+        for (key, action) in [
+            (
+                "j",
+                Box::new(crate::app::NextTranscriptSession) as Box<dyn gpui::Action>,
+            ),
+            (
+                "k",
+                Box::new(crate::app::PreviousTranscriptSession) as Box<dyn gpui::Action>,
+            ),
+        ] {
+            let stroke = gpui::Keystroke::parse(&format!("{modifier}-{key}")).unwrap();
+            let (matched, _) = keymap.bindings_for_input(
+                std::slice::from_ref(&stroke),
+                &contexts(&[APP_INPUT_CONTEXT, TRANSCRIPT_KEY_CONTEXT]),
+            );
+            assert!(
+                matched
+                    .iter()
+                    .any(|binding| binding.action().partial_eq(action.as_ref())),
+                "{modifier}-{key}"
+            );
+            for names in [
+                vec![APP_INPUT_CONTEXT],
+                vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"],
+                vec![APP_INPUT_CONTEXT, "PiPicker", "Input"],
+                vec![NATIVE_INPUT_CONTEXT],
+            ] {
+                let (matched, _) =
+                    keymap.bindings_for_input(std::slice::from_ref(&stroke), &contexts(&names));
+                assert!(
+                    matched.is_empty(),
+                    "{modifier}-{key} intercepted in {names:?}"
+                );
+            }
+        }
     }
 }
 

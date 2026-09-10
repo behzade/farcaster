@@ -9,6 +9,7 @@ pub(crate) struct SessionRailView {
     app: WeakEntity<FarcasterApp>,
     list: ListState,
     rows: RefCell<Vec<String>>,
+    pub(crate) reveal: Option<String>,
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
 }
@@ -18,6 +19,7 @@ pub(crate) struct InactiveSessionRailView {
     kind: SessionRailKind,
     list: ListState,
     rows: RefCell<Vec<String>>,
+    pub(crate) reveal: Option<String>,
 }
 
 fn session_list() -> ListState {
@@ -30,6 +32,7 @@ impl SessionRailView {
             app,
             list: session_list(),
             rows: RefCell::new(Vec::new()),
+            reveal: None,
             width: THEME.layout.session_rail,
             resize_start: None,
         }
@@ -67,8 +70,9 @@ impl InactiveSessionRailView {
         Self {
             app,
             kind,
-            list: session_list(),
+            list: session_list().with_uniform_item_height(THEME.layout.session_row_height),
             rows: RefCell::new(Vec::new()),
+            reveal: None,
         }
     }
 }
@@ -80,14 +84,17 @@ impl Render for SessionRailView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
-        app.read(cx)
+        let content = app
+            .read(cx)
             .render_sessions(
                 self.app.clone(),
                 cx.has_active_drag(),
                 self.list.clone(),
                 &self.rows,
             )
-            .into_any_element()
+            .into_any_element();
+        reveal_session_row(&self.list, &self.rows, &mut self.reveal);
+        content
     }
 }
 
@@ -98,11 +105,32 @@ impl Render for InactiveSessionRailView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
-        app.read(cx).render_inactive_sessions(
+        let content = app.read(cx).render_inactive_sessions(
             self.app.clone(),
             self.kind,
             self.list.clone(),
             &self.rows,
-        )
+        );
+        reveal_session_row(&self.list, &self.rows, &mut self.reveal);
+        content
     }
 }
+
+fn reveal_session_row(list: &ListState, rows: &RefCell<Vec<String>>, reveal: &mut Option<String>) {
+    if let Some(key) = reveal.take()
+        && let Some(index) = rows.borrow().iter().position(|row| row == &key)
+    {
+        list.scroll_to_reveal_item(index);
+        // On first expansion there may be no viewport measurement yet.
+        if list.logical_scroll_top().item_ix > index {
+            list.scroll_to(gpui::ListOffset {
+                item_ix: index,
+                offset_in_item: gpui::px(0.0),
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "session_rail_tests.rs"]
+mod tests;

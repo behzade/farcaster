@@ -71,6 +71,7 @@ pub(crate) const COMPOSER_KEY_CONTEXT: &str = "FarcasterComposer";
 pub(crate) const APP_SHORTCUT_CONTEXT: &str = "FarcasterApp && input == app";
 pub(crate) const APP_INPUT_CONTEXT: &str = "FarcasterApp input=app";
 pub(crate) const NATIVE_INPUT_CONTEXT: &str = "FarcasterApp input=native";
+pub(crate) const TRANSCRIPT_KEY_CONTEXT: &str = "FarcasterTranscript";
 
 #[derive(Debug, Eq, PartialEq)]
 enum CurrentCloseTarget {
@@ -111,6 +112,8 @@ actions!(
         ShowTerminal,
         PreviousSession,
         NextSession,
+        NextTranscriptSession,
+        PreviousTranscriptSession,
         ToggleArchivedSessions,
         SubmitPrompt,
         AbortRun,

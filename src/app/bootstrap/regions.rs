@@ -23,7 +23,7 @@ pub(super) fn create(
 
     let transcript_list = TranscriptListState::new();
     transcript_list.scroll_to_end();
-    let transcript = cx.new(|_| TranscriptView::new(app.clone(), transcript_list.clone()));
+    let transcript = cx.new(|cx| TranscriptView::new(app.clone(), transcript_list.clone(), cx));
     match crate::app::infrastructure::persistence::StateStore::open()
         .and_then(|store| store.load_transcript_font_size())
     {

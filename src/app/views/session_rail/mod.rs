@@ -5,6 +5,7 @@ mod folders;
 mod groups;
 mod hover;
 mod inactive_rail;
+mod navigation;
 mod rendering;
 mod rows;
 #[cfg(test)]
