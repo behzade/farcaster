@@ -498,7 +498,7 @@ fn history_tool_output(item: &Value, kind: &str, is_error: bool) -> Vec<Value> {
     vec![json!({"type": "text", "text": output})]
 }
 
-fn user_content(content: Option<&Value>) -> Vec<Value> {
+pub(super) fn user_content(content: Option<&Value>) -> Vec<Value> {
     content
         .and_then(Value::as_array)
         .into_iter()

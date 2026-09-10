@@ -1,6 +1,53 @@
 use super::*;
 
 #[test]
+fn delivered_inputs_preserve_images() {
+    use crate::protocol::PromptImage;
+
+    for (prefix, mode) in [
+        (STEER_CLIENT_ID_PREFIX, WorkerSendMode::Steer),
+        (QUEUE_CLIENT_ID_PREFIX, WorkerSendMode::Queue),
+    ] {
+        for text in [Some("look at these"), None] {
+            let mut session = test_session();
+            let mut content = vec![
+                json!({"type":"image", "url":"data:image/png;base64,aGVsbG8="}),
+                json!({"type":"image", "url":"data:image/jpeg;base64,d29ybGQ="}),
+            ];
+            if let Some(text) = text {
+                content.insert(0, json!({"type":"text", "text":text}));
+            }
+            let item = json!({
+                "type":"userMessage", "clientId":format!("{prefix}1"),
+                "content":content,
+            });
+            for method in ["item/started", "item/completed"] {
+                session
+                    .queued_inbound
+                    .push_back(Ok(CodexInbound::Notification {
+                        method: method.into(),
+                        params: json!({"threadId":"thread-1", "item":item}),
+                    }));
+            }
+            assert_eq!(
+                session.poll(),
+                Some(WorkerEvent::Activity(
+                    WorkerActivity::InputDeliveredWithImages {
+                        mode,
+                        message: text.unwrap_or_default().into(),
+                        images: vec![
+                            PromptImage::new("aGVsbG8=".into(), "image/png".into()),
+                            PromptImage::new("d29ybGQ=".into(), "image/jpeg".into()),
+                        ],
+                    }
+                ))
+            );
+            assert_eq!(session.poll(), None);
+        }
+    }
+}
+
+#[test]
 fn skill_refresh_updates_commands_and_attaches_paths_to_prompts() {
     use std::io::BufRead as _;
     let (mut session, mut sent) = writable_test_session();

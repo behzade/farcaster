@@ -1496,15 +1496,25 @@ fn codex_input_delivery(item: &Value) -> Option<WorkerActivity> {
     } else {
         return None;
     };
-    let message = item
-        .get("content")?
-        .as_array()?
+    let content = super::catalog::user_content(item.get("content"));
+    let message = content
         .iter()
-        .find(|input| input.get("type").and_then(Value::as_str) == Some("text"))?
-        .get("text")?
-        .as_str()?
-        .to_owned();
-    Some(WorkerActivity::InputDelivered { mode, message })
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let images: Vec<crate::protocol::PromptImage> = content
+        .into_iter()
+        .filter_map(|part| serde_json::from_value(part).ok())
+        .collect();
+    if images.is_empty() {
+        (!message.is_empty()).then_some(WorkerActivity::InputDelivered { mode, message })
+    } else {
+        Some(WorkerActivity::InputDeliveredWithImages {
+            mode,
+            message,
+            images,
+        })
+    }
 }
 
 fn codex_agent_message_text(item: &Value) -> Option<String> {
