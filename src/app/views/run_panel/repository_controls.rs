@@ -15,7 +15,7 @@ use crate::{
         },
     },
     repository::{
-        BackendPreference, RepositoryBackend, RepositoryKind, RepositorySyncAction,
+        BackendPreference, RepositoryBackend, RepositoryEdit, RepositoryKind, RepositorySyncAction,
         SnapshotIdentity, WorkingCopySnapshot,
     },
 };
@@ -23,6 +23,13 @@ use gpui::{
     AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px,
+};
+
+use gpui_component::{
+    Disableable as _, Sizable as _, Size,
+    button::{Button, ButtonVariants as _},
+    menu::{DropdownMenu as _, PopupMenuItem},
+    tooltip::Tooltip,
 };
 
 pub(super) fn file_action(
@@ -45,10 +52,6 @@ pub(super) fn file_action(
             }
         })
 }
-use gpui_component::{
-    menu::{DropdownMenu as _, PopupMenuItem},
-    tooltip::Tooltip,
-};
 
 pub(super) fn repository_header(
     app: &FarcasterApp,
@@ -58,6 +61,9 @@ pub(super) fn repository_header(
     filtering: bool,
 ) -> AnyElement {
     let refresh = entity.clone();
+    let clear = entity.clone();
+    let commit = entity.clone();
+    let selected_count = app.repository.edits.selection.paths.len();
     let enabled = app.repository.execution_allowed;
     let syncing = app.repository.sync.action;
     let count = snapshot.map_or(0, |snapshot| {
@@ -84,12 +90,59 @@ pub(super) fn repository_header(
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
+                        .text_ellipsis()
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.muted)
                         .when(snapshot.is_some(), |label| {
-                            label.child(format!("· {count}"))
+                            label.child(if selected_count > 0 {
+                                format!("· {selected_count} selected")
+                            } else {
+                                format!("· {count}")
+                            })
                         }),
                 )
+                .when(snapshot.is_some() && selected_count > 0, |row| {
+                    let selection_button = |id, icon, label: &'static str| {
+                        Button::new(id)
+                            .icon(icon)
+                            .with_size(Size::Small)
+                            .disabled(syncing.is_some() || app.repository.edits.pending.is_some())
+                            .accessibility_label(label)
+                            .tooltip(label)
+                    };
+                    row.child(
+                        selection_button(
+                            "clear-selected-files",
+                            AppIcon::X,
+                            "Clear file selection",
+                        )
+                        .ghost()
+                        .on_click(move |_, _, cx| {
+                            let _ = clear.update(cx, |this, cx| {
+                                this.clear_repository_selection(cx);
+                            });
+                        }),
+                    )
+                    .child(
+                        selection_button(
+                            "commit-selected-files",
+                            AppIcon::Check,
+                            "Review and commit selected files",
+                        )
+                        .primary()
+                        .on_click(move |_, window, cx| {
+                            let _ = commit.update(cx, |this, cx| {
+                                this.review_repository_edit(
+                                    RepositoryEdit::Commit,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                    )
+                })
                 .when(enabled, |row| {
                     row.child(icon_button(
                         "refresh-working-copy",

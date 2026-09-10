@@ -21,7 +21,7 @@ use crate::{
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
-        primitives::{AppIconSize, ButtonTone, activates_button, app_icon, button},
+        primitives::{AppIconSize, activates_button, app_icon},
     },
     repository::{RepositoryEdit, RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };
@@ -41,7 +41,6 @@ impl FarcasterApp {
         browser: &RepositoryView<'_>,
     ) -> AnyElement {
         let snapshot = self.repository.snapshot.as_ref();
-        let selected_count = self.repository.edits.selection.paths.len();
         let header = repository_header(
             self,
             snapshot,
@@ -113,52 +112,6 @@ impl FarcasterApp {
                             .aria_label("Filter changed files")
                             .prefix(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline)),
                     )
-                    .when(selected_count > 0, |section| {
-                        let commit = entity.clone();
-                        let clear = entity.clone();
-                        let enabled = self.repository.sync.action.is_none()
-                            && self.repository.edits.pending.is_none();
-                        section.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(THEME.space.sm)
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.muted)
-                                        .child(format!("{selected_count} selected")),
-                                )
-                                .child(button(
-                                    "clear-selected-files",
-                                    "Clear",
-                                    ButtonTone::Quiet,
-                                    enabled,
-                                    move |_, cx| {
-                                        let _ = clear.update(cx, |this, cx| {
-                                            this.clear_repository_selection(cx);
-                                        });
-                                    },
-                                ))
-                                .child(button(
-                                    "commit-selected-files",
-                                    "Commit…",
-                                    ButtonTone::Accent,
-                                    enabled,
-                                    move |window, cx| {
-                                        let _ = commit.update(cx, |this, cx| {
-                                            this.review_repository_edit(
-                                                RepositoryEdit::Commit,
-                                                None,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    },
-                                )),
-                        )
-                    })
                     .child(self.repository_changes(
                         snapshot,
                         entity.clone(),
