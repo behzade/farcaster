@@ -222,6 +222,28 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
     )?;
     scratch("")?;
     lua(a.path(), "assert(vim.api.nvim_get_current_line() == '')")?;
+    open_target(
+        &executable,
+        project.path(),
+        a.path(),
+        11,
+        EditorTarget::Review(crate::app::reviews::Review {
+            title: "Inspect | `changes`".into(),
+            items: vec![crate::app::reviews::ReviewLocation {
+                path: "it's | shared.rs".into(),
+                start_line: Some(2),
+                end_line: Some(4),
+                note: "Inspect this band".into(),
+            }],
+        }),
+    )?;
+    lua(a.path(), r#"
+        local qf = vim.fn.getqflist({title = 0, items = 0})
+        assert(qf.title == 'Farcaster review: Inspect | `changes`')
+        assert(qf.items[1].lnum == 2 and qf.items[1].end_lnum == 4)
+        assert(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(qf.items[1].bufnr), ':t') == "it's | shared.rs")
+        assert(vim.bo.buftype == 'quickfix')
+    "#)?;
     assert!(lua(a.path(), "error('expected test error')").is_err());
     assert_eq!(
         std::fs::read_to_string(path).map_err(|error| error.to_string())?,

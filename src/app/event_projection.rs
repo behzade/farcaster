@@ -165,7 +165,7 @@ impl FarcasterApp {
                 snapshot.conversation.items.len(),
             );
             crate::app::views::transcript::TranscriptRowUpdate::replace(
-                crate::app::views::transcript::project_rows(&snapshot.conversation.items),
+                crate::app::views::transcript::project_conversation_rows(&snapshot.conversation),
             )
         } else {
             self.project_transcript_rows(&snapshot, cx)

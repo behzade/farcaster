@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "review_layout.rs"]
+mod review_layout;
+
 pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
     px((f32::from(viewport_height) * 0.32).clamp(72.0, 280.0))
 }
@@ -27,7 +30,8 @@ pub(crate) fn estimated_row_height(
         {
             Some(item(index).text.as_str())
         }
-        TranscriptRow::Item { .. } | TranscriptRow::ActivityGroup { .. } => None,
+        TranscriptRow::Item { .. } | TranscriptRow::ActivityGroup { .. }
+        | TranscriptRow::Review { .. } => None,
     };
     let Some(text) = text else {
         return TRANSCRIPT_ROW_HEIGHT_HINT;
@@ -48,6 +52,12 @@ pub(crate) fn estimated_row_height(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptRow {
+    Review {
+        index: usize,
+        revision: usize,
+        working: bool,
+        continued: bool,
+    },
     Item {
         index: usize,
         revision: usize,
@@ -94,7 +104,8 @@ impl TranscriptRow {
 
     pub(crate) fn same_position(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Item { index: left, .. }, Self::Item { index: right, .. }) => left == right,
+            (Self::Item { index: left, .. }, Self::Item { index: right, .. })
+            | (Self::Review { index: left, .. }, Self::Review { index: right, .. }) => left == right,
             (
                 Self::MessageChunk {
                     index: left_index,
@@ -151,6 +162,7 @@ impl TranscriptRow {
     pub(super) fn item_start(&self) -> usize {
         match self {
             Self::Item { index, .. }
+            | Self::Review { index, .. }
             | Self::MessageChunk { index, .. }
             | Self::StreamChunk { index, .. } => *index,
             Self::ActivityGroup { start, .. } => *start,
@@ -160,6 +172,7 @@ impl TranscriptRow {
     pub(super) fn item_end(&self) -> usize {
         match self {
             Self::Item { index, .. }
+            | Self::Review { index, .. }
             | Self::MessageChunk { index, .. }
             | Self::StreamChunk { index, .. } => index + 1,
             Self::ActivityGroup { start, len, .. } => start + len,
@@ -170,7 +183,27 @@ impl TranscriptRow {
 pub(crate) fn project_rows(
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
 ) -> PersistentVec<TranscriptRow> {
-    project_rows_from(items, 0)
+    review_layout::arrange(project_rows_from(items, 0), items, None, &[])
+}
+
+pub(crate) fn project_conversation_rows(
+    conversation: &conversation::ConversationState,
+) -> PersistentVec<TranscriptRow> {
+    review_layout::arrange(
+        project_rows_from(&conversation.items, 0),
+        &conversation.items,
+        conversation.active_run_start(),
+        &conversation.completed_runs,
+    )
+}
+
+pub(crate) fn update_conversation_rows(
+    previous_rows: &PersistentVec<TranscriptRow>,
+    previous: &conversation::ConversationState,
+    next: &conversation::ConversationState,
+    changed_from: Option<usize>,
+) -> TranscriptRowUpdate {
+    update_rows_with_run(previous_rows, &previous.items, &next.items, changed_from, next.active_run_start(), &next.completed_runs)
 }
 
 #[cfg(test)]
@@ -182,6 +215,7 @@ pub(crate) fn update_rows(
     update_rows_from(previous_rows, previous_items, items, None)
 }
 
+#[cfg(test)]
 pub(crate) fn update_rows_from(
     previous_rows: &PersistentVec<TranscriptRow>,
     previous_items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
@@ -224,12 +258,41 @@ impl TranscriptRowUpdate {
     }
 }
 
+// Item-only entry point used by the transcript benchmark and projection tests.
+#[allow(dead_code)]
 pub(crate) fn update_rows_incremental(
     previous_rows: &PersistentVec<TranscriptRow>,
     previous_items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
     items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
     changed_from: Option<usize>,
 ) -> TranscriptRowUpdate {
+    update_rows_with_run(previous_rows, previous_items, items, changed_from, None, &[])
+}
+
+fn update_rows_with_run(
+    previous_rows: &PersistentVec<TranscriptRow>,
+    previous_items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
+    items: &(impl Indexed<Arc<TranscriptItem>> + ?Sized),
+    changed_from: Option<usize>,
+    active_start: Option<usize>,
+    completed_runs: &[std::ops::Range<usize>],
+) -> TranscriptRowUpdate {
+    // Review handoffs deliberately reorder source items. Keep the monotonic
+    // incremental fast path for ordinary transcripts; compare visual rows for
+    // review transcripts, including state-only settlement updates.
+    if previous_rows.iter().any(|row| matches!(row, TranscriptRow::Review { .. }))
+        || (changed_from.unwrap_or(0)..items.len()).any(|index| {
+            items.get(index).is_some_and(|item| review_artifact::from_item(item).is_some())
+        })
+    {
+        let rows = review_layout::arrange(project_rows_from(items, 0), items, active_start, completed_runs);
+        let prefix = previous_rows.iter().zip(rows.iter()).take_while(|(a, b)| a == b).count();
+        let unchanged = prefix == previous_rows.len() && prefix == rows.len();
+        return TranscriptRowUpdate {
+            rows: (!unchanged).then_some(rows),
+            unchanged_prefix_rows: prefix,
+        };
+    }
     let unchanged_hint = changed_from
         .unwrap_or_default()
         .min(previous_items.len())
@@ -406,6 +469,16 @@ fn project_rows_from(
         let item = items
             .get(index)
             .expect("projected transcript item should exist");
+        if review_artifact::from_item(item).is_some() {
+            rows.push(TranscriptRow::Review {
+                index,
+                revision: item_revision(items, index..index + 1),
+                working: false,
+                continued: false,
+            });
+            index += 1;
+            continue;
+        }
         if is_groupable_activity(item) {
             let start = index;
             let mut end = start;
@@ -502,6 +575,7 @@ fn text_revision(text: &str) -> usize {
 fn is_groupable_activity(item: &TranscriptItem) -> bool {
     use conversation::{ToolExecutionState, ToolReviewState};
     matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
+        && review_artifact::from_item(item).is_none()
         && !item.tool_review.as_ref().is_some_and(|review| {
             matches!(
                 review.state,

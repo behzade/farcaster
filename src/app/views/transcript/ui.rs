@@ -1,7 +1,7 @@
 use gpui::Context;
 
 use super::{
-    TranscriptRowUpdate, conversation::TranscriptKind, update_rows_from, update_rows_incremental,
+    TranscriptRowUpdate, conversation::TranscriptKind, update_conversation_rows,
 };
 use crate::app::FarcasterApp;
 
@@ -91,10 +91,10 @@ impl FarcasterApp {
         let _timing =
             crate::app::infrastructure::performance::Timing::new("transcript.project_rows");
         let transcript = self.transcript_view.read(cx);
-        update_rows_incremental(
+        update_conversation_rows(
             &transcript.rows,
-            &self.snapshot.conversation.items,
-            &snapshot.conversation.items,
+            &self.snapshot.conversation,
+            &snapshot.conversation,
             snapshot.transcript_changed_from,
         )
     }
@@ -181,10 +181,15 @@ impl FarcasterApp {
         _was_empty: bool,
         cx: &mut Context<Self>,
     ) {
-        let items = self.snapshot.conversation.items.clone();
+        let conversation = self.snapshot.conversation.clone();
         self.transcript_view.update(cx, |transcript, cx| {
-            let rows = update_rows_from(&transcript.rows, &items, &items, Some(index));
-            let _changed = transcript.apply_rows(TranscriptRowUpdate::replace(rows), &items);
+            let rows = update_conversation_rows(
+                &transcript.rows,
+                &conversation,
+                &conversation,
+                Some(index),
+            );
+            let _changed = transcript.apply_rows(rows, &conversation.items);
             cx.notify();
         });
     }

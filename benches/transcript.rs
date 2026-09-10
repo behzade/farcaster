@@ -10,7 +10,11 @@ use std::{
 use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
+#[path = "../src/app/reviews.rs"]
+mod reviews;
+
 mod app {
+    pub(crate) use crate::reviews;
     gpui::actions!(farcaster_bench, [OpenTranscriptScratch]);
     #[derive(Clone, Debug, Eq, PartialEq, gpui::Action)]
     #[action(namespace = farcaster_bench, no_json)]
@@ -114,6 +118,15 @@ mod app {
             _: &mut gpui::Context<Self>,
         ) {
         }
+        pub(crate) fn open_review_editor(
+            &mut self,
+            _: std::path::PathBuf,
+            _: crate::reviews::Review,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) {
+        }
+
         pub(crate) fn open_transcript_scratch(
             &mut self,
             _: &mut gpui::Window,

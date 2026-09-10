@@ -8,6 +8,34 @@ use super::{
 };
 
 impl FarcasterApp {
+    pub(crate) fn open_review_editor(
+        &mut self,
+        project: PathBuf,
+        review: crate::app::reviews::Review,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.center_surface_switch_blocked() {
+            return;
+        }
+        let current = self.workspace_project();
+        let validation = review.validate().and_then(|()| {
+            let root = current.canonicalize().map_err(|error| error.to_string())?;
+            if project != root {
+                return Err("This review belongs to a different project.".into());
+            }
+            for item in &review.items {
+                crate::app::reviews::resolve_path(&root, &item.path)?;
+            }
+            Ok(())
+        });
+        if let Err(error) = validation {
+            self.notify_workspace_error("Review", error, cx);
+            return;
+        }
+        self.activate_editor_tab(current, EditorTarget::Review(review), window, cx);
+    }
+
     pub(crate) fn open_file_editor(
         &mut self,
         path: PathBuf,

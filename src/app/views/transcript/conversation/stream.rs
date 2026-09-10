@@ -49,7 +49,7 @@ impl ConversationState {
         let mut incremental_content_changed = true;
         match kind {
             "agent_start" => {
-                self.running = true;
+                self.begin_run();
                 self.settled = false;
             }
             "agent_end" => {
@@ -59,6 +59,9 @@ impl ConversationState {
             }
             "agent_settled" => {
                 self.running = false;
+                if let Some(start) = self.run_started_at.take() {
+                    self.completed_runs.push(start..self.items.len());
+                }
                 self.settled = true;
                 self.retrying = false;
                 self.compacting = false;

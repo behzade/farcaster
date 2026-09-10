@@ -7,6 +7,7 @@ pub(crate) mod infrastructure;
 #[allow(unused_imports)]
 pub(crate) use infrastructure::{launch, paths, persistence, shell_environment};
 pub(crate) mod mcp_server;
+pub(crate) mod reviews;
 mod navigation;
 mod project;
 pub(crate) mod runtime;

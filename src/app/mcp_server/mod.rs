@@ -1,5 +1,6 @@
 mod lifecycle;
 mod notices;
+mod reviews;
 pub(crate) use lifecycle::{set_enabled, start};
 mod workers;
 mod workgraph;
@@ -92,6 +93,26 @@ impl FarcasterMcp {
 
 #[tool_router]
 impl FarcasterMcp {
+    #[tool(
+        name = "submit_review",
+        description = "Submit suggested review locations for the user as a transcript review card. Supply project-relative files, optional inclusive line bands, and short notes. This is advisory, not a verified changeset. The user can open the list in their editor; submitting never opens it automatically."
+    )]
+    async fn submit_review(
+        &self,
+        Parameters(params): Parameters<reviews::Params>,
+        Extension(parts): Extension<axum::http::request::Parts>,
+    ) -> Result<Json<JsonObject>, String> {
+        let token = caller_token(&parts)
+            .ok_or_else(|| "review requires a registered Farcaster caller".to_owned())?;
+        let result = tokio::task::spawn_blocking(move || {
+            let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
+            reviews::submit(&caller, params)
+        })
+        .await
+        .map_err(|error| format!("review task failed: {error}"))??;
+        json_object(result)
+    }
+
     #[tool(
         name = "worker_send",
         description = "Send work within your worker family. Top-level workers provide a direct child name in `to`; first use creates the child and subsequent messages reuse it. Children omit `to` and always send to their parent."

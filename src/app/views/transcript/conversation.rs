@@ -13,6 +13,10 @@ use crate::{
     protocol::PromptImage,
 };
 
+#[cfg(test)]
+#[path = "conversation/notices_tests.rs"]
+mod notices_tests;
+
 #[path = "conversation/attachments.rs"]
 mod attachments;
 #[path = "conversation/history.rs"]
@@ -194,6 +198,8 @@ pub(crate) struct ConversationState {
     pub items: PersistentVec<Arc<TranscriptItem>>,
     pub queue: QueueState,
     pub running: bool,
+    run_started_at: Option<usize>,
+    pub(crate) completed_runs: Vec<std::ops::Range<usize>>,
     pub settled: bool,
     pub compacting: bool,
     pub retrying: bool,
@@ -325,6 +331,25 @@ impl ConversationState {
         true
     }
 
+    pub(crate) fn begin_run(&mut self) {
+        if !self.running || self.run_started_at.is_none() {
+            self.run_started_at = Some(self.items.len());
+        }
+        self.running = true;
+    }
+
+    pub(crate) fn active_run_start(&self) -> Option<usize> {
+        self.running.then(|| {
+            self.run_started_at
+                .unwrap_or_else(|| {
+                    self.items
+                        .rposition(|item| item.kind == TranscriptKind::User)
+                        .unwrap_or(0)
+                })
+                .min(self.items.len())
+        })
+    }
+
     pub(crate) fn ended_in_error(&self) -> bool {
         self.items
             .iter_rev()
@@ -350,6 +375,40 @@ impl ConversationState {
             tool_review: None,
             invocation: None,
         }));
+    }
+
+    pub(crate) fn push_extension_notice(&mut self, message: String) -> usize {
+        let index = self.items.len().saturating_sub(1);
+        if let Some(last) = self.items.last()
+            && last.kind == TranscriptKind::Notice
+            && last.label == "Extension"
+            && self.run_started_at != Some(self.items.len())
+        {
+            let mut item = last.clone();
+            let text = &mut Arc::make_mut(&mut item).text;
+            text.push('\n');
+            text.push_str(&message);
+            self.items.set(index, item);
+            return index;
+        }
+        let index = self.items.len();
+        self.items.push(Arc::new(TranscriptItem {
+            kind: TranscriptKind::Notice,
+            label: "Extension".into(),
+            text: message,
+            images: Arc::default(),
+            files: Arc::default(),
+            stream_chunks: Arc::default(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation: None,
+        }));
+        index
     }
 
     pub(crate) fn push_extension_error(&mut self, message: String) {

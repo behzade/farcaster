@@ -125,7 +125,7 @@ impl RuntimeOwner {
                     native_invocation,
                 ),
             });
-        conversation.running = true;
+        conversation.begin_run();
         self.snapshot.status = "Working".into();
         self.publish();
         self.dispatch_prompt(
@@ -165,7 +165,7 @@ impl RuntimeOwner {
                 native_invocation,
             ),
         });
-        conversation.running = true;
+        conversation.begin_run();
         self.snapshot.status = "Working".into();
         self.publish();
         self.dispatch_prompt(
@@ -389,7 +389,7 @@ impl RuntimeOwner {
                 self.pending_prompt_item = Some(optimistic);
             }
             let snapshot = self.active_snapshot_mut();
-            Arc::make_mut(&mut snapshot.conversation).running = true;
+            Arc::make_mut(&mut snapshot.conversation).begin_run();
             snapshot.status = "Working".into();
             if self.snapshot.history_preview
                 && let Some(snapshot) = self.parked_snapshot.take()

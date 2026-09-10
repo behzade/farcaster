@@ -17,6 +17,7 @@ fn exposes_only_farcaster_tools() {
     assert_eq!(
         names,
         [
+            "submit_review",
             "worker_notices",
             "worker_send",
             "workgraph_claim",
@@ -131,6 +132,14 @@ async fn workgraph_rejects_missing_authenticated_caller() {
         .await;
     assert!(matches!(result, Err(error) if error.contains("registered Farcaster caller")));
     assert!(!temp.path().join("unused.db").exists());
+    let (parts, _) = axum::http::Request::new(()).into_parts();
+    let result = server.submit_review(
+        Parameters(serde_json::from_value(serde_json::json!({
+            "title": "Review", "items": [{"path": "file.rs", "note": "Inspect"}]
+        })).unwrap()),
+        Extension(parts),
+    ).await;
+    assert!(matches!(result, Err(error) if error.contains("registered Farcaster caller")));
 }
 
 #[test]

@@ -222,6 +222,11 @@ impl TranscriptListState {
         let anchor = state.logical_scroll_top();
         let old_len = old_range.len();
         let replacement_len = state.heights.splice(old_range.clone(), size_hints);
+        // Selection uses visual row positions. A splice touching or preceding
+        // it must not silently transfer the highlight to different content.
+        if state.selection_range().is_some_and(|range| *range.end() >= old_range.start) {
+            state.clear_selection();
+        }
 
         let (anchor_index, anchor_offset) = if was_empty {
             (0, px(0.0))

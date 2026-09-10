@@ -269,6 +269,21 @@ fn cross_element_selection_marks_the_inclusive_logical_range() {
 }
 
 #[test]
+fn reordered_rows_clear_affected_selection_but_appends_preserve_it() {
+    let state = TranscriptListState::new();
+    state.splice_with_size_hints(0..0, [px(20.0); 4]);
+    {
+        let mut inner = state.0.borrow_mut();
+        inner.selection_anchor = Some(1);
+        inner.selection_cursor = Some(2);
+    }
+    state.splice_with_size_hints(4..4, [px(20.0)]);
+    assert!(state.selection_contains(1));
+    state.splice_with_size_hints(1..4, [px(20.0); 3]);
+    assert!(state.0.borrow().selection_range().is_none());
+}
+
+#[test]
 fn selection_edge_scroll_repeats_until_stopped() {
     let state = state_with_rows(100);
     let mut inner = state.0.borrow_mut();

@@ -38,6 +38,7 @@ pub(super) enum EditorTarget {
     File(PathBuf, Option<u64>),
     Diff(PathBuf, Option<u64>),
     Transcript(String),
+    Review(crate::app::reviews::Review),
 }
 
 pub(super) fn new_session_tab() -> u64 {
@@ -223,6 +224,38 @@ fn open_target(
             );
             (expression, Some(file))
         }
+        EditorTarget::Review(review) => {
+            review.validate()?;
+            let items = review
+                .items
+                .iter()
+                .map(|location| {
+                    let path = crate::app::reviews::resolve_path(project, &location.path)?;
+                    Ok(serde_json::json!({
+                        "path": path,
+                        "start_line": location.start_line,
+                        "end_line": location.end_line,
+                        "note": location.note,
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let payload = serde_json::json!({ "title": review.title, "items": items });
+            run_remote(
+                executable,
+                project,
+                &state_dir.join("nvim.sock"),
+                &session_expression(tab, None, None),
+            )?;
+            let mut file = tempfile::NamedTempFile::new_in(state_dir)
+                .map_err(|error| error.to_string())?;
+            serde_json::to_writer(&mut file, &payload).map_err(|error| error.to_string())?;
+            let expression = format!(
+                "luaeval({}, {})",
+                vim_string(include_str!("neovim_review.lua")),
+                vim_string(&file.path().to_string_lossy()),
+            );
+            (expression, Some(file))
+        }
         EditorTarget::Transcript(text) => {
             let mut file =
                 tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
@@ -316,6 +349,10 @@ fn remote_output(
         std::thread::sleep(RETRY_INTERVAL);
     }
 }
+
+#[cfg(test)]
+#[path = "neovim_review_tests.rs"]
+mod review_tests;
 
 #[cfg(test)]
 #[path = "neovim_tests.rs"]

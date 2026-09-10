@@ -44,6 +44,10 @@ mod links;
 mod message_rows;
 #[path = "render/rows.rs"]
 mod rows;
+#[path = "render/review.rs"]
+mod review;
+#[path = "render/review_artifact.rs"]
+mod review_artifact;
 #[path = "render/tool_rows.rs"]
 mod tool_rows;
 
@@ -112,7 +116,7 @@ pub(super) fn message_follows_tool(
         TranscriptRow::MessageChunk { first, .. } | TranscriptRow::StreamChunk { first, .. } => {
             first
         }
-        TranscriptRow::ActivityGroup { .. } => false,
+        TranscriptRow::ActivityGroup { .. } | TranscriptRow::Review { .. } => false,
     };
     is_first_assistant_row
         && (0..row.item_start())
@@ -127,13 +131,16 @@ pub(super) fn copy_transcript_row_range(
     rows: &PersistentVec<TranscriptRow>,
     range: std::ops::RangeInclusive<usize>,
 ) -> String {
-    let last = rows.partition_point(|row| row.key() <= *range.end());
-    let end = last
-        .checked_sub(1)
-        .and_then(|index| rows.get(index))
-        .filter(|row| row.key() == *range.end())
-        .map_or(*range.end(), |row| row.item_end().saturating_sub(1));
-    copy_transcript_items(items, *range.start()..=end)
+    let mut seen = std::collections::HashSet::new();
+    rows.iter()
+        .skip(*range.start())
+        .take(range.end().saturating_sub(*range.start()).saturating_add(1))
+        .flat_map(|row| row.item_start()..row.item_end())
+        .filter(|index| seen.insert(*index))
+        .map(|index| copy_transcript_items(items, index..=index))
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 pub(in crate::app) fn transcript_scratch_text(
@@ -239,13 +246,22 @@ pub(crate) fn render(
     let visual_selection_active = list_state.selected_text().is_some();
     let jump = entity.clone();
     let row_entity = entity;
-    let selection_rows = rows.clone();
+    // Selection keys follow visual order, while disclosure keys retain source
+    // identity. Reviews can move behind later messages without reversing a drag.
+    let mut group_start = 0;
+    let selection_keys: Arc<Vec<usize>> = Arc::new(rows.iter().enumerate().map(|(index, row)| {
+        if index == 0 || rows[index - 1].key() != row.key() {
+            group_start = index;
+        }
+        group_start
+    }).collect());
+    let selection_groups = selection_keys.clone();
     let selection_copy_rows = rows.clone();
     let selection_items = conversation.items.clone();
     let selection_state = list_state.clone();
     let view = transcript_list_grouped(
         list_state.clone(),
-        move |index| selection_rows.get(index).map_or(index, TranscriptRow::key),
+        move |index| selection_groups.get(index).copied().unwrap_or(index),
         move |range| copy_transcript_row_range(&selection_items, &selection_copy_rows, range),
         move |index, _, cx| {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
@@ -268,7 +284,7 @@ pub(crate) fn render(
                 .child(
                     div()
                         .w_full()
-                        .when(selection_state.selection_contains(row.key()), |row| {
+                        .when(selection_state.selection_contains(selection_keys[index]), |row| {
                             row.bg(THEME.colors.selection)
                         })
                         .child(div().w_full().child(render_row(
@@ -364,11 +380,13 @@ fn transcript_context_menu(
                     .separator();
             }
 
-            if matches!(row, TranscriptRow::ActivityGroup { .. })
+            if matches!(row, TranscriptRow::ActivityGroup { .. } | TranscriptRow::Review { .. })
                     || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool)
             {
                 let entity = entity.clone();
-                menu = menu.item(PopupMenuItem::new(if expanded {
+                menu = menu.item(PopupMenuItem::new(if matches!(row, TranscriptRow::Review { .. }) {
+                    if expanded { "Hide review locations" } else { "Show review locations" }
+                } else if expanded {
                     "Hide activity details"
                 } else {
                     "Show activity details"
@@ -440,7 +458,7 @@ pub(super) fn latest_allows_tail_reserve(
                     TranscriptKind::Thinking | TranscriptKind::Error | TranscriptKind::AgentResult
                 )
         }
-        TranscriptRow::ActivityGroup { .. } => true,
+        TranscriptRow::ActivityGroup { .. } | TranscriptRow::Review { .. } => true,
     }
 }
 
@@ -459,6 +477,12 @@ fn render_row(
     let key = row.key();
     let follows_tool = message_follows_tool(row, items);
     match row {
+        TranscriptRow::Review { index, working, continued, .. } => {
+            review_artifact::from_item(&items[index]).map_or_else(
+                || div().into_any_element(),
+                |artifact| review::render(font_scale, key, artifact, expanded, working, continued, entity),
+            )
+        }
         TranscriptRow::ActivityGroup { start, len, .. } => render_activity_group(
             font_scale,
             row.disclosure_key(),

@@ -3,6 +3,8 @@ use super::*;
 impl ConversationState {
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
         self.items.clear();
+        self.run_started_at = None;
+        self.completed_runs.clear();
         self.average_cache_hit_rate = None;
         self.cache_read_tokens = 0;
         self.prompt_tokens = 0;
