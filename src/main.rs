@@ -4,6 +4,7 @@ mod builtin_mcp;
 mod linux_graphics;
 mod modules;
 
+use app::infrastructure::performance::StartupTiming;
 pub(crate) use app::runtime;
 pub(crate) use modules::agents::extensions as protocol;
 pub(crate) use modules::sessions::activity as agent_activity;
@@ -15,15 +16,20 @@ fn main() -> std::process::ExitCode {
         return fail(error);
     }
 
-    if let Err(error) = app::shell_environment::import() {
-        return fail(format!("import app shell environment: {error}"));
-    }
+    let shell_import_ms = match app::shell_environment::import() {
+        Ok(elapsed) => elapsed,
+        Err(error) => return fail(format!("import app shell environment: {error}")),
+    };
 
     zlog::init();
     zlog::init_output_stderr();
     if let Err(error) = init_log_file() {
         zlog::error!("Failed to initialize application log file: {error}");
     }
+    if let Some(elapsed_ms) = shell_import_ms {
+        zlog::info!("STARTUP operation=main.import_shell_environment elapsed_ms={elapsed_ms}");
+    }
+    let prepare_timing = StartupTiming::always("main.prepare");
     let project = match app::launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
         Ok(project) => project,
         Err(error) => return fail(error),
@@ -55,6 +61,7 @@ fn main() -> std::process::ExitCode {
         Err(error) => return fail(format!("start MCP server: {error}")),
     };
 
+    drop(prepare_timing);
     match app::launch::run(project, workgraph_update_receiver, worker_updates) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),

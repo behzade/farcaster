@@ -3,6 +3,8 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 #[cfg(target_os = "linux")]
 use std::{fs, sync::Arc};
 
+use super::performance::StartupTiming;
+
 use crate::{
     app::FarcasterApp,
     app::infrastructure::persistence::{StateStore, WindowPlacement, WindowState},
@@ -70,23 +72,29 @@ pub(crate) fn run(
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
 ) -> Result<(), LaunchError> {
+    let launch_timing = StartupTiming::always("launch.until_window_open");
     #[cfg(target_os = "linux")]
     install_linux_desktop_identity();
 
-    let trust_timing =
-        crate::app::infrastructure::performance::StartupTiming::new("launch.project_trust");
+    let trust_timing = StartupTiming::new("launch.project_trust");
     let startup_trust =
         crate::app::project::trust::startup_trust(&project).map_err(LaunchError::ProjectTrust)?;
     drop(trust_timing);
     let failure = Rc::new(RefCell::new(None));
     let failure_in_app = failure.clone();
-    gpui_platform::application()
+    let platform_timing = StartupTiming::always("launch.platform");
+    let platform_application = gpui_platform::application();
+    drop(platform_timing);
+    let event_loop_timing = StartupTiming::always("launch.event_loop_start");
+    platform_application
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
+            drop(event_loop_timing);
             cx.set_app_identity("io.github.behzade.farcaster", "Farcaster");
+            let components_timing = StartupTiming::always("launch.init_components");
             gpui_component::init(cx);
-            let fonts_timing =
-                crate::app::infrastructure::performance::StartupTiming::new("launch.load_fonts");
+            drop(components_timing);
+            let fonts_timing = StartupTiming::always("launch.load_fonts");
             if AppAssets.load_fonts(cx).is_err() {
                 *failure_in_app.borrow_mut() = Some(LaunchError::BundledFonts);
                 quit_after_start(cx);
@@ -150,9 +158,7 @@ pub(crate) fn run(
                 }
             })
             .detach();
-            let placement_timing = crate::app::infrastructure::performance::StartupTiming::new(
-                "launch.restore_window",
-            );
+            let placement_timing = StartupTiming::new("launch.restore_window");
             let (window_bounds, display_id) = restored_window(cx).unwrap_or_else(|| {
                 (
                     WindowBounds::Windowed(Bounds::centered(
@@ -185,8 +191,8 @@ pub(crate) fn run(
                 .map(Arc::new);
                 window_options
             };
-            let open_window_timing =
-                crate::app::infrastructure::performance::StartupTiming::new("launch.open_window");
+            let open_window_timing = StartupTiming::always("launch.open_window");
+            let first_frame_timing = StartupTiming::always("launch.open_to_first_frame_callback");
             let result = cx.open_window(window_options, move |window, cx| {
                 super::quit::install_window(window, cx);
                 let launch = cx.new(|cx| {
@@ -200,7 +206,9 @@ pub(crate) fn run(
                         cx,
                     )
                 });
-                cx.new(|cx| gpui_component::Root::new(launch, window, cx))
+                let root = cx.new(|cx| gpui_component::Root::new(launch, window, cx));
+                window.on_next_frame(move |_, _| drop(first_frame_timing));
+                root
             });
             drop(open_window_timing);
             if let Err(error) = result {
@@ -210,6 +218,7 @@ pub(crate) fn run(
                 return;
             }
             cx.activate(true);
+            drop(launch_timing);
         });
     match failure.borrow_mut().take() {
         Some(error) => Err(error),

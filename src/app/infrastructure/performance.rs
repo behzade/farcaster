@@ -282,6 +282,14 @@ pub(crate) struct StartupTiming {
 }
 
 impl StartupTiming {
+    /// Record a once-per-launch stage even when detailed DEBUG timings are off.
+    pub(crate) fn always(name: &'static str) -> Self {
+        Self {
+            name,
+            started_at: Some(Instant::now()),
+        }
+    }
+
     pub(crate) fn new(name: &'static str) -> Self {
         Self {
             name,

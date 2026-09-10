@@ -1,8 +1,9 @@
-use std::{ffi::OsString, path::Path, process::Command};
+use std::{ffi::OsString, path::Path, process::Command, time::Instant};
 
 type Environment = Vec<(OsString, OsString)>;
 
 const APP_ENV_IMPORTED: &str = "FARCASTER_SHELL_ENV_IMPORTED";
+const APP_ENV_IMPORT_MS: &str = "FARCASTER_SHELL_ENV_IMPORT_MS";
 const LAUNCH_ENVIRONMENT: [&str; 11] = [
     "FARCASTER_CODEX_PATH",
     "FARCASTER_DATA_DIR",
@@ -17,12 +18,15 @@ const LAUNCH_ENVIRONMENT: [&str; 11] = [
     "XDG_DATA_HOME",
 ];
 
-pub(crate) fn import() -> Result<(), String> {
+pub(crate) fn import() -> Result<Option<u128>, String> {
     use std::os::unix::process::CommandExt as _;
 
     if std::env::var(APP_ENV_IMPORTED).as_deref() == Ok("1") {
-        return Ok(());
+        return Ok(std::env::var(APP_ENV_IMPORT_MS)
+            .ok()
+            .and_then(|value| value.parse().ok()));
     }
+    let started_at = Instant::now();
     let environment =
         preserve_launch_environment(crate::agents::app_shell_environment()?, |name| {
             std::env::var_os(name)
@@ -34,6 +38,11 @@ pub(crate) fn import() -> Result<(), String> {
         .env_clear()
         .envs(environment)
         .env(APP_ENV_IMPORTED, "1")
+        // Carry the elapsed time across exec to log it after shell import.
+        .env(
+            APP_ENV_IMPORT_MS,
+            started_at.elapsed().as_millis().to_string(),
+        )
         .exec();
     Err(format!(
         "relaunch farcaster with the login-shell environment: {error}"

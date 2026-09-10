@@ -16,7 +16,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> Self {
         let _startup_timing =
-            crate::app::infrastructure::performance::StartupTiming::new("app.start");
+            crate::app::infrastructure::performance::StartupTiming::always("app.start");
         let persisted = persisted::load(&project);
 
         let runtime_timing =
