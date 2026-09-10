@@ -46,7 +46,8 @@ impl FarcasterApp {
         self.capture_composer_session(cx);
         let target = self.composer_sessions.current_target().to_owned();
         let editor_text = self.composer.read(cx).value().to_string();
-        let (mode, allow_while_running) = submission_delivery(&value, mode);
+        let (mode, allow_while_running) =
+            submission_delivery(&value, mode, &self.snapshot.commands);
         let show_in_transcript = !self.snapshot.conversation.running;
         let images = self
             .composer_images
@@ -286,8 +287,12 @@ fn rejected_attachment_target(
         .map(|path| session_target(&path))
 }
 
-fn submission_delivery(value: &str, requested: PromptMode) -> (PromptMode, bool) {
-    if value.trim_start().starts_with('/') {
+fn submission_delivery(
+    value: &str,
+    requested: PromptMode,
+    commands: &[crate::protocol::SlashCommand],
+) -> (PromptMode, bool) {
+    if super::slash_commands::exact(value.trim_start(), commands).is_some() {
         (PromptMode::Normal, true)
     } else {
         (requested, false)

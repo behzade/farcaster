@@ -77,17 +77,33 @@ fn pending_submission_only_blocks_its_own_composer() {
 }
 
 #[test]
-fn every_slash_command_uses_backend_prompt_semantics() {
+fn submission_delivery_only_treats_registered_names_as_commands() {
+    let commands = [crate::protocol::SlashCommand {
+        name: "settings".into(),
+        description: None,
+        source: crate::protocol::SlashCommandSource::Extension,
+    }];
+    for requested in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
+        for message in ["/settings", "  /settings argument"] {
+            assert_eq!(
+                submission_delivery(message, requested, &commands),
+                (PromptMode::Normal, true)
+            );
+        }
+        for message in [
+            "ordinary prompt",
+            "/tmp/takeout.zip inspect this",
+            "  /settings-extra",
+        ] {
+            assert_eq!(
+                submission_delivery(message, requested, &commands),
+                (requested, false),
+                "{message:?} must retain {requested:?} delivery"
+            );
+        }
+    }
     assert_eq!(
-        submission_delivery("/settings", PromptMode::Steer),
-        (PromptMode::Normal, true)
-    );
-    assert_eq!(
-        submission_delivery("  /backend-command argument", PromptMode::FollowUp),
-        (PromptMode::Normal, true)
-    );
-    assert_eq!(
-        submission_delivery("ordinary prompt", PromptMode::Steer),
+        submission_delivery("/settings", PromptMode::Steer, &[]),
         (PromptMode::Steer, false)
     );
 }
