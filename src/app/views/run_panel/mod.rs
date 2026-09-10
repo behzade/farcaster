@@ -6,6 +6,7 @@ mod repository;
 mod repository_controls;
 mod repository_presentation;
 mod resize;
+pub(super) mod review;
 #[cfg(test)]
 mod tests;
 

@@ -16,6 +16,9 @@ pub(crate) struct RunPanelView {
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
     scroll: ScrollHandle,
+    review_scroll: ScrollHandle,
+    pub(crate) review_tree: super::super::run_panel::change_tree::ChangeTreeState,
+    review_id: Option<u64>,
     completed_agents_expanded: bool,
     limited_agents_expanded: bool,
 }
@@ -31,6 +34,9 @@ impl RunPanelView {
             width: THEME.layout.run_panel,
             resize_start: None,
             scroll: ScrollHandle::new(),
+            review_scroll: ScrollHandle::new(),
+            review_tree: Default::default(),
+            review_id: None,
             completed_agents_expanded: false,
             limited_agents_expanded: false,
         }
@@ -86,6 +92,21 @@ impl Render for RunPanelView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
+        if let Some(review) = app.read(cx).visible_review() {
+            if self.review_id != Some(review.id) {
+                self.review_id = Some(review.id);
+                self.review_tree = Default::default();
+                self.review_scroll
+                    .set_offset(gpui::point(gpui::px(0.0), gpui::px(0.0)));
+            }
+            return super::super::run_panel::review::render(
+                review,
+                &self.review_scroll,
+                &self.review_tree,
+                self.app.clone(),
+                cx.entity().downgrade(),
+            );
+        }
         if self.search.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files…"));
             self.search_subscription =

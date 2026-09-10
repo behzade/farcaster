@@ -104,6 +104,7 @@ impl FarcasterApp {
             workgraph_detail_view: regions.workgraph_detail,
             workgraph_sidebar_view: regions.workgraph_sidebar,
             editor: None,
+            active_review: None,
             project_editors: HashMap::new(),
             session_editor_tabs: HashMap::new(),
             editor_ready: false,

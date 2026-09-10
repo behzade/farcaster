@@ -1,5 +1,5 @@
 (function()
-  local id, path, line, scratch, diff = unpack(_A)
+  local id, path, line, scratch, diff, review = unpack(_A)
   local state = rawget(_G, 'farcaster_session_views')
   if not state then
     state = { tabs = {} }
@@ -20,7 +20,7 @@
   end
 
   state.diffs = state.diffs or {}
-  if path ~= nil and path ~= vim.NIL or scratch ~= nil and scratch ~= vim.NIL then
+  if path ~= nil and path ~= vim.NIL or scratch ~= nil and scratch ~= vim.NIL or review == true then
     local previous = state.diffs[tab]
     if previous then
       if vim.api.nvim_win_is_valid(previous.work) then

@@ -88,6 +88,59 @@ pub(crate) fn disclosure_title_row(
         })
 }
 
+/// Compact folder disclosure shared by repository and review trees.
+pub(crate) fn tree_folder_row(
+    id: impl Into<ElementId>,
+    label: String,
+    depth: usize,
+    expanded: bool,
+    enabled: bool,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let row = div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(disclosure_action_label(expanded, &label))
+        .aria_expanded(expanded)
+        .w_full()
+        .min_w_0()
+        .h(gpui::px(24.0))
+        .pl(gpui::px(depth as f32 * 12.0 + 4.0))
+        .pr(THEME.space.xs)
+        .flex()
+        .items_center()
+        .gap(THEME.space.xs)
+        .rounded(THEME.radius)
+        .text_size(THEME.type_scale.caption)
+        .text_color(THEME.colors.muted)
+        .child(div().w(gpui::px(14.0)).flex_none().child(app_icon(
+            if expanded {
+                AppIcon::CaretDown
+            } else {
+                AppIcon::CaretRight
+            },
+            AppIconSize::Inline,
+        )))
+        .child(div().min_w_0().flex_1().text_ellipsis().child(label));
+    if !enabled {
+        return row;
+    }
+    let on_press: DisclosureHandler = Rc::new(on_press);
+    let click = Rc::clone(&on_press);
+    row.tab_index(0)
+        .cursor_pointer()
+        .hover(|row| row.bg(THEME.colors.hover))
+        .focus_visible(|row| row.bg(THEME.colors.selection))
+        .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
+        .on_click(move |_, window, cx| click(window, cx))
+        .on_key_down(move |event, window, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                on_press(window, cx);
+            }
+        })
+}
+
 fn disclosure_action_label(expanded: bool, label: &str) -> String {
     format!("{} {label}", if expanded { "Collapse" } else { "Expand" })
 }

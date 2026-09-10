@@ -165,6 +165,7 @@ impl FarcasterApp {
             self.chat_navigation.activation.clear();
             self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
             self.notify_session_rail_shell(cx);
+            self.notify_run_panel(cx);
             cx.notify();
         }
         changed

@@ -188,77 +188,32 @@ impl FarcasterApp {
                         let project = self.repository.project.clone();
                         let path = path.clone();
                         let panel = panel.clone();
-                        let key_panel = panel.clone();
-                        let key_project = project.clone();
-                        let key_path = path.clone();
-                        let filtering = !browser.query.trim().is_empty();
+                        let accessible = format!(
+                            "{} {}",
+                            if *open { "Collapse" } else { "Expand" },
+                            path.display()
+                        );
                         Some(
-                            div()
-                                .id(format!("repository-folder-{}", path.display()))
-                                .role(Role::Button)
-                                .aria_label(format!(
-                                    "{} {}",
-                                    if *open { "Collapse" } else { "Expand" },
-                                    path.display()
+                            crate::app::ui::primitives::tree_folder_row(
+                                format!("repository-folder-{}", path.display()),
+                                label.clone(),
+                                *depth,
+                                *open,
+                                browser.query.trim().is_empty(),
+                                move |_, cx| {
+                                    let _ = panel.update(cx, |view, cx| {
+                                        view.changes.toggle(&project, &path);
+                                        cx.notify();
+                                    });
+                                },
+                            )
+                            .aria_label(accessible)
+                            .when(!*open, |row| {
+                                row.child(crate::app::ui::primitives::folder_change_summary(
+                                    *count, *counts,
                                 ))
-                                .aria_expanded(*open)
-                                .w_full()
-                                .min_w_0()
-                                .h(px(24.0))
-                                .pl(px(*depth as f32 * 12.0 + 4.0))
-                                .pr(THEME.space.xs)
-                                .flex()
-                                .items_center()
-                                .gap(THEME.space.xs)
-                                .rounded(THEME.radius)
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
-                                .when(!filtering, |row| {
-                                    row.tab_index(0)
-                                        .on_mouse_down(
-                                            gpui::MouseButton::Left,
-                                            crate::app::ui::primitives::preserve_pointer_focus,
-                                        )
-                                        .cursor_pointer()
-                                        .hover(|row| row.bg(THEME.colors.hover))
-                                        .focus_visible(|row| row.bg(THEME.colors.selection))
-                                        .on_click(move |_, _, cx| {
-                                            let _ = panel.update(cx, |view, cx| {
-                                                view.changes.toggle(&project, &path);
-                                                cx.notify();
-                                            });
-                                        })
-                                        .on_key_down(move |event, _, cx| {
-                                            if activates_button(event) {
-                                                cx.stop_propagation();
-                                                let _ = key_panel.update(cx, |view, cx| {
-                                                    view.changes.toggle(&key_project, &key_path);
-                                                    cx.notify();
-                                                });
-                                            }
-                                        })
-                                })
-                                .child(div().w(px(14.0)).flex_none().child(app_icon(
-                                    if *open {
-                                        AppIcon::CaretDown
-                                    } else {
-                                        AppIcon::CaretRight
-                                    },
-                                    AppIconSize::Inline,
-                                )))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex_1()
-                                        .text_ellipsis()
-                                        .child(label.clone()),
-                                )
-                                .when(!*open, |row| {
-                                    row.child(crate::app::ui::primitives::folder_change_summary(
-                                        *count, *counts,
-                                    ))
-                                })
-                                .into_any_element(),
+                            })
+                            .into_any_element(),
                         )
                     }
                     TreeRow::File { index, depth } => self

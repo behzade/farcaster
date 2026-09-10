@@ -177,14 +177,18 @@ impl FarcasterApp {
                         .flex_none()
                         .border_l(THEME.border)
                         .border_color(THEME.colors.border)
-                        .child(if self.workgraph_inspector_issue.is_some() {
-                            self.workgraph_detail_view.clone().into_any_element()
-                        } else {
-                            self.run_panel_view
-                                .clone()
-                                .cached(gpui::StyleRefinement::default().size_full())
-                                .into_any_element()
-                        })
+                        .child(
+                            if self.workgraph_inspector_issue.is_some()
+                                && self.visible_review().is_none()
+                            {
+                                self.workgraph_detail_view.clone().into_any_element()
+                            } else {
+                                self.run_panel_view
+                                    .clone()
+                                    .cached(gpui::StyleRefinement::default().size_full())
+                                    .into_any_element()
+                            },
+                        )
                         .child(resize_handle("run-panel-resize", false, move |x, cx| {
                             let _ = resize.update(cx, |this, cx| {
                                 this.begin_run_panel_resize(x, cx);

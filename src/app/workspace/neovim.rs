@@ -39,6 +39,11 @@ pub(super) enum EditorTarget {
     Diff(PathBuf, Option<u64>),
     Transcript(String),
     Review(crate::app::reviews::Review),
+    ReviewLocation {
+        list_id: u64,
+        index: usize,
+        path: PathBuf,
+    },
 }
 
 pub(super) fn new_session_tab() -> u64 {
@@ -117,7 +122,7 @@ impl NvimEditor {
         tab: u64,
         target: EditorTarget,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
+    ) -> Task<Result<Option<crate::app::reviews::ReviewNavigation>, String>> {
         self.request(cx, move |executable, project, state_dir| {
             open_target(executable, project, state_dir, tab, target)
         })
@@ -190,6 +195,13 @@ fn session_expression(tab: u64, path: Option<&Path>, line: Option<u64>) -> Strin
     )
 }
 
+fn review_session_expression(tab: u64) -> String {
+    format!(
+        "luaeval({}, [{tab}, v:null, v:null, v:null, v:null, v:true])",
+        vim_string(SESSION_VIEW)
+    )
+}
+
 fn scratch_expression(tab: u64, path: &Path) -> String {
     format!(
         "luaeval({}, [{tab}, v:null, v:null, {}])",
@@ -204,7 +216,11 @@ fn open_target(
     state_dir: &Path,
     tab: u64,
     target: EditorTarget,
-) -> Result<(), String> {
+) -> Result<Option<crate::app::reviews::ReviewNavigation>, String> {
+    let review_request = matches!(
+        &target,
+        EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
+    );
     // Keep large transcripts out of the command line. Hold the transfer file
     // until Neovim has read it, then let it drop.
     let (expression, _transfer) = match target {
@@ -240,14 +256,8 @@ fn open_target(
                 })
                 .collect::<Result<Vec<_>, String>>()?;
             let payload = serde_json::json!({ "title": review.title, "items": items });
-            run_remote(
-                executable,
-                project,
-                &state_dir.join("nvim.sock"),
-                &session_expression(tab, None, None),
-            )?;
-            let mut file = tempfile::NamedTempFile::new_in(state_dir)
-                .map_err(|error| error.to_string())?;
+            let mut file =
+                tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
             serde_json::to_writer(&mut file, &payload).map_err(|error| error.to_string())?;
             let expression = format!(
                 "luaeval({}, {})",
@@ -256,6 +266,19 @@ fn open_target(
             );
             (expression, Some(file))
         }
+        EditorTarget::ReviewLocation {
+            list_id,
+            index,
+            path,
+        } => (
+            format!(
+                "luaeval({}, [{list_id}, {}, {}])",
+                vim_string(include_str!("neovim_review.lua")),
+                index + 1,
+                vim_string(&path.to_string_lossy()),
+            ),
+            None,
+        ),
         EditorTarget::Transcript(text) => {
             let mut file =
                 tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
@@ -264,12 +287,23 @@ fn open_target(
             (scratch_expression(tab, file.path()), Some(file))
         }
     };
-    run_remote(
-        executable,
-        project,
-        &state_dir.join("nvim.sock"),
-        &expression,
-    )
+    let socket = state_dir.join("nvim.sock");
+    if review_request {
+        run_remote(
+            executable,
+            project,
+            &socket,
+            &review_session_expression(tab),
+        )?;
+    }
+    let output = remote_output(executable, project, &socket, &expression)?;
+    if review_request {
+        serde_json::from_str(&output)
+            .map(Some)
+            .map_err(|error| format!("Read review locations: {error}"))
+    } else {
+        Ok(None)
+    }
 }
 
 fn run_remote(

@@ -8,34 +8,6 @@ use super::{
 };
 
 impl FarcasterApp {
-    pub(crate) fn open_review_editor(
-        &mut self,
-        project: PathBuf,
-        review: crate::app::reviews::Review,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.center_surface_switch_blocked() {
-            return;
-        }
-        let current = self.workspace_project();
-        let validation = review.validate().and_then(|()| {
-            let root = current.canonicalize().map_err(|error| error.to_string())?;
-            if project != root {
-                return Err("This review belongs to a different project.".into());
-            }
-            for item in &review.items {
-                crate::app::reviews::resolve_path(&root, &item.path)?;
-            }
-            Ok(())
-        });
-        if let Err(error) = validation {
-            self.notify_workspace_error("Review", error, cx);
-            return;
-        }
-        self.activate_editor_tab(current, EditorTarget::Review(review), window, cx);
-    }
-
     pub(crate) fn open_file_editor(
         &mut self,
         path: PathBuf,
@@ -120,7 +92,7 @@ impl FarcasterApp {
         self.activate_editor_tab(project, EditorTarget::Resume, window, cx);
     }
 
-    fn activate_editor_tab(
+    pub(super) fn activate_editor_tab(
         &mut self,
         project: PathBuf,
         editor_target: EditorTarget,
@@ -152,10 +124,14 @@ impl FarcasterApp {
             .get(&(project.clone(), tab))
             .filter(|editor| editor.read(cx).is_alive(cx))
             .cloned()
-            .or_else(|| self.spawn_editor(project, tab, window, cx))
+            .or_else(|| self.spawn_editor(project.clone(), tab, window, cx))
         else {
             return;
         };
+        let review_request = matches!(
+            &editor_target,
+            EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
+        );
         self.editor = Some(editor.clone());
         self.hide_terminal(cx);
         // Startup prompts can block remote requests until the user responds.
@@ -163,24 +139,57 @@ impl FarcasterApp {
         self.editor_ready = true;
         self.reveal_native_center_surface(AppSurface::Editor, window, cx);
         let generation = self.editor_request_generation;
+        match &editor_target {
+            EditorTarget::Review(review) => {
+                self.active_review = Some(super::review::ActiveReview::new(
+                    generation,
+                    target.clone(),
+                    project,
+                    review.clone(),
+                ));
+            }
+            EditorTarget::ReviewLocation { .. } => {
+                if let Some(review) = self.active_review.as_mut() {
+                    review.pending = Some(generation);
+                    review.error = None;
+                }
+            }
+            _ => {}
+        }
         let opened = editor.update(cx, |editor, cx| editor.activate_tab(tab, editor_target, cx));
         cx.spawn_in(window, async move |weak, cx| {
-            let Err(error) = opened.await else {
-                return;
-            };
-            zlog::warn!("Neovim session-view request failed for {target}: {error}");
+            let result = opened.await;
             let _ = weak.update_in(cx, |this, _window, cx| {
+                if review_request {
+                    let completion = match &result {
+                        Ok(Some(navigation)) => Ok(navigation.clone()),
+                        Err(error) => Err(error.clone()),
+                        Ok(None) => Err("Editor returned no review locations".into()),
+                    };
+                    if let Some(review) = this.active_review.as_mut()
+                        && review.target == target
+                        && review.complete(generation, completion)
+                    {
+                        this.notify_run_panel(cx);
+                        cx.notify();
+                    }
+                }
                 if this.editor.as_ref() != Some(&editor)
-                    || !editor_completion_is_current(
-                        generation,
-                        this.editor_request_generation,
-                        tab,
-                        this.session_editor_tabs
-                            .get(this.composer_sessions.current_target())
-                            .copied(),
-                        this.surface,
-                    )
+                    || this.composer_sessions.current_target() != target
                 {
+                    return;
+                }
+                let Err(error) = result else { return };
+                zlog::warn!("Neovim session-view request failed for {target}: {error}");
+                if !editor_completion_is_current(
+                    generation,
+                    this.editor_request_generation,
+                    tab,
+                    this.session_editor_tabs
+                        .get(this.composer_sessions.current_target())
+                        .copied(),
+                    this.surface,
+                ) {
                     return;
                 }
                 if !editor.read(cx).is_alive(cx) {
@@ -190,6 +199,7 @@ impl FarcasterApp {
             });
         })
         .detach();
+        self.notify_run_panel(cx);
         cx.notify();
     }
 

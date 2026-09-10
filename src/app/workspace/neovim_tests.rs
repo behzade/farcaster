@@ -222,7 +222,7 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
     )?;
     scratch("")?;
     lua(a.path(), "assert(vim.api.nvim_get_current_line() == '')")?;
-    open_target(
+    let navigation = open_target(
         &executable,
         project.path(),
         a.path(),
@@ -236,14 +236,34 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
                 note: "Inspect this band".into(),
             }],
         }),
-    )?;
-    lua(a.path(), r#"
+    )?
+    .ok_or("missing review navigation")?;
+    assert_eq!(navigation.selected, Some(0));
+    assert!(navigation.locations[0].valid);
+    let selected = open_target(
+        &executable,
+        project.path(),
+        a.path(),
+        11,
+        EditorTarget::ReviewLocation {
+            list_id: navigation.list_id,
+            index: 0,
+            path: path.clone(),
+        },
+    )?
+    .ok_or("missing selected review navigation")?;
+    assert_eq!(selected.list_id, navigation.list_id);
+    assert_eq!(selected.selected, Some(0));
+    lua(
+        a.path(),
+        r#"
         local qf = vim.fn.getqflist({title = 0, items = 0})
         assert(qf.title == 'Farcaster review: Inspect | `changes`')
         assert(qf.items[1].lnum == 2 and qf.items[1].end_lnum == 4)
         assert(vim.fn.fnamemodify(vim.api.nvim_buf_get_name(qf.items[1].bufnr), ':t') == "it's | shared.rs")
-        assert(vim.bo.buftype == 'quickfix')
-    "#)?;
+        assert(vim.bo.buftype == '')
+    "#,
+    )?;
     assert!(lua(a.path(), "error('expected test error')").is_err());
     assert_eq!(
         std::fs::read_to_string(path).map_err(|error| error.to_string())?,

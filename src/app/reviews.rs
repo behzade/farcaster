@@ -19,6 +19,20 @@ pub(crate) struct ReviewLocation {
     pub note: String,
 }
 
+/// Editor-reported locations and the last explicit review navigation.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct ReviewNavigation {
+    pub list_id: u64,
+    pub selected: Option<usize>,
+    pub locations: Vec<ReviewLocationStatus>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct ReviewLocationStatus {
+    pub valid: bool,
+    pub warning: Option<String>,
+}
+
 impl Review {
     pub(crate) fn validate(&self) -> Result<(), String> {
         bounded_text(&self.title, 200, "title")?;

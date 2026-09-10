@@ -9,6 +9,7 @@ pub(in crate::app) mod code_tasks;
 mod editor;
 pub(in crate::app) mod neovim;
 mod regions;
+pub(in crate::app) mod review;
 pub(in crate::app) mod runtime_picker;
 mod surfaces;
 mod terminal;

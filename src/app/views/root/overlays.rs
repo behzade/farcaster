@@ -38,7 +38,8 @@ impl FarcasterApp {
             )
         });
         let run_sheet = self.overlays.run.then(|| {
-            let inspecting = self.workgraph_inspector_issue.is_some();
+            let reviewing = self.visible_review().is_some();
+            let inspecting = self.workgraph_inspector_issue.is_some() && !reviewing;
             let content = if inspecting {
                 self.workgraph_detail_view.clone().into_any_element()
             } else {
@@ -49,7 +50,9 @@ impl FarcasterApp {
             };
             panel_sheet(
                 "run",
-                if inspecting {
+                if reviewing {
+                    "Review"
+                } else if inspecting {
                     "Node details"
                 } else {
                     "Session details"

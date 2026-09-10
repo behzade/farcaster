@@ -17,7 +17,9 @@ pub(crate) use button::{
 pub(crate) use content::{folder_change_summary, panel, section_heading};
 pub(crate) use context_menu::ContextMenuTrigger;
 pub(crate) use dialog::modal;
-pub(crate) use disclosure::{disclosure_button, disclosure_detail, disclosure_title_row};
+pub(crate) use disclosure::{
+    disclosure_button, disclosure_detail, disclosure_title_row, tree_folder_row,
+};
 pub(crate) use feedback::{FeedbackTone, feedback};
 pub(crate) use icon::{AppIconSize, app_icon, icon_control};
 pub(crate) use picker::{PickerDelegate, PickerRow};
