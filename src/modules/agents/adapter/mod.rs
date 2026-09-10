@@ -26,7 +26,9 @@ pub(crate) use trust::{
 };
 
 pub(crate) use auxiliary::{generate_session_title, supports_auto_title_generation};
-pub(crate) use shell_environment::{app_shell_environment, default_login_shell};
+pub(crate) use shell_environment::{
+    app_shell_environment, default_login_shell, project_shell_environment,
+};
 
 fn external_acp_profile(harness: &str) -> Option<&'static acp::AcpProfile> {
     match harness {

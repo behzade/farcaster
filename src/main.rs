@@ -11,6 +11,10 @@ pub(crate) use modules::sessions::activity as agent_activity;
 pub(crate) use modules::{access, agents, projects, repository, sessions};
 
 fn main() -> std::process::ExitCode {
+    if let Err(error) = app::infrastructure::neovim_launch::run_if_requested() {
+        return fail(error);
+    }
+
     #[cfg(target_os = "linux")]
     if let Err(error) = linux_graphics::relaunch() {
         return fail(error);

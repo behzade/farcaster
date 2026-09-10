@@ -12,6 +12,8 @@ use std::{
 use gpui::{App, Context, Entity, IntoElement, Render, RenderImage, Task, Window};
 use gpui_libghostty::{Terminal, TerminalOptions};
 
+use crate::app::infrastructure::neovim_launch;
+
 static NEXT_TAB: AtomicU64 = AtomicU64::new(1);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
@@ -80,13 +82,30 @@ impl NvimEditor {
                 .tempdir()
                 .map_err(|error| format!("create Neovim socket directory: {error}"))?,
         );
+        let launch_file = socket_dir.path().join("launch.json");
+        neovim_launch::prepare(
+            &launch_file,
+            executable.clone(),
+            vec![
+                "-i".into(),
+                socket_dir.path().join("shada").into_os_string(),
+                "--cmd".into(),
+                state_setup(socket_dir.path()).into(),
+                "--listen".into(),
+                socket_dir.path().join("nvim.sock").into_os_string(),
+                "--".into(),
+                project.clone().into_os_string(),
+            ],
+            project.clone(),
+        )?;
         let command = format!(
-            "{} -i {} --cmd {} --listen {} -- {}",
-            shell_quote(&executable),
-            shell_quote(&socket_dir.path().join("shada")),
-            shell_quote(Path::new(&state_setup(socket_dir.path()))),
-            shell_quote(&socket_dir.path().join("nvim.sock")),
-            shell_quote(&project),
+            "{} {} {}",
+            shell_quote(
+                &std::env::current_exe()
+                    .map_err(|error| format!("resolve Neovim launcher: {error}"))?
+            ),
+            neovim_launch::ARGUMENT,
+            shell_quote(&launch_file),
         );
         let terminal = Terminal::spawn(TerminalOptions::new(command, project.clone()), window, cx)?;
         terminal.update(cx, |terminal, _| terminal.set_visible(false));

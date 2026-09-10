@@ -1,6 +1,7 @@
 use super::*;
 
 pub(crate) mod launch;
+pub(crate) mod neovim_launch;
 #[cfg(target_os = "macos")]
 mod menus;
 pub(crate) mod paths;

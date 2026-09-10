@@ -2,6 +2,7 @@ mod adapter;
 mod contract;
 mod core;
 
+pub(crate) use adapter::project_shell_environment;
 pub(crate) use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,
