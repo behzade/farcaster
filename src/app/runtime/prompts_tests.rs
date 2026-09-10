@@ -141,3 +141,28 @@ fn resumed_empty_session_defers_prompt_without_starting_title_generation() {
         ));
     }
 }
+
+#[test]
+fn unselected_backend_rejects_prompt_before_enqueuing() {
+    let (mut owner, events) = owner_without_process(std::env::temp_dir());
+    owner.harness.clear();
+    owner.send_prompt(
+        "draft:unselected".into(),
+        PromptMode::Normal,
+        "hello".into(),
+        vec![],
+        false,
+    );
+    assert!(owner.pending_prompt_target.is_none());
+    assert_eq!(
+        owner.snapshot.conversation.items[0].text,
+        "Choose a backend before sending a message."
+    );
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            accepted: false,
+            ..
+        }
+    )));
+}

@@ -52,6 +52,10 @@ impl RuntimeOwner {
         images: Vec<PromptImage>,
         allow_while_running: bool,
     ) {
+        if self.harness.is_empty() {
+            self.reject_prompt(&target, "Choose a backend before sending a message.".into());
+            return;
+        }
         if let Some(error) = self.pending_session_controls.model_error() {
             self.reject_prompt(
                 &target,

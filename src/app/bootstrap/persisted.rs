@@ -42,10 +42,10 @@ pub(super) fn load(project: &Path) -> PersistedState {
     let preferred_harness = match crate::app::infrastructure::persistence::StateStore::open()
         .and_then(|store| store.load_preferred_harness(project))
     {
-        Ok(harness) => harness,
+        Ok(harness) => harness.unwrap_or_default(),
         Err(load_error) => {
             error.get_or_insert(load_error);
-            "pi".into()
+            String::new()
         }
     };
     let draft_timing =
@@ -55,13 +55,11 @@ pub(super) fn load(project: &Path) -> PersistedState {
         Ok(draft) => draft,
         Err(load_error) => {
             error.get_or_insert(load_error);
-            projects::DraftSession {
-                harness: preferred_harness.clone(),
-                ..projects::DraftSession::with_id(
-                    format!("untracked-draft-{}", std::process::id()),
-                    project.to_path_buf(),
-                )
-            }
+            projects::DraftSession::with_id(
+                preferred_harness.clone(),
+                format!("untracked-draft-{}", std::process::id()),
+                project.to_path_buf(),
+            )
         }
     };
     drop(draft_timing);

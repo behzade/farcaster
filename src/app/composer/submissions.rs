@@ -40,6 +40,17 @@ impl FarcasterApp {
             return;
         }
         let backend = self.snapshot.harness.clone();
+        if backend.is_empty() {
+            let snapshot = Arc::make_mut(&mut self.snapshot);
+            let index = snapshot.conversation.items.len();
+            Arc::make_mut(&mut snapshot.conversation).push_local_error(
+                "Prompt not sent",
+                "Choose a backend before sending a message.".into(),
+            );
+            self.mark_transcript_changed(index, index == 0, cx);
+            cx.notify();
+            return;
+        }
         let project = self.project.clone();
         if !self.ensure_backend_trust(&backend, &project, window, cx) {
             return;

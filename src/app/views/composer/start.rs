@@ -20,7 +20,13 @@ pub(super) fn harness_selector(
         .iter()
         .find(|backend| backend.id == harness)
         .map_or_else(
-            || "Unavailable harness".to_owned(),
+            || {
+                if harness.is_empty() {
+                    "Choose a backend".to_owned()
+                } else {
+                    "Unavailable backend".to_owned()
+                }
+            },
             |backend| {
                 if backend.available {
                     backend.name.clone()

@@ -53,7 +53,7 @@ impl RuntimeHandle {
     ) -> Self {
         Self::spawn_with_configuration_refresh(
             project.clone(),
-            crate::projects::DraftSession::with_id(draft_id, project),
+            crate::projects::DraftSession::with_id("pi".into(), draft_id, project),
             initial_session,
             process_command,
             false,
@@ -311,7 +311,22 @@ fn send_configured_command(
         )),
         _ => None,
     };
+    let catalog = command_target(&command)
+        .and_then(|(_, project, harness)| configurations.catalog_command(&harness, &project));
+    // Fork and restart launch inside the command handler, so validate them
+    // against the cached catalog before starting the child process.
+    if matches!(
+        &command,
+        RuntimeCommand::ForkSession { .. } | RuntimeCommand::RestartSession { .. }
+    ) && let Some(catalog) = &catalog
+    {
+        actor.send(catalog.clone());
+    }
     actor.send(command);
+    // The actor may have changed projects and rejected the earlier update.
+    if let Some(catalog) = catalog {
+        actor.send(catalog);
+    }
     let Some((model, effort)) = selection else {
         return;
     };

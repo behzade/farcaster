@@ -384,7 +384,7 @@ fn setup_main_connection(
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
     })?;
-    let (metadata, skills) = load_main_metadata(&mut connection, &launch.project)?;
+    let (mut metadata, skills) = load_main_metadata(&mut connection, &launch.project)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
         crate::agents::SessionStart::New => {
@@ -401,6 +401,7 @@ fn setup_main_connection(
             connection.fork_thread(&thread_id, &cwd, None, None, access_mode)?
         }
     };
+    metadata.session_name = thread.name.clone();
     let (reader, writer, queued, next_id) = connection.into_parts();
     Ok(((reader, writer, queued, next_id, thread), metadata, skills))
 }
@@ -1152,8 +1153,14 @@ impl WorkerSession for CodexWorkerSession {
                         "thread/settings/updated" => {
                             self.observe_command_settings(&params["threadSettings"])
                         }
+                        "thread/name/updated" => {
+                            if let Some(name) = params.get("threadName").and_then(Value::as_str) {
+                                return Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(
+                                    name.to_owned(),
+                                )));
+                            }
+                        }
                         "thread/status/changed"
-                        | "thread/name/updated"
                         | "turn/diff/updated"
                         | "turn/plan/updated"
                         | "serverRequest/resolved"

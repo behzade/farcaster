@@ -146,7 +146,7 @@ fn removing_a_project_only_changes_registered_matches() {
 
 #[test]
 fn only_unsubmitted_drafts_can_change_project() {
-    let mut draft = DraftSession::new("draft".into(), 1, PathBuf::from("/first"), 1);
+    let mut draft = DraftSession::new("pi".into(), "draft".into(), 1, PathBuf::from("/first"), 1);
     assert!(draft.change_project(PathBuf::from("/second")));
     assert_eq!(draft.project, PathBuf::from("/second"));
     assert!(!draft.change_project(PathBuf::from("/second")));
@@ -166,7 +166,7 @@ fn old_registry_drafts_decode_as_unsubmitted() -> Result<(), Box<dyn std::error:
         &path,
         serde_json::json!({
             "projects": [project.clone()],
-            "drafts": [{"id": "legacy", "project": project, "created_ms": 3}]
+            "drafts": [{"id": "legacy", "harness": "pi", "project": project, "created_ms": 3}]
         })
         .to_string(),
     )?;
@@ -176,4 +176,10 @@ fn old_registry_drafts_decode_as_unsubmitted() -> Result<(), Box<dyn std::error:
     assert!(!registry.drafts[0].submitted);
     assert_eq!(registry.drafts[0].session_path, None);
     Ok(())
+}
+
+#[test]
+fn drafts_without_a_backend_do_not_decode_as_pi() {
+    let draft = serde_json::json!({"id": "missing", "project": "/project", "created_ms": 3});
+    assert!(serde_json::from_value::<DraftSession>(draft).is_err());
 }

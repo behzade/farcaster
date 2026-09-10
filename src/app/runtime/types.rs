@@ -21,6 +21,11 @@ pub(crate) enum RuntimeCommand {
         images: Vec<PromptImage>,
         allow_while_running: bool,
     },
+    UpdateConfigurationCatalog {
+        harness: String,
+        project: PathBuf,
+        catalog: crate::agents::ConfigurationCatalog,
+    },
     Abort,
     ApplySteering,
     StopSessionFamily {

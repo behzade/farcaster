@@ -25,11 +25,9 @@ impl FarcasterApp {
         self.cover_native_workspace_surface(cx);
         let available = import_harnesses();
         let harness = available
-            .iter()
-            .find(|harness| *harness == &self.preferred_harness)
-            .cloned()
-            .or_else(|| available.into_iter().next())
-            .unwrap_or_else(|| "pi".into());
+            .into_iter()
+            .find(|harness| harness == &self.preferred_harness)
+            .unwrap_or_default();
         let dialog = SessionImportDialog {
             focus: cx.focus_handle(),
             return_focus: window.focused(cx),
@@ -177,14 +175,20 @@ impl FarcasterApp {
         self.session_import_generation = self.session_import_generation.saturating_add(1);
         let Some((harness, generation)) = self.session_import.as_mut().map(|dialog| {
             dialog.preview_generation = self.session_import_generation;
-            dialog.loading = true;
-            dialog.error = None;
+            dialog.loading = !dialog.harness.is_empty();
+            dialog.error = dialog
+                .harness
+                .is_empty()
+                .then(|| "Choose a backend to import sessions.".into());
             dialog.candidates.clear();
             dialog.selected.clear();
             (dialog.harness.clone(), dialog.preview_generation)
         }) else {
             return;
         };
+        if harness.is_empty() {
+            return;
+        }
         self.send(
             RuntimeCommand::PreviewImport {
                 harness,
@@ -197,11 +201,9 @@ impl FarcasterApp {
 }
 
 pub(in crate::app) fn import_harnesses() -> Vec<String> {
-    let mut harnesses = vec!["pi".into()];
-    for backend in agents::backend_statuses() {
-        if backend.available && backend.id != "pi" {
-            harnesses.push(backend.id);
-        }
-    }
-    harnesses
+    agents::backend_statuses()
+        .into_iter()
+        .filter(|backend| backend.available)
+        .map(|backend| backend.id)
+        .collect()
 }

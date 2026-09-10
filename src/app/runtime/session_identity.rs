@@ -56,6 +56,12 @@ impl RuntimeSnapshot {
         self.models
             .iter()
             .find(|model| model.id == selected.id && model.provider == selected.provider)
+            .or_else(|| {
+                self.models.iter().find(|model| {
+                    model.provider == selected.provider
+                        && model.resolved_model.as_deref() == Some(selected.id.as_str())
+                })
+            })
             .unwrap_or(selected)
     }
 
@@ -222,6 +228,27 @@ impl HarnessConfigurationStore {
             ConfigurationStatus::Failed(error);
     }
 
+    pub fn catalog_command(
+        &self,
+        harness: &str,
+        project: &std::path::Path,
+    ) -> Option<super::RuntimeCommand> {
+        let catalog = self
+            .catalogs
+            .get(&(harness.to_owned(), project.to_owned()))?;
+        if catalog.models.is_empty() {
+            return None;
+        }
+        Some(super::RuntimeCommand::UpdateConfigurationCatalog {
+            harness: harness.to_owned(),
+            project: project.to_owned(),
+            catalog: crate::agents::ConfigurationCatalog {
+                models: catalog.models.clone(),
+                efforts: catalog.efforts.clone(),
+            },
+        })
+    }
+
     pub fn refresh_snapshot_catalog(&self, snapshot: &mut RuntimeSnapshot) {
         if let Some(catalog) = self
             .catalogs
@@ -308,6 +335,7 @@ impl HarnessConfigurationStore {
                     provider: provider.clone(),
                     context_window: 0,
                     reasoning: false,
+                    resolved_model: None,
                     access_modes: None,
                     efforts: None,
                 })

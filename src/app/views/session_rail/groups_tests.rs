@@ -10,7 +10,7 @@ use crate::sessions::UsageSummary;
 fn drafts_and_sessions_share_one_descending_id_order() {
     let alpha = PathBuf::from("/alpha");
     let beta = PathBuf::from("/beta");
-    let mut draft = DraftSession::with_id("draft".into(), alpha.clone());
+    let mut draft = DraftSession::with_id("pi".into(), "draft".into(), alpha.clone());
     draft.app_session_id = 2;
     let sessions = vec![
         session("old", 1, &alpha, false),
@@ -83,9 +83,9 @@ fn filtered_reorder_preserves_hidden_row_positions() {
 fn project_filter_keeps_a_flat_subset() {
     let alpha = PathBuf::from("/alpha");
     let beta = PathBuf::from("/beta");
-    let mut alpha_draft = DraftSession::with_id("alpha-draft".into(), alpha.clone());
+    let mut alpha_draft = DraftSession::with_id("pi".into(), "alpha-draft".into(), alpha.clone());
     alpha_draft.app_session_id = 4;
-    let mut beta_draft = DraftSession::with_id("beta-draft".into(), beta.clone());
+    let mut beta_draft = DraftSession::with_id("pi".into(), "beta-draft".into(), beta.clone());
     beta_draft.app_session_id = 3;
     let sessions = vec![
         session("alpha-active", 2, &alpha, false),
@@ -128,7 +128,7 @@ fn archived_sessions_are_sorted_by_recency_not_imported_id() {
 #[test]
 fn promotion_identity_is_rendered_once_and_prefers_the_draft() {
     let project = PathBuf::from("/project");
-    let mut draft = DraftSession::with_id("draft".into(), project.clone());
+    let mut draft = DraftSession::with_id("pi".into(), "draft".into(), project.clone());
     draft.app_session_id = 7;
     draft.submitted = true;
     let persisted = session("persisted", 7, &project, false);

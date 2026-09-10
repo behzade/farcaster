@@ -76,11 +76,8 @@ impl RuntimeOwner {
             .as_ref()
             .is_some_and(|state| state.session_name.is_none());
         if unnamed {
-            if let Some(state) = self.active_snapshot_mut().session.as_mut() {
-                state.session_name = Some(title.clone());
-            }
+            // The rename acknowledgement reloads state and publishes the saved name.
             self.send(SessionCommand::Rename { name: title });
-            self.publish_session_metadata();
         }
     }
 
@@ -141,6 +138,18 @@ impl RuntimeOwner {
             .as_ref()
             .and(self.pending_prompt_item.clone());
         let available_access_modes = self.available_access_modes();
+        let configuration = (self.snapshot.selected_session == session
+            || fork
+                .as_ref()
+                .is_some_and(|source| self.snapshot.selected_session.as_ref() == Some(source)))
+        .then(|| {
+            let snapshot = self.active_snapshot();
+            (
+                snapshot.models.clone(),
+                snapshot.thinking_levels.clone(),
+                snapshot.session_identity().model.cloned(),
+            )
+        });
         self.reset_process_runtime();
         // Missing backend metadata must never make a resume or fork eligible for a title.
         self.title_generation.new_session = session.is_none() && fork.is_none();
@@ -148,13 +157,14 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        if !available_access_modes.contains(&self.process_command.access_mode) {
-            let Some(mode) = available_access_modes.first().copied() else {
-                self.fail("No access mode is available for this model".into());
-                return;
-            };
-            self.process_command.access_mode = mode;
-        }
+        let Some(mode) = self
+            .access_mode_changes
+            .resolve_available(self.process_command.access_mode, &available_access_modes)
+        else {
+            self.fail("No access mode is available for this model".into());
+            return;
+        };
+        self.process_command.access_mode = mode;
         let status = if fork.is_some() {
             "Forking session".into()
         } else {
@@ -181,6 +191,14 @@ impl RuntimeOwner {
                 self.snapshot.conversation = conversation;
                 self.pending_prompt_item = preserved_prompt_item;
             }
+        }
+        // Startup still needs the catalog that validated the launch mode. Clearing it
+        // here makes the loading snapshot treat supported modes as unavailable.
+        if let Some((models, thinking_levels, selected_model)) = configuration {
+            let snapshot = self.active_snapshot_mut();
+            snapshot.models = models;
+            snapshot.thinking_levels = thinking_levels;
+            snapshot.prefill_model = selected_model;
         }
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
             generation: self.process_generation,
@@ -462,6 +480,7 @@ impl RuntimeOwner {
     pub(super) fn publish(&mut self) {
         crate::app::infrastructure::performance::count_snapshot();
         self.snapshot.harness.clone_from(&self.harness);
+        self.reconcile_access_mode();
         self.snapshot.access_mode = self
             .access_mode_changes
             .requested_mode(self.process_command.access_mode);

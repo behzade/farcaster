@@ -24,7 +24,7 @@ impl StateStore {
             .map_err(|error| format!("save transcript folder setting: {error}"))
     }
 
-    pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<String, String> {
+    pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<Option<String>, String> {
         // Before the first saved choice, infer it from this project's main sessions.
         let normalized_project = crate::sessions::normalize_session_path(project);
         let legacy_project = project.to_string_lossy();
@@ -36,8 +36,7 @@ impl StateStore {
                      WHERE submitted=1 AND client_key IS NOT NULL
                        AND project_id IN (SELECT id FROM projects WHERE path IN (?1, ?2))
                        AND parent_id IS NULL AND parent_backend_id IS NULL
-                     ORDER BY created_ms DESC, id DESC LIMIT 1),
-                    'pi')",
+                     ORDER BY created_ms DESC, id DESC LIMIT 1))",
                 [
                     normalized_project.to_string_lossy().as_ref(),
                     legacy_project.as_ref(),
@@ -45,9 +44,18 @@ impl StateStore {
                 |row| row.get(0),
             )
             .map_err(|error| format!("load preferred harness: {error}"))
+            .and_then(|harness: Option<String>| match harness {
+                Some(harness) if harness.trim().is_empty() => {
+                    Err("The saved backend is empty. Choose a backend.".into())
+                }
+                harness => Ok(harness),
+            })
     }
 
     pub(crate) fn save_preferred_harness(&self, harness: &str) -> Result<(), String> {
+        if harness.trim().is_empty() {
+            return Err("Choose a backend before saving the preference.".into());
+        }
         self.connection
             .execute(
                 "INSERT INTO meta(key, value) VALUES('preferred_harness', ?1)

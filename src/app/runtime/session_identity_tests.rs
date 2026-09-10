@@ -7,6 +7,7 @@ fn model(id: &str, reasoning: bool, efforts: Option<&[&str]>) -> Model {
         provider: "provider".into(),
         context_window: 0,
         reasoning,
+        resolved_model: None,
         access_modes: None,
         efforts: efforts.map(|efforts| efforts.iter().map(|effort| (*effort).into()).collect()),
     }
@@ -189,18 +190,21 @@ fn cached_defaults_restore_across_projects_per_harness() {
 #[test]
 fn available_access_modes_use_fresh_catalog_support_for_selected_model() {
     use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
-    let selected = model("selected", false, None);
-    let mut supported = selected.clone();
-    supported.access_modes = Some(vec![Sandboxed, Auto, Full]);
-    let mut snapshot = RuntimeSnapshot {
-        harness: "claude".into(),
-        prefill_model: Some(selected),
-        models: vec![supported],
-        ..RuntimeSnapshot::default()
-    };
-    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Auto, Full]);
-    snapshot.models[0].access_modes = Some(vec![Sandboxed, Full]);
-    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
-    snapshot.models.clear();
-    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
+    for catalog_id in ["selected", "alias"] {
+        let selected = model("selected", false, None);
+        let mut supported = model(catalog_id, false, None);
+        supported.resolved_model = Some(selected.id.clone());
+        supported.access_modes = Some(vec![Sandboxed, Auto, Full]);
+        let mut snapshot = RuntimeSnapshot {
+            harness: "claude".into(),
+            prefill_model: Some(selected),
+            models: vec![supported],
+            ..RuntimeSnapshot::default()
+        };
+        assert_eq!(snapshot.available_access_modes(), [Sandboxed, Auto, Full]);
+        snapshot.models[0].access_modes = Some(vec![Sandboxed, Full]);
+        assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
+        snapshot.models.clear();
+        assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
+    }
 }

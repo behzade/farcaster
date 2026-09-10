@@ -10,8 +10,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "access_mode_lifecycle_tests.rs"]
+mod access_mode_lifecycle_tests;
+
 #[path = "code_tasks_tests.rs"]
 mod code_tasks_tests;
+
+#[path = "title_lifecycle_tests.rs"]
+mod title_lifecycle_tests;
 
 const WAIT: Duration = Duration::from_secs(3);
 const CHILD_MARKER: &str = "FARCASTER_CATALOG_TEST_CHILD";
@@ -44,6 +50,10 @@ fn fixture_binary() -> &'static std::path::Path {
 /// Re-exec only this test before changing HOME/PATH. Parallel tests and real
 /// credentials cannot leak into the supervisor's global environment or caches.
 fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
+    isolated_with_env(name, backends, &[], run);
+}
+
+fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: impl FnOnce()) {
     let test_name = format!(
         "{}::{name}",
         module_path!()
@@ -83,6 +93,7 @@ fn isolated(name: &str, backends: &[&str], run: impl FnOnce()) {
         .stdin(Stdio::null())
         .stdout(log.try_clone().expect("test operation should succeed"))
         .stderr(log);
+    command.envs(env.iter().copied());
     for (backend, variable) in [
         ("claude", "FARCASTER_CLAUDE_PATH"),
         ("antigravity-acp", "FARCASTER_ANTIGRAVITY_ACP_PATH"),
@@ -133,7 +144,7 @@ impl Harness {
         // Unlike RuntimeHandle::spawn_with, do not disable catalog discovery.
         let runtime = RuntimeHandle::spawn_with_configuration_refresh(
             project.clone(),
-            crate::projects::DraftSession::with_id("initial".into(), project.clone()),
+            crate::projects::DraftSession::with_id("pi".into(), "initial".into(), project.clone()),
             None,
             AgentLaunchConfig {
                 session_locator_root: Some(project.join("session-locators")),

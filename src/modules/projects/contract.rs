@@ -35,7 +35,7 @@ pub(crate) struct DraftSession {
     pub id: String,
     #[serde(default)]
     pub app_session_id: i64,
-    #[serde(default = "default_harness")]
+    // Empty only while a draft is waiting for the user to choose a backend.
     pub harness: String,
     pub project: PathBuf,
     pub created_ms: u64,
@@ -48,11 +48,17 @@ pub(crate) struct DraftSession {
 }
 
 impl DraftSession {
-    pub(crate) fn new(id: String, app_session_id: i64, project: PathBuf, created_ms: u64) -> Self {
+    pub(crate) fn new(
+        harness: String,
+        id: String,
+        app_session_id: i64,
+        project: PathBuf,
+        created_ms: u64,
+    ) -> Self {
         Self {
             id,
             app_session_id,
-            harness: default_harness(),
+            harness,
             project,
             created_ms,
             submitted: false,
@@ -61,8 +67,8 @@ impl DraftSession {
         }
     }
 
-    pub(crate) fn with_id(id: String, project: PathBuf) -> Self {
-        Self::new(id, 0, project, current_time_ms())
+    pub(crate) fn with_id(harness: String, id: String, project: PathBuf) -> Self {
+        Self::new(harness, id, 0, project, current_time_ms())
     }
 
     pub(crate) const fn can_change_project(&self) -> bool {
@@ -84,10 +90,6 @@ impl DraftSession {
         self.harness = harness;
         true
     }
-}
-
-fn default_harness() -> String {
-    "pi".into()
 }
 
 fn current_time_ms() -> u64 {

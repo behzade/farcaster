@@ -71,6 +71,12 @@ impl Supervisor {
             settings.harness.clone(),
             self.supervisor_thread.clone(),
         );
+        if let Some(catalog) = self
+            .configurations
+            .catalog_command(&settings.harness, &settings.project)
+        {
+            actor.send(catalog);
+        }
         if let Some(model) = settings.model {
             actor.send(RuntimeCommand::SetModel(model));
         }

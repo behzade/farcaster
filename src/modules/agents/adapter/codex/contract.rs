@@ -59,6 +59,8 @@ pub(crate) struct CodexInitializeResponse {
 pub(crate) struct CodexThread {
     pub id: String,
     #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
     pub parent_thread_id: Option<String>,
     pub cwd: String,
 }

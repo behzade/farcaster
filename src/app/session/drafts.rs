@@ -65,11 +65,10 @@ impl FarcasterApp {
         {
             return None;
         }
-        self.drafts
-            .iter()
-            .find(|draft| draft.id == id)
-            .map(|draft| draft.harness.clone())
-            .or_else(|| Some(self.snapshot.harness.clone()).filter(|harness| !harness.is_empty()))
+        Some(self.drafts.iter().find(|draft| draft.id == id).map_or_else(
+            || self.snapshot.harness.clone(),
+            |draft| draft.harness.clone(),
+        ))
     }
 
     pub(in crate::app) fn change_draft_harness(
@@ -93,7 +92,11 @@ impl FarcasterApp {
             return;
         }
         if !self.drafts.iter().any(|draft| draft.id == id) {
-            let mut draft = DraftSession::with_id(id.clone(), self.project.clone());
+            let mut draft = DraftSession::with_id(
+                self.snapshot.harness.clone(),
+                id.clone(),
+                self.project.clone(),
+            );
             draft.app_session_id = self.draft_session_ids.get(&id).copied().unwrap_or_default();
             self.drafts.insert(0, draft);
         }
@@ -228,9 +231,12 @@ impl FarcasterApp {
             .insert(target.to_owned(), "Working".into());
         if !self.drafts.iter().any(|draft| draft.id == id) {
             let app_session_id = self.draft_session_ids.get(id).copied().unwrap_or_default();
-            let mut draft = DraftSession::with_id(id.to_owned(), self.project.clone());
+            let mut draft = DraftSession::with_id(
+                self.snapshot.harness.clone(),
+                id.to_owned(),
+                self.project.clone(),
+            );
             draft.app_session_id = app_session_id;
-            draft.harness.clone_from(&self.snapshot.harness);
             self.drafts.insert(0, draft);
         }
         let draft = self
@@ -443,9 +449,9 @@ fn sync_materialized_draft(
     let existing = drafts.iter().position(|draft| draft.id == id);
     match (existing, has_content) {
         (None, true) => {
-            let mut draft = DraftSession::with_id(id.to_owned(), project.to_path_buf());
+            let mut draft =
+                DraftSession::with_id(harness.to_owned(), id.to_owned(), project.to_path_buf());
             draft.app_session_id = app_session_id;
-            draft.harness = harness.to_owned();
             drafts.insert(0, draft);
             true
         }

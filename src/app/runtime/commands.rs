@@ -40,6 +40,22 @@ impl RuntimeOwner {
                 ),
             },
             RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
+            RuntimeCommand::UpdateConfigurationCatalog {
+                harness,
+                project,
+                catalog,
+            } => {
+                if self.harness == harness && self.project == project {
+                    for snapshot in
+                        std::iter::once(&mut self.snapshot).chain(self.parked_snapshot.iter_mut())
+                    {
+                        snapshot.models.clone_from(&catalog.models);
+                        snapshot.thinking_levels.clone_from(&catalog.efforts);
+                        snapshot.configuration_status = ConfigurationStatus::Loaded;
+                    }
+                    self.publish();
+                }
+            }
             RuntimeCommand::Abort => {
                 self.cancel_deferred_prompt();
                 self.send(SessionCommand::Abort);

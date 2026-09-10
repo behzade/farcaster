@@ -36,6 +36,11 @@ impl Supervisor {
     pub(super) fn publish_configuration_snapshots(&mut self, harness: &str, project: &Path) {
         for (key, snapshot) in &mut self.latest {
             if snapshot.harness == harness && snapshot.project == project {
+                if let Some(actor) = self.actors.get(key)
+                    && let Some(command) = self.configurations.catalog_command(harness, project)
+                {
+                    actor.send(command);
+                }
                 self.configurations
                     .refresh_snapshot_catalog(Arc::make_mut(snapshot));
                 if key == &self.selected {
@@ -89,6 +94,15 @@ impl Supervisor {
             }
             RuntimeEvent::Snapshot { snapshot, .. } => {
                 let mut snapshot = snapshot;
+                // A fast catalog can finish before the actor's first snapshot.
+                if snapshot.models.is_empty()
+                    && let Some(actor) = self.actors.get(&key)
+                    && let Some(command) = self
+                        .configurations
+                        .catalog_command(&snapshot.harness, &snapshot.project)
+                {
+                    actor.send(command);
+                }
                 // Publish identity even when the actor finishes starting in the background.
                 if let Some(target) = snapshot.session_target()
                     && self

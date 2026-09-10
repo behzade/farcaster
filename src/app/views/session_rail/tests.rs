@@ -23,11 +23,14 @@ fn closing_a_session_keeps_its_visual_slot_when_possible() {
 
 #[test]
 fn shortcuts_number_sessions_without_binding_zero_to_a_draft() {
-    let mut first_draft = DraftSession::with_id("first".into(), PathBuf::from("/project"));
+    let mut first_draft =
+        DraftSession::with_id("pi".into(), "first".into(), PathBuf::from("/project"));
     first_draft.app_session_id = 12;
-    let mut second_draft = DraftSession::with_id("second".into(), PathBuf::from("/project"));
+    let mut second_draft =
+        DraftSession::with_id("pi".into(), "second".into(), PathBuf::from("/project"));
     second_draft.app_session_id = 11;
-    let mut submitted = DraftSession::with_id("submitted".into(), PathBuf::from("/project"));
+    let mut submitted =
+        DraftSession::with_id("pi".into(), "submitted".into(), PathBuf::from("/project"));
     submitted.app_session_id = 10;
     submitted.submitted = true;
     let persisted = item("persisted", 9, "/other", SessionRailKind::Project, false);

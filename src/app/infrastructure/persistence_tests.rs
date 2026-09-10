@@ -30,16 +30,24 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");
     let mut store = StateStore::open_at(&database)?;
-    assert_eq!(store.load_preferred_harness(temp.path())?, "pi");
+    assert_eq!(store.load_preferred_harness(temp.path())?, None);
 
-    let mut draft = DraftSession::new("main".into(), 0, temp.path().to_path_buf(), 1);
-    draft.harness = "codex-cli".into();
+    let mut draft = DraftSession::new(
+        "codex-cli".into(),
+        "main".into(),
+        0,
+        temp.path().to_path_buf(),
+        1,
+    );
     draft.submitted = true;
     store.allocate_app_session_id(&draft)?;
     // An unused startup draft must not reset the inferred preference.
-    let empty = DraftSession::new("empty".into(), 0, temp.path().to_path_buf(), 2);
+    let empty = DraftSession::new("pi".into(), "empty".into(), 0, temp.path().to_path_buf(), 2);
     store.allocate_app_session_id(&empty)?;
-    assert_eq!(store.load_preferred_harness(temp.path())?, "codex-cli");
+    assert_eq!(
+        store.load_preferred_harness(temp.path())?,
+        Some("codex-cli".into())
+    );
     drop(store);
 
     let connection = Connection::open(&database)?;
@@ -50,16 +58,30 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     drop(connection);
     assert_eq!(
         StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
-        "codex-cli"
+        Some("codex-cli".into())
     );
 
     for harness in ["opencode", "codex-cli"] {
         StateStore::open_at(&database)?.save_preferred_harness(harness)?;
         assert_eq!(
             StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
-            harness
+            Some(harness.into())
         );
     }
+    Ok(())
+}
+
+#[test]
+fn empty_backend_preference_is_an_error() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    assert!(store.save_preferred_harness("").is_err());
+    Connection::open(&database)?.execute(
+        "INSERT INTO meta(key, value) VALUES('preferred_harness', '')",
+        [],
+    )?;
+    assert!(store.load_preferred_harness(temp.path()).is_err());
     Ok(())
 }
 
@@ -83,7 +105,7 @@ fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn st
         registry.projects.push(project.clone());
 
         // Match startup: register the allocated draft before saving the registry.
-        let mut draft = DraftSession::new("startup".into(), 0, project, 1);
+        let mut draft = DraftSession::new("pi".into(), "startup".into(), 0, project, 1);
         draft.app_session_id = store.allocate_app_session_id(&draft)?;
         registry.drafts.push(draft);
         store.save_registry(&registry)?;
@@ -132,6 +154,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
                 provider: "provider".into(),
                 context_window: 200_000,
                 reasoning: true,
+                resolved_model: Some("concrete-model".into()),
                 access_modes: Some(vec![crate::agents::HarnessAccessMode::Auto]),
                 efforts: Some(vec!["low".into(), "high".into()]),
             }],
@@ -179,6 +202,7 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
             provider: "provider".into(),
             context_window: 0,
             reasoning: false,
+            resolved_model: None,
             access_modes: None,
             efforts: None,
         }],
@@ -227,6 +251,7 @@ fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::E
             provider: "provider".into(),
             context_window: 200_000,
             reasoning: true,
+            resolved_model: None,
             access_modes: None,
             efforts: Some(vec!["low".into(), "high".into()]),
         }),
@@ -701,8 +726,13 @@ fn application_session_ids_are_incremental_i64_values() -> Result<(), Box<dyn st
     let temp = tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
-    let mut draft = DraftSession::new("first".into(), 0, temp.path().to_path_buf(), 1);
-    draft.harness = "codex-cli".into();
+    let mut draft = DraftSession::new(
+        "codex-cli".into(),
+        "first".into(),
+        0,
+        temp.path().to_path_buf(),
+        1,
+    );
     let first = store.allocate_app_session_id(&draft)?;
     draft.id = "second".into();
     let second = store.allocate_app_session_id(&draft)?;
@@ -1081,7 +1111,7 @@ fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
-    let mut draft = DraftSession::new("draft".into(), 1, project.clone(), 1);
+    let mut draft = DraftSession::new("pi".into(), "draft".into(), 1, project.clone(), 1);
     assert!(draft.change_harness("opencode2".into()));
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
@@ -1651,7 +1681,13 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
-    let draft = DraftSession::new("pending".into(), 0, temp.path().to_path_buf(), 1);
+    let draft = DraftSession::new(
+        "pi".into(),
+        "pending".into(),
+        0,
+        temp.path().to_path_buf(),
+        1,
+    );
     store.allocate_app_session_id(&draft)?;
     let first = store.enqueue_prompt_with_presentation(
         "draft:pending",

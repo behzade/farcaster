@@ -12,8 +12,7 @@ pub(in crate::app) fn new_draft(
     let id = format!("draft-{}-{}", elapsed.as_nanos(), std::process::id());
     let created_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
     let mut store = StateStore::open()?;
-    let mut draft = projects::DraftSession::new(id, 0, project, created_ms);
-    draft.harness = harness.to_owned();
+    let mut draft = projects::DraftSession::new(harness.to_owned(), id, 0, project, created_ms);
     draft.app_session_id = projects::allocate_session_id(&mut store, &draft)?;
     Ok(draft)
 }

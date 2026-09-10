@@ -4,8 +4,13 @@ use super::*;
 fn bound_draft_aliases_preserve_write_and_delete_order() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
-    let mut draft =
-        crate::projects::DraftSession::new("draft".into(), 0, temp.path().to_path_buf(), 1);
+    let mut draft = crate::projects::DraftSession::new(
+        "pi".into(),
+        "draft".into(),
+        0,
+        temp.path().to_path_buf(),
+        1,
+    );
     draft.session_path = Some(temp.path().join("session.jsonl"));
     store.allocate_app_session_id(&draft)?;
     let bound = session_target(

@@ -1,6 +1,15 @@
 #!/bin/sh
 set -eu
 case_name=$1
+session_file=''
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = '--session' ]; then
+    session_file=$(printf '%s' "$argument" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    break
+  fi
+  previous=$argument
+done
 
 if [ "$case_name" = "project-directory" ]; then
   printf '%s' "$PWD" > "$PWD/process-project"
@@ -49,8 +58,13 @@ fi
 if [ "$case_name" = "normal" ]; then
   printf '{"type":"agent_start"}\n'
 fi
-if [ "$case_name" = "peer-delivery" ] || [ "$case_name" = "deferred-session" ] || [ "$case_name" = "project-directory" ]; then
-  printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","sessionFile":"%s/fake-session.jsonl","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id" "$PWD"
+if [ -z "$session_file" ]; then
+  case "$case_name" in
+    peer-delivery|deferred-session|project-directory) session_file="$PWD/fake-session.jsonl" ;;
+  esac
+fi
+if [ -n "$session_file" ]; then
+  printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","sessionFile":"%s","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id" "$session_file"
 else
   printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}}\n' "$id"
 fi
@@ -103,6 +117,9 @@ while IFS= read -r line; do
         data='{"model":{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true},"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":1,"pendingMessageCount":0}'
       else
         data='{"model":null,"thinkingLevel":"off","isStreaming":false,"isCompacting":false,"sessionId":"fake","autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0}'
+      fi
+      if [ -n "$session_file" ]; then
+        data=$(printf '{"sessionFile":"%s",%s' "$session_file" "${data#\{}")
       fi
       ;;
     set_model)

@@ -219,6 +219,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             client.fork_session(&session_id, None)?
         }
     };
+    metadata.session_name = session.title;
     let session_id = session.id;
     let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;
     caller_identity.bind(session_id.clone());

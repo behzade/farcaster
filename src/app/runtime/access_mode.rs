@@ -5,6 +5,8 @@ const ACCESS_MODE_CHANGE_DEBOUNCE: Duration = Duration::from_millis(500);
 #[derive(Default)]
 pub(super) struct AccessModeChangeState {
     queued: Option<HarnessAccessMode>,
+    // Keep the preference when a harness or an incomplete catalog forces a fallback.
+    fallback_preference: Option<HarnessAccessMode>,
     apply_due: Option<Instant>,
     restart_pending: bool,
 }
@@ -29,6 +31,21 @@ impl AccessModeChangeState {
         }
         self.apply_due = None;
         self.queued.take()
+    }
+
+    pub(super) fn resolve_available(
+        &mut self,
+        current: HarnessAccessMode,
+        available: &[HarnessAccessMode],
+    ) -> Option<HarnessAccessMode> {
+        let preferred = self.fallback_preference.unwrap_or(current);
+        if available.contains(&preferred) {
+            self.fallback_preference = None;
+            Some(preferred)
+        } else {
+            self.fallback_preference = Some(preferred);
+            available.first().copied()
+        }
     }
 
     pub(super) fn next_deadline(&self) -> Option<Instant> {
@@ -62,6 +79,29 @@ impl AccessModeChangeState {
 }
 
 impl RuntimeOwner {
+    pub(super) fn reconcile_access_mode(&mut self) {
+        if self.access_mode_changes.queued.is_some()
+            || (self.process.is_some() && self.access_mode_changes.fallback_preference.is_none())
+        {
+            return;
+        }
+        let available = self.available_access_modes();
+        let current = self.process_command.access_mode;
+        if self.process.is_none() {
+            if let Some(mode) = self
+                .access_mode_changes
+                .resolve_available(current, &available)
+            {
+                self.process_command.access_mode = mode;
+            }
+        } else if let Some(preferred) = self.access_mode_changes.fallback_preference
+            && available.contains(&preferred)
+        {
+            self.access_mode_changes.fallback_preference = None;
+            self.access_mode_changes.queue(preferred, current);
+        }
+    }
+
     pub(super) fn available_access_modes(&self) -> Vec<HarnessAccessMode> {
         crate::agents::available_access_modes(
             &self.harness,
@@ -83,6 +123,7 @@ impl RuntimeOwner {
         if !self.available_access_modes().contains(&mode) {
             return;
         }
+        self.access_mode_changes.fallback_preference = None;
         if self.process.is_none() && self.access_mode_change_ready() {
             self.access_mode_changes.queued = None;
             self.access_mode_changes.apply_due = None;

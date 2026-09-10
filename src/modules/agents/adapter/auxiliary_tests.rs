@@ -12,6 +12,7 @@ fn model_from(provider: &str, id: &str, reasoning: bool) -> Model {
         provider: provider.into(),
         context_window: 0,
         reasoning,
+        resolved_model: None,
         access_modes: None,
         efforts: None,
     }

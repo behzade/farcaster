@@ -67,3 +67,18 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
         HarnessAccessMode::Sandboxed
     );
 }
+
+#[test]
+fn access_modes_restore_auto_after_an_unsupported_harness() {
+    use HarnessAccessMode::{Auto, Sandboxed};
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.process_command.access_mode = Auto;
+    owner.publish();
+    assert_eq!(owner.process_command.access_mode, Sandboxed);
+    owner.stage_draft("codex-cli".into(), std::env::temp_dir());
+    assert_eq!(owner.snapshot.access_mode, Auto);
+    assert_eq!(owner.process_command.access_mode, Auto);
+    owner.set_access_mode(Sandboxed);
+    owner.publish();
+    assert_eq!(owner.snapshot.access_mode, Sandboxed);
+}

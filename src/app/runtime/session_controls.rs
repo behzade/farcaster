@@ -124,8 +124,11 @@ impl RuntimeOwner {
                 );
                 return;
             }
-        } else if !available.contains(&current) {
-            let Some(mode) = available.first().copied() else {
+        } else {
+            let Some(mode) = self
+                .access_mode_changes
+                .resolve_available(current, &available)
+            else {
                 self.command_not_sent("set_model", "No access mode is available for this model");
                 return;
             };

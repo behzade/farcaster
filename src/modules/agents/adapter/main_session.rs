@@ -14,6 +14,7 @@ use crate::agents::{
 
 #[derive(Default)]
 pub(super) struct MainSessionMetadata {
+    pub session_name: Option<String>,
     pub service_tier: Option<String>,
     pub service_tiers: Vec<String>,
     pub models: Vec<Value>,
@@ -52,7 +53,6 @@ pub(super) struct WorkerSessionTransport {
     metadata: MainSessionMetadata,
     history: Option<Vec<Value>>,
     message_count: usize,
-    session_name: Option<String>,
     selected_mode: Option<String>,
     usage: WorkerUsage,
 }
@@ -111,7 +111,6 @@ impl WorkerSessionTransport {
                 .or_else(|| metadata.efforts.first().cloned()),
             metadata,
             message_count: history.as_ref().map_or(0, |history| history.messages.len()),
-            session_name: None,
             history: history.map(|history| history.messages),
             selected_mode,
             usage: WorkerUsage {
@@ -215,7 +214,7 @@ impl WorkerSessionTransport {
             "isCompacting": false,
             "sessionFile": self.path.to_string_lossy(),
             "sessionId": self.locator,
-            "sessionName": self.session_name,
+            "sessionName": self.metadata.session_name,
             "autoCompactionEnabled": true,
             "messageCount": self.message_count,
             "pendingMessageCount": 0,
@@ -415,7 +414,7 @@ impl WorkerSessionTransport {
                 return;
             }
             WorkerActivity::TitleChanged(title) => {
-                self.session_name = Some(title);
+                self.metadata.session_name = Some(title);
                 self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
                 return;
             }
@@ -710,7 +709,7 @@ impl SessionTransport for WorkerSessionTransport {
             }
             SessionCommand::Rename { name } => {
                 self.worker.rename(&name)?;
-                self.session_name = Some(name);
+                self.metadata.session_name = Some(name);
                 self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::ExportHtml { .. } | SessionCommand::ForkAt { .. } => {
