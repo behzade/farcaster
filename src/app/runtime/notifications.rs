@@ -2,6 +2,33 @@ use super::*;
 use crate::app::views::transcript::conversation::TranscriptKind;
 
 impl RuntimeOwner {
+    pub(super) fn apply_interaction(&mut self, request: ExtensionUiRequest) -> SnapshotChange {
+        let desktop_alert = request.gpui_system_notification().is_some();
+        match request {
+            ExtensionUiRequest::Notify {
+                message,
+                tone: crate::protocol::NotifyTone::Info,
+                ..
+            } if !desktop_alert => {
+                let changed_from =
+                    conversation_mut(self.active_snapshot_mut()).push_extension_notice(message);
+                self.transcript_changed_from = Some(
+                    self.transcript_changed_from
+                        .map_or(changed_from, |previous| previous.min(changed_from)),
+                );
+                SnapshotChange::Immediate
+            }
+            request => {
+                let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
+                    generation: self.process_generation,
+                    request,
+                    system_notification_target: self.attention_target(),
+                });
+                SnapshotChange::None
+            }
+        }
+    }
+
     pub(super) fn notify_attention(&self, title: &str, detail: Option<&str>) {
         let snapshot = self.active_snapshot();
         let _ = self.event_tx.send(RuntimeEvent::SystemNotification {
@@ -73,10 +100,8 @@ pub(super) fn interaction_notification(
             "Farcaster: Input needed",
             request_text(title, detail.as_deref().unwrap_or_default()),
         ),
-        ExtensionUiRequest::Notify { message, .. } => {
-            let (title, body) = request
-                .gpui_system_notification()
-                .unwrap_or(("Farcaster", message));
+        ExtensionUiRequest::Notify { .. } => {
+            let (title, body) = request.gpui_system_notification()?;
             (title, body.to_owned())
         }
         _ => return None,

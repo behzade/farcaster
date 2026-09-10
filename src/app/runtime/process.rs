@@ -290,14 +290,7 @@ impl RuntimeOwner {
                 self.apply_response(response);
                 SnapshotChange::None
             }
-            SessionEvent::Interaction(request) => {
-                let _ = self.event_tx.send(RuntimeEvent::ExtensionUi {
-                    generation: self.process_generation,
-                    request,
-                    system_notification_target: self.attention_target(),
-                });
-                SnapshotChange::None
-            }
+            SessionEvent::Interaction(request) => self.apply_interaction(request),
             SessionEvent::Activity(event) => {
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
                 let conversation = &self.active_snapshot().conversation;
