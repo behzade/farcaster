@@ -13,6 +13,17 @@ pub(super) fn create(
     window: &mut Window,
     cx: &mut Context<FarcasterApp>,
 ) -> BootstrapSubscriptions {
+    cx.on_app_quit(|this, cx| {
+        this.capture_composer_session(cx);
+        let target = this.composer_sessions.current_target().to_owned();
+        let composer = this.composer_sessions.current();
+        // Apply session-switch cleanup only after quit is confirmed.
+        if this.sync_current_draft(&composer, &target) {
+            this.composer_sessions.remove(&target);
+        }
+        async {}
+    })
+    .detach();
     let composer = subscribe_composer(&inputs.composer, window, cx);
     let search = cx.subscribe_in(
         &inputs.search,

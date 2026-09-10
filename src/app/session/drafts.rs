@@ -180,7 +180,10 @@ impl FarcasterApp {
         let Some(id) = self.selected_draft.as_deref() else {
             return false;
         };
-        if target != draft_target(id) || self.submitted_drafts.contains_key(id) {
+        if target != draft_target(id)
+            || self.submitted_drafts.contains_key(id)
+            || self.pending_submissions.contains_key(target)
+        {
             return false;
         }
         let has_content = draft_has_content(composer)
@@ -214,8 +217,7 @@ impl FarcasterApp {
         if changed {
             self.save_project_registry();
         }
-        let submission_pending = self.pending_submissions.contains_key(target);
-        if !has_content && !submission_pending {
+        if !has_content {
             self.composer_images.remove(target);
             self.composer_pastes.remove(target);
         }

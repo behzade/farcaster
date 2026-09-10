@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn empty_startup_draft_stays_deleted_after_late_composer_save()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::app::infrastructure::persistence::{ComposerRecord, StateStore};
+
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let project = temp.path().canonicalize()?;
+    let mut store = StateStore::open_at(&database)?;
+    let draft = DraftSession::with_id("pi".into(), "startup".into(), project.clone());
+    let id = store.allocate_app_session_id(&draft)?;
+    let mut registry = store.load_registry()?;
+    assert!(sync_materialized_draft(
+        &mut registry.drafts,
+        "startup",
+        id,
+        &project,
+        "pi",
+        false,
+    ));
+    store.save_registry(&registry)?;
+    // A queued composer write must not recreate the draft after quit removes it.
+    store.save_composer_session(&ComposerRecord {
+        target: draft_target("startup"),
+        ..Default::default()
+    })?;
+    drop(store);
+
+    let reopened = StateStore::open_at(&database)?;
+    assert!(reopened.load_registry()?.drafts.is_empty());
+    assert!(reopened.load_composer_sessions()?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn project_choices_include_registered_and_current_worktrees() {
     let temp = tempfile::tempdir().expect("temporary project root");
     let project = temp.path().join("project");
