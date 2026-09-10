@@ -177,11 +177,18 @@ impl ListDelegate for PickerDelegate {
                                 })),
                         )
                         .children(row.shortcut.map(|shortcut| {
-                            Kbd::new(
-                                Keystroke::parse(&shortcut)
-                                    .expect("static picker shortcut must parse"),
-                            )
-                            .outline()
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .gap(THEME.space.xs)
+                                .children(shortcut.split_whitespace().map(|key| {
+                                    Kbd::new(
+                                        Keystroke::parse(key)
+                                            .expect("static picker shortcut must parse"),
+                                    )
+                                    .outline()
+                                }))
                         }))
                         .children(row.removable_project.map(|project| {
                             icon_control(
