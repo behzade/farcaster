@@ -77,6 +77,16 @@ impl Activation {
         if let Some(scroll) = transcript_scroll(key, modifiers, prefix) {
             return ActivatedKey::Scroll(scroll);
         }
+        if prefix.is_none()
+            && key == "n"
+            && modifiers
+                == (gpui::Modifiers {
+                    shift: true,
+                    ..Default::default()
+                })
+        {
+            return ActivatedKey::Command(Command::StartCodeTask);
+        }
         if !modifiers.modified()
             && let Some(command) = shortcuts::activated_command(key, prefix)
         {
@@ -276,6 +286,7 @@ impl FarcasterApp {
             }
             Command::Editor => self.show_editor_surface(window, cx),
             Command::CommentCode => self.comment_on_code(window, cx),
+            Command::StartCodeTask => self.start_task_from_code(window, cx),
             Command::TranscriptScratch => self.open_transcript_scratch(window, cx),
             Command::Terminal => self.show_terminal_surface(window, cx),
             Command::SearchSessions => self.open_picker(PickerScope::Sessions, window, cx),

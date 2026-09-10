@@ -17,9 +17,14 @@ pub(in crate::app::views) fn render(
     let cancel = entity.clone();
     let submit = entity.clone();
     let enabled = !comment.input.read(cx).value().trim().is_empty();
+    let title = if comment.task.is_some() {
+        "Start task"
+    } else {
+        "Comment on code"
+    };
     modal(
         "code-comment",
-        "Comment on code",
+        title,
         &comment.focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
@@ -32,11 +37,20 @@ pub(in crate::app::views) fn render(
                     .flex()
                     .flex_col()
                     .gap(THEME.space.sm)
-                    .child(
-                        Textarea::new(&comment.input)
-                            .aria_label("Comment on selected code")
-                            .w_full(),
-                    )
+                    .children(comment.task.as_ref().map(|settings| {
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child(format!(
+                                "{} · {}",
+                                crate::agents::backend_display_name(&settings.harness),
+                                settings
+                                    .model
+                                    .as_ref()
+                                    .map_or("Default model", |model| model.name.as_str())
+                            ))
+                    }))
+                    .child(Textarea::new(&comment.input).aria_label(title).w_full())
                     .child(
                         div()
                             .flex()
@@ -54,7 +68,11 @@ pub(in crate::app::views) fn render(
                             ))
                             .child(button(
                                 "add-code-comment",
-                                "Add",
+                                if comment.task.is_some() {
+                                    "Start task"
+                                } else {
+                                    "Add"
+                                },
                                 ButtonTone::Accent,
                                 enabled,
                                 move |window, cx| {

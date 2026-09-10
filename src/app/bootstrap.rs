@@ -142,6 +142,7 @@ impl FarcasterApp {
             image_preview: None,
             code_comment: None,
             code_comment_capture: None,
+            code_tasks: Default::default(),
             image_preview_focus: cx.focus_handle(),
             image_preview_return_focus: None,
             sheet_focus: cx.focus_handle(),

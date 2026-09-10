@@ -650,6 +650,9 @@ pub(super) fn target_command_needs_actor_message(
         return true;
     };
     match command {
+        RuntimeCommand::ResumeDraft {
+            harness, project, ..
+        } => snapshot.harness != *harness || snapshot.project != *project,
         RuntimeCommand::SelectSession { harness, .. } => {
             snapshot.harness != *harness || (!snapshot.connected && !snapshot.history_preview)
         }

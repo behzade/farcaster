@@ -175,7 +175,9 @@ impl RuntimeOwner {
             } => self.preview_import(harness, generation),
             RuntimeCommand::CommitImport { sessions } => self.commit_import(sessions),
             // Configuration loading belongs to the supervisor, not a chat actor.
-            RuntimeCommand::LoadConfiguration { .. } | RuntimeCommand::Shutdown => {}
+            RuntimeCommand::LoadConfiguration { .. }
+            | RuntimeCommand::StartTask { .. }
+            | RuntimeCommand::Shutdown => {}
         }
     }
 }

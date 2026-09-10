@@ -1,6 +1,51 @@
 use super::*;
 
 impl Supervisor {
+    fn start_background_task(&mut self, id: String, settings: TaskSettings, message: String) {
+        let key = format!("draft:{id}");
+        // Retrying the same creation request must not launch or submit twice.
+        if self.actors.contains_key(&key) {
+            return;
+        }
+        let mut process_command = self.process_command.clone();
+        process_command.access_mode = settings.access_mode;
+        let actor = SessionRuntimeHandle::spawn(
+            settings.project.clone(),
+            process_command,
+            false,
+            settings.harness.clone(),
+            self.supervisor_thread.clone(),
+        );
+        if let Some(model) = settings.model {
+            actor.send(RuntimeCommand::SetModel(model));
+        }
+        if let Some(effort) = settings.effort {
+            actor.send(RuntimeCommand::SetThinking(effort));
+        }
+        actor.send(RuntimeCommand::Prompt {
+            target: key.clone(),
+            mode: PromptMode::Normal,
+            message,
+            display_message: None,
+            invocation: None,
+            images: Vec::new(),
+            allow_while_running: false,
+        });
+        self.clock = self.clock.saturating_add(1);
+        self.last_touch.insert(key.clone(), self.clock);
+        self.interacted.insert(key.clone());
+        // A user may open the draft before its actor has published any events.
+        self.latest.insert(
+            key.clone(),
+            Arc::new(RuntimeSnapshot {
+                harness: settings.harness,
+                project: settings.project,
+                ..RuntimeSnapshot::default()
+            }),
+        );
+        self.actors.insert(key, actor);
+    }
+
     fn request_configuration(&mut self, harness: String, project: PathBuf) {
         let Some(sender) = &self.configuration_tx else {
             return;
@@ -44,6 +89,15 @@ impl Supervisor {
         match self.command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
+                if let RuntimeCommand::StartTask {
+                    id,
+                    settings,
+                    message,
+                } = command
+                {
+                    self.start_background_task(id, settings, message);
+                    return true;
+                }
                 if let RuntimeCommand::LoadConfiguration { harness, project } = &command {
                     self.request_configuration(harness.clone(), project.clone());
                     return true;

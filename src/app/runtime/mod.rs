@@ -84,7 +84,9 @@ use supervisor::{
     command_targets_catalog, initial_draft_command, is_view_only_selection,
     publish_session_status_if_changed, route_session_discovery, target_command_needs_actor_message,
 };
-pub(crate) use types::{ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot};
+pub(crate) use types::{
+    ConfigurationStatus, RuntimeCommand, RuntimeEvent, RuntimeSnapshot, TaskSettings,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SnapshotChange {

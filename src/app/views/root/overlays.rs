@@ -22,6 +22,8 @@ impl FarcasterApp {
         work_active: bool,
         cx: &Context<Self>,
     ) -> gpui::Div {
+        let task_notice = self.render_code_task_notice(entity.clone());
+        let has_notices = !self.extension.notifications.is_empty() || task_notice.is_some();
         let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
         let sessions_sheet = self.overlays.sessions.then(|| {
             panel_sheet(
@@ -149,7 +151,7 @@ impl FarcasterApp {
                 dialogs::image_preview::render(self, entity.clone()),
                 |root, preview| root.child(preview),
             )
-            .when(!self.extension.notifications.is_empty(), |root| {
+            .when(has_notices, |root| {
                 root.child(
                     div()
                         .absolute()
@@ -160,6 +162,7 @@ impl FarcasterApp {
                         .flex()
                         .flex_col()
                         .gap(THEME.space.xs)
+                        .children(task_notice)
                         .children(self.extension.notifications.iter().enumerate().map(
                             |(index, notice)| {
                                 feedback(

@@ -51,6 +51,7 @@ The second group also works inside Neovim and the terminal:
 <leader> j -> next session
 <leader> k -> previous session
 <leader> n -> new session
+<leader> Shift+N -> start a task from code in Neovim
 <leader> p -> add project
 <leader> s -> set sandbox
 <leader> m -> set provider/model/effort
@@ -76,6 +77,12 @@ code to the current session's composer without sending; Shift+Enter adds a new
 line. Existing draft text and attachments remain. Esc returns to the editor
 without moving the cursor or changing the selection. File buffers only; captures
 are limited to 2,000 lines and 128 KiB.
+
+`Ctrl-G Shift-N` captures the same code for a new task. Add an instruction and
+press Enter to send it in a separate chat, using the current harness and model.
+Focus returns to Neovim; the original chat draft and attachments stay intact.
+The confirmation offers **Open chat**. A failed start keeps the request in the
+new chat's composer so you can retry.
 
 ## Composer and local keys
 

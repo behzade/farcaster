@@ -70,7 +70,7 @@ fn timeout_cancellation_and_modified_keys_do_not_leak() {
         activated(&mut state, "ctrl-g", now + ACTIVATION_TIMEOUT),
         ActivatedKey::Pending
     );
-    for key in ["escape", "ctrl-2", "z"] {
+    for key in ["escape", "ctrl-2", "z", "ctrl-shift-n", "alt-shift-n"] {
         state.clear();
         activated(&mut state, "ctrl-g", now);
         assert_eq!(activated(&mut state, key, now), ActivatedKey::Cancel);
@@ -95,6 +95,8 @@ fn activation_routes_bare_surfaces_and_transcript_boundaries() {
         ("e", Command::Editor),
         ("v", Command::TranscriptScratch),
         ("c", Command::CommentCode),
+        ("n", Command::NewSession),
+        ("shift-n", Command::StartCodeTask),
         ("t", Command::Terminal),
         ("p", Command::AddProject),
         ("s", Command::Sandbox),

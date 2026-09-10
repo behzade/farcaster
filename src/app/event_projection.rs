@@ -481,6 +481,7 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
+        self.code_task_result(&target, accepted, session.as_deref(), cx);
         self.record_draft_submission(&target, accepted, session.clone());
         if !accepted {
             self.run_statuses.insert(target.clone(), "Failed".into());
@@ -637,6 +638,11 @@ impl FarcasterApp {
                     dirty.root = true;
                     dirty.composer = true;
                     dirty.run = true;
+                }
+                self.code_tasks.associate(&target, session.as_deref());
+                dirty.root |= self.code_tasks.notice_message().is_some();
+                if status == "Stopped" {
+                    self.code_task_result(&target, false, session.as_deref(), cx);
                 }
                 self.record_session_status(target, session, status);
                 dirty.rail |= self.reconcile_submitted_drafts(cx);

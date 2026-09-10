@@ -88,6 +88,7 @@ enum PickerCommand {
     Action(&'static str),
     OpenProjects(ProjectPickerIntent),
     OpenSessions,
+    StartCodeTask,
     AddProject(Option<ProjectPickerIntent>),
     OpenWorkGraph,
     OpenSettings,
@@ -399,6 +400,10 @@ impl FarcasterApp {
             return;
         };
         match command {
+            PickerCommand::StartCodeTask => {
+                self.close_picker(window, cx);
+                self.start_task_from_code(window, cx);
+            }
             PickerCommand::Action(name) => {
                 if let Some(shortcut) = crate::app::ui::keybindings::registry()
                     .into_iter()
@@ -498,6 +503,17 @@ impl FarcasterApp {
         let include_shortcuts = scope == PickerScope::Actions;
         let mut rows = match scope {
             PickerScope::Actions => vec![
+                picker_row(
+                    &mut commands,
+                    "action:code-task",
+                    PickerCommand::StartCodeTask,
+                    AppIcon::Code,
+                    "Start task from selected code…",
+                    None,
+                    Some("ctrl-g shift-n".into()),
+                    "neovim editor selection background new chat",
+                )
+                .disabled(self.surface != crate::app::AppSurface::Editor),
                 picker_row(
                     &mut commands,
                     "action:harness",

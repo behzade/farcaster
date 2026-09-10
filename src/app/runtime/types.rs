@@ -1,5 +1,14 @@
 use super::*;
 
+#[derive(Clone, Debug)]
+pub(crate) struct TaskSettings {
+    pub project: PathBuf,
+    pub harness: String,
+    pub model: Option<Model>,
+    pub effort: Option<String>,
+    pub access_mode: HarnessAccessMode,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) enum RuntimeCommand {
@@ -47,6 +56,11 @@ pub(crate) enum RuntimeCommand {
         id: String,
         harness: String,
         project: PathBuf,
+    },
+    StartTask {
+        id: String,
+        settings: TaskSettings,
+        message: String,
     },
     ForkSession {
         path: PathBuf,

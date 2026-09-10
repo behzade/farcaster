@@ -3,6 +3,7 @@ use gpui_component::input::{InputEvent, TextareaState};
 
 use super::neovim::CodeContext;
 use crate::app::{AppSurface, FarcasterApp};
+use crate::runtime::TaskSettings;
 
 impl CodeContext {
     pub fn location(&self) -> String {
@@ -54,6 +55,7 @@ pub(in crate::app) struct CodeComment {
     pub focus: FocusHandle,
     pub input: Entity<TextareaState>,
     pub context: CodeContext,
+    pub task: Option<TaskSettings>,
     target: String,
     return_focus: Option<FocusHandle>,
     _subscription: Subscription,
@@ -61,6 +63,23 @@ pub(in crate::app) struct CodeComment {
 
 impl FarcasterApp {
     pub(in crate::app) fn comment_on_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.capture_code_prompt(false, window, cx);
+    }
+
+    pub(in crate::app) fn start_task_from_code(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.capture_code_prompt(true, window, cx);
+    }
+
+    fn capture_code_prompt(
+        &mut self,
+        start_task: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.surface != AppSurface::Editor
             || self.native_workspace_covered_by_overlay()
             || self.code_comment_capture.is_some()
@@ -70,6 +89,18 @@ impl FarcasterApp {
         let Some(editor) = self.editor.clone().filter(|_| self.editor_ready) else {
             return;
         };
+        let task = start_task.then(|| TaskSettings {
+            project: self.workspace_project(),
+            harness: self.active_harness().to_owned(),
+            model: self.snapshot.session_identity().model.cloned(),
+            effort: self.snapshot.session_identity().effort.map(str::to_owned),
+            access_mode: self.snapshot.access_mode,
+        });
+        if let Some(settings) = &task
+            && !self.ensure_backend_trust(&settings.harness, &settings.project, window, cx)
+        {
+            return;
+        }
         let target = self.composer_sessions.current_target().to_owned();
         let generation = self.editor_request_generation;
         let return_focus = window.focused(cx);
@@ -91,7 +122,15 @@ impl FarcasterApp {
                 let context = match result {
                     Ok(context) => context,
                     Err(error) => {
-                        this.notify_workspace_error("Comment on code", error, cx);
+                        this.notify_workspace_error(
+                            if start_task {
+                                "Start task"
+                            } else {
+                                "Comment on code"
+                            },
+                            error,
+                            cx,
+                        );
                         return;
                     }
                 };
@@ -99,7 +138,11 @@ impl FarcasterApp {
                     TextareaState::new(window, cx)
                         .auto_grow(1, 8)
                         .submit_on_enter(true)
-                        .placeholder("Comment…")
+                        .placeholder(if start_task {
+                            "What should the agent do?"
+                        } else {
+                            "Comment…"
+                        })
                 });
                 let subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
                     if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
@@ -113,6 +156,7 @@ impl FarcasterApp {
                     focus: cx.focus_handle(),
                     input,
                     context,
+                    task,
                     target,
                     return_focus,
                     _subscription: subscription,
@@ -142,8 +186,12 @@ impl FarcasterApp {
         };
         if comment.target != self.composer_sessions.current_target() {
             self.notify_workspace_error(
-                "Comment on code",
-                "Return to the original session to add this comment.".into(),
+                if comment.task.is_some() {
+                    "Start task"
+                } else {
+                    "Comment on code"
+                },
+                "Return to the original session to use this code capture.".into(),
                 cx,
             );
             return;
@@ -153,6 +201,10 @@ impl FarcasterApp {
             return;
         }
         let prompt = comment.context.prompt(&instruction);
+        if let Some(settings) = comment.task.clone() {
+            self.submit_code_task(settings, prompt, window, cx);
+            return;
+        }
         let existing = self.composer.read(cx).value();
         let combined = if existing.is_empty() {
             prompt

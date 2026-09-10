@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "code_tasks_tests.rs"]
+mod code_tasks_tests;
+
 const WAIT: Duration = Duration::from_secs(3);
 const CHILD_MARKER: &str = "FARCASTER_CATALOG_TEST_CHILD";
 
@@ -132,7 +135,10 @@ impl Harness {
             project.clone(),
             "initial".into(),
             None,
-            AgentLaunchConfig::default(),
+            AgentLaunchConfig {
+                session_locator_root: Some(project.join("session-locators")),
+                ..AgentLaunchConfig::default()
+            },
             true,
         );
         Self {
