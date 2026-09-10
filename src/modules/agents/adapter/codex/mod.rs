@@ -3,6 +3,7 @@ mod connection;
 #[cfg(test)]
 mod connection_tests;
 mod contract;
+mod skills;
 mod subagents;
 mod tool;
 mod transfer;
@@ -57,7 +58,7 @@ use super::super::contract::{
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
-    use CapabilitySupport::{Available, Unsupported};
+    use CapabilitySupport::Available;
 
     AgentBackendDescriptor {
         id: AgentBackendId::new("codex-cli").expect("Codex backend id is valid"),
@@ -89,7 +90,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 select_model: Available,
                 reasoning_effort: Available,
                 modes: Available,
-                commands: Unsupported,
+                commands: Available,
                 mcp_servers: Available,
             },
             interactions: InteractionCapabilities {

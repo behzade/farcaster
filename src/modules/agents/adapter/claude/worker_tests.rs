@@ -465,3 +465,38 @@ fn access_modes_preserve_claude_model_auto_support() {
         session.close().expect("test operation should succeed");
     }
 }
+
+#[test]
+fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .submit_prompt(
+            "first".into(),
+            "hold".into(),
+            WorkerSendMode::Prompt,
+            Vec::new(),
+        )
+        .unwrap();
+    let first = session.active_uuid.clone().unwrap();
+    session
+        .submit_prompt(
+            "queued".into(),
+            "hold".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .unwrap();
+    assert!(session.poll_prompt_ack().is_none());
+    let mut echo = fixture("SDKUserMessageReplay");
+    echo["session_id"] = json!(session.id);
+    echo["uuid"] = json!("unrelated");
+    session.receive(decode(echo.clone()).unwrap()).unwrap();
+    assert!(session.poll_prompt_ack().is_none());
+    echo["uuid"] = json!(first);
+    session.receive(decode(echo).unwrap()).unwrap();
+    assert_eq!(session.poll_prompt_ack(), Some(("first".into(), Ok(()))));
+    assert!(session.poll_prompt_ack().is_none());
+    session.abort().unwrap();
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "queued"));
+}

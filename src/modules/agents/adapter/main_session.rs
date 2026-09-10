@@ -41,6 +41,7 @@ pub(super) struct WorkerSessionTransport {
     worker: Box<dyn WorkerSession>,
     pending: VecDeque<SessionEvent>,
     next_id: u64,
+    pending_prompts: BTreeMap<String, (SessionOperation, PromptMode, Option<String>)>,
     running: bool,
     steering: Vec<String>,
     follow_up: Vec<String>,
@@ -96,6 +97,7 @@ impl WorkerSessionTransport {
             worker,
             pending: VecDeque::new(),
             next_id: 0,
+            pending_prompts: BTreeMap::new(),
             running: false,
             steering: Vec::new(),
             follow_up: Vec::new(),
@@ -128,6 +130,32 @@ impl WorkerSessionTransport {
                 data,
                 error: None,
             }));
+    }
+
+    fn finish_prompt_ack(&mut self, id: String, result: Result<(), String>) {
+        let Some((operation, mode, message)) = self.pending_prompts.remove(&id) else {
+            return;
+        };
+        if result.is_ok() {
+            self.message_count = self.message_count.saturating_add(1);
+            if let Some(message) = message {
+                self.enqueue_message(mode, message);
+            }
+        }
+        self.pending
+            .push_back(SessionEvent::Response(SessionResponse {
+                id: Some(id),
+                operation,
+                success: result.is_ok(),
+                data: json!({}),
+                error: result.err(),
+            }));
+    }
+
+    fn drain_prompt_acks(&mut self) {
+        while let Some((id, result)) = self.worker.poll_prompt_ack() {
+            self.finish_prompt_ack(id, result);
+        }
     }
 
     fn enqueue_queue_update(&mut self) {
@@ -226,6 +254,9 @@ impl WorkerSessionTransport {
             }
             WorkerEvent::Activity(activity) => self.enqueue_activity(activity),
             WorkerEvent::Failed(error) => {
+                for id in self.pending_prompts.keys().cloned().collect::<Vec<_>>() {
+                    self.finish_prompt_ack(id, Err(error.clone()));
+                }
                 self.clear_queue();
                 self.pending.push_back(SessionEvent::Failure(error));
             }
@@ -635,12 +666,11 @@ impl SessionTransport for WorkerSessionTransport {
                     PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
                 let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
-                self.worker.send_with_images(message, worker_mode, images)?;
-                self.message_count = self.message_count.saturating_add(1);
-                if let Some(message) = queued_message {
-                    self.enqueue_message(mode, message);
+                let accepted = self.worker.submit_prompt(id.clone(), message, worker_mode, images)?;
+                self.pending_prompts.insert(id.clone(), (operation, mode, queued_message));
+                if accepted {
+                    self.finish_prompt_ack(id.clone(), Ok(()));
                 }
-                self.response(id.clone(), operation, json!({}));
             }
             SessionCommand::Abort => {
                 self.worker.abort()?;
@@ -718,8 +748,15 @@ impl SessionTransport for WorkerSessionTransport {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
         }
-        let event = self.worker.poll()?;
-        self.enqueue_worker_event(event);
+        self.drain_prompt_acks();
+        if let Some(event) = self.pending.pop_front() {
+            return Some(event);
+        }
+        let event = self.worker.poll();
+        self.drain_prompt_acks();
+        if let Some(event) = event {
+            self.enqueue_worker_event(event);
+        }
         self.pending.pop_front()
     }
 

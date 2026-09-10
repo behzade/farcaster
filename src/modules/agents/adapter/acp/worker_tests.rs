@@ -145,6 +145,9 @@ fn inert_session() -> AcpWorkerSession {
         .expect("test operation should succeed"),
         session_id: "one".into(),
         current_prompt: Some(AcpRequestId::Number(1)),
+        next_prompt_ack: None,
+        prompt_requests: HashMap::new(),
+        prompt_acks: VecDeque::new(),
         pending_steers: HashMap::new(),
         queued_prompts: VecDeque::new(),
         output: String::new(),
@@ -570,4 +573,62 @@ fn live_cursor_session_round_trip() {
         "Resumed prompt settled and process reaped"
     )
     .expect("write test diagnostics");
+}
+
+#[test]
+fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
+    for (reply, accepted) in [
+        (
+            AcpInbound::Response {
+                id: AcpRequestId::Number(1),
+                result: json!({"stopReason":"end_turn"}),
+            },
+            true,
+        ),
+        (
+            AcpInbound::Error {
+                id: AcpRequestId::Number(1),
+                message: "rejected".into(),
+            },
+            false,
+        ),
+        (
+            AcpInbound::Response {
+                id: AcpRequestId::Number(1),
+                result: json!({}),
+            },
+            false,
+        ),
+    ] {
+        let mut session = inert_session();
+        session
+            .prompt_requests
+            .insert(AcpRequestId::Number(1), "submission".into());
+        assert!(session.poll_prompt_ack().is_none());
+        session.connection.restore_queued(VecDeque::from([reply]));
+        session.poll();
+        let (id, result) = session.poll_prompt_ack().expect("correlated reply");
+        assert_eq!(id, "submission");
+        assert_eq!(result.is_ok(), accepted);
+    }
+}
+
+#[test]
+fn acp_in_memory_queue_is_not_an_acknowledgement() {
+    let mut session = inert_session();
+    assert!(
+        !session
+            .submit_prompt(
+                "queued".into(),
+                "work".into(),
+                WorkerSendMode::Queue,
+                Vec::new()
+            )
+            .unwrap()
+    );
+    assert!(session.poll_prompt_ack().is_none());
+    assert_eq!(
+        session.queued_prompts.back().unwrap().3.as_deref(),
+        Some("queued")
+    );
 }

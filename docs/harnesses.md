@@ -2,21 +2,27 @@
 
 This table shows the support declared by Farcaster's adapters. Actual support can depend on the installed harness version and selected model.
 
-All four adapters support session history and resume, images, stopping runs, queued follow-ups, model selection, MCP servers, approvals, and tool activity.
+All six adapters support session resume, images, stopping runs, queued follow-ups, model selection, reasoning effort selection, MCP servers, approvals, and tool activity.
 
-| Feature | Pi | Codex | Cursor | OpenCode |
-| --- | --- | --- | --- | --- |
-| Fork sessions | Yes | Yes | No | Yes |
-| Move sessions between projects | Yes | Yes | No | Yes |
-| Steer an active run | Yes | Yes | No | Yes |
-| Compact context | Yes | Yes | No | Yes |
-| Set reasoning effort | Yes | Yes | No | Yes |
-| Select agent modes | No | Yes | Yes | Yes |
-| Harness-provided commands | Yes | No | Yes | Yes |
-| Usage reporting | Yes | Yes | No | Yes |
-| Native subagent activity | No | Yes | Yes | Yes |
-| File-change events from the harness | No | Yes | Yes | Yes |
+| Harness | History | Fork | Steer | Compact | Modes | Usage |
+| --- | --- | --- | --- | --- | --- | --- |
+| Pi | Yes | Yes | Yes | Yes | No | Yes |
+| Codex | Yes | Yes | Yes | Yes | Yes | Yes |
+| Cursor | Yes | No | No | No | Yes | No |
+| OpenCode | Yes | Yes | Yes | Yes | Yes | Yes |
+| Antigravity | No | No | No | No | Yes | No |
+| Claude | Yes | No | No | No | Yes | Yes |
 
-Native subagent activity is separate from Farcaster's worker tools. File-change events are separate from the app's Git change list.
+Other differences:
 
-Sources: [Pi](../src/modules/agents/adapter/pi/mod.rs), [Codex](../src/modules/agents/adapter/codex/mod.rs), [Cursor](../src/modules/agents/adapter/cursor/mod.rs), [OpenCode](../src/modules/agents/adapter/opencode/mod.rs).
+- Moving sessions between projects: Pi, Codex, and OpenCode.
+- Harness commands: all six; Codex exposes skills.
+- Native subagent activity: all except Pi and Antigravity.
+- File-change events from the harness: all except Pi.
+
+Usage notes:
+
+- Claude uses `claude -p`. Anthropic's guidance has been mixed on whether this usage counts toward subscription limits or separate limits.
+- Antigravity's terms of service are unclear about using its harness in third-party apps. Use it at your own risk.
+
+Sources: [Pi](../src/modules/agents/adapter/pi/mod.rs), [Codex](../src/modules/agents/adapter/codex/mod.rs), [Cursor](../src/modules/agents/adapter/cursor/mod.rs), [OpenCode](../src/modules/agents/adapter/opencode/mod.rs), [Antigravity](../src/modules/agents/adapter/antigravity/mod.rs) ([shared ACP capabilities](../src/modules/agents/adapter/acp/backend.rs)), [Claude](../src/modules/agents/adapter/claude/mod.rs).

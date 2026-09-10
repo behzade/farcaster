@@ -235,6 +235,9 @@ fn spawn_session(
             connection,
             session_id,
             current_prompt: None,
+            next_prompt_ack: None,
+            prompt_requests: HashMap::new(),
+            prompt_acks: VecDeque::new(),
             pending_steers: HashMap::new(),
             queued_prompts: VecDeque::new(),
             output: String::new(),
@@ -302,6 +305,9 @@ fn setup_connection(
         .or(resume)
         .ok_or_else(|| format!("{} ACP agent did not provide a session id", profile.name))?
         .to_owned();
+    if resume.is_some_and(|expected| expected != session_id) {
+        return Err(format!("{} resumed a different session", profile.name));
+    }
     let (mut metadata, config_ids) =
         super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
     let queued = connection.drain_queued()?;
@@ -449,8 +455,16 @@ struct AcpWorkerSession {
     connection: AcpConnection,
     session_id: String,
     current_prompt: Option<AcpRequestId>,
+    next_prompt_ack: Option<String>,
+    prompt_requests: HashMap<AcpRequestId, String>,
+    prompt_acks: VecDeque<(String, Result<(), String>)>,
     pending_steers: HashMap<AcpRequestId, (String, Vec<crate::protocol::PromptImage>)>,
-    queued_prompts: VecDeque<(WorkerSendMode, String, Vec<crate::protocol::PromptImage>)>,
+    queued_prompts: VecDeque<(
+        WorkerSendMode,
+        String,
+        Vec<crate::protocol::PromptImage>,
+        Option<String>,
+    )>,
     output: String,
     thought_started: bool,
     pending_inputs: HashMap<String, PendingInput>,
@@ -485,6 +499,9 @@ impl AcpWorkerSession {
             "session/prompt",
             json!({"sessionId": self.session_id, "prompt": prompt}),
         )?;
+        if let Some(ack) = self.next_prompt_ack.take() {
+            self.prompt_requests.insert(id.clone(), ack);
+        }
         self.current_prompt = Some(id);
         if let Some(identity) = &self.caller_identity {
             identity.set_activity(WorkerActivityState::Working);
@@ -853,6 +870,9 @@ impl WorkerSession for AcpWorkerSession {
                     "_meta": {"steering": {"idleBehavior": "promptRequired"}},
                 }),
             )?;
+            if let Some(ack) = self.next_prompt_ack.take() {
+                self.prompt_requests.insert(id.clone(), ack);
+            }
             self.pending_steers.insert(id, (message, images));
             return Ok(());
         }
@@ -860,7 +880,8 @@ impl WorkerSession for AcpWorkerSession {
             if matches!(mode, WorkerSendMode::Queue | WorkerSendMode::Steer) {
                 // Keep the requested mode for delivery acknowledgements even
                 // when an ACP agent needs to defer steering to its next turn.
-                self.queued_prompts.push_back((mode, message, images));
+                self.queued_prompts
+                    .push_back((mode, message, images, self.next_prompt_ack.take()));
                 return Ok(());
             }
             return Err(format!(
@@ -871,6 +892,23 @@ impl WorkerSession for AcpWorkerSession {
         self.start_prompt_request(&message, images)?;
         self.events.push_back(WorkerEvent::Started);
         Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        self.next_prompt_ack = Some(id);
+        let result = self.send_with_images(message, mode, images);
+        self.next_prompt_ack = None;
+        result.map(|()| false)
+    }
+
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.prompt_acks.pop_front()
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -1003,7 +1041,16 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        self.queued_prompts.clear();
+        for (_, _, _, ack) in self.queued_prompts.drain(..) {
+            if let Some(ack) = ack {
+                self.prompt_acks
+                    .push_back((ack, Err("Prompt cancelled before delivery".into())));
+            }
+        }
+        for (_, ack) in self.prompt_requests.drain() {
+            self.prompt_acks
+                .push_back((ack, Err("Prompt cancelled before acknowledgement".into())));
+        }
         for pending in self.pending_inputs.drain().map(|(_, pending)| pending) {
             self.connection.respond(
                 &pending.request,
@@ -1150,20 +1197,43 @@ impl WorkerSession for AcpWorkerSession {
                     if let Some((message, images)) = self.pending_steers.remove(&id) =>
                 {
                     if result.get("outcome").and_then(Value::as_str) == Some("promptRequired") {
-                        self.queued_prompts
-                            .push_front((WorkerSendMode::Steer, message, images));
+                        self.queued_prompts.push_front((
+                            WorkerSendMode::Steer,
+                            message,
+                            images,
+                            self.prompt_requests.remove(&id),
+                        ));
                         continue;
+                    }
+                    if let Some(ack) = self.prompt_requests.remove(&id) {
+                        self.prompt_acks.push_back((ack, Ok(())));
                     }
                     return Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
                         mode: WorkerSendMode::Steer,
                         message,
                     }));
                 }
-                Ok(AcpInbound::Response { id, .. })
+                Ok(AcpInbound::Response { id, result })
                     if self.current_prompt.as_ref() == Some(&id) =>
                 {
+                    let accepted = match result.get("stopReason").and_then(Value::as_str) {
+                        Some("cancelled") => {
+                            Err("ACP prompt cancelled before acknowledgement".to_owned())
+                        }
+                        Some(_) => Ok(()),
+                        None => Err("ACP prompt response has no stop reason".to_owned()),
+                    };
+                    if let Some(ack) = self.prompt_requests.remove(&id) {
+                        self.prompt_acks.push_back((ack, accepted.clone()));
+                    }
+                    if result.get("stopReason").and_then(Value::as_str).is_none() {
+                        return Some(WorkerEvent::Failed(
+                            "ACP prompt response has no stop reason".into(),
+                        ));
+                    }
                     self.current_prompt = None;
-                    if let Some((mode, message, images)) = self.queued_prompts.pop_front() {
+                    if let Some((mode, message, images, ack)) = self.queued_prompts.pop_front() {
+                        self.next_prompt_ack = ack;
                         return Some(match self.start_prompt_request(&message, images) {
                             Ok(()) => WorkerEvent::Activity(WorkerActivity::InputDelivered {
                                 mode,
@@ -1181,6 +1251,9 @@ impl WorkerSession for AcpWorkerSession {
                 }
                 Ok(AcpInbound::Response { .. }) => {}
                 Ok(AcpInbound::Error { id, message }) => {
+                    if let Some(ack) = self.prompt_requests.remove(&id) {
+                        self.prompt_acks.push_back((ack, Err(message.clone())));
+                    }
                     self.pending_steers.remove(&id);
                     if self.current_prompt.as_ref() == Some(&id) {
                         self.current_prompt = None;

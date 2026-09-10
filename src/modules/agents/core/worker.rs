@@ -232,6 +232,20 @@ pub(crate) trait WorkerSession: Send {
             Err("worker backend does not support image input".into())
         }
     }
+    /// Return true only after the backend confirms admission. Async backends
+    /// return false and later report the caller's id through poll_prompt_ack.
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        _message: String,
+        _mode: WorkerSendMode,
+        _images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        Err("worker backend does not implement prompt acknowledgements".into())
+    }
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        None
+    }
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String>;
     fn abort(&mut self) -> Result<(), String>;
     /// Apply submitted steering without discarding pending input.

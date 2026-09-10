@@ -62,6 +62,17 @@ impl WorkerSession for RejectAfterWriteWorker {
         Ok(())
     }
 
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        Ok(false)
+    }
+
     fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
         Ok(())
     }
@@ -80,7 +91,6 @@ impl WorkerSession for RejectAfterWriteWorker {
 }
 
 #[test]
-#[ignore = "audit regression: prompt response must wait for native backend acknowledgement"]
 fn prompt_response_does_not_precede_worker_rejection() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -103,7 +113,7 @@ fn prompt_response_does_not_precede_worker_rejection() {
         .expect("worker write");
 
     assert!(
-        matches!(transport.poll(), Some(SessionEvent::Failure(_))),
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if !response.success),
         "a successful bridge response currently arrives before the worker reports rejection"
     );
 }
@@ -212,6 +222,17 @@ impl WorkerSession for SteeringWorker {
         Ok(())
     }
 
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        Ok(true)
+    }
+
     fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
         Ok(())
     }
@@ -278,6 +299,17 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
 impl WorkerSession for IdleWorker {
     fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
         Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        Ok(true)
     }
 
     fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {

@@ -209,6 +209,8 @@ fn attach(
         events: Events::default(),
         active: false,
         active_uuid: None,
+        prompt_requests: HashMap::new(),
+        prompt_acks: VecDeque::new(),
         closed: false,
         queued: VecDeque::new(),
         permissions: HashMap::new(),
@@ -233,6 +235,8 @@ struct ClaudeSession {
     events: Events,
     active: bool,
     active_uuid: Option<String>,
+    prompt_requests: HashMap<String, String>,
+    prompt_acks: VecDeque<(String, Result<(), String>)>,
     closed: bool,
     queued: VecDeque<Prompt>,
     permissions: HashMap<String, Value>,
@@ -350,6 +354,36 @@ impl ClaudeSession {
             self.configuration_changed();
         }
         let frame = serde_json::to_value(frame).map_err(|error| error.to_string())?;
+        if frame["type"] == "system"
+            && frame["subtype"] == "init"
+            && frame["session_id"].as_str().is_some_and(|id| id != self.id)
+        {
+            return Err("Claude initialized a different session than requested".into());
+        }
+        if frame["type"] == "user" && frame["session_id"].as_str() == Some(self.id.as_str()) {
+            if let Some(ack) = self.prompt_requests.remove(string(&frame, "uuid")) {
+                self.prompt_acks.push_back((ack, Ok(())));
+            }
+        }
+        if frame["type"] == "result" && self.active {
+            if let Some(ack) = self
+                .active_uuid
+                .as_ref()
+                .and_then(|uuid| self.prompt_requests.remove(uuid))
+            {
+                let result = if frame["subtype"] == "success"
+                    && frame["is_error"] != true
+                    && !matches!(
+                        string(&frame, "terminal_reason"),
+                        "aborted_streaming" | "aborted_tools"
+                    ) {
+                    Ok(())
+                } else {
+                    Err("Claude stopped before acknowledging the prompt".into())
+                };
+                self.prompt_acks.push_back((ack, result));
+            }
+        }
         match string(&frame, "type") {
             "control_request" => self.control(&frame)?,
             "control_cancel_request" => {
@@ -372,6 +406,16 @@ impl ClaudeSession {
                                 .as_ref()
                                 .is_some_and(|id| cancelled.contains(id))
                         {
+                            if let Some(ack) = self
+                                .active_uuid
+                                .as_ref()
+                                .and_then(|uuid| self.prompt_requests.remove(uuid))
+                            {
+                                self.prompt_acks.push_back((
+                                    ack,
+                                    Err("Claude cancelled the prompt before execution".into()),
+                                ));
+                            }
                             self.idle();
                             self.events.pending.push_back(WorkerEvent::Settled {
                                 output: String::new(),
@@ -495,6 +539,32 @@ impl WorkerSession for ClaudeSession {
         };
         self.admit(prompt, mode)
     }
+    fn submit_prompt(
+        &mut self,
+        id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        let queued = self.queued.len();
+        self.send_with_images(message, mode, images)?;
+        let uuid = if self.queued.len() > queued {
+            match &self.queued.back().expect("prompt was queued").message.uuid {
+                Presence::Present(uuid) => Some(uuid.clone()),
+                Presence::Missing => None,
+            }
+        } else {
+            self.active_uuid.clone()
+        }
+        .ok_or("Claude prompt has no acknowledgement id")?;
+        self.prompt_requests.insert(uuid, id);
+        Ok(false)
+    }
+
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.prompt_acks.pop_front()
+    }
+
     fn send_peer_message(
         &mut self,
         message: &PeerMessage,
@@ -525,7 +595,16 @@ impl WorkerSession for ClaudeSession {
         Ok(())
     }
     fn abort(&mut self) -> Result<(), String> {
-        self.queued.clear();
+        for prompt in self.queued.drain(..) {
+            if let Presence::Present(uuid) = prompt.message.uuid {
+                if let Some(ack) = self.prompt_requests.remove(&uuid) {
+                    self.prompt_acks.push_back((
+                        ack,
+                        Err("Claude cancelled a queued prompt before delivery".into()),
+                    ));
+                }
+            }
+        }
         if !self.active {
             return Ok(());
         }

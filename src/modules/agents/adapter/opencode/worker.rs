@@ -207,7 +207,11 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         crate::agents::SessionStart::Resume(_) => {
             let session_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "OpenCode resume requires a session id".to_owned())?;
-            client.get_session(&session_id)?
+            let session = client.get_session(&session_id)?;
+            if session.id != session_id {
+                return Err("OpenCode returned a different session on resume".into());
+            }
+            session
         }
         crate::agents::SessionStart::Fork(_) => {
             let session_id = main_session::launch_session_locator(launch)
@@ -514,6 +518,9 @@ impl OpenCodeWorkerSession {
             .server
             .client()
             .prompt(&self.session_id, &message, files, delivery)?;
+        if admission.session_id != self.session_id || admission.id.is_empty() {
+            return Err("OpenCode returned an invalid prompt admission receipt".into());
+        }
         self.pending_deliveries
             .insert(admission.id, (mode, message));
         self.caller_identity
@@ -1099,6 +1106,18 @@ impl WorkerSession for OpenCodeWorkerSession {
             })
             .collect();
         self.send_prompt(message, mode, files)
+    }
+
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        // send_prompt waits for the server's HTTP admission receipt.
+        self.send_with_images(message, mode, images)?;
+        Ok(true)
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {

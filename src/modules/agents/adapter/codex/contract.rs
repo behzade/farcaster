@@ -81,6 +81,8 @@ pub(crate) enum CodexUserInput {
     Image { url: String },
     #[serde(rename = "localImage")]
     LocalImage { path: String },
+    #[serde(rename = "skill")]
+    Skill { name: String, path: String },
 }
 
 impl CodexUserInput {

@@ -145,10 +145,16 @@ impl RuntimeOwner {
             if response.success {
                 let target = self.pending_prompt_target.clone().unwrap_or_default();
                 let session = self.active_session.clone();
-                if let Some(id) = self.pending_outbox_id.take()
+                if let Some(id) = self.pending_outbox_id
                     && let Some(state) = self.state.as_mut()
                 {
-                    let _ = agents::complete_prompt(state, id, &target, session.as_deref());
+                    if let Err(error) =
+                        agents::complete_prompt(state, id, &target, session.as_deref())
+                    {
+                        self.fail(format!("Backend accepted the prompt, but saving its acknowledgement failed: {error}"));
+                        return;
+                    }
+                    self.pending_outbox_id = None;
                 }
             } else {
                 self.invalidate_auto_title_generation();

@@ -1,6 +1,67 @@
 use super::*;
 
 #[test]
+fn skill_refresh_updates_commands_and_attaches_paths_to_prompts() {
+    use std::io::BufRead as _;
+    let (mut session, mut sent) = writable_test_session();
+    for _ in 0..2 {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: "skills/changed".into(),
+                params: json!({}),
+            }));
+    }
+    assert!(session.poll().is_none());
+    let mut requests = Vec::new();
+    for _ in 0..2 {
+        let mut line = String::new();
+        sent.read_line(&mut line).unwrap();
+        let request: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "skills/list");
+        assert_eq!(
+            request["params"],
+            json!({"cwds":["/project"], "forceReload":true})
+        );
+        requests.push(serde_json::from_value::<CodexRequestId>(request["id"].clone()).unwrap());
+    }
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: requests[1].clone(),
+        result: json!({"data":[{"cwd":"/project", "skills":[
+            {"name":"review", "description":"Review code", "enabled":true, "path":"/skills/review/SKILL.md"}
+        ]}]}),
+    }));
+    assert!(
+        matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands }))
+        if commands == vec![json!({"name":"skill:review", "description":"Review code", "source":"skill"})])
+    );
+    // A late reply from an older refresh must not erase the new catalog.
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: requests[0].clone(),
+        result: json!({"data":[]}),
+    }));
+    assert!(session.poll().is_none());
+    session
+        .send_with_images(
+            "$skill:review changes".into(),
+            WorkerSendMode::Prompt,
+            Vec::new(),
+        )
+        .unwrap();
+    let mut line = String::new();
+    sent.read_line(&mut line).unwrap();
+    let request: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(request["method"], "turn/start");
+    assert_eq!(
+        request["params"]["input"],
+        json!([
+            {"type":"text", "text":"$review changes", "text_elements":[]},
+            {"type":"skill", "name":"review", "path":"/skills/review/SKILL.md"}
+        ])
+    );
+}
+
+#[test]
 fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
     let mut session = test_session();
     session.thread_id = "native-parent".into();
@@ -157,6 +218,8 @@ fn test_session() -> CodexWorkerSession {
         effort: None,
         collaboration_mode: None,
         collaboration_modes: HashMap::new(),
+        skills: Skills::default(),
+        project: "/project".into(),
         native_queue: false,
         next_id: 0,
         current_turn: None,
@@ -167,6 +230,8 @@ fn test_session() -> CodexWorkerSession {
         manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
+        prompt_requests: HashMap::new(),
+        prompt_acks: VecDeque::new(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
@@ -637,4 +702,71 @@ fn native_startup_configures_required_farcaster_mcp() {
         &"mcp_servers.farcaster.http_headers={\"farcaster-caller\"=\"caller-1\"}".to_owned()
     ));
     assert!(arguments.contains(&"mcp_servers.farcaster.required=true".to_owned()));
+}
+
+#[test]
+fn prompt_ack_requires_the_matching_rpc_reply_for_every_delivery_mode() {
+    for mode in [
+        WorkerSendMode::Prompt,
+        WorkerSendMode::Steer,
+        WorkerSendMode::Queue,
+    ] {
+        let (mut session, _sent) = writable_test_session();
+        session.native_queue = true;
+        session.current_turn = Some("active".into());
+        assert!(
+            !session
+                .submit_prompt("submission".into(), "work".into(), mode, Vec::new())
+                .unwrap()
+        );
+        assert!(session.poll_prompt_ack().is_none());
+        let id = CodexRequestId::Number(session.next_id);
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(9999),
+            result: json!({}),
+        }));
+        session.poll();
+        assert!(session.poll_prompt_ack().is_none());
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id,
+            result: json!({"turn":{"id":"active","status":"inProgress","items":[]}}),
+        }));
+        for _ in 0..5 {
+            session.poll();
+        }
+        assert_eq!(
+            session.poll_prompt_ack(),
+            Some(("submission".into(), Ok(())))
+        );
+        assert!(session.poll_prompt_ack().is_none());
+    }
+}
+
+#[test]
+fn rejected_or_malformed_codex_reply_never_acknowledges_success() {
+    for reply in [
+        json!({"error":{"code":-1,"message":"rejected"}}),
+        json!({"result":{}}),
+    ] {
+        let (mut session, _sent) = writable_test_session();
+        session
+            .submit_prompt(
+                "submission".into(),
+                "".into(),
+                WorkerSendMode::Prompt,
+                Vec::new(),
+            )
+            .unwrap();
+        let mut reply = reply;
+        reply["id"] = json!(session.next_id);
+        session
+            .queued_inbound
+            .push_back(super::super::wire::decode_frame(
+                reply.to_string().as_bytes(),
+            ));
+        for _ in 0..5 {
+            session.poll();
+        }
+        assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "submission"));
+    }
 }

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use super::{
     connection::{CodexConnection, read_message},
     contract::{CodexClientInfo, CodexInbound, CodexRequestId, CodexUserInput, TurnResponse},
+    skills::Skills,
     tool,
     wire::{encode_error_response, encode_request, encode_response},
 };
@@ -64,7 +65,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .spawn()
             .map_err(|error| format!("start Codex worker app-server: {error}"))?;
         child_stderr::capture(&mut child, "codex-worker")?;
-        let (mut reader, writer, queued, next_id, thread) =
+        let ((mut reader, writer, queued, next_id, thread), skills) =
             match setup_connection(&mut child, &launch, self.command.access_mode) {
                 Ok(setup) => setup,
                 Err(error) => {
@@ -107,6 +108,8 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             effort: launch.effort,
             collaboration_mode: None,
             collaboration_modes: HashMap::new(),
+            skills,
+            project: launch.project.clone(),
             native_queue: false,
             next_id,
             current_turn: None,
@@ -117,6 +120,8 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             manual_compaction: false,
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
+            prompt_requests: HashMap::new(),
+            prompt_acks: VecDeque::new(),
             queued_inbound: VecDeque::new(),
             peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
@@ -153,7 +158,7 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
             title: Some("Farcaster".into()),
             version: env!("CARGO_PKG_VERSION").into(),
         })?;
-        load_main_metadata(&mut connection)
+        load_main_metadata(&mut connection, project).map(|(metadata, _)| metadata)
     })();
     let _ = child.kill();
     let _ = child.wait();
@@ -194,7 +199,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-main-session")?;
     let setup = setup_main_connection(&mut child, launch, command.access_mode);
-    let ((mut reader, writer, queued, next_id, thread), metadata) = match setup {
+    let ((mut reader, writer, queued, next_id, thread), metadata, skills) = match setup {
         Ok(setup) => setup,
         Err(error) => {
             let _ = child.kill();
@@ -244,6 +249,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         effort: None,
         collaboration_mode: None,
         collaboration_modes,
+        skills,
+        project: launch.project.clone(),
         native_queue: true,
         next_id,
         current_turn: None,
@@ -254,6 +261,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         manual_compaction: false,
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
+        prompt_requests: HashMap::new(),
+        prompt_acks: VecDeque::new(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
@@ -291,7 +300,7 @@ fn setup_connection(
     child: &mut Child,
     launch: &WorkerLaunch,
     access_mode: crate::agents::HarnessAccessMode,
-) -> Result<CodexSetup, String> {
+) -> Result<(CodexSetup, Skills), String> {
     let stdin = child
         .stdin
         .take()
@@ -339,8 +348,9 @@ fn setup_connection(
             )?
         }
     };
+    let skills = Skills::load(&mut connection, &launch.project);
     let (reader, writer, queued, next_id) = connection.into_parts();
-    Ok((reader, writer, queued, next_id, thread))
+    Ok(((reader, writer, queued, next_id, thread), skills))
 }
 
 fn setup_main_connection(
@@ -351,6 +361,7 @@ fn setup_main_connection(
     (
         CodexSetup,
         crate::modules::agents::adapter::main_session::MainSessionMetadata,
+        Skills,
     ),
     String,
 > {
@@ -368,7 +379,7 @@ fn setup_main_connection(
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
     })?;
-    let metadata = load_main_metadata(&mut connection)?;
+    let (metadata, skills) = load_main_metadata(&mut connection, &launch.project)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
         crate::agents::SessionStart::New => {
@@ -386,12 +397,19 @@ fn setup_main_connection(
         }
     };
     let (reader, writer, queued, next_id) = connection.into_parts();
-    Ok(((reader, writer, queued, next_id, thread), metadata))
+    Ok(((reader, writer, queued, next_id, thread), metadata, skills))
 }
 
 fn load_main_metadata(
     connection: &mut CodexConnection<BufReader<std::process::ChildStdout>, ChildStdin>,
-) -> Result<crate::modules::agents::adapter::main_session::MainSessionMetadata, String> {
+    project: &std::path::Path,
+) -> Result<
+    (
+        crate::modules::agents::adapter::main_session::MainSessionMetadata,
+        Skills,
+    ),
+    String,
+> {
     let id = connection.send_request("model/list", json!({"limit": 100}))?;
     let response: Value = connection.wait_response(&id)?;
     let mut efforts = Vec::new();
@@ -462,15 +480,17 @@ fn load_main_metadata(
             }))
         })
         .collect();
-    Ok(
+    let skills = Skills::load(connection, project);
+    Ok((
         crate::modules::agents::adapter::main_session::MainSessionMetadata {
             models,
             efforts,
-            commands: Vec::new(),
+            commands: skills.commands(),
             modes,
             ..Default::default()
         },
-    )
+        skills,
+    ))
 }
 
 fn supported_model_efforts(model: &Value) -> Vec<String> {
@@ -489,6 +509,8 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 }
 
 enum PendingRequest {
+    LoadSkills,
+    ObsoleteSkills,
     StartTurn,
     LoadGoal,
     ChildStatus { id: String, title: Option<String> },
@@ -506,6 +528,8 @@ struct CodexWorkerSession {
     effort: Option<String>,
     collaboration_mode: Option<Value>,
     collaboration_modes: HashMap<String, Value>,
+    skills: Skills,
+    project: std::path::PathBuf,
     native_queue: bool,
     next_id: i64,
     current_turn: Option<String>,
@@ -516,6 +540,8 @@ struct CodexWorkerSession {
     manual_compaction: bool,
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
+    prompt_requests: HashMap<CodexRequestId, String>,
+    prompt_acks: VecDeque<(String, Result<(), String>)>,
     queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
@@ -524,7 +550,7 @@ struct CodexWorkerSession {
 
 impl WorkerSession for CodexWorkerSession {
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
-        self.send_input(vec![CodexUserInput::text(message)], mode)
+        self.send_with_images(message, mode, Vec::new())
     }
 
     fn send_with_images(
@@ -533,7 +559,7 @@ impl WorkerSession for CodexWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        let mut input = vec![CodexUserInput::text(message)];
+        let mut input = self.skills.input(message);
         let images = images
             .into_iter()
             .map(crate::protocol::PromptImage::into_inline)
@@ -542,6 +568,23 @@ impl WorkerSession for CodexWorkerSession {
             url: format!("data:{};base64,{}", image.mime_type, image.data),
         }));
         self.send_input(input, mode)
+    }
+
+    fn submit_prompt(
+        &mut self,
+        id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        self.prompt_requests
+            .insert(CodexRequestId::Number(self.next_id), id);
+        Ok(false)
+    }
+
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.prompt_acks.pop_front()
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -644,8 +687,47 @@ impl WorkerSession for CodexWorkerSession {
                 .queued_inbound
                 .pop_front()
                 .or_else(|| self.incoming.try_recv().ok())?;
+            // Correlate the actual RPC reply, never a write or turn notification.
+            match &inbound {
+                Ok(CodexInbound::Response { id, result }) => {
+                    if let Some(prompt) = self.prompt_requests.remove(id) {
+                        let accepted =
+                            if matches!(self.pending.get(id), Some(PendingRequest::StartTurn)) {
+                                serde_json::from_value::<TurnResponse>(result.clone())
+                                    .map(|_| ())
+                                    .map_err(|error| {
+                                        format!("decode Codex turn acknowledgement: {error}")
+                                    })
+                            } else {
+                                Ok(())
+                            };
+                        self.prompt_acks.push_back((prompt, accepted));
+                    }
+                }
+                Ok(CodexInbound::Error { id, error }) => {
+                    if let Some(prompt) = self.prompt_requests.remove(id) {
+                        self.prompt_acks
+                            .push_back((prompt, Err(error.message.clone())));
+                    }
+                }
+                _ => {}
+            }
             match inbound {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
+                    Some(PendingRequest::LoadSkills) => {
+                        match Skills::parse(result, &self.project) {
+                            Ok(skills) => {
+                                let commands = skills.commands();
+                                self.skills = skills;
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::CommandsChanged { commands },
+                                ));
+                            }
+                            Err(error) => {
+                                zlog::warn!("Codex skills could not be refreshed: {error}");
+                            }
+                        }
+                    }
                     Some(PendingRequest::StartTurn) => {
                         let turn = match serde_json::from_value::<TurnResponse>(result) {
                             Ok(response) => response.turn,
@@ -698,11 +780,22 @@ impl WorkerSession for CodexWorkerSession {
                             ));
                         }
                     }
-                    Some(PendingRequest::Ignore | PendingRequest::ObsoleteChildStatus) | None => {}
+                    Some(
+                        PendingRequest::Ignore
+                        | PendingRequest::ObsoleteChildStatus
+                        | PendingRequest::ObsoleteSkills,
+                    )
+                    | None => {}
                 },
                 Ok(CodexInbound::Error { id, error }) => {
                     match self.pending.remove(&id) {
-                        Some(PendingRequest::ObsoleteChildStatus) => continue,
+                        Some(PendingRequest::LoadSkills) => {
+                            zlog::warn!("Codex skills could not be refreshed: {}", error.message);
+                            continue;
+                        }
+                        Some(
+                            PendingRequest::ObsoleteChildStatus | PendingRequest::ObsoleteSkills,
+                        ) => continue,
                         Some(PendingRequest::ChildStatus { .. }) => {
                             zlog::warn!("Codex child status could not be read: {}", error.message);
                             continue;
@@ -727,6 +820,22 @@ impl WorkerSession for CodexWorkerSession {
                     )));
                 }
                 Ok(CodexInbound::Notification { method, params }) => {
+                    if method == "skills/changed" {
+                        match self.request("skills/list", Skills::params(&self.project, true)) {
+                            Ok(id) => {
+                                for pending in self.pending.values_mut() {
+                                    if matches!(pending, PendingRequest::LoadSkills) {
+                                        *pending = PendingRequest::ObsoleteSkills;
+                                    }
+                                }
+                                self.pending.insert(id, PendingRequest::LoadSkills);
+                            }
+                            Err(error) => {
+                                zlog::warn!("Codex skills could not be refreshed: {error}");
+                            }
+                        }
+                        continue;
+                    }
                     if let Some(activity) = codex_telemetry(&method, &params) {
                         return Some(WorkerEvent::Activity(activity));
                     }
