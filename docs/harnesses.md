@@ -16,7 +16,7 @@ All six adapters support session resume, images, stopping runs, queued follow-up
 Other differences:
 
 - Moving sessions between projects: Pi, Codex, and OpenCode.
-- Harness commands: all six; Codex exposes skills.
+- Harness commands: all six.
 - Native subagent activity: all except Pi and Antigravity.
 - File-change events from the harness: all except Pi.
 

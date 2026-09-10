@@ -1,3 +1,6 @@
+#[path = "commands.rs"]
+mod commands;
+
 use std::{
     collections::{HashMap, VecDeque},
     io::{BufReader, Write as _},
@@ -108,6 +111,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             effort: launch.effort,
             collaboration_mode: None,
             collaboration_modes: HashMap::new(),
+            command_state: commands::State::new(self.command.access_mode),
             skills,
             project: launch.project.clone(),
             native_queue: false,
@@ -249,6 +253,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         effort: None,
         collaboration_mode: None,
         collaboration_modes,
+        command_state: commands::State::new(command.access_mode),
         skills,
         project: launch.project.clone(),
         native_queue: true,
@@ -485,7 +490,7 @@ fn load_main_metadata(
         crate::modules::agents::adapter::main_session::MainSessionMetadata {
             models,
             efforts,
-            commands: skills.commands(),
+            commands: commands::catalog(&skills),
             modes,
             ..Default::default()
         },
@@ -509,6 +514,7 @@ fn supported_model_efforts(model: &Value) -> Vec<String> {
 }
 
 enum PendingRequest {
+    Command(commands::Request),
     LoadSkills,
     ObsoleteSkills,
     StartTurn,
@@ -528,6 +534,7 @@ struct CodexWorkerSession {
     effort: Option<String>,
     collaboration_mode: Option<Value>,
     collaboration_modes: HashMap<String, Value>,
+    command_state: commands::State,
     skills: Skills,
     project: std::path::PathBuf,
     native_queue: bool,
@@ -559,15 +566,10 @@ impl WorkerSession for CodexWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        let mut input = self.skills.input(message);
-        let images = images
-            .into_iter()
-            .map(crate::protocol::PromptImage::into_inline)
-            .collect::<Result<Vec<_>, _>>()?;
-        input.extend(images.into_iter().map(|image| CodexUserInput::Image {
-            url: format!("data:{};base64,{}", image.mime_type, image.data),
-        }));
-        self.send_input(input, mode)
+        if self.dispatch_command(&message, mode, &images, None)? {
+            return Ok(());
+        }
+        self.send_prompt_input(message, mode, images)
     }
 
     fn submit_prompt(
@@ -577,7 +579,10 @@ impl WorkerSession for CodexWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, String> {
-        self.send_with_images(message, mode, images)?;
+        if self.dispatch_command(&message, mode, &images, Some(id.clone()))? {
+            return Ok(false);
+        }
+        self.send_prompt_input(message, mode, images)?;
         self.prompt_requests
             .insert(CodexRequestId::Number(self.next_id), id);
         Ok(false)
@@ -714,10 +719,16 @@ impl WorkerSession for CodexWorkerSession {
             }
             match inbound {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
+                    Some(PendingRequest::Command(request)) => {
+                        self.command_response(request, Ok(result));
+                        if let Some(event) = self.events.pop_front() {
+                            return Some(event);
+                        }
+                    }
                     Some(PendingRequest::LoadSkills) => {
                         match Skills::parse(result, &self.project) {
                             Ok(skills) => {
-                                let commands = skills.commands();
+                                let commands = commands::catalog(&skills);
                                 self.skills = skills;
                                 return Some(WorkerEvent::Activity(
                                     WorkerActivity::CommandsChanged { commands },
@@ -789,6 +800,10 @@ impl WorkerSession for CodexWorkerSession {
                 },
                 Ok(CodexInbound::Error { id, error }) => {
                     match self.pending.remove(&id) {
+                        Some(PendingRequest::Command(request)) => {
+                            self.command_response(request, Err(error.message));
+                            return self.events.pop_front();
+                        }
                         Some(PendingRequest::LoadSkills) => {
                             zlog::warn!("Codex skills could not be refreshed: {}", error.message);
                             continue;
@@ -814,6 +829,8 @@ impl WorkerSession for CodexWorkerSession {
                         }
                         Some(PendingRequest::Ignore) | None => {}
                     }
+                    self.manual_compaction = false;
+                    self.compacting = false;
                     return Some(WorkerEvent::Failed(format!(
                         "Codex app-server error {}: {}",
                         error.code, error.message
@@ -960,6 +977,11 @@ impl WorkerSession for CodexWorkerSession {
                         }
                         "item/completed" => {
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
+                            if item_type == Some("exitedReviewMode") {
+                                if let Some(review) = params["item"]["review"].as_str() {
+                                    self.output = review.to_owned();
+                                }
+                            }
                             if let Some(output) = codex_agent_message_text(&params["item"]) {
                                 self.output = output;
                             }
@@ -1050,15 +1072,17 @@ impl WorkerSession for CodexWorkerSession {
                             };
                             let session = codex_usage(total);
                             let turn = usage.get("last").map(codex_usage).unwrap_or(session);
+                            let reported_usage = WorkerUsage {
+                                turn,
+                                session,
+                                context_window: usage
+                                    .get("modelContextWindow")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0),
+                            };
+                            self.command_state.usage = Some(reported_usage);
                             return Some(WorkerEvent::Activity(WorkerActivity::Usage(
-                                WorkerUsage {
-                                    turn,
-                                    session,
-                                    context_window: usage
-                                        .get("modelContextWindow")
-                                        .and_then(Value::as_u64)
-                                        .unwrap_or(0),
-                                },
+                                reported_usage,
                             )));
                         }
                         "thread/goal/updated" => {
@@ -1125,8 +1149,10 @@ impl WorkerSession for CodexWorkerSession {
                                 self.turn_error = Some(message);
                             }
                         }
+                        "thread/settings/updated" => {
+                            self.observe_command_settings(&params["threadSettings"])
+                        }
                         "thread/status/changed"
-                        | "thread/settings/updated"
                         | "thread/name/updated"
                         | "turn/diff/updated"
                         | "turn/plan/updated"
@@ -1210,6 +1236,23 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn send_prompt_input(
+        &mut self,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<(), String> {
+        let mut input = self.skills.input(message);
+        let images = images
+            .into_iter()
+            .map(crate::protocol::PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?;
+        input.extend(images.into_iter().map(|image| CodexUserInput::Image {
+            url: format!("data:{};base64,{}", image.mime_type, image.data),
+        }));
+        self.send_input(input, mode)
+    }
+
     fn interrupt_turn(&mut self, turn_id: &str) -> Result<(), String> {
         let id = self.request(
             "turn/interrupt",
@@ -1282,11 +1325,12 @@ impl CodexWorkerSession {
     fn activity(&self) -> WorkerActivityState {
         if self.current_turn.is_some() {
             WorkerActivityState::Working
-        } else if self
-            .pending
-            .values()
-            .any(|request| matches!(request, PendingRequest::StartTurn))
-        {
+        } else if self.pending.values().any(|request| {
+            matches!(
+                request,
+                PendingRequest::StartTurn | PendingRequest::Command(_)
+            )
+        }) {
             WorkerActivityState::Starting
         } else {
             WorkerActivityState::Idle

@@ -33,7 +33,7 @@ fn skill_refresh_updates_commands_and_attaches_paths_to_prompts() {
     }));
     assert!(
         matches!(session.poll(), Some(WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands }))
-        if commands == vec![json!({"name":"skill:review", "description":"Review code", "source":"skill"})])
+        if commands.iter().any(|command| command == &json!({"name":"skill:review", "description":"Review code", "source":"skill"})) && commands.len() == 6)
     );
     // A late reply from an older refresh must not erase the new catalog.
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
@@ -218,6 +218,7 @@ fn test_session() -> CodexWorkerSession {
         effort: None,
         collaboration_mode: None,
         collaboration_modes: HashMap::new(),
+        command_state: commands::State::default(),
         skills: Skills::default(),
         project: "/project".into(),
         native_queue: false,
@@ -239,7 +240,7 @@ fn test_session() -> CodexWorkerSession {
     }
 }
 
-fn writable_test_session() -> (
+pub(super) fn writable_test_session() -> (
     CodexWorkerSession,
     std::io::BufReader<std::process::ChildStdout>,
 ) {
