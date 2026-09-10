@@ -1,8 +1,8 @@
 use super::*;
 
 #[gpui::test]
-fn header_toggle_and_neovim_action_are_independent(cx: &mut gpui::TestAppContext) {
-    use gpui::{FocusHandle, Render, point, px};
+fn header_opens_by_default_and_alt_click_only_toggles_locations(cx: &mut gpui::TestAppContext) {
+    use gpui::{FocusHandle, InteractiveElement as _, Modifiers, Render, point, px};
     use std::{cell::Cell, rc::Rc};
 
     struct Header {
@@ -51,28 +51,30 @@ fn header_toggle_and_neovim_action_are_independent(cx: &mut gpui::TestAppContext
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let header = cx.debug_bounds("review-header-7").unwrap();
-    let icon = cx.debug_bounds("review-open-7").unwrap();
-    // The trailing blank part of the row toggles too; the icon stays beside
-    // the title/count rather than being pushed to the far edge.
-    assert!(icon.right() < header.right() - px(40.0));
-    cx.simulate_click(
-        point(header.right() - px(5.0), header.center().y),
-        Default::default(),
-    );
-    assert!(expanded.get());
-    assert_eq!(opened.get(), 0);
-    cx.simulate_click(icon.center(), Default::default());
-    assert!(expanded.get());
-    assert_eq!(opened.get(), 1);
-    // Pointer activation preserves the keyboard owner. Tab visits the row,
-    // then its independent editor control.
-    cx.simulate_keystrokes("tab enter");
+    // Blank row space has the same primary action as the title.
+    let target = point(header.right() - px(5.0), header.center().y);
+    cx.simulate_click(target, Default::default());
     assert!(!expanded.get());
     assert_eq!(opened.get(), 1);
-    cx.simulate_keystrokes("tab enter");
+    let alt = Modifiers {
+        alt: true,
+        ..Default::default()
+    };
+    cx.simulate_click(target, alt);
+    assert!(expanded.get());
+    assert_eq!(opened.get(), 1);
+    cx.simulate_click(target, Default::default());
+    assert!(expanded.get());
+    assert_eq!(opened.get(), 2);
+    cx.simulate_click(target, alt);
     assert!(!expanded.get());
     assert_eq!(opened.get(), 2);
-    cx.simulate_keystrokes("space");
+    // The single keyboard stop opens; disclosure remains an explicit
+    // secondary action, also available in the context menu.
+    cx.simulate_keystrokes("tab enter");
     assert!(!expanded.get());
     assert_eq!(opened.get(), 3);
+    cx.simulate_keystrokes("space");
+    assert!(!expanded.get());
+    assert_eq!(opened.get(), 4);
 }

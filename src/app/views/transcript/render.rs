@@ -380,12 +380,30 @@ fn transcript_context_menu(
                     .separator();
             }
 
+            if let TranscriptRow::Review { index, .. } = row
+                && let Some(artifact) = review_artifact::from_item(&items[index])
+            {
+                let entity = entity.clone();
+                menu = menu.item(PopupMenuItem::new("Open in Neovim").on_click(
+                    move |_, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.open_review_editor(
+                                artifact.project.clone(),
+                                artifact.review.clone(),
+                                window,
+                                cx,
+                            );
+                        });
+                    },
+                ));
+            }
+
             if matches!(row, TranscriptRow::ActivityGroup { .. } | TranscriptRow::Review { .. })
                     || matches!(row, TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool)
             {
                 let entity = entity.clone();
                 menu = menu.item(PopupMenuItem::new(if matches!(row, TranscriptRow::Review { .. }) {
-                    if expanded { "Hide review locations" } else { "Show review locations" }
+                    if expanded { "Hide locations" } else { "Show locations" }
                 } else if expanded {
                     "Hide activity details"
                 } else {

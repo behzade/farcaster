@@ -129,19 +129,22 @@ fn review_header(
     toggle: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
     open: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    use crate::app::ui::{
-        assets::AppIcon,
-        primitives::{AppIconSize, activates_button, app_icon, icon_control},
+    let modifier = if cfg!(target_os = "macos") {
+        "Option"
+    } else {
+        "Alt"
     };
-    let open = std::rc::Rc::new(open);
-    let click = open.clone();
-    tool_changes::title_row(
+    let action = if expanded { "hide" } else { "show" };
+    tool_changes::activation_row(
         format!("review-header-{key}"),
-        format!(
-            "{} {title}, {count} locations",
-            if expanded { "Hide" } else { "Show" }
-        ),
-        toggle,
+        format!("Open review in Neovim: {title} · {modifier}-click to {action} locations"),
+        move |alt, window, cx| {
+            if alt {
+                toggle(window, cx);
+            } else {
+                open(window, cx);
+            }
+        },
     )
     .aria_expanded(expanded)
     .debug_selector(move || format!("review-header-{key}"))
@@ -162,23 +165,6 @@ fn review_header(
                 "{count} {}",
                 if count == 1 { "location" } else { "locations" }
             )),
-    )
-    .child(
-        icon_control(format!("review-open-{key}"), "Open review in Neovim")
-            .debug_selector(move || format!("review-open-{key}"))
-            .text_color(THEME.colors.text)
-            .hover(|control| control.bg(THEME.colors.hover))
-            .child(app_icon(AppIcon::Neovim, AppIconSize::Control))
-            .on_click(move |_, window, cx| {
-                cx.stop_propagation();
-                click(window, cx);
-            })
-            .on_key_down(move |event, window, cx| {
-                if activates_button(event) {
-                    cx.stop_propagation();
-                    open(window, cx);
-                }
-            }),
     )
 }
 

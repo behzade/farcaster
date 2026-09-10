@@ -83,3 +83,9 @@ These keys require focus in the composer:
 | Esc | Apply queued steering; otherwise press twice to abort. |
 
 In dialogs, Tab / Shift+Tab move focus and Esc closes. In the action picker, Tab / Shift+Tab or Ctrl+N / Ctrl+P select items; Enter chooses one.
+
+## Review rows
+
+Click a review row, or focus it and press Enter, to open its locations in Neovim
+quickfix. Alt-click (Option-click on macOS) expands or collapses the locations.
+The context menu also offers **Open in Neovim** and **Show/Hide locations**.

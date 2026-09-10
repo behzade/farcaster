@@ -20,7 +20,7 @@ pub(super) fn title_row(
     label: String,
     on_press: impl Fn(&mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
-    activation_row(id, label, false, move |_, window, cx| on_press(window, cx))
+    activation_row(id, label, move |_, window, cx| on_press(window, cx))
 }
 
 pub(super) fn file_row(
@@ -34,13 +34,14 @@ pub(super) fn file_row(
     } else {
         label
     };
-    activation_row(id, label, diff_enabled, on_press)
+    activation_row(id, label, move |alt, window, cx| {
+        on_press(diff_enabled && alt, window, cx)
+    })
 }
 
-fn activation_row(
+pub(super) fn activation_row(
     id: impl Into<ElementId>,
     label: String,
-    diff_enabled: bool,
     on_press: impl Fn(bool, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let press = Rc::new(on_press);
@@ -64,7 +65,7 @@ fn activation_row(
             window.prevent_default();
             GlobalState::suppress_text_selection(cx);
         })
-        .on_click(move |event, window, cx| click(diff_enabled && event.modifiers().alt, window, cx))
+        .on_click(move |event, window, cx| click(event.modifiers().alt, window, cx))
         .on_key_down(move |event, window, cx| {
             if activates_button(event) {
                 cx.stop_propagation();

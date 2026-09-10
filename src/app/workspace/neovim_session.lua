@@ -37,6 +37,35 @@
       end
       state.diffs[tab] = nil
     end
+
+    -- Review activation focuses quickfix. Open targets in an editing window,
+    -- never replace the quickfix buffer with a file or transcript.
+    if vim.bo.buftype == 'quickfix' then
+      local function can_edit(win)
+        if not vim.api.nvim_win_is_valid(win)
+            or vim.api.nvim_win_get_config(win).relative ~= '' then
+          return false
+        end
+        local buf = vim.api.nvim_win_get_buf(win)
+        local kind = vim.bo[buf].buftype
+        return not vim.wo[win].previewwindow
+            and (kind == '' or kind == 'nofile' and not vim.bo[buf].readonly)
+      end
+      local candidates = vim.api.nvim_tabpage_list_wins(tab)
+      table.insert(candidates, 1, vim.fn.win_getid(vim.fn.winnr('#')))
+      local target
+      for _, win in ipairs(candidates) do
+        if can_edit(win) then
+          target = win
+          break
+        end
+      end
+      if target then
+        vim.api.nvim_set_current_win(target)
+      else
+        vim.cmd('aboveleft new')
+      end
+    end
   end
 
   if scratch ~= nil and scratch ~= vim.NIL then
