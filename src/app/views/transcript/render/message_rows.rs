@@ -23,6 +23,7 @@ use super::{
 };
 
 pub(super) fn render_invocation(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     entity: WeakEntity<FarcasterApp>,
@@ -41,7 +42,7 @@ pub(super) fn render_invocation(
         })
         .child(
             with_file_links(
-                technical_text(("invocation-name", key), item.text.clone()),
+                technical_text(font_scale, ("invocation-name", key), item.text.clone()),
                 entity,
             )
             .min_w_0()
@@ -184,7 +185,9 @@ pub(in crate::app::views::transcript) fn highlighted_invocation_markdown(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render_message(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     follows_tool: bool,
@@ -211,18 +214,18 @@ pub(super) fn render_message(
             row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         })
         .when(item.kind == TranscriptKind::PeerMessage, |row| {
-            row.child(peer_label(&item.label))
+            row.child(peer_label(font_scale, &item.label))
         })
         .when(user && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity.clone()))
         })
         .child({
             let text = markdown_state.map_or_else(
-                || selectable_text(("transcript-text", key), &item.text),
-                |state| selectable_text_state(&state),
+                || selectable_text(font_scale, ("transcript-text", key), &item.text),
+                |state| selectable_text_state(font_scale, &state),
             );
             let text = match markdown_style {
-                Some(style) => text.style(style),
+                Some(style) => text.style(super::scaled_markdown_style(style, font_scale)),
                 None => text,
             };
             with_file_links(text, entity)
@@ -234,6 +237,7 @@ pub(super) fn render_message(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_message_chunk(
+    font_scale: f32,
     key: usize,
     block: usize,
     item: &TranscriptItem,
@@ -259,23 +263,23 @@ pub(super) fn render_message_chunk(
         .when(!first, |row| row.pt(THEME.space.xs))
         .when(last, |row| row.pb(THEME.space.md))
         .when(first && item.kind == TranscriptKind::PeerMessage, |row| {
-            row.child(peer_label(&item.label))
+            row.child(peer_label(font_scale, &item.label))
         })
         .when(first && user && item.has_attachments(), |row| {
             row.child(render_attachments(key, item, entity.clone()))
         })
         .child(
-            with_file_links(selectable_text_state(&markdown_state), entity)
+            with_file_links(selectable_text_state(font_scale, &markdown_state), entity)
                 .text_color(item_color(item))
                 .when(user, |text| text.font_weight(FontWeight::MEDIUM)),
         )
         .into_any_element()
 }
 
-fn peer_label(label: &str) -> impl gpui::IntoElement {
+fn peer_label(font_scale: f32, label: &str) -> impl gpui::IntoElement {
     div()
         .mb(px(7.0))
-        .text_size(THEME.type_scale.caption)
+        .text_size(THEME.type_scale.caption * font_scale)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(THEME.colors.muted)
         .child(label.to_owned())

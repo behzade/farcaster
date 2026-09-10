@@ -360,6 +360,7 @@ impl Render for TranscriptBenchView {
         transcript::render(
             &self.list,
             transcript::TranscriptViewport {
+                font_scale: 1.0,
                 following: true,
                 unseen: 0,
                 tail_reserve: transcript::tail_reserve(window.viewport_size().height),

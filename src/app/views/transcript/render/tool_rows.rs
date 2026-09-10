@@ -33,6 +33,7 @@ use tool_preview::ToolPreview;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_activity_group(
+    font_scale: f32,
     key: usize,
     items: &PersistentVec<Arc<TranscriptItem>>,
     start: usize,
@@ -65,8 +66,8 @@ pub(super) fn render_activity_group(
             )
             .aria_expanded(expanded)
             .font_family(UI_FONT_FAMILY)
-            .text_size(THEME.type_scale.body_small)
-            .line_height(THEME.type_scale.line_body)
+            .text_size(THEME.type_scale.body_small * font_scale)
+            .line_height(THEME.type_scale.line_body * font_scale)
             .text_color(THEME.colors.muted)
             .child(summary),
         )
@@ -81,9 +82,15 @@ pub(super) fn render_activity_group(
                         let child_expanded =
                             disclosure_states.get(&index).copied().unwrap_or(false);
                         if item.kind == TranscriptKind::Thinking {
-                            super::render_thinking(index, item, child_expanded, entity.clone())
+                            super::render_thinking(
+                                font_scale,
+                                index,
+                                item,
+                                child_expanded,
+                                entity.clone(),
+                            )
                         } else {
-                            render_tool(index, item, child_expanded, entity.clone(), cx)
+                            render_tool(font_scale, index, item, child_expanded, entity.clone(), cx)
                         }
                     })),
             )
@@ -93,6 +100,7 @@ pub(super) fn render_activity_group(
 }
 
 pub(super) fn render_tool(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
@@ -161,7 +169,7 @@ pub(super) fn render_tool(
                             .flex_1()
                             .min_w_0()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small)
+                            .text_size(THEME.type_scale.body_small * font_scale)
                             .child(label),
                     )
                 }
@@ -172,7 +180,7 @@ pub(super) fn render_tool(
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(THEME.type_scale.body_small)
+                        .text_size(THEME.type_scale.body_small * font_scale)
                         .text_color(THEME.colors.muted)
                         .child(summary),
                 )
@@ -184,8 +192,14 @@ pub(super) fn render_tool(
                     .id(("tool-detail-scroll", key))
                     .max_h(THEME.layout.tool_max_height)
                     .overflow_y_scroll()
-                    .children(file_links(key, item, entity, project.as_deref()))
-                    .child(expanded_tool_body(("tool-detail", key), item)),
+                    .children(file_links(
+                        font_scale,
+                        key,
+                        item,
+                        entity,
+                        project.as_deref(),
+                    ))
+                    .child(expanded_tool_body(font_scale, ("tool-detail", key), item)),
             )
         })
         .into_any_element()
@@ -267,6 +281,7 @@ pub(super) fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptIte
 }
 
 fn file_links(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     entity: WeakEntity<FarcasterApp>,
@@ -292,7 +307,7 @@ fn file_links(
                     });
                 },
             )
-            .text_size(THEME.type_scale.body_small)
+            .text_size(THEME.type_scale.body_small * font_scale)
             .text_color(THEME.colors.accent)
             .child(label)
             .into_any_element()
@@ -423,10 +438,14 @@ fn status_slot(status: Option<ToolStatus>) -> AnyElement {
         .into_any_element()
 }
 
-fn expanded_tool_body(id: impl Into<gpui::ElementId>, item: &TranscriptItem) -> AnyElement {
-    selectable_text(id, fenced_text(&tool_body_text(item)))
+fn expanded_tool_body(
+    font_scale: f32,
+    id: impl Into<gpui::ElementId>,
+    item: &TranscriptItem,
+) -> AnyElement {
+    selectable_text(font_scale, id, fenced_text(&tool_body_text(item)))
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
+        .text_size(THEME.type_scale.body_small * font_scale)
         .text_color(if item.is_error {
             THEME.colors.error
         } else {

@@ -122,6 +122,25 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
         }};
     }
     let mut shortcuts = vec![
+        application_shortcut!(
+            "Transcript",
+            "Increase transcript font size",
+            "=",
+            crate::app::IncreaseTranscriptFontSize
+        ),
+        application_shortcut!(
+            "Transcript",
+            "Increase transcript font size",
+            "+",
+            crate::app::IncreaseTranscriptFontSize,
+            false
+        ),
+        application_shortcut!(
+            "Transcript",
+            "Decrease transcript font size",
+            "-",
+            crate::app::DecreaseTranscriptFontSize
+        ),
         application_shortcut!("Sessions", "New session", "n", NewSession),
         session_shortcut!("Open first unsubmitted draft", "0", SwitchSession0),
         session_shortcut!("Open session 1", "1", SwitchSession1),

@@ -31,6 +31,7 @@ mod schema;
 mod sessions;
 mod settings;
 mod traits;
+mod transcript;
 
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 

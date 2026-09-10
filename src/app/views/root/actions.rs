@@ -22,6 +22,16 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &CopySelection, window, cx| {
         this.copy_selection(window, cx);
     }))
+    .on_action(
+        cx.listener(|this, _: &crate::app::IncreaseTranscriptFontSize, _, cx| {
+            this.adjust_transcript_font_size(1.0, cx);
+        }),
+    )
+    .on_action(
+        cx.listener(|this, _: &crate::app::DecreaseTranscriptFontSize, _, cx| {
+            this.adjust_transcript_font_size(-1.0, cx);
+        }),
+    )
     .on_action(cx.listener(|this, _: &ClipboardCopyAlias, window, cx| {
         this.handle_clipboard_alias(false, window, cx);
     }))

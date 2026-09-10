@@ -220,7 +220,7 @@ fn hovering_short_tool_output_does_not_notify_the_view(cx: &mut gpui::TestAppCon
         ) -> impl gpui::IntoElement {
             div()
                 .w(px(300.0))
-                .child(expanded_tool_body("output", &self.0))
+                .child(expanded_tool_body(1.0, "output", &self.0))
         }
     }
 

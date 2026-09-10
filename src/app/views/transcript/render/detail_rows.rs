@@ -16,6 +16,7 @@ use super::{
 };
 
 pub(super) fn render_agent_message(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
@@ -53,7 +54,7 @@ pub(super) fn render_agent_message(
             )
             .child(
                 div()
-                    .text_size(THEME.type_scale.body_small)
+                    .text_size(THEME.type_scale.body_small * font_scale)
                     .text_color(THEME.colors.muted)
                     .child(item.label.clone()),
             )
@@ -62,7 +63,7 @@ pub(super) fn render_agent_message(
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(THEME.type_scale.body_small)
+                    .text_size(THEME.type_scale.body_small * font_scale)
                     .text_color(THEME.colors.text)
                     .child(summary),
             ),
@@ -78,7 +79,7 @@ pub(super) fn render_agent_message(
                     .pl(THEME.space.sm)
                     .py(THEME.space.xs)
                     .child(
-                        with_file_links(selectable_text_state(&state), entity)
+                        with_file_links(selectable_text_state(font_scale, &state), entity)
                             .text_color(THEME.colors.muted),
                     ),
             )
@@ -87,6 +88,7 @@ pub(super) fn render_agent_message(
 }
 
 pub(super) fn render_error(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
@@ -118,22 +120,29 @@ pub(super) fn render_error(
                     .gap(THEME.space.xs)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption)
+                            .text_size(THEME.type_scale.caption * font_scale)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(THEME.colors.error)
                             .child(item.label.clone()),
                     )
                     .child(
-                        with_file_links(selectable_text(("error-text", key), &item.text), entity)
-                            .text_color(THEME.colors.error),
+                        with_file_links(
+                            selectable_text(font_scale, ("error-text", key), &item.text),
+                            entity,
+                        )
+                        .text_color(THEME.colors.error),
                     ),
             ),
         )
         .when(expanded && has_details, |error| {
             error.child(
                 disclosure_detail().child(
-                    technical_text(("error-details", key), fenced_text(&item.tool_output))
-                        .text_color(THEME.colors.muted),
+                    technical_text(
+                        font_scale,
+                        ("error-details", key),
+                        fenced_text(&item.tool_output),
+                    )
+                    .text_color(THEME.colors.muted),
                 ),
             )
         })
@@ -180,6 +189,7 @@ pub(in crate::app::views::transcript) fn thinking_has_details(item: &TranscriptI
 }
 
 pub(super) fn render_thinking(
+    font_scale: f32,
     key: usize,
     item: &TranscriptItem,
     expanded: bool,
@@ -209,7 +219,7 @@ pub(super) fn render_thinking(
                     .flex_1()
                     .min_w_0()
                     .italic()
-                    .text_size(THEME.type_scale.body_small)
+                    .text_size(THEME.type_scale.body_small * font_scale)
                     .text_color(THEME.colors.subtle)
                     .when(emphasized, |preview| {
                         preview.font_weight(FontWeight::SEMIBOLD)
@@ -225,7 +235,7 @@ pub(super) fn render_thinking(
             row.child(
                 disclosure_detail().child(
                     with_file_links(
-                        selectable_text(("thinking-text", key), item.complete_text()),
+                        selectable_text(font_scale, ("thinking-text", key), item.complete_text()),
                         entity,
                     )
                     .italic()

@@ -19,6 +19,7 @@ use crate::{
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
     entity: WeakEntity<FarcasterApp>,
+    cx: &gpui::App,
 ) -> AnyElement {
     let dismiss = entity.clone();
     modal(
@@ -60,6 +61,7 @@ pub(in crate::app::views) fn render(
                         .gap(gpui::px(24.0))
                         .p(gpui::px(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
+                        .child(transcript_font_size(app.transcript_view.read(cx).font_size, entity.clone()))
                         .child(toggle_setting(
                             "transcript-folders-toggle",
                             "Expand changed folders in transcript",
@@ -218,6 +220,68 @@ fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
                 .text_size(THEME.type_scale.body_small)
                 .text_color(THEME.colors.muted)
                 .child(description),
+        )
+        .into_any_element()
+}
+
+fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    use crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE;
+
+    let size = f32::from(size);
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(THEME.space.md)
+        .child(setting_label(
+            "Transcript font size",
+            if cfg!(target_os = "macos") {
+                "Applies to all sessions. Cmd+- / Cmd+= also adjust the size."
+            } else {
+                "Applies to all sessions. Ctrl+- / Ctrl+= also adjust the size."
+            },
+        ))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(THEME.space.sm)
+                .child(format!("{size} px"))
+                .children(
+                    [
+                        (
+                            "transcript-font-smaller",
+                            "−",
+                            size - 1.0,
+                            size > *TRANSCRIPT_FONT_SIZE_RANGE.start(),
+                        ),
+                        (
+                            "transcript-font-larger",
+                            "+",
+                            size + 1.0,
+                            size < *TRANSCRIPT_FONT_SIZE_RANGE.end(),
+                        ),
+                        (
+                            "transcript-font-reset",
+                            "Reset",
+                            f32::from(THEME.type_scale.reading),
+                            size != f32::from(THEME.type_scale.reading),
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(id, label, next, enabled)| {
+                        let entity = entity.clone();
+                        button(id, label, ButtonTone::Neutral, enabled, move |_, cx| {
+                            let _ = entity
+                                .update(cx, |this, cx| this.set_transcript_font_size(next, cx));
+                        })
+                        .accessibility_label(match label {
+                            "−" => "Decrease transcript font size",
+                            "+" => "Increase transcript font size",
+                            _ => "Reset transcript font size",
+                        })
+                    }),
+                ),
         )
         .into_any_element()
 }

@@ -264,7 +264,9 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
         [gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("test operation should succeed")];
     let native_contexts =
         [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("test operation should succeed")];
-    for key in ["cmd-n", "cmd-e", "cmd-t", "cmd-k", "cmd-g"] {
+    for key in [
+        "cmd-n", "cmd-e", "cmd-t", "cmd-k", "cmd-g", "cmd--", "cmd-=", "cmd-+",
+    ] {
         if key == "cmd-g" && !cfg!(target_os = "macos") {
             continue;
         }

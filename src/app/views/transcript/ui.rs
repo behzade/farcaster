@@ -6,6 +6,43 @@ use super::{
 use crate::app::FarcasterApp;
 
 impl FarcasterApp {
+    pub(in crate::app) fn adjust_transcript_font_size(
+        &mut self,
+        delta: f32,
+        cx: &mut Context<Self>,
+    ) {
+        let size = f32::from(self.transcript_view.read(cx).font_size) + delta;
+        self.set_transcript_font_size(size, cx);
+    }
+
+    pub(in crate::app) fn set_transcript_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+        use crate::app::infrastructure::persistence::StateStore;
+        use crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE;
+
+        let size = size.clamp(
+            *TRANSCRIPT_FONT_SIZE_RANGE.start(),
+            *TRANSCRIPT_FONT_SIZE_RANGE.end(),
+        );
+        if gpui::px(size) == self.transcript_view.read(cx).font_size {
+            return;
+        }
+        match StateStore::open().and_then(|store| store.save_transcript_font_size(size)) {
+            Ok(()) => {
+                self.transcript_view.update(cx, |transcript, cx| {
+                    transcript.font_size = gpui::px(size);
+                    transcript.list.remeasure_items(0..transcript.rows.len());
+                    cx.notify();
+                });
+                self.settings_transcript_error = None;
+            }
+            Err(error) => {
+                zlog::error!("{error}");
+                self.settings_transcript_error = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
     pub(in crate::app) fn toggle_transcript_folder(
         &mut self,
         key: usize,

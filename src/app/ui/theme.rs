@@ -5,6 +5,8 @@ use gpui_component::{
 };
 use gpui_libghostty::{TerminalColor, TerminalTheme};
 
+pub(crate) const TRANSCRIPT_FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 10.0..=32.0;
+
 pub(crate) const UI_FONT_FAMILY: &str = "IBM Plex Sans";
 pub(crate) const FARSI_FONT_FAMILY: &str = "Vazirmatn";
 pub(crate) const MONO_FONT_FAMILY: &str = "Lilex";

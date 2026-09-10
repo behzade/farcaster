@@ -24,6 +24,14 @@ pub(super) fn create(
     let transcript_list = TranscriptListState::new();
     transcript_list.scroll_to_end();
     let transcript = cx.new(|_| TranscriptView::new(app.clone(), transcript_list.clone()));
+    match crate::app::infrastructure::persistence::StateStore::open()
+        .and_then(|store| store.load_transcript_font_size())
+    {
+        Ok(size) => transcript.update(cx, |view, _| view.font_size = gpui::px(size)),
+        Err(error) => {
+            zlog::error!("{error}");
+        }
+    }
     install_transcript_scroll_handler(&transcript_list, &transcript);
 
     let composer = cx.new(|_| ComposerView::new(app.clone()));

@@ -72,6 +72,7 @@ pub(crate) const TRANSCRIPT_ROW_HEIGHT_HINT: Pixels = px(24.0);
 
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptViewport {
+    pub(crate) font_scale: f32,
     pub(crate) following: bool,
     pub(crate) unseen: usize,
     pub(crate) tail_reserve: Pixels,
@@ -234,6 +235,7 @@ pub(crate) fn render(
         return div().size_full().bg(THEME.colors.canvas).into_any_element();
     }
 
+    let font_scale = viewport.font_scale;
     let visual_selection_active = list_state.selected_text().is_some();
     let jump = entity.clone();
     let row_entity = entity;
@@ -257,6 +259,8 @@ pub(crate) fn render(
             let reserves_tail = index + 1 == rows.len()
                 && latest_allows_tail_reserve(row, &conversation.items, expanded);
             let content = div()
+                .text_size(THEME.type_scale.body * font_scale)
+                .line_height(THEME.type_scale.line_body * font_scale)
                 .w_full()
                 .max_w(THEME.layout.conversation_width)
                 .mx_auto()
@@ -268,6 +272,7 @@ pub(crate) fn render(
                             row.bg(THEME.colors.selection)
                         })
                         .child(div().w_full().child(render_row(
+                            font_scale,
                             row,
                             &conversation.items,
                             expanded,
@@ -441,6 +446,7 @@ pub(super) fn latest_allows_tail_reserve(
 
 #[allow(clippy::too_many_arguments)]
 fn render_row(
+    font_scale: f32,
     row: TranscriptRow,
     items: &PersistentVec<Arc<TranscriptItem>>,
     expanded: bool,
@@ -454,6 +460,7 @@ fn render_row(
     let follows_tool = message_follows_tool(row, items);
     match row {
         TranscriptRow::ActivityGroup { start, len, .. } => render_activity_group(
+            font_scale,
             row.disclosure_key(),
             items,
             start,
@@ -477,6 +484,7 @@ fn render_row(
             let markdown =
                 markdown_chunk_text(&items[index].text, MarkdownChunk { start, end, fence });
             render_message_chunk(
+                font_scale,
                 key,
                 block,
                 &items[index],
@@ -503,6 +511,7 @@ fn render_row(
                 .get(chunk)
                 .map_or(items[index].text.as_str(), |chunk| chunk.as_ref());
             render_message_chunk(
+                font_scale,
                 key,
                 chunk,
                 &items[index],
@@ -518,7 +527,7 @@ fn render_row(
             )
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Error => {
-            render_error(key, &items[index], expanded, entity)
+            render_error(font_scale, key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, revision }
             if items[index].invocation.as_ref().is_some_and(|resolved| {
@@ -528,6 +537,7 @@ fn render_row(
             let resolved = message_rows::invocation_resolution(&items[index]);
             let markdown = highlighted_invocation_markdown(&items[index].text, resolved);
             render_message(
+                font_scale,
                 key,
                 &items[index],
                 follows_tool,
@@ -537,10 +547,10 @@ fn render_row(
             )
         }
         TranscriptRow::Item { index, .. } if items[index].invocation.is_some() => {
-            render_invocation(key, &items[index], entity)
+            render_invocation(font_scale, key, &items[index], entity)
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Tool => {
-            render_tool(key, &items[index], expanded, entity, cx)
+            render_tool(font_scale, key, &items[index], expanded, entity, cx)
         }
         TranscriptRow::Item { index, revision }
             if matches!(
@@ -555,10 +565,17 @@ fn render_row(
                     cx,
                 )
             });
-            render_agent_message(key, &items[index], expanded, markdown_state, entity)
+            render_agent_message(
+                font_scale,
+                key,
+                &items[index],
+                expanded,
+                markdown_state,
+                entity,
+            )
         }
         TranscriptRow::Item { index, .. } if items[index].kind == TranscriptKind::Thinking => {
-            render_thinking(key, &items[index], expanded, entity)
+            render_thinking(font_scale, key, &items[index], expanded, entity)
         }
         TranscriptRow::Item { index, revision } => {
             let markdown_state = matches!(
@@ -573,6 +590,7 @@ fn render_row(
                 )
             });
             render_message(
+                font_scale,
                 key,
                 &items[index],
                 follows_tool,
@@ -614,32 +632,44 @@ fn toggle_transcript_item(
 }
 
 fn selectable_text(
+    font_scale: f32,
     id: impl Into<gpui::ElementId>,
     text: impl Into<gpui::SharedString>,
 ) -> TextView {
-    styled_selectable_text(TextView::markdown(id, text))
+    styled_selectable_text(font_scale, TextView::markdown(id, text))
 }
 
-fn selectable_text_state(state: &Entity<TextViewState>) -> TextView {
-    styled_selectable_text(TextView::new(state))
+fn selectable_text_state(font_scale: f32, state: &Entity<TextViewState>) -> TextView {
+    styled_selectable_text(font_scale, TextView::new(state))
 }
 
-fn styled_selectable_text(text: TextView) -> TextView {
-    text.style(transcript_markdown_style())
+fn styled_selectable_text(font_scale: f32, text: TextView) -> TextView {
+    let style = scaled_markdown_style(transcript_markdown_style(), font_scale);
+    text.style(style)
         .code_block_actions(|block, _, _| copy_code::CopyCodeButton::new(block.code()))
         .selectable(true)
         .focusable(false)
         .w_full()
         .min_w_0()
-        .text_size(THEME.type_scale.reading)
-        .line_height(THEME.type_scale.line_reading)
+        .text_size(THEME.type_scale.reading * font_scale)
+        .line_height(THEME.type_scale.line_reading * font_scale)
 }
 
-fn technical_text(id: impl Into<gpui::ElementId>, text: impl Into<gpui::SharedString>) -> TextView {
-    selectable_text(id, text)
+fn technical_text(
+    font_scale: f32,
+    id: impl Into<gpui::ElementId>,
+    text: impl Into<gpui::SharedString>,
+) -> TextView {
+    selectable_text(font_scale, id, text)
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small)
-        .line_height(THEME.type_scale.line_body)
+        .text_size(THEME.type_scale.body_small * font_scale)
+        .line_height(THEME.type_scale.line_body * font_scale)
+}
+
+fn scaled_markdown_style(mut style: TextViewStyle, font_scale: f32) -> TextViewStyle {
+    style.heading_base_font_size = THEME.type_scale.reading * font_scale;
+    style.code_block.text.font_size = Some((THEME.type_scale.body_small * font_scale).into());
+    style
 }
 
 pub(super) fn transcript_markdown_style() -> TextViewStyle {
