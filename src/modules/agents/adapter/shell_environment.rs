@@ -1,4 +1,4 @@
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 
 use std::{
     collections::HashMap,
@@ -123,33 +123,90 @@ fn capture_login_shell_environment(shell: &Path, project: &Path) -> Result<Envir
         .current_dir(project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = command
+        // Avoid an undrained script pipe; shell diagnostics travel through the PTY.
+        .stderr(Stdio::null());
+    let mut child = command
         .spawn()
         .map_err(|error| format!("start login shell {} in terminal: {error}", shell.display()))?;
-    let mut child = child;
-    let _input = {
-        let mut input = child
-            .stdin
-            .take()
-            .ok_or_else(|| "login shell terminal did not expose input".to_owned())?;
-        input
-            .write_all(CAPTURE_COMMAND.as_bytes())
-            .and_then(|()| input.flush())
-            .map_err(|error| format!("request login shell environment: {error}"))?;
-        input
-    };
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("wait for login shell {}: {error}", shell.display()))?;
-    if !output.status.success() {
+    let output = capture_terminal_output(&mut child);
+    if output.is_err() {
+        let _ = child.kill();
+    }
+    let status = child.wait();
+    let output = output?;
+    let status =
+        status.map_err(|error| format!("wait for login shell {}: {error}", shell.display()))?;
+    if !status.success() {
         return Err(format!(
-            "login shell {} exited with {}",
+            "login shell {} exited with {status}",
             shell.display(),
-            output.status
         ));
     }
-    parse_environment(&output.stdout)
+    parse_environment(&output)
+}
+
+fn capture_terminal_output(child: &mut std::process::Child) -> Result<Vec<u8>, String> {
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or_else(|| "login shell terminal did not expose input".to_owned())?;
+    let mut output = child
+        .stdout
+        .take()
+        .ok_or_else(|| "login shell terminal did not expose output".to_owned())?;
+    input
+        .write_all(CAPTURE_COMMAND.as_bytes())
+        .and_then(|()| input.flush())
+        .map_err(|error| format!("request login shell environment: {error}"))?;
+
+    let mut terminal = CaptureTerminal::default();
+    let mut captured = Vec::new();
+    let mut buffer = [0; 8192];
+    loop {
+        let count = match output.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(format!("read login shell environment: {error}")),
+        };
+        terminal
+            .respond(&buffer[..count], &mut input)
+            .map_err(|error| format!("answer login shell terminal query: {error}"))?;
+        captured.extend_from_slice(&buffer[..count]);
+    }
+    Ok(captured)
+}
+
+/// Complete fish's terminal-query barrier without advertising optional features
+/// or changing shell initialization. This is not a full terminal emulator.
+#[derive(Default)]
+struct CaptureTerminal {
+    tail: Vec<u8>,
+    capturing_environment: bool,
+}
+
+impl CaptureTerminal {
+    fn respond(&mut self, output: &[u8], input: &mut impl std::io::Write) -> std::io::Result<()> {
+        for &byte in output {
+            if self.capturing_environment {
+                break;
+            }
+            self.tail.push(byte);
+            if self.tail.ends_with(START_MARKER) {
+                // Exported values are data, even if they contain escape sequences.
+                self.capturing_environment = true;
+                break;
+            }
+            if self.tail.ends_with(b"\x1b[0c") || self.tail.ends_with(b"\x1b[c") {
+                input.write_all(b"\x1b[?0c")?;
+                input.flush()?;
+            }
+            if self.tail.len() >= START_MARKER.len() {
+                self.tail.remove(0);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]

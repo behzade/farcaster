@@ -4,6 +4,10 @@ use tempfile::tempdir;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "shell_environment_integration_tests.rs"]
+mod integration;
+
 #[test]
 fn account_record_yields_its_absolute_login_shell() {
     assert_eq!(
@@ -108,7 +112,7 @@ printf 'prompt hook output before environment\n'
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn capture_includes_environment_loaded_by_first_interactive_prompt() -> TestResult {
     let temp = tempdir()?;
@@ -139,6 +143,67 @@ exec /bin/sh
             .iter()
             .any(|(name, value)| { name == "FIRST_PROMPT_VALUE" && value == "loaded" })
     );
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn capture_answers_a_query_over_the_real_pty_before_environment_capture() -> TestResult {
+    let temp = tempdir()?;
+    let shell = temp.path().join("querying shell");
+    fs::write(
+        &shell,
+        r#"#!/bin/sh
+set -eu
+# Buffer the queued command, as fish does while waiting for terminal replies.
+IFS= read -r capture
+stty -echo -icanon min 0 time 10
+printf '\033[0c'
+reply=$(dd bs=1 count=5 2>/dev/null)
+test "$reply" = "$(printf '\033[?0c')"
+export HANDSHAKE_VALUE=answered
+exec /bin/sh -c "$capture"
+"#,
+    )?;
+    fs::set_permissions(&shell, fs::Permissions::from_mode(0o755))?;
+    let environment = capture_login_shell_environment(&shell, temp.path())?;
+    assert!(environment.contains(&("HANDSHAKE_VALUE".into(), "answered".into())));
+    Ok(())
+}
+
+#[test]
+fn terminal_answers_primary_attributes_across_read_boundaries() -> TestResult {
+    // Only primary requests get replies, not prompts, replies, or optional queries.
+    let output = b"prompt> \x1b[?0c\x1b[>0c\x1b[6n\x1b]11;?\x1b\\\x1b[0c\x1b[c\x1b[0c";
+    for split in 0..=output.len() {
+        let mut terminal = CaptureTerminal::default();
+        let mut replies = Vec::new();
+        terminal.respond(&output[..split], &mut replies)?;
+        terminal.respond(&output[split..], &mut replies)?;
+        assert_eq!(replies, b"\x1b[?0c\x1b[?0c\x1b[?0c", "split {split}");
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_never_interprets_captured_values_as_queries() -> TestResult {
+    let output = [
+        b"\x1b[0c".as_slice(),
+        START_MARKER,
+        b"PATH=/bin\0VALUE=\x1b[0c\x1b[c\0",
+        END_MARKER,
+        b"\x1b[0c",
+    ]
+    .concat();
+    for chunk_size in 1..=output.len() {
+        let mut terminal = CaptureTerminal::default();
+        let mut replies = Vec::new();
+        for chunk in output.chunks(chunk_size) {
+            terminal.respond(chunk, &mut replies)?;
+        }
+        assert_eq!(replies, b"\x1b[?0c", "chunk size {chunk_size}");
+    }
+    assert!(parse_environment(&output)?.contains(&("VALUE".into(), "\x1b[0c\x1b[c".into())));
     Ok(())
 }
 
