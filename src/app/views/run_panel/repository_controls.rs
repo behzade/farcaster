@@ -87,7 +87,9 @@ pub(super) fn repository_header(
                         .flex_1()
                         .text_size(THEME.type_scale.caption)
                         .text_color(THEME.colors.muted)
-                        .child(format!("· {count}")),
+                        .when(snapshot.is_some(), |label| {
+                            label.child(format!("· {count}"))
+                        }),
                 )
                 .when(enabled, |row| {
                     row.child(icon_button(
@@ -119,21 +121,21 @@ pub(super) fn repository_header(
                 ))
                 .child(menu),
         )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(THEME.space.sm)
-                .text_size(THEME.type_scale.caption)
-                .child(working_copy_totals(
-                    app.repository.additions,
-                    app.repository.deletions,
-                ))
-                .child(div().flex_1())
-                .when_some(snapshot, |row, snapshot| {
-                    let metadata = repository_sync_metadata(&snapshot.identity);
-                    let detail = format!("{} · {metadata}", repository_identity_label(snapshot));
-                    row.child(
+        .when_some(snapshot, |section, snapshot| {
+            let metadata = repository_sync_metadata(&snapshot.identity);
+            let detail = format!("{} · {metadata}", repository_identity_label(snapshot));
+            section.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.sm)
+                    .text_size(THEME.type_scale.caption)
+                    .child(working_copy_totals(
+                        app.repository.additions,
+                        app.repository.deletions,
+                    ))
+                    .child(div().flex_1())
+                    .child(
                         div()
                             .id("repository-identity")
                             .min_w_0()
@@ -144,9 +146,9 @@ pub(super) fn repository_header(
                                 Tooltip::new(detail.clone()).build(window, cx)
                             })
                             .child(compact_identity_label(snapshot)),
-                    )
-                }),
-        )
+                    ),
+            )
+        })
         .when_some(syncing, |section, action| {
             section.child(
                 div()

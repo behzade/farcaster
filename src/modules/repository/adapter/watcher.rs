@@ -186,18 +186,14 @@ fn discovery_targets(project: &Path) -> Result<Vec<WatchTarget>, String> {
             project.display()
         )
     })?;
-    let mut targets = Vec::new();
-    add_target(&mut targets, project.clone(), RecursiveMode::Recursive);
-    let mut ancestor = project.parent();
-    while let Some(path) = ancestor {
-        add_target(
-            &mut targets,
-            path.to_path_buf(),
-            RecursiveMode::NonRecursive,
-        );
-        ancestor = path.parent();
-    }
-    Ok(targets)
+    // Only the project and its parents can gain a marker for this project.
+    Ok(project
+        .ancestors()
+        .map(|path| WatchTarget {
+            path: path.to_path_buf(),
+            mode: RecursiveMode::NonRecursive,
+        })
+        .collect())
 }
 
 fn watch_targets(location: &RepositoryLocation) -> Result<Vec<WatchTarget>, String> {

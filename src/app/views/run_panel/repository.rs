@@ -82,11 +82,9 @@ impl FarcasterApp {
             .when_some(
                 self.repository.watcher_error.as_deref(),
                 |section, error| {
-                    section.child(repository_notice(
-                        &format!(
-                            "Automatic refresh is unavailable; use Refresh: {}",
-                            bounded_message(error)
-                        ),
+                    section.child(repository_error_notice(
+                        "Auto-refresh unavailable. Use Refresh to try again.",
+                        error,
                         THEME.colors.warning,
                     ))
                 },
@@ -99,14 +97,11 @@ impl FarcasterApp {
             })
             .when_some(self.repository.error.as_deref(), |section, error| {
                 let message = if self.repository.snapshot.is_some() {
-                    format!(
-                        "Refresh failed; showing the previous result: {}",
-                        bounded_message(error)
-                    )
+                    "Could not refresh changes. Showing the previous result."
                 } else {
-                    bounded_message(error)
+                    "Could not read this repository. Check the project folder and refresh."
                 };
-                section.child(repository_notice(&message, THEME.colors.error))
+                section.child(repository_error_notice(message, error, THEME.colors.error))
             })
             .when_some(snapshot, |section, snapshot| {
                 section
@@ -528,14 +523,21 @@ impl FarcasterApp {
     }
 }
 
-fn repository_notice(message: &str, color: gpui::Rgba) -> AnyElement {
+fn repository_error_notice(message: &str, detail: &str, color: gpui::Rgba) -> AnyElement {
+    let detail = bounded_message(detail);
+    repository_notice(message, color)
+        .min_w_0()
+        .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
+        .into_any_element()
+}
+
+fn repository_notice(message: &str, color: gpui::Rgba) -> gpui::Stateful<gpui::Div> {
     div()
         .id(message.to_owned())
         .role(Role::Status)
         .text_size(THEME.type_scale.caption)
         .text_color(color)
         .child(message.to_owned())
-        .into_any_element()
 }
 
 #[cfg(test)]

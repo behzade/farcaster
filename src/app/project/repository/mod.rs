@@ -465,7 +465,11 @@ impl FarcasterApp {
                                 display_changed = true;
                             }
                             this.repository.backend = Some(backend);
-                            display_changed |= this.install_repository_watcher(location, cx);
+                            if this.repository.snapshot.is_some() {
+                                display_changed |= this.install_repository_watcher(location, cx);
+                            } else {
+                                display_changed |= this.install_repository_discovery_watcher(cx);
+                            }
                             let error = error.to_string();
                             display_changed |=
                                 this.repository.error.as_deref() != Some(error.as_str());
@@ -478,7 +482,7 @@ impl FarcasterApp {
                             this.repository.snapshot = None;
                             this.repository.additions = None;
                             this.repository.deletions = None;
-                            this.repository.error = None;
+                            display_changed |= this.repository.error.take().is_some();
                             this.repository.row_focus.clear();
                             display_changed |= this.install_repository_discovery_watcher(cx);
                             if had_observation {

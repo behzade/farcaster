@@ -26,9 +26,14 @@ fn discovery_watches_project_and_ancestors_but_only_accepts_repository_markers()
     let parent = project.parent().expect("parent").to_path_buf();
 
     let targets = discovery_targets(&project).expect("targets");
+    assert!(
+        targets
+            .iter()
+            .all(|target| target.mode == RecursiveMode::NonRecursive)
+    );
     assert!(targets.contains(&WatchTarget {
         path: project.clone(),
-        mode: RecursiveMode::Recursive,
+        mode: RecursiveMode::NonRecursive,
     }));
     assert!(targets.contains(&WatchTarget {
         path: parent,
