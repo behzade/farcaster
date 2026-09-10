@@ -63,6 +63,12 @@ fn quit_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {
     });
 }
 
+#[cfg(target_os = "linux")]
+#[gpui::test]
+fn super_quit_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {
+    assert_quit_prompts(cx, |cx| cx.simulate_keystrokes("super-q"));
+}
+
 #[cfg(target_os = "macos")]
 #[gpui::test]
 fn close_window_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {

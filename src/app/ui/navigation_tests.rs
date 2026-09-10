@@ -37,13 +37,15 @@ fn activation_is_not_a_leader_and_only_double_g_returns() {
 }
 
 #[test]
-fn activation_routes_session_keys_without_space() {
+fn activation_routes_commands_without_space() {
     let now = Instant::now();
     for (key, command) in [
         ("j", Command::RelativeSession(1)),
         ("k", Command::RelativeSession(-1)),
+        ("q", Command::Quit),
     ] {
         let mut state = Activation::default();
+        assert_eq!(activated(&mut state, key, now), ActivatedKey::Pass);
         assert_eq!(activated(&mut state, "ctrl-g", now), ActivatedKey::Pending);
         assert_eq!(
             activated(&mut state, key, now + Duration::from_millis(1900)),
@@ -193,7 +195,7 @@ fn prefix_chord_is_ctrl_g_only() {
 #[test]
 fn help_lists_ctrl_g_prefix_and_direct_composer_return() {
     let rows = shortcuts::help_shortcuts();
-    for key in ["ctrl-f", "ctrl-b", "ctrl-u", "ctrl-d"] {
+    for key in ["ctrl-f", "ctrl-b", "ctrl-u", "ctrl-d", "q"] {
         assert!(
             rows.iter()
                 .any(|(section, chord, _)| *section == "From anywhere"

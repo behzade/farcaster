@@ -84,11 +84,22 @@ pub(crate) fn registry() -> Vec<Shortcut> {
 }
 
 fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
+    let mut aliases = Vec::new();
     macro_rules! application_shortcut {
         ($section:literal, $label:literal, $key:literal, $action:expr) => {
             application_shortcut!($section, $label, $key, $action, true)
         };
-        ($section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {
+        ($section:literal, $label:literal, $key:literal, $action:expr, $show:expr) => {{
+            if cfg!(target_os = "linux") && prefix == "ctrl" {
+                aliases.push(shortcut!(
+                    $section,
+                    $label,
+                    concat!("super-", $key),
+                    $action,
+                    Some(APP_SHORTCUT_CONTEXT),
+                    false
+                ));
+            }
             shortcut!(
                 $section,
                 $label,
@@ -98,13 +109,12 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
                 $show
             )
             .in_picker($show)
-        };
+        }};
     }
     let session_prefix = if prefix == "cmd" { "cmd" } else { "super" };
-    let mut session_aliases = Vec::new();
     macro_rules! session_shortcut {
         ($label:literal, $key:literal, $action:expr) => {{
-            session_aliases.push(shortcut!(
+            aliases.push(shortcut!(
                 "Sessions",
                 $label,
                 concat!("ctrl-", $key),
@@ -472,17 +482,8 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             binding: KeyBinding::new("escape", DismissSurface, Some(PICKER_KEY_CONTEXT)),
         },
         application_shortcut!("Application", "Quit", "q", QuitApplication),
-        #[cfg(not(target_os = "macos"))]
-        shortcut!(
-            "Sessions",
-            "Close surface or draft; archive session",
-            "ctrl-w",
-            CloseCurrent,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
     ];
-    shortcuts.extend(session_aliases);
+    shortcuts.extend(aliases);
     if prefix == "ctrl" {
         shortcuts.retain(|shortcut| !matches!(shortcut.keystroke.as_str(), "ctrl-j" | "ctrl-k"));
     }

@@ -16,6 +16,7 @@ pub(crate) enum Command {
     Runtime,
     RestoreSession,
     Close,
+    Quit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +65,7 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ("m", "Set provider/model/effort", Command::Runtime),
     ("a", "Restore session", Command::RestoreSession),
     ("w", "Close surface or session", Command::Close),
+    ("q", "Quit", Command::Quit),
     ("j", "Next session", Command::RelativeSession(1)),
     ("k", "Previous session", Command::RelativeSession(-1)),
 ];

@@ -296,6 +296,7 @@ impl FarcasterApp {
                 cx,
             ),
             Command::Close => self.close_current_target(window, cx),
+            Command::Quit => window.dispatch_action(Box::new(crate::app::QuitApplication), cx),
             Command::RelativeSession(direction) => {
                 self.switch_relative_session(direction, window, cx);
             }

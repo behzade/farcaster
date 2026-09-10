@@ -59,21 +59,32 @@ fn root_focus_traversal_is_unbound() {
 }
 
 #[test]
-fn picker_shortcuts_route_only_in_their_owned_contexts() {
+fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
     use super::registry_for_platform;
     use crate::app::{
         APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
         ShowEditor, ShowTerminal,
     };
 
-    for prefix in ["cmd", "ctrl"] {
+    for (platform, prefix) in [
+        ("cmd", "cmd"),
+        ("ctrl", "ctrl"),
+        #[cfg(target_os = "linux")]
+        ("ctrl", "super"),
+    ] {
         let keymap = gpui::Keymap::new(
-            registry_for_platform(prefix)
+            registry_for_platform(platform)
                 .into_iter()
                 .map(|shortcut| shortcut.binding)
                 .collect(),
         );
         for (suffix, action) in [
+            (
+                "q",
+                Box::new(crate::app::QuitApplication) as Box<dyn gpui::Action>,
+            ),
+            ("n", Box::new(crate::app::NewSession)),
+            ("w", Box::new(crate::app::CloseCurrent)),
             ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
             ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
             (
