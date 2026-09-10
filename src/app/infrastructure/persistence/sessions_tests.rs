@@ -22,6 +22,31 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
 }
 
 #[test]
+fn metadata_readback_failure_rolls_back_the_update() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let mut update = metadata("readback");
+    let original = store.update_session_metadata(&update)?;
+    // Inject a value accepted by SQLite but rejected by the summary decoder.
+    // All writes succeed, so only the read-back can cause the rollback.
+    store
+        .connection
+        .execute_batch(
+            "CREATE TRIGGER invalid_summary AFTER UPDATE OF title ON sessions
+             BEGIN UPDATE sessions SET message_count=-1 WHERE id=NEW.id; END;",
+        )
+        .map_err(|error| error.to_string())?;
+    update.title = Some("Must not commit".into());
+    let error = store.update_session_metadata(&update).unwrap_err();
+    assert!(error.contains("decode cached session"), "{error}");
+    let restored = store.cached_sessions("")?;
+    assert_eq!(restored.len(), 1);
+    assert_eq!(restored[0].title, original.title);
+    assert_eq!(restored[0].message_count, original.message_count);
+    Ok(())
+}
+
+#[test]
 fn live_metadata_preserves_archive_identity_and_other_sessions() {
     let temp = tempfile::tempdir().expect("test operation should succeed");
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))

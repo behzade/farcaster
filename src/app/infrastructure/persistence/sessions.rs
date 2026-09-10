@@ -3,16 +3,18 @@ use super::*;
 impl StateStore {
     pub(crate) fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
         Ok(crate::sessions::filter_session_tree(
-            self.read_cached_sessions(None)?,
+            Self::read_cached_sessions(&self.connection, None)?,
             query,
         ))
     }
 
-    fn read_cached_sessions(&self, id: Option<i64>) -> Result<Vec<SessionSummary>, String> {
+    fn read_cached_sessions(
+        connection: &Connection,
+        id: Option<i64>,
+    ) -> Result<Vec<SessionSummary>, String> {
         let _startup_timing =
             crate::app::infrastructure::performance::StartupTiming::new("db.cached_sessions");
-        let mut statement = self
-            .connection
+        let mut statement = connection
             .prepare(&format!(
                 "SELECT s.id, s.locator, p.path, s.title, s.first_user_message, s.timestamp,
                         COALESCE(parent.backend_id, parent.locator, s.parent_backend_id),
@@ -127,12 +129,13 @@ impl StateStore {
             )
             .map_err(|error| error.to_string())?;
         }
-        tx.commit().map_err(|error| error.to_string())?;
-        let mut session = self
-            .read_cached_sessions(Some(id))?
+        // Keep the row protected from concurrent draft binding until read-back
+        // completes: binding can merge this row into a different session ID.
+        let mut session = Self::read_cached_sessions(&tx, Some(id))?
             .into_iter()
             .next()
             .ok_or("Updated session is missing")?;
+        tx.commit().map_err(|error| error.to_string())?;
         session.is_running = update.is_running;
         Ok(session)
     }
