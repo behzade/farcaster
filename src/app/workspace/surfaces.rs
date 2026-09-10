@@ -73,8 +73,13 @@ impl FarcasterApp {
         _window: &Window,
         cx: &gpui::App,
     ) -> Option<FocusHandle> {
-        if let Some(comment) = &self.code_comment {
-            Some(comment.input.read(cx).focus_handle(cx))
+        if let Some(comment) = &self.code_comment
+            && !self.overlays.project_trust
+        {
+            Some(comment.picker.as_ref().map_or_else(
+                || comment.input.read(cx).focus_handle(cx),
+                |picker| picker.list.read(cx).focus_handle(cx),
+            ))
         } else if self.image_preview.is_some() {
             Some(self.image_preview_focus.clone())
         } else if let Some(pending) = &self.repository.edits.pending {
@@ -842,7 +847,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.code_comment.is_some() {
+        if self.code_comment.is_some() && !self.overlays.project_trust {
             self.close_code_comment(window, cx);
         } else if self.image_preview.is_some() {
             self.close_image_preview(window, cx);

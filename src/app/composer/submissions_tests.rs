@@ -27,6 +27,7 @@ fn pending() -> PendingSubmission {
         text: "submitted".into(),
         images: Vec::new(),
         pastes: Vec::new(),
+        append_on_failure: false,
         result: None,
     }
 }

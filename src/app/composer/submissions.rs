@@ -24,6 +24,7 @@ pub(in crate::app) struct PendingSubmission {
     pub(in crate::app) text: String,
     pub(in crate::app) images: Vec<ComposerImage>,
     pub(in crate::app) pastes: Vec<ComposerPaste>,
+    pub(in crate::app) append_on_failure: bool,
     pub(in crate::app) result: Option<(bool, Option<std::path::PathBuf>)>,
 }
 
@@ -108,6 +109,7 @@ impl FarcasterApp {
                         text: editor_text.clone(),
                         images: pending_images,
                         pastes: pending_pastes,
+                        append_on_failure: false,
                         result: None,
                     },
                 );
@@ -218,9 +220,16 @@ impl FarcasterApp {
                 continue;
             }
 
-            let restored = self
-                .composer_sessions
-                .restore_submitted_text(&target, pending.text.clone());
+            let restored = if pending.append_on_failure {
+                self.capture_composer_session(cx);
+                Some(
+                    self.composer_sessions
+                        .append_to_draft(&target, &pending.text),
+                )
+            } else {
+                self.composer_sessions
+                    .restore_submitted_text(&target, pending.text.clone())
+            };
             if !pending.images.is_empty() {
                 let images = self.composer_images.entry(target.clone()).or_default();
                 images.splice(0..0, pending.images.clone());
@@ -258,7 +267,7 @@ fn can_submit_to(
     !pending.contains_key(target)
 }
 
-fn inactive_session_for_target(
+pub(in crate::app) fn inactive_session_for_target(
     target: &str,
     selected_session: Option<&Path>,
     sessions: &[SessionSummary],

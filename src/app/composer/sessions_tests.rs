@@ -17,6 +17,30 @@ fn switch_restores_text_cursor_and_selection_per_session() {
 }
 
 #[test]
+fn failed_code_comment_keeps_both_drafts_and_destination_cursor() {
+    let mut sessions = sessions("session:destination");
+    let destination = ComposerSnapshot::new("existing draft".into(), 3, 1..3);
+    sessions.switch_to("session:source".into(), destination.clone());
+    let attachment = crate::app::infrastructure::persistence::ComposerAttachment::TextFile {
+        path: "/project/notes.txt".into(),
+    };
+    sessions.set_attachments("session:destination", vec![attachment.clone()]);
+    let source = ComposerSnapshot::new("source draft".into(), 2, 2..2);
+    sessions.capture_current(source.clone());
+    sessions.record_submission("session:destination", "code comment");
+    assert_eq!(sessions.snapshot_for("session:destination"), destination);
+    let recovered = sessions.append_to_draft("session:destination", "code comment");
+    assert_eq!(recovered.text, "existing draft\n\ncode comment");
+    assert_eq!(recovered.cursor, destination.cursor);
+    assert_eq!(recovered.selection, destination.selection);
+    assert_eq!(sessions.snapshot_for("session:source"), source);
+    assert_eq!(
+        sessions.saved_attachments().next().map(|(_, files)| files),
+        Some([attachment].as_slice())
+    );
+}
+
+#[test]
 fn history_cycles_and_restores_the_unsent_draft() {
     let mut sessions = sessions("session:one");
     sessions.record_submission("session:one", "old");

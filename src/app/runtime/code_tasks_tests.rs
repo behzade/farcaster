@@ -29,6 +29,10 @@ fn task(harness: &Harness, id: &str, model: Option<Model>) -> RuntimeCommand {
 }
 
 fn result(harness: &Harness, id: &str, background: bool) -> (bool, Option<PathBuf>) {
+    result_for(harness, &format!("draft:{id}"), background)
+}
+
+fn result_for(harness: &Harness, expected: &str, background: bool) -> (bool, Option<PathBuf>) {
     let deadline = Instant::now() + WAIT;
     loop {
         match harness.runtime.try_recv() {
@@ -48,7 +52,7 @@ fn result(harness: &Harness, id: &str, background: bool) -> (bool, Option<PathBu
                 accepted,
                 session,
             }) => {
-                assert_eq!(target, format!("draft:{id}"));
+                assert_eq!(target, expected);
                 return (accepted, session);
             }
             _ => {}
@@ -56,6 +60,122 @@ fn result(harness: &Harness, id: &str, background: bool) -> (bool, Option<PathBu
         assert!(Instant::now() < deadline, "no task result");
         thread::sleep(Duration::from_millis(5));
     }
+}
+
+fn echo_user(peer: &mut Peer, expected: &str) -> Value {
+    let mut line = String::new();
+    peer.reader.read_line(&mut line).expect("read user prompt");
+    let prompt: Value = serde_json::from_str(&line).expect("user JSON");
+    assert_eq!(prompt["type"], "user");
+    assert_eq!(prompt["message"]["content"][0]["text"], expected);
+    peer.write(prompt.clone());
+    prompt
+}
+
+#[test]
+fn comment_reuses_running_background_session_and_queues_when_steering_is_unavailable() {
+    isolated(
+        "code_tasks_tests::comment_reuses_running_background_session_and_queues_when_steering_is_unavailable",
+        &["claude"],
+        || {
+            let harness = ready_original();
+            harness
+                .runtime
+                .send(task(&harness, "destination", None))
+                .expect("start destination");
+            let mut peer = harness.accept(WAIT).expect("destination starts");
+            peer.complete_catalog(false);
+            echo_user(&mut peer, PROMPT);
+            let (_, session) = result(&harness, "destination", true);
+            let path = session.expect("session locator");
+            let target = format!("session:{}", path.display());
+            harness
+                .runtime
+                .send(RuntimeCommand::SendToSession {
+                    target: target.clone(),
+                    session: Some(crate::sessions::SessionTarget {
+                        path: path.clone(),
+                        harness: "claude".into(),
+                        id: String::new(),
+                    }),
+                    project: harness.project.clone(),
+                    message: "Fix the selected code".into(),
+                })
+                .expect("send comment");
+            // Claude cannot steer. Finishing its turn must release the queued comment.
+            let finished =
+                include_str!("../../modules/agents/adapter/claude/fixtures/cli-2.1.236.jsonl")
+                    .lines()
+                    .map(|line| serde_json::from_str::<Value>(line).expect("recorded frame"))
+                    .find(|frame| frame["type"] == "result")
+                    .expect("recorded result");
+            peer.write(finished);
+            echo_user(&mut peer, "Fix the selected code");
+            assert!(result_for(&harness, &target, true).0);
+            assert!(
+                harness.accept(Duration::from_millis(50)).is_none(),
+                "sending restarted the destination"
+            );
+        },
+    );
+}
+
+#[test]
+fn missing_comment_draft_is_rejected_without_sending_to_selected_chat() {
+    isolated(
+        "code_tasks_tests::missing_comment_draft_is_rejected_without_sending_to_selected_chat",
+        &["claude"],
+        || {
+            let harness = ready_original();
+            harness
+                .runtime
+                .send(RuntimeCommand::SendToSession {
+                    target: "draft:missing".into(),
+                    session: None,
+                    project: harness.project.clone(),
+                    message: PROMPT.into(),
+                })
+                .expect("send request");
+            assert!(!result(&harness, "missing", true).0);
+            assert!(harness.accept(Duration::from_millis(50)).is_none());
+        },
+    );
+}
+
+#[test]
+fn comment_resumes_an_unopened_session_without_selecting_it() {
+    isolated(
+        "code_tasks_tests::comment_resumes_an_unopened_session_without_selecting_it",
+        &["claude"],
+        || {
+            let harness = ready_original();
+            let id = "00000000-0000-4000-8000-000000000123";
+            let native = harness.project.join(".claude/projects/fixture");
+            fs::create_dir_all(&native).expect("native transcript directory");
+            fs::write(native.join(format!("{id}.jsonl")), format!("{}\n", json!({
+                "type":"user", "sessionId":id, "cwd":harness.project, "message":{"role":"user", "content":"Earlier task"}
+            }))).expect("native transcript");
+            let path = harness.project.join("session-locators/claude").join(id);
+            let target = format!("session:{}", path.display());
+            harness
+                .runtime
+                .send(RuntimeCommand::SendToSession {
+                    target: target.clone(),
+                    session: Some(crate::sessions::SessionTarget {
+                        path: path.clone(),
+                        harness: "claude".into(),
+                        id: id.into(),
+                    }),
+                    project: harness.project.clone(),
+                    message: PROMPT.into(),
+                })
+                .expect("send comment");
+            let mut peer = harness.accept(WAIT).expect("resume destination");
+            peer.complete_catalog(false);
+            assert_eq!(echo_user(&mut peer, PROMPT)["session_id"], id);
+            assert!(result_for(&harness, &target, true).0);
+        },
+    );
 }
 
 #[test]

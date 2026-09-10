@@ -62,6 +62,12 @@ pub(crate) enum RuntimeCommand {
         settings: TaskSettings,
         message: String,
     },
+    SendToSession {
+        target: String,
+        session: Option<crate::sessions::SessionTarget>,
+        project: PathBuf,
+        message: String,
+    },
     ForkSession {
         path: PathBuf,
         harness: String,

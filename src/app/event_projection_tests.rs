@@ -39,6 +39,7 @@ fn prompt_result_follows_submission_through_draft_promotion() {
                     text: "keep this on rejection".into(),
                     images: Vec::new(),
                     pastes: Vec::new(),
+                    append_on_failure: false,
                     result: None,
                 },
             )]);

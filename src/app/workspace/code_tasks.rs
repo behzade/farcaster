@@ -11,9 +11,10 @@ use crate::runtime::{RuntimeCommand, TaskSettings};
 
 #[derive(Clone)]
 struct TaskChat {
-    id: String,
+    target: String,
     project: PathBuf,
     session: Option<PathBuf>,
+    new_task: bool,
 }
 
 struct TaskNotice {
@@ -30,10 +31,14 @@ pub(in crate::app) struct CodeTasks {
 
 impl CodeTasks {
     pub(in crate::app) fn notice_message(&self) -> Option<&'static str> {
-        Some(match self.notice.as_ref()?.result {
-            None => "Starting task…",
-            Some(true) => "Task started",
-            Some(false) => "Task couldn’t start",
+        let notice = self.notice.as_ref()?;
+        Some(match (notice.chat.new_task, notice.result) {
+            (true, None) => "Starting task…",
+            (true, Some(true)) => "Task started",
+            (true, Some(false)) => "Task couldn’t start",
+            (false, None) => "Sending comment…",
+            (false, Some(true)) => "Comment sent",
+            (false, Some(false)) => "Comment couldn’t send · Saved in chat draft",
         })
     }
 
@@ -43,7 +48,7 @@ impl CodeTasks {
             chat.session = Some(session.to_path_buf());
         }
         if let Some(notice) = &mut self.notice
-            && draft_target(&notice.chat.id) == target
+            && notice.chat.target == target
         {
             notice.chat.session = Some(session.to_path_buf());
         }
@@ -51,6 +56,56 @@ impl CodeTasks {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn submit_code_comment(
+        &mut self,
+        destination: super::code_comment::CodeDestination,
+        project: PathBuf,
+        message: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = destination.target;
+        if self.pending_submissions.contains_key(&target) {
+            self.code_comment_error(
+                "A message is still being sent to this chat. Try again shortly.".into(),
+                cx,
+            );
+            return;
+        }
+        if !self.ensure_backend_trust(&destination.harness, &project, window, cx) {
+            return;
+        }
+        let chat = TaskChat {
+            target: target.clone(),
+            project: project.clone(),
+            session: destination
+                .session
+                .as_ref()
+                .map(|session| session.path.clone()),
+            new_task: false,
+        };
+        if let Err(error) = self.runtime.send(RuntimeCommand::SendToSession {
+            target: target.clone(),
+            session: destination.session,
+            project,
+            message: message.clone(),
+        }) {
+            self.code_comment_error(error, cx);
+            return;
+        }
+        self.capture_composer_session(cx);
+        if let Some(path) = crate::app::composer::submissions::inactive_session_for_target(
+            &target,
+            chat.session.as_deref(),
+            &self.all_sessions,
+        ) {
+            self.set_session_active(path, cx);
+        }
+        self.track_code_submission(chat, message, cx);
+        self.close_code_comment(window, cx);
+        self.notify_session_rail(cx);
+    }
+
     pub(in crate::app) fn submit_code_task(
         &mut self,
         settings: TaskSettings,
@@ -58,6 +113,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.ensure_backend_trust(&settings.harness, &settings.project, window, cx) {
+            return;
+        }
         let draft = project_registry::new_draft(settings.project.clone(), &settings.harness)
             .and_then(|draft| {
                 let mut registry = crate::projects::Registry {
@@ -73,7 +131,7 @@ impl FarcasterApp {
         let draft = match draft {
             Ok(draft) => draft,
             Err(error) => {
-                self.notify_workspace_error("Start task", error, cx);
+                self.code_comment_error(error, cx);
                 return;
             }
         };
@@ -81,31 +139,17 @@ impl FarcasterApp {
         self.draft_session_ids
             .insert(draft.id.clone(), draft.app_session_id);
         let chat = TaskChat {
-            id: draft.id.clone(),
+            target: target.clone(),
             project: settings.project.clone(),
             session: None,
+            new_task: true,
         };
         match self.runtime.send(RuntimeCommand::StartTask {
             id: draft.id,
             settings,
             message: message.clone(),
         }) {
-            Ok(()) => {
-                self.begin_draft_submission(&target, &message);
-                self.composer_sessions.record_submission(&target, &message);
-                self.pending_submissions.insert(
-                    target.clone(),
-                    PendingSubmission {
-                        submitted_target: target.clone(),
-                        text: message,
-                        images: Vec::new(),
-                        pastes: Vec::new(),
-                        result: None,
-                    },
-                );
-                self.code_tasks.pending.insert(target, chat.clone());
-                self.show_code_task_notice(chat, None, cx);
-            }
+            Ok(()) => self.track_code_submission(chat, message, cx),
             Err(_) => {
                 self.composer_sessions
                     .restore_submitted_text(&target, message);
@@ -114,6 +158,25 @@ impl FarcasterApp {
         }
         self.close_code_comment(window, cx);
         self.notify_session_rail(cx);
+    }
+
+    fn track_code_submission(&mut self, chat: TaskChat, message: String, cx: &mut Context<Self>) {
+        let target = &chat.target;
+        self.begin_draft_submission(target, &message);
+        self.composer_sessions.record_submission(target, &message);
+        self.pending_submissions.insert(
+            target.clone(),
+            PendingSubmission {
+                submitted_target: target.clone(),
+                text: message,
+                images: Vec::new(),
+                pastes: Vec::new(),
+                append_on_failure: !chat.new_task,
+                result: None,
+            },
+        );
+        self.code_tasks.pending.insert(target.clone(), chat.clone());
+        self.show_code_task_notice(chat, None, cx);
     }
 
     pub(in crate::app) fn code_task_result(
@@ -166,8 +229,8 @@ impl FarcasterApp {
         let chat = notice.chat;
         if let Some(path) = chat.session {
             self.select_session_and_focus(path, chat.project, window, cx);
-        } else {
-            self.resume_draft_and_focus(chat.id, chat.project, window, cx);
+        } else if let Some(id) = chat.target.strip_prefix("draft:") {
+            self.resume_draft_and_focus(id.to_owned(), chat.project, window, cx);
         }
         self.show_chat_surface(window, cx);
     }

@@ -9,8 +9,8 @@ pub(crate) use adapter::{
     load_configuration_catalog, load_session_history, move_session_family, project_trust,
     project_trust_description, rename_session, saved_project_trust, spawn_session,
     supports_auto_title_generation, supports_reasoning_effort, supports_session_fork,
-    supports_session_move, supports_startup_command, validate_launch, validate_session_move,
-    worker_factories,
+    supports_session_move, supports_startup_command, supports_steering, validate_launch,
+    validate_session_move, worker_factories,
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{

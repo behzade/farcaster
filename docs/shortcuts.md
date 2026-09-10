@@ -72,9 +72,12 @@ The terminal/Neovim keeps its Ctrl keys. Super is unbound on Linux.
 
 In Neovim, `Ctrl-G c` opens an app modal with the current file and cursor line
 (normal mode), or selected buffer text and range (visual mode, including line
-and block selections). Unsaved edits are included. Enter adds your comment and
-code to the current session's composer without sending; Shift+Enter adds a new
-line. Existing draft text and attachments remain. Esc returns to the editor
+and block selections). Unsaved edits are included. Enter sends your comment and
+code to the chosen chat; Shift+Enter adds a new line. **To** defaults to the current
+chat and opens a searchable list of chats in this project, plus **New task**.
+Sending keeps you in Neovim and leaves draft text and attachments intact. During
+a run, comments steer when supported or queue as a follow-up. A failed send keeps
+the comment in the destination's draft, after any existing text. Esc returns to the editor
 without moving the cursor or changing the selection. File buffers only; captures
 are limited to 2,000 lines and 128 KiB.
 
@@ -82,7 +85,8 @@ are limited to 2,000 lines and 128 KiB.
 press Enter to send it in a separate chat, using the current harness and model.
 Focus returns to Neovim; the original chat draft and attachments stay intact.
 The confirmation offers **Open chat**. A failed start keeps the request in the
-new chat's composer so you can retry.
+new chat's composer so you can retry. Both shortcuts use the same modal; you can
+change the destination before sending.
 
 ## Composer and local keys
 

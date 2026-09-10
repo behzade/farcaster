@@ -3,6 +3,20 @@ use super::*;
 impl RuntimeOwner {
     pub(super) fn apply_command(&mut self, runtime_command: RuntimeCommand) {
         match runtime_command {
+            RuntimeCommand::SendToSession {
+                target, message, ..
+            } => {
+                let mode = if self.active_snapshot().conversation.running {
+                    if agents::supports_steering(&self.harness) {
+                        PromptMode::Steer
+                    } else {
+                        PromptMode::FollowUp
+                    }
+                } else {
+                    PromptMode::Normal
+                };
+                self.send_prompt(target, mode, message, Vec::new(), false);
+            }
             RuntimeCommand::Prompt {
                 target,
                 mode,

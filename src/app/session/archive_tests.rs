@@ -69,6 +69,7 @@ fn active_work_includes_recursive_descendants() {
             text: "pending child prompt".into(),
             images: Vec::new(),
             pastes: Vec::new(),
+            append_on_failure: false,
             result: None,
         },
     )]);

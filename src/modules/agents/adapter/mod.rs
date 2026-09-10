@@ -60,6 +60,13 @@ pub(crate) fn available_access_modes(
         .collect()
 }
 
+pub(crate) fn supports_steering(harness: &str) -> bool {
+    known_backend_descriptors().into_iter().any(|descriptor| {
+        descriptor.id.as_str() == harness
+            && descriptor.capabilities.turns.steer == super::contract::CapabilitySupport::Available
+    })
+}
+
 pub(crate) fn supports_reasoning_effort(harness: &str) -> bool {
     known_backend_descriptors().into_iter().any(|descriptor| {
         descriptor.id.as_str() == harness

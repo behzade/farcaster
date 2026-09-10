@@ -273,6 +273,18 @@ impl ComposerSessions {
         Some(session.composer.clone())
     }
 
+    pub(crate) fn append_to_draft(&mut self, target: &str, text: &str) -> ComposerSnapshot {
+        let session = self.sessions.entry(target.to_owned()).or_default();
+        if !session.composer.text.is_empty() {
+            session.composer.text.push_str("\n\n");
+        }
+        session.composer.text.push_str(text);
+        session.history_index = None;
+        session.history_draft = None;
+        self.persistence.save(session.record(target.to_owned()));
+        session.composer.clone()
+    }
+
     pub(crate) fn sync_history(&mut self, target: &str, messages: &[String]) {
         if messages.is_empty() {
             return;

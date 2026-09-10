@@ -5,6 +5,11 @@ use super::neovim::CodeContext;
 use crate::app::{AppSurface, FarcasterApp};
 use crate::runtime::TaskSettings;
 
+#[path = "code_destinations.rs"]
+mod destinations;
+pub(in crate::app) use destinations::CodeDestination;
+use destinations::DestinationPicker;
+
 impl CodeContext {
     pub fn location(&self) -> String {
         if self.mode == "n" {
@@ -55,10 +60,20 @@ pub(in crate::app) struct CodeComment {
     pub focus: FocusHandle,
     pub input: Entity<TextareaState>,
     pub context: CodeContext,
-    pub task: Option<TaskSettings>,
+    pub settings: TaskSettings,
+    destination: Option<usize>,
+    pub picker: Option<DestinationPicker>,
+    pub error: Option<String>,
+    destinations: Vec<CodeDestination>,
     target: String,
     return_focus: Option<FocusHandle>,
     _subscription: Subscription,
+}
+
+impl CodeComment {
+    pub(in crate::app) fn destination(&self) -> Option<&CodeDestination> {
+        self.destination.map(|index| &self.destinations[index])
+    }
 }
 
 impl FarcasterApp {
@@ -89,18 +104,13 @@ impl FarcasterApp {
         let Some(editor) = self.editor.clone().filter(|_| self.editor_ready) else {
             return;
         };
-        let task = start_task.then(|| TaskSettings {
+        let settings = TaskSettings {
             project: self.workspace_project(),
             harness: self.active_harness().to_owned(),
             model: self.snapshot.session_identity().model.cloned(),
             effort: self.snapshot.session_identity().effort.map(str::to_owned),
             access_mode: self.snapshot.access_mode,
-        });
-        if let Some(settings) = &task
-            && !self.ensure_backend_trust(&settings.harness, &settings.project, window, cx)
-        {
-            return;
-        }
+        };
         let target = self.composer_sessions.current_target().to_owned();
         let generation = self.editor_request_generation;
         let return_focus = window.focused(cx);
@@ -152,11 +162,23 @@ impl FarcasterApp {
                 });
                 this.cover_native_workspace_surface(cx);
                 let input_focus = input.read(cx).focus_handle(cx);
+                let current = CodeDestination {
+                    target: target.clone(),
+                    session: this.snapshot.session_target(),
+                    label: "Current chat".into(),
+                    harness: settings.harness.clone(),
+                };
+                let destinations =
+                    destinations::choices(&settings.project, current, &this.all_sessions);
                 this.code_comment = Some(CodeComment {
                     focus: cx.focus_handle(),
                     input,
                     context,
-                    task,
+                    settings,
+                    destination: (!start_task).then_some(0),
+                    destinations,
+                    picker: None,
+                    error: None,
                     target,
                     return_focus,
                     _subscription: subscription,
@@ -172,6 +194,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .code_comment
+            .as_ref()
+            .is_some_and(|comment| comment.picker.is_some())
+        {
+            self.close_code_destination_picker(window, cx);
+            return;
+        }
         let Some(comment) = self.code_comment.take() else {
             return;
         };
@@ -181,16 +211,15 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn add_code_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(comment) = self.code_comment.as_ref() else {
+        let Some(comment) = self.code_comment.as_mut() else {
             return;
         };
+        comment.error = None;
+        if comment.picker.is_some() {
+            return;
+        }
         if comment.target != self.composer_sessions.current_target() {
-            self.notify_workspace_error(
-                if comment.task.is_some() {
-                    "Start task"
-                } else {
-                    "Comment on code"
-                },
+            self.code_comment_error(
                 "Return to the original session to use this code capture.".into(),
                 cx,
             );
@@ -201,23 +230,20 @@ impl FarcasterApp {
             return;
         }
         let prompt = comment.context.prompt(&instruction);
-        if let Some(settings) = comment.task.clone() {
-            self.submit_code_task(settings, prompt, window, cx);
-            return;
-        }
-        let existing = self.composer.read(cx).value();
-        let combined = if existing.is_empty() {
-            prompt
+        if let Some(destination) = comment.destination().cloned() {
+            let project = comment.settings.project.clone();
+            self.submit_code_comment(destination, project, prompt, window, cx);
         } else {
-            format!("{existing}\n\n{prompt}")
-        };
-        self.close_code_comment(window, cx);
-        self.composer.update(cx, |input, cx| {
-            input.set_value(combined.clone(), window, cx);
-            input.set_selected_range(combined.len()..combined.len(), cx);
-        });
-        self.capture_composer_session(cx);
-        self.return_to_chat_composer(window, cx);
+            let settings = comment.settings.clone();
+            self.submit_code_task(settings, prompt, window, cx);
+        }
+    }
+
+    pub(super) fn code_comment_error(&mut self, message: String, cx: &mut Context<Self>) {
+        if let Some(comment) = self.code_comment.as_mut() {
+            comment.error = Some(message);
+            cx.notify();
+        }
     }
 }
 

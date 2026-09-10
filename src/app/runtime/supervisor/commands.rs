@@ -1,6 +1,61 @@
 use super::*;
 
 impl Supervisor {
+    fn send_to_session(&mut self, command: RuntimeCommand) {
+        let RuntimeCommand::SendToSession {
+            target,
+            session,
+            project,
+            ..
+        } = &command
+        else {
+            return;
+        };
+        let key = if let Some(session) = session {
+            let select = RuntimeCommand::SelectSession {
+                path: session.path.clone(),
+                harness: session.harness.clone(),
+                session_id: session.id.clone(),
+                project: project.clone(),
+            };
+            let key = self
+                .actor_paths
+                .get(&session.path)
+                .cloned()
+                .unwrap_or_else(|| actor_key_for_command(&select, target, &self.latest));
+            let resident = self.latest.get(&key);
+            let actor = self.actors.entry(key.clone()).or_insert_with(|| {
+                SessionRuntimeHandle::spawn(
+                    project.clone(),
+                    self.process_command.clone(),
+                    false,
+                    session.harness.clone(),
+                    self.supervisor_thread.clone(),
+                )
+            });
+            if target_command_needs_actor_message(&select, resident.map(Arc::as_ref)) {
+                send_configured_command(actor, select, &self.configurations);
+            }
+            self.actor_paths.insert(session.path.clone(), key.clone());
+            key
+        } else {
+            // Draft comments address only the draft where the capture began.
+            target.clone()
+        };
+        if let Some(actor) = self.actors.get(&key) {
+            self.clock = self.clock.saturating_add(1);
+            self.last_touch.insert(key.clone(), self.clock);
+            self.interacted.insert(key);
+            actor.send(command);
+        } else {
+            let _ = self.event_tx.send(RuntimeEvent::PromptResult {
+                target: target.clone(),
+                accepted: false,
+                session: session.as_ref().map(|session| session.path.clone()),
+            });
+        }
+    }
+
     fn start_background_task(&mut self, id: String, settings: TaskSettings, message: String) {
         let key = format!("draft:{id}");
         // Retrying the same creation request must not launch or submit twice.
@@ -89,6 +144,10 @@ impl Supervisor {
         match self.command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => false,
             Ok(command) => {
+                if matches!(command, RuntimeCommand::SendToSession { .. }) {
+                    self.send_to_session(command);
+                    return true;
+                }
                 if let RuntimeCommand::StartTask {
                     id,
                     settings,
