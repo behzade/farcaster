@@ -10,18 +10,12 @@ use crate::{
 
 #[derive(Default)]
 pub(in crate::app) struct FileSelection {
-    pub active: bool,
     pub paths: BTreeSet<PathBuf>,
 }
 
 impl FileSelection {
-    pub fn toggle_mode(&mut self) {
-        self.active = !self.active;
-        self.paths.clear();
-    }
-
     pub fn toggle(&mut self, path: PathBuf) {
-        if self.active && !self.paths.remove(&path) {
+        if !self.paths.remove(&path) {
             self.paths.insert(path);
         }
     }
@@ -78,9 +72,9 @@ impl PendingRepositoryEdit {
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn toggle_repository_selection(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn clear_repository_selection(&mut self, cx: &mut Context<Self>) {
         if self.repository.edits.pending.is_none() {
-            self.repository.edits.selection.toggle_mode();
+            self.repository.edits.selection.paths.clear();
             self.notify_run_panel(cx);
         }
     }

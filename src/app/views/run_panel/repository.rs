@@ -41,6 +41,7 @@ impl FarcasterApp {
         browser: &RepositoryView<'_>,
     ) -> AnyElement {
         let snapshot = self.repository.snapshot.as_ref();
+        let selected_count = self.repository.edits.selection.paths.len();
         let header = repository_header(
             self,
             snapshot,
@@ -112,9 +113,11 @@ impl FarcasterApp {
                             .aria_label("Filter changed files")
                             .prefix(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline)),
                     )
-                    .when(self.repository.edits.selection.active, |section| {
+                    .when(selected_count > 0, |section| {
                         let commit = entity.clone();
-                        let count = self.repository.edits.selection.paths.len();
+                        let clear = entity.clone();
+                        let enabled = self.repository.sync.action.is_none()
+                            && self.repository.edits.pending.is_none();
                         section.child(
                             div()
                                 .flex()
@@ -125,15 +128,24 @@ impl FarcasterApp {
                                         .flex_1()
                                         .text_size(THEME.type_scale.caption)
                                         .text_color(THEME.colors.muted)
-                                        .child(format!("{count} selected")),
+                                        .child(format!("{selected_count} selected")),
                                 )
+                                .child(button(
+                                    "clear-selected-files",
+                                    "Clear",
+                                    ButtonTone::Quiet,
+                                    enabled,
+                                    move |_, cx| {
+                                        let _ = clear.update(cx, |this, cx| {
+                                            this.clear_repository_selection(cx);
+                                        });
+                                    },
+                                ))
                                 .child(button(
                                     "commit-selected-files",
                                     "Commit…",
                                     ButtonTone::Accent,
-                                    count > 0
-                                        && self.repository.sync.action.is_none()
-                                        && self.repository.edits.pending.is_none(),
+                                    enabled,
                                     move |window, cx| {
                                         let _ = commit.update(cx, |this, cx| {
                                             this.review_repository_edit(
@@ -334,7 +346,7 @@ impl FarcasterApp {
         let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
         let action_group: gpui::SharedString = format!("repository-actions-{row_id}").into();
-        let selecting = self.repository.edits.selection.active;
+        let selecting = !self.repository.edits.selection.paths.is_empty();
         let selected = self
             .repository
             .edits
@@ -376,7 +388,7 @@ impl FarcasterApp {
             .items_center()
             .gap(THEME.space.xs)
             .hover(|row| row.bg(THEME.colors.hover))
-            .when(selecting && selected, |row| row.bg(THEME.colors.selection))
+            .when(selected, |row| row.bg(THEME.colors.selection))
             .focus(|row| row.bg(THEME.colors.selection))
             .cursor_pointer()
             .on_click(move |event, window, cx| {
@@ -398,48 +410,52 @@ impl FarcasterApp {
                     });
                 }
             })
-            .when(selecting, |row| {
-                row.child(
-                    file_action(
-                        ("select-repository-file", row_id),
-                        format!(
-                            "{} {} for commit",
-                            if selected { "Deselect" } else { "Select" },
-                            change.relative_path.display()
-                        ),
-                        move |_, cx| {
-                            if editable {
-                                let _ = select_entity.update(cx, |this, cx| {
-                                    this.toggle_repository_file(select_path.clone(), cx)
-                                });
-                            }
-                        },
-                    )
-                    .role(Role::CheckBox)
-                    .aria_toggled(if selected {
-                        gpui::Toggled::True
-                    } else {
-                        gpui::Toggled::False
-                    })
-                    .when(!editable, |control| control.opacity(0.4))
-                    .child(
-                        div()
-                            .size(px(14.0))
-                            .border(THEME.border)
-                            .border_color(THEME.colors.muted)
-                            .rounded(px(2.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(selected, |checkbox| {
-                                checkbox.bg(THEME.colors.accent).child(
-                                    app_icon(AppIcon::Check, AppIconSize::Inline)
-                                        .text_color(THEME.colors.surface),
-                                )
-                            }),
+            .child(
+                file_action(
+                    ("select-repository-file", row_id),
+                    format!(
+                        "{} {} for commit",
+                        if selected { "Deselect" } else { "Select" },
+                        change.relative_path.display()
                     ),
+                    move |_, cx| {
+                        if editable {
+                            let _ = select_entity.update(cx, |this, cx| {
+                                this.toggle_repository_file(select_path.clone(), cx)
+                            });
+                        }
+                    },
                 )
-            })
+                .role(Role::CheckBox)
+                .aria_toggled(if selected {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .when(!selecting, |control| {
+                    control
+                        .opacity(0.0)
+                        .group_hover(action_group.clone(), |control| control.opacity(1.0))
+                        .focus_visible(|control| control.opacity(1.0))
+                })
+                .child(
+                    div()
+                        .size(px(14.0))
+                        .border(THEME.border)
+                        .border_color(THEME.colors.muted)
+                        .when(!editable, |checkbox| checkbox.opacity(0.4))
+                        .rounded(px(2.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(selected, |checkbox| {
+                            checkbox.bg(THEME.colors.accent).child(
+                                app_icon(AppIcon::Check, AppIconSize::Inline)
+                                    .text_color(THEME.colors.surface),
+                            )
+                        }),
+                ),
+            )
             .child(
                 div()
                     .min_w_0()

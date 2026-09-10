@@ -8,7 +8,7 @@ use crate::{
         ui::{
             assets::AppIcon,
             primitives::{
-                ButtonTone, activates_button, button, dropdown_button, icon_button, icon_control,
+                ButtonTone, activates_button, dropdown_button, icon_button, icon_control,
                 section_heading,
             },
             theme::{MONO_FONT_FAMILY, THEME},
@@ -58,7 +58,6 @@ pub(super) fn repository_header(
     filtering: bool,
 ) -> AnyElement {
     let refresh = entity.clone();
-    let select = entity.clone();
     let enabled = app.repository.execution_allowed;
     let syncing = app.repository.sync.action;
     let count = snapshot.map_or(0, |snapshot| {
@@ -103,22 +102,6 @@ pub(super) fn repository_header(
                         },
                     ))
                 })
-                .child(button(
-                    "select-repository-files",
-                    if app.repository.edits.selection.active {
-                        "Cancel"
-                    } else {
-                        "Select"
-                    },
-                    ButtonTone::Quiet,
-                    enabled
-                        && (count > 0 || app.repository.edits.selection.active)
-                        && syncing.is_none()
-                        && app.repository.edits.pending.is_none(),
-                    move |_, cx| {
-                        let _ = select.update(cx, |this, cx| this.toggle_repository_selection(cx));
-                    },
-                ))
                 .child(menu),
         )
         .when_some(snapshot, |section, snapshot| {

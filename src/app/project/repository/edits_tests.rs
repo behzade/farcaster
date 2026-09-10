@@ -1,16 +1,13 @@
 use super::*;
 
 #[test]
-fn leaving_selection_mode_clears_paths_and_inactive_rows_cannot_select() {
+fn checkboxes_select_directly_and_deselect_the_last_path() {
     let mut selection = FileSelection::default();
     selection.toggle("a".into());
-    assert!(selection.paths.is_empty());
-    selection.toggle_mode();
-    selection.toggle("a".into());
+    assert_eq!(selection.paths, BTreeSet::from([PathBuf::from("a")]));
     selection.toggle("b".into());
     selection.toggle("a".into());
     assert_eq!(selection.paths, BTreeSet::from([PathBuf::from("b")]));
-    selection.toggle_mode();
-    assert!(!selection.active);
+    selection.toggle("b".into());
     assert!(selection.paths.is_empty());
 }
