@@ -30,7 +30,7 @@ impl UiEventSender {
 impl RuntimeHandle {
     pub(crate) fn spawn(
         project: PathBuf,
-        draft_id: String,
+        draft: crate::projects::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
         app_proxy: Option<String>,
     ) -> Self {
@@ -41,7 +41,7 @@ impl RuntimeHandle {
                 .map(|root| root.join("session-locators")),
             ..AgentLaunchConfig::default()
         };
-        Self::spawn_with_configuration_refresh(project, draft_id, initial_session, command, true)
+        Self::spawn_with_configuration_refresh(project, draft, initial_session, command, true)
     }
 
     #[cfg(test)]
@@ -52,8 +52,8 @@ impl RuntimeHandle {
         process_command: AgentLaunchConfig,
     ) -> Self {
         Self::spawn_with_configuration_refresh(
-            project,
-            draft_id,
+            project.clone(),
+            crate::projects::DraftSession::with_id(draft_id, project),
             initial_session,
             process_command,
             false,
@@ -62,7 +62,7 @@ impl RuntimeHandle {
 
     fn spawn_with_configuration_refresh(
         project: PathBuf,
-        draft_id: String,
+        draft: crate::projects::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
         refresh_configuration: bool,
@@ -79,7 +79,7 @@ impl RuntimeHandle {
             .spawn(move || {
                 run_supervisor(
                     project,
-                    draft_id,
+                    draft,
                     initial_session,
                     process_command,
                     command_rx,
@@ -363,7 +363,7 @@ struct Supervisor {
 
 fn run_supervisor(
     project: PathBuf,
-    draft_id: String,
+    draft: crate::projects::DraftSession,
     initial_session: Option<crate::sessions::SessionTarget>,
     process_command: AgentLaunchConfig,
     command_rx: mpsc::Receiver<RuntimeCommand>,
@@ -372,7 +372,7 @@ fn run_supervisor(
 ) {
     Supervisor::new(
         project,
-        draft_id,
+        draft,
         initial_session,
         process_command,
         command_rx,
@@ -385,7 +385,7 @@ fn run_supervisor(
 impl Supervisor {
     fn new(
         project: PathBuf,
-        draft_id: String,
+        draft: crate::projects::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
         command_rx: mpsc::Receiver<RuntimeCommand>,
@@ -393,11 +393,10 @@ impl Supervisor {
         refresh_configuration: bool,
     ) -> Self {
         let supervisor_thread = thread::current();
-        let initial_key = format!("draft:{draft_id}");
+        let initial_key = format!("draft:{}", draft.id);
         let catalog_key = "catalog".to_owned();
         let initial_project = project.clone();
-        let initial_command =
-            initial_draft_command(draft_id, initial_project.clone(), initial_session.clone());
+        let initial_command = initial_draft_command(draft, initial_session.clone());
         let initial_harness = session_actor_harness(&initial_command);
         let mut actors = HashMap::from([
             (
@@ -536,14 +535,14 @@ impl Supervisor {
 }
 
 pub(super) fn initial_draft_command(
-    id: String,
-    project: PathBuf,
+    draft: crate::projects::DraftSession,
     session: Option<crate::sessions::SessionTarget>,
 ) -> RuntimeCommand {
+    let project = draft.project;
     session.map_or(
         RuntimeCommand::ResumeDraft {
-            id,
-            harness: "pi".into(),
+            id: draft.id,
+            harness: draft.harness,
             project: project.clone(),
         },
         |target| RuntimeCommand::SelectSession {

@@ -23,7 +23,13 @@ impl FarcasterApp {
             crate::app::infrastructure::performance::StartupTiming::new("app.spawn_runtime");
         let runtime = RuntimeHandle::spawn(
             project.clone(),
-            persisted.selected_draft.clone(),
+            persisted
+                .registry
+                .drafts
+                .iter()
+                .find(|draft| draft.id == persisted.selected_draft)
+                .expect("startup draft is registered")
+                .clone(),
             None,
             persisted.saved_proxy.clone(),
         );

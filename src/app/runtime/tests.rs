@@ -430,9 +430,11 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
 #[test]
 fn persisted_submitted_draft_selects_its_session() {
     let project = PathBuf::from("/project");
+    let mut draft = crate::projects::DraftSession::with_id("draft".into(), project.clone());
+    draft.harness = "codex-cli".into();
     let session = PathBuf::from("/sessions/submitted.jsonl");
     assert!(matches!(
-        initial_draft_command("draft".into(), project.clone(), Some(crate::sessions::SessionTarget {
+        initial_draft_command(draft.clone(), Some(crate::sessions::SessionTarget {
             harness: "pi".into(), id: "saved-pi-id".into(), path: session.clone(),
         })),
         RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
@@ -443,7 +445,7 @@ fn persisted_submitted_draft_selects_its_session() {
     ));
     let codex = PathBuf::from("/locators/codex-cli/thread-1");
     assert!(matches!(
-        initial_draft_command("draft".into(), project.clone(), Some(crate::sessions::SessionTarget {
+        initial_draft_command(draft.clone(), Some(crate::sessions::SessionTarget {
             harness: "codex-cli".into(), id: "thread-1".into(), path: codex.clone(),
         })),
         RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
@@ -453,9 +455,9 @@ fn persisted_submitted_draft_selects_its_session() {
                 && selected_project == project
     ));
     assert!(matches!(
-        initial_draft_command("draft".into(), project.clone(), None),
-        RuntimeCommand::ResumeDraft { id, project: draft_project, .. }
-            if id == "draft" && draft_project == project
+        initial_draft_command(draft, None),
+        RuntimeCommand::ResumeDraft { id, harness, project: draft_project }
+            if id == "draft" && harness == "codex-cli" && draft_project == project
     ));
 }
 

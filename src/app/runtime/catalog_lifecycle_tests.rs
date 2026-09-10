@@ -133,7 +133,7 @@ impl Harness {
         // Unlike RuntimeHandle::spawn_with, do not disable catalog discovery.
         let runtime = RuntimeHandle::spawn_with_configuration_refresh(
             project.clone(),
-            "initial".into(),
+            crate::projects::DraftSession::with_id("initial".into(), project.clone()),
             None,
             AgentLaunchConfig {
                 session_locator_root: Some(project.join("session-locators")),
