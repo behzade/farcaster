@@ -51,6 +51,10 @@ I have been using Farcaster daily for a while. It's still early, and bugs/missin
 - [Pi](https://github.com/badlogic/pi-mono) (through Pi RPC)
 - [OpenCode](https://opencode.ai/) (through the `opencode2` server executable)
 - [Cursor](https://cursor.com/cli) (through Cursor CLI ACP adapter)
+- [Claude Code](https://github.com/anthropics/claude-code) (through `claude -p`)
+- Antigravity (through its ACP server)
+
+See the [harness feature table](docs/harnesses.md) for capabilities and usage notes.
 
 In theory, any harness supporting ACP could be integrated through the app's ACP adapter, but most harnesses support a wider range of features than ACP.
 
