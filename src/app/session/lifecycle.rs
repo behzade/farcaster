@@ -215,6 +215,27 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.new_session_with_folder(project, None, window, cx);
+    }
+
+    pub(in crate::app) fn new_session_with_folder(
+        &mut self,
+        project: PathBuf,
+        folder: Option<u64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if folder.is_some_and(|id| {
+            !self
+                .session_folders
+                .folders
+                .iter()
+                .any(|folder| folder.id == id)
+        }) {
+            self.sessions_error = Some("This folder no longer exists".into());
+            self.notify_session_rail(cx);
+            return;
+        }
         if self.pending_project_trust_command.is_some() {
             return;
         }
@@ -234,6 +255,9 @@ impl FarcasterApp {
         self.draft_session_ids
             .insert(draft.id.clone(), draft.app_session_id);
         self.drafts.push(draft.clone());
+        if let Some(folder) = folder {
+            self.assign_session_folder(draft.app_session_id, Some(folder), cx);
+        }
         self.save_project_registry();
         self.send_project_command(
             &project,

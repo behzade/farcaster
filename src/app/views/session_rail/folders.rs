@@ -5,9 +5,11 @@ use super::{
     rendering::session_section_header,
 };
 use crate::app::{
+    PickerScope, ProjectPickerIntent,
     session_folders::SessionFolders,
     ui::{
-        primitives::{ButtonTone, button},
+        assets::AppIcon,
+        primitives::{AppIconSize, ButtonTone, app_icon, button},
         theme::THEME,
     },
 };
@@ -78,35 +80,46 @@ pub(super) fn folder_header(
     let drop_entity = entity.clone();
     let edit_entity = entity.clone();
     let menu_entity = entity.clone();
+    let new_entity = entity.clone();
     let cancel_entity = entity;
+    let mut section = div().w_full().flex().flex_col().pt(THEME.space.sm);
+    if id.is_some() {
+        section = section.child(
+            div()
+                .mx(THEME.space.md)
+                .mb(THEME.space.sm)
+                .h(THEME.border)
+                .flex_none()
+                .bg(THEME.colors.border),
+        );
+    }
     let mut row = session_section_header()
         .id(format!("session-folder-{id:?}"))
         .group("session-folder-header")
         .w_full()
-        .mt(THEME.space.sm)
-        .border_t(THEME.border)
-        .border_color(THEME.colors.border)
         .gap(THEME.space.xs);
     if id.is_none() || editing {
         row = row.h(px(40.0));
     }
     if editing {
         let commit = edit_entity.clone();
-        return row
-            .on_action(move |_: &gpui_component::input::Escape, _, cx| {
-                cx.stop_propagation();
-                let _ = cancel_entity.update(cx, |this, cx| this.cancel_session_title_edit(cx));
-            })
-            .child(Input::new(&input).flex_1().min_w_0().appearance(true))
-            .child(button(
-                "save-folder",
-                if id.is_some() { "Save" } else { "Create" },
-                ButtonTone::Neutral,
-                true,
-                move |_, cx| {
-                    let _ = commit.update(cx, |this, cx| this.commit_folder_edit(cx));
-                },
-            ))
+        return section
+            .child(
+                row.on_action(move |_: &gpui_component::input::Escape, _, cx| {
+                    cx.stop_propagation();
+                    let _ = cancel_entity.update(cx, |this, cx| this.cancel_session_title_edit(cx));
+                })
+                .child(Input::new(&input).flex_1().min_w_0().appearance(true))
+                .child(button(
+                    "save-folder",
+                    if id.is_some() { "Save" } else { "Create" },
+                    ButtonTone::Neutral,
+                    true,
+                    move |_, cx| {
+                        let _ = commit.update(cx, |this, cx| this.commit_folder_edit(cx));
+                    },
+                )),
+            )
             .into_any_element();
     }
     let Some(id) = id else {
@@ -119,11 +132,14 @@ pub(super) fn folder_header(
                 this.clear_session_drop_target(cx);
             });
         });
-        return row
-            .hover(|row| row.bg(THEME.colors.hover))
-            .child(new_folder_button(move |window, cx| {
-                let _ = edit_entity.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
-            }))
+        return section
+            .child(
+                row.hover(|row| row.bg(THEME.colors.hover))
+                    .child(new_folder_button(move |window, cx| {
+                        let _ = edit_entity
+                            .update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
+                    })),
+            )
             .into_any_element();
     };
 
@@ -142,17 +158,16 @@ pub(super) fn folder_header(
             .child(name),
     );
     row = row.child(
-        crate::app::ui::primitives::dropdown_button(
-            format!("folder-menu-{id}"),
-            "⋯",
-            ButtonTone::Quiet,
-            true,
+        folder_action(
+            crate::app::ui::primitives::dropdown_button(
+                format!("folder-menu-{id}"),
+                "⋯",
+                ButtonTone::Quiet,
+                true,
+            )
+            .dropdown_caret(false)
+            .px(px(4.0)),
         )
-        .dropdown_caret(false)
-        .px(px(4.0))
-        .cursor_pointer()
-        .opacity(0.0)
-        .group_hover("session-folder-header", |style| style.opacity(1.0))
         .dropdown_menu(move |menu, _, _| {
             let rename = menu_entity.clone();
             let delete = menu_entity.clone();
@@ -170,7 +185,33 @@ pub(super) fn folder_header(
             )
         }),
     );
-    row.into_any_element()
+    row = row.child(
+        folder_action(Button::new(format!("new-session-in-folder-{id}")).ghost())
+            .px(px(0.0))
+            .accessibility_label("New session in folder")
+            .tooltip("New session in folder")
+            .text_color(THEME.colors.muted)
+            .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
+            .on_click(move |_, window, cx| {
+                let _ = new_entity.update(cx, |this, cx| {
+                    this.open_picker(
+                        PickerScope::Projects(ProjectPickerIntent::NewSessionInFolder(id)),
+                        window,
+                        cx,
+                    );
+                });
+            }),
+    );
+    section.child(row).into_any_element()
+}
+
+fn folder_action(button: Button) -> Button {
+    button
+        .size(px(24.0))
+        .cursor_pointer()
+        .opacity(0.0)
+        .group_hover("session-folder-header", |style| style.opacity(1.0))
+        .focus(|style| style.opacity(1.0))
 }
 
 fn new_folder_button(on_press: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static) -> Button {
@@ -181,7 +222,10 @@ fn new_folder_button(on_press: impl Fn(&mut gpui::Window, &mut gpui::App) + 'sta
         .h_full()
         .px(px(0.0))
         .cursor_pointer()
-        .text_color(THEME.colors.text)
+        .text_color(THEME.colors.muted)
+        .group_hover("session-folder-header", |button| {
+            button.text_color(THEME.colors.text)
+        })
         .child(
             div()
                 .w_full()

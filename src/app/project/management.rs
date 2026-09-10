@@ -28,6 +28,9 @@ impl FarcasterApp {
                     Some(ProjectPickerIntent::NewSession) => {
                         this.new_session(project, window, cx);
                     }
+                    Some(ProjectPickerIntent::NewSessionInFolder(folder)) => {
+                        this.new_session_with_folder(project, Some(folder), window, cx);
+                    }
                     Some(ProjectPickerIntent::ChangeDraft) => {
                         this.change_draft_project(project, window, cx);
                         this.composer_focus.focus(window, cx);
