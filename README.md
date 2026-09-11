@@ -2,46 +2,48 @@
 
 # Farcaster
 
-Farcaster is a native desktop app for controlling different AI agent harnesses through one UI, with keyboard controls, an embedded terminal and Neovim.
-
-I wanted to use all my agent subscriptions in the same app, with the same keybindings, and review them in Neovim.
+Farcaster is a native, keyboard-first workspace for running and coordinating coding agents across harnesses, with an embedded terminal and Neovim.
 
 ![Farcaster showing concurrent agent sessions, a conversation, and changed files](https://github.com/user-attachments/assets/87e034bd-d091-4820-8dc3-f81c76fcabca)
 
-## How I use it
+## Why
 
-I spawn many concurrent sessions, mostly as I notice/remember issues or tasks; because of the concurrency, I don't care too much about model speed, and I make use of cheaper models as workers for more intelligent top-level agents to save costs. I try to stay in the app as agents are working, notice issues in their implementation by the files they are touching, occasionally dropping into Neovim to audit/change things.
+The agent space is changing fast, but switching harnesses shouldn't mean relearning the interface or leaving your editor behind. I wanted to use different agents and subscriptions with the same controls, and keep Neovim at the center of my workflow.
 
-## What you can do
+## Is this another agent harness?
 
-### Use one UI across harnesses
+No. Farcaster brings your existing harnesses and subscriptions into one UI. It builds around them rather than competing with them.
 
-Work with different agents without learning a new interface for each one. As a Neovim user, I want my workspace to be routine and predictable.
+## What does this app give you?
 
-### Work from the keyboard
+- A native, keyboard-first desktop app.
+- An agent, editor, and terminal for each session.
+- Integrated [Neovim](#neovim) for reviewing code, editing, and sending context to agents.
+- [Shared tools](#tools) for coordinating workers and tracking tasks across harnesses.
 
-This app is designed to make most actions comfortable without reaching for the mouse.
-
-### Review and edit in Neovim
-
-The app embeds a full terminal emulator using libghostty. Neovim is the default configured editor in the app using the same terminal. Clicking on changed files in the transcript or the Git change list opens them in Neovim instead of a limited diff viewer.
+## Neovim
 
 ![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/37192030-73b5-4b31-a8f8-72e3c1b8b4e9)
 
-### Coordinate agents across harnesses
+The app embeds a full terminal emulator using libghostty. Each chat session has its own Neovim and terminal tab. I find this a pretty nice way to work with AI as I can think of each session as a separate row of `agent | editor | terminal`.
 
-An optional MCP server gives supported harnesses access to shared tools:
+The following integrations with Neovim are built into the app:
 
-- **Workgraph:** A persistent plan and task queue that lasts beyond a single session.
-- **Worker tools:** Tools for creating and communicating with agent sessions across harnesses, providers, and models.
+- Clicking on any changed file opens it in Neovim at the changed line.
+- You can open the transcript itself in a temp Markdown file in Neovim to copy/select things.
+- You can send messages with context from Neovim (normal mode -> line context, select -> selected context) to the current session, another existing session or a new session to fire off a new task.
+- Agents can present their work to be reviewed in Neovim with filenames/lines and context using a built-in tool. ([`submit_review`](#review))
 
-This allows harnesses like Pi that don't have built-in subagents to offload implementation or review to separate workers.
+## Tools
 
-![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/5d216a2b-2fef-459c-911d-20450e87d749)
+Farcaster comes with an optional MCP server (can be turned off in settings) that provides the following capabilities:
 
-### Better visibility to agent actions
+- **Workgraph:** A set of tools (`workgraph_*`) for creating tasks and dependencies that persist beyond any one agent session.
+- **Worker Tools:** Tools for creating and communicating with agent sessions across harnesses, providers, and models.
 
-Since the tasks are managed outside any one harness, they are easy to audit and change. Jumping to any Farcaster worker thread is also trivial for the same reason.
+  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/5d216a2b-2fef-459c-911d-20450e87d749)
+
+- <a name="review"></a>**Review:** A tool (`submit_review`) that lets agents present files, line ranges, and notes for you to navigate and review using Neovim's quickfix list.
 
 ## Current status
 
@@ -63,6 +65,7 @@ In theory, any harness supporting ACP could be integrated through the app's ACP 
 Download the latest build for your platform from the [releases page](https://github.com/behzade/farcaster/releases). Builds for macOS ARM64 and x86_64 Linux are currently available.
 
 The macOS app uses ad hoc signing; it is not notarized.
+If macOS blocks the app because it is not notarized and you trust the download, follow [Apple's instructions](https://support.apple.com/102445) to allow it through System Settings → Privacy & Security → Open Anyway.
 
 You'll also need the agent harness you want to use installed and signed in. To use Neovim in the embedded terminal, it must be available in your environment.
 
