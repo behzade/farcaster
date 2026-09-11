@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ObjectFit, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, StyledImage as _, WeakEntity, div, img,
+    Styled as _, StyledImage as _, WeakEntity, div, img,
     prelude::FluentBuilder as _,
 };
 
@@ -9,7 +9,7 @@ use crate::app::{
     AppSurface,
     ui::{
         layout::{
-            LayoutMode, composer_bottom_clearance, draft_top_padding, shows_left_inline,
+            LayoutMode, composer_bottom_clearance, shows_left_inline,
             shows_right_inline,
         },
         theme::THEME,
@@ -34,37 +34,24 @@ impl FarcasterApp {
             .h_full()
             .flex()
             .flex_col()
-            .child(
+            .child(if has_conversation {
                 div()
                     .id("chat-body")
                     .flex_1()
                     .min_h_0()
-                    .when(has_conversation, |body| {
-                        body.child(self.transcript_view.clone())
-                    })
-                    .when(!has_conversation, |body| {
-                        body.overflow_y_scroll()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .pt(draft_top_padding(viewport_height))
-                            .pb(THEME.space.md)
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(THEME.layout.conversation_width)
-                                    .px(THEME.space.md)
-                                    .flex_none()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(THEME.space.md)
-                                    .when_some(editable_draft_project, |draft, project| {
-                                        draft.child(draft::render_heading(project, entity.clone()))
-                                    })
-                                    .child(self.composer_view.clone()),
-                            )
+                    .child(self.transcript_view.clone())
+                    .into_any_element()
+            } else {
+                draft::render_body(
+                    self.composer_view.clone(),
+                    editable_draft_project.map(|project| {
+                        draft::render_heading(project, entity.clone()).into_any_element()
                     }),
-            )
+                    self.composer_focus.clone(),
+                    viewport_height,
+                )
+                .into_any_element()
+            })
             .when(has_conversation, |main| {
                 main.child(
                     div()

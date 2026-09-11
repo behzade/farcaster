@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn navigation_can_leave_and_return_to_an_unsubmitted_draft() {
+    use crate::app::views::session_rail::folders;
+    let drafts = [(30, false), (20, true), (10, false)].map(|(id, submitted)| {
+        let mut draft = crate::projects::DraftSession::with_id(
+            "pi".into(),
+            format!("draft-{id}"),
+            "/project".into(),
+        );
+        draft.app_session_id = id;
+        draft.submitted = submitted;
+        draft
+    });
+    let rows = session_rail_lists(&[], &drafts, None, &[]).active;
+    let shortcuts = crate::app::views::session_rail::visible_session_shortcuts(&rows);
+    assert_eq!(shortcuts.len(), 1);
+    assert_eq!(shortcuts.get(&20), Some(&1));
+    let ids = folders::folder_rows(rows, &Default::default())
+        .into_iter()
+        .filter_map(VisibleSessionTarget::from_row)
+        .map(|target| target.app_session_id())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [30, 20, 10]);
+    for (selected, direction, expected) in [
+        (30, 1, Some(SessionStep::Active(1))),
+        (20, -1, Some(SessionStep::Active(0))),
+        (10, -1, Some(SessionStep::Active(1))),
+        (10, 1, Some(SessionStep::Archived(0))),
+    ] {
+        assert_eq!(
+            session_step(ids.iter().copied(), [5], selected, direction),
+            expected
+        );
+    }
+}
+
+#[test]
 fn navigation_crosses_archive_preview_in_both_directions_without_wrapping() {
     let active = [10, 4];
     let archived = [30, 22, 19, 16, 15, 12, 8];

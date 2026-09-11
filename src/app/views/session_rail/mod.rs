@@ -57,6 +57,16 @@ enum VisibleSessionTarget {
 }
 
 impl VisibleSessionTarget {
+    fn from_row(row: folders::FolderRow) -> Option<Self> {
+        match row {
+            folders::FolderRow::Session(ActiveSessionItem::Draft(draft)) => Some(Self::Draft(draft)),
+            folders::FolderRow::Session(ActiveSessionItem::Session(item)) => {
+                Some(Self::Persisted(item.session))
+            }
+            folders::FolderRow::Header(..) | folders::FolderRow::New => None,
+        }
+    }
+
     fn app_session_id(&self) -> i64 {
         match self {
             Self::Draft(draft) => draft.app_session_id,
@@ -158,7 +168,7 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         if let Some(target) = self
-            .visible_session_targets()
+            .numbered_session_targets()
             .get(number.saturating_sub(1))
             .cloned()
         {
@@ -172,7 +182,7 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let sessions = self.visible_session_targets();
+        let sessions = self.numbered_session_targets();
         let selected_id = root_session_for_path(&self.sessions, Some(&path))
             .map(|session| session.app_session_id);
         let replacement = selected_id
@@ -225,7 +235,7 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         if let Some(target) = self
-            .visible_session_targets()
+            .numbered_session_targets()
             .into_iter()
             .find(|target| target.app_session_id() == app_session_id)
         {
@@ -252,6 +262,14 @@ impl FarcasterApp {
         }
     }
 
+    fn numbered_session_targets(&self) -> Vec<VisibleSessionTarget> {
+        let mut targets = self.visible_session_targets();
+        targets.retain(|target| {
+            !matches!(target, VisibleSessionTarget::Draft(draft) if !draft.submitted)
+        });
+        targets
+    }
+
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
         folders::folder_rows(
             session_rail_lists(
@@ -264,15 +282,7 @@ impl FarcasterApp {
             &self.session_folders,
         )
         .into_iter()
-        .filter_map(|row| match row {
-            folders::FolderRow::Session(ActiveSessionItem::Draft(draft)) if draft.submitted => {
-                Some(VisibleSessionTarget::Draft(draft))
-            }
-            folders::FolderRow::Session(ActiveSessionItem::Session(item)) => {
-                Some(VisibleSessionTarget::Persisted(item.session))
-            }
-            _ => None,
-        })
+        .filter_map(VisibleSessionTarget::from_row)
         .collect()
     }
 
