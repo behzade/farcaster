@@ -44,9 +44,7 @@ impl FarcasterApp {
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
         let search_focus = self.search_focus.clone();
-        let selected_root =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.id.clone());
+        let selected_root = self.selected_rail_root().map(|session| session.id.clone());
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());

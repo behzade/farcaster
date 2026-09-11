@@ -29,9 +29,7 @@ impl FarcasterApp {
         list_rows: &RefCell<Vec<String>>,
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
-        let selected_root =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.id.clone());
+        let selected_root = self.selected_rail_root().map(|session| session.id.clone());
         let live_root =
             root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
                 .map(|session| session.id.clone());

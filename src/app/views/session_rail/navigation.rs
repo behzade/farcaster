@@ -1,9 +1,22 @@
+use std::path::Path;
+
 use gpui::{Context, Window};
 
 use super::{
     FarcasterApp, VisibleSessionTarget, rendering::INACTIVE_PREVIEW_LIMIT, session_rail_lists,
 };
-use crate::{app::AppSurface, sessions::root_session_for_path};
+use crate::{
+    app::AppSurface,
+    sessions::{SessionSummary, root_session_for_path},
+};
+
+fn selected_root<'a>(
+    sessions: &'a [SessionSummary],
+    confirmed: Option<&Path>,
+    requested: Option<&Path>,
+) -> Option<&'a SessionSummary> {
+    root_session_for_path(sessions, requested.or(confirmed))
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum SessionStep {
@@ -33,6 +46,16 @@ fn session_step(
 }
 
 impl FarcasterApp {
+    pub(super) fn selected_rail_root(&self) -> Option<&SessionSummary> {
+        selected_root(
+            &self.sessions,
+            self.snapshot.selected_session.as_deref(),
+            self.pending_session_switch
+                .as_ref()
+                .map(|(path, _)| path.as_path()),
+        )
+    }
+
     pub(in crate::app) fn switch_transcript_session(
         &mut self,
         direction: isize,
@@ -51,18 +74,13 @@ impl FarcasterApp {
         )
         .archived;
         // A held key may advance again before the runtime publishes the selection.
-        let selected_path = self
-            .pending_session_switch
-            .as_ref()
-            .map(|(path, _)| path.as_path())
-            .or(self.snapshot.selected_session.as_deref());
         let selected = self
             .selected_draft
             .as_ref()
             .and_then(|id| self.drafts.iter().find(|draft| &draft.id == id))
             .map(|draft| draft.app_session_id)
             .or_else(|| {
-                root_session_for_path(&self.sessions, selected_path)
+                self.selected_rail_root()
                     .map(|session| session.app_session_id)
             });
         let Some(selected) = selected else { return };
