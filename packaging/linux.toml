@@ -1,6 +1,6 @@
 name = "farcaster"
 product-name = "Farcaster"
-version = "0.1.4"
+version = "0.2.0"
 identifier = "io.github.behzade.farcaster"
 category = "DeveloperTool"
 description = "Native desktop client for coding agents"
