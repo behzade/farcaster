@@ -111,14 +111,7 @@ impl FarcasterApp {
                 cx.notify();
             });
         }
-        if self.keyboard_overlay_focus(window, cx).is_none() {
-            self.post_render_focus = None;
-            self.transcript_view
-                .read(cx)
-                .focus
-                .clone()
-                .focus(window, cx);
-        }
+        self.recover_keyboard_focus(window, cx);
         self.notify_session_rail(cx);
         cx.notify();
     }

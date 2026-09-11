@@ -489,14 +489,14 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
                 "Next session (including archived)",
                 format!("{modifier}-j"),
                 crate::app::NextTranscriptSession,
-                Some(crate::app::TRANSCRIPT_KEY_CONTEXT)
+                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
             ),
             shortcut!(
                 "Transcript",
                 "Previous session (including archived)",
                 format!("{modifier}-k"),
                 crate::app::PreviousTranscriptSession,
-                Some(crate::app::TRANSCRIPT_KEY_CONTEXT)
+                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
             ),
         ]);
     }

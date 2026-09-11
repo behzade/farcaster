@@ -1,16 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
-use gpui::{
-    Context, FocusHandle, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, WeakEntity,
-};
+use gpui::{Context, IntoElement as _, Render, WeakEntity};
 
 use super::super::{FarcasterApp, transcript};
 use crate::app::ui::persistent_vec::PersistentVec;
 
 pub(crate) struct TranscriptView {
     app: WeakEntity<FarcasterApp>,
-    pub(crate) focus: FocusHandle,
     markdown_cache: transcript::markdown::TranscriptMarkdownCache,
     pub(crate) font_size: gpui::Pixels,
     pub(crate) list: transcript::list::TranscriptListState,
@@ -26,11 +22,9 @@ impl TranscriptView {
     pub(crate) fn new(
         app: WeakEntity<FarcasterApp>,
         list: transcript::list::TranscriptListState,
-        cx: &mut Context<Self>,
     ) -> Self {
         Self {
             app,
-            focus: cx.focus_handle(),
             font_size: crate::app::ui::theme::THEME.type_scale.reading,
             markdown_cache: transcript::markdown::TranscriptMarkdownCache::default(),
             list,
@@ -82,31 +76,20 @@ impl Render for TranscriptView {
         };
         let app = app.read(cx);
         let viewport = window.viewport_size();
-        gpui::div()
-            .size_full()
-            .key_context(crate::app::TRANSCRIPT_KEY_CONTEXT)
-            .track_focus(&self.focus)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.focus.focus(window, cx);
-                }),
-            )
-            .child(transcript::render(
-                &self.list,
-                transcript::TranscriptViewport {
-                    font_scale: self.font_size / crate::app::ui::theme::THEME.type_scale.reading,
-                    following: self.following,
-                    unseen: self.unseen,
-                    tail_reserve: transcript::tail_reserve(viewport.height),
-                },
-                self.rows.clone(),
-                app.snapshot.conversation.clone(),
-                self.disclosure_states.clone(),
-                self.file_trees.clone(),
-                self.markdown_cache.clone(),
-                self.app.clone(),
-            ))
-            .into_any_element()
+        transcript::render(
+            &self.list,
+            transcript::TranscriptViewport {
+                font_scale: self.font_size / crate::app::ui::theme::THEME.type_scale.reading,
+                following: self.following,
+                unseen: self.unseen,
+                tail_reserve: transcript::tail_reserve(viewport.height),
+            },
+            self.rows.clone(),
+            app.snapshot.conversation.clone(),
+            self.disclosure_states.clone(),
+            self.file_trees.clone(),
+            self.markdown_cache.clone(),
+            self.app.clone(),
+        )
     }
 }

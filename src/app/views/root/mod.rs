@@ -26,7 +26,12 @@ impl Render for FarcasterApp {
 
         let mode = layout_mode(window.viewport_size().width);
         let entity = cx.entity().downgrade();
-        let key_context = if self.native_workspace_covered_by_overlay()
+        let key_context = if self.surface == AppSurface::Chat
+            && !self.native_workspace_covered_by_overlay()
+            && self.keyboard_overlay_focus(window, cx).is_none()
+        {
+            crate::app::CHAT_INPUT_CONTEXT
+        } else if self.native_workspace_covered_by_overlay()
             || matches!(self.surface, AppSurface::Chat | AppSurface::Work)
         {
             APP_INPUT_CONTEXT

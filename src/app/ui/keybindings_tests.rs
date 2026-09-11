@@ -312,8 +312,8 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
 }
 
 #[test]
-fn modified_jk_navigates_sessions_only_in_the_transcript() {
-    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, TRANSCRIPT_KEY_CONTEXT};
+fn modified_jk_navigates_chat_sessions_with_composer_focus() {
+    use crate::app::{APP_INPUT_CONTEXT, CHAT_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
     let keymap = gpui::Keymap::new(bindings());
     let contexts = |names: &[&str]| {
         names
@@ -333,16 +333,19 @@ fn modified_jk_navigates_sessions_only_in_the_transcript() {
             ),
         ] {
             let stroke = gpui::Keystroke::parse(&format!("{modifier}-{key}")).unwrap();
-            let (matched, _) = keymap.bindings_for_input(
-                std::slice::from_ref(&stroke),
-                &contexts(&[APP_INPUT_CONTEXT, TRANSCRIPT_KEY_CONTEXT]),
-            );
-            assert!(
-                matched
-                    .iter()
-                    .any(|binding| binding.action().partial_eq(action.as_ref())),
-                "{modifier}-{key}"
-            );
+            for names in [
+                vec![CHAT_INPUT_CONTEXT],
+                vec![CHAT_INPUT_CONTEXT, "FarcasterComposer", "Input"],
+            ] {
+                let (matched, _) =
+                    keymap.bindings_for_input(std::slice::from_ref(&stroke), &contexts(&names));
+                assert!(
+                    matched
+                        .iter()
+                        .any(|binding| binding.action().partial_eq(action.as_ref())),
+                    "{modifier}-{key} missing in {names:?}"
+                );
+            }
             for names in [
                 vec![APP_INPUT_CONTEXT],
                 vec![APP_INPUT_CONTEXT, "FarcasterComposer", "Input"],
