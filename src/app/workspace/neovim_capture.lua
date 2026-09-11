@@ -1,16 +1,16 @@
 (function()
   local mode = vim.fn.mode()
   if mode ~= 'n' and mode ~= 'v' and mode ~= 'V' and mode ~= '\22' then
-    error('Use normal or visual mode to comment on code')
+    error('Use normal or visual mode to send to chat')
   end
   local path = vim.api.nvim_buf_get_name(0)
   if path == '' or vim.bo.buftype ~= '' then
-    error('Open a file buffer to comment on code')
+    error('Open a file buffer to send to chat')
   end
   local cursor = vim.fn.getpos('.')
   local anchor = mode == 'n' and cursor or vim.fn.getpos('v')
   if math.abs(cursor[2] - anchor[2]) > 1999 then
-    error('Select at most 2,000 lines to comment on')
+    error('Select at most 2,000 lines to send to chat')
   end
   local lines
   if mode == 'n' then
@@ -23,7 +23,7 @@
   end
   local text = table.concat(lines, '\n')
   if #text > 131072 then
-    error('Select at most 128 KiB of code to comment on')
+    error('Select at most 128 KiB of code to send to chat')
   end
   return vim.json.encode({
     path = path,

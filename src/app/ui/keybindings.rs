@@ -413,6 +413,20 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             false
         ),
         shortcut!(
+            "Send to chat",
+            "Previous destination",
+            "ctrl-p",
+            SelectUp,
+            Some("FarcasterCodeComment")
+        ),
+        shortcut!(
+            "Send to chat",
+            "Next destination",
+            "ctrl-n",
+            SelectDown,
+            Some("FarcasterCodeComment")
+        ),
+        shortcut!(
             "Application",
             "Close dialog",
             "escape",

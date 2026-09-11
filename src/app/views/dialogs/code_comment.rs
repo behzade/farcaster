@@ -5,7 +5,11 @@ use crate::app::{
         theme::THEME,
     },
 };
-use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div};
+use gpui::{
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _,
+    WeakEntity, div,
+};
+use gpui_base::actions::{SelectDown, SelectUp};
 use gpui_component::{input::Textarea, list::List};
 
 pub(in crate::app::views) fn render(
@@ -18,13 +22,15 @@ pub(in crate::app::views) fn render(
     let cancel = entity.clone();
     let submit = entity.clone();
     let choose = entity.clone();
+    let next = entity.clone();
+    let previous = entity.clone();
     let enabled = !comment.input.read(cx).value().trim().is_empty();
     let title = if comment.picker.is_some() {
         "Send to"
     } else if destination.is_none() {
         "Start task"
     } else {
-        "Comment on code"
+        "Send to chat"
     };
     modal(
         "code-comment",
@@ -132,5 +138,12 @@ pub(in crate::app::views) fn render(
             )
         },
     )
+    .key_context("FarcasterCodeComment")
+    .on_action(move |_: &SelectDown, _, cx| {
+        let _ = next.update(cx, |this, cx| this.cycle_code_destination(true, cx));
+    })
+    .on_action(move |_: &SelectUp, _, cx| {
+        let _ = previous.update(cx, |this, cx| this.cycle_code_destination(false, cx));
+    })
     .into_any_element()
 }

@@ -239,6 +239,49 @@ fn composer_completion_keys_require_visible_suggestions() {
 }
 
 #[test]
+fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
+    use gpui::Action as _;
+
+    let outside = [
+        crate::app::APP_INPUT_CONTEXT,
+        crate::app::OVERLAY_KEY_CONTEXT,
+        "Input",
+    ]
+    .map(|context| gpui::KeyContext::parse(context).unwrap());
+    let mut inside = outside.to_vec();
+    inside.insert(1, gpui::KeyContext::parse("FarcasterCodeComment").unwrap());
+    for platform in ["ctrl", "cmd"] {
+        let keymap = gpui::Keymap::new(
+            super::registry_for_platform(platform)
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
+        );
+        for (key, action) in [
+            ("ctrl-n", super::SelectDown.name()),
+            ("ctrl-p", super::SelectUp.name()),
+            ("cmd-n", super::SelectDown.name()),
+            ("cmd-p", super::SelectUp.name()),
+        ] {
+            let strokes = [gpui::Keystroke::parse(key).unwrap()];
+            let (baseline, _) = keymap.bindings_for_input(&strokes, &outside);
+            let baseline = baseline.first().map(|binding| binding.action().name());
+            assert_ne!(baseline, Some(action));
+            let (matched, _) = keymap.bindings_for_input(&strokes, &inside);
+            assert_eq!(
+                matched.first().map(|binding| binding.action().name()),
+                if key.starts_with("ctrl-") {
+                    Some(action)
+                } else {
+                    baseline
+                },
+                "{platform}: {key}"
+            );
+        }
+    }
+}
+
+#[test]
 fn application_shortcuts_stay_in_app_owned_contexts() {
     use super::registry_for_platform;
     use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};

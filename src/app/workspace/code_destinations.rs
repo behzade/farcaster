@@ -57,7 +57,34 @@ pub(super) fn choices(
     choices
 }
 
+// None is the "New task" entry before the existing chats in the picker.
+pub(super) fn cycle_destination(
+    current: Option<usize>,
+    count: usize,
+    forward: bool,
+) -> Option<usize> {
+    if forward {
+        let next = current.map_or(0, |index| index + 1);
+        (next < count).then_some(next)
+    } else {
+        current.unwrap_or(count).checked_sub(1)
+    }
+}
+
 impl FarcasterApp {
+    pub(in crate::app) fn cycle_code_destination(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(comment) = self.code_comment.as_mut() else {
+            return;
+        };
+        // The open picker's list owns navigation until it is confirmed or cancelled.
+        if comment.picker.is_some() {
+            return;
+        }
+        comment.destination =
+            cycle_destination(comment.destination, comment.destinations.len(), forward);
+        cx.notify();
+    }
+
     pub(in crate::app) fn choose_code_destination(
         &mut self,
         window: &mut Window,

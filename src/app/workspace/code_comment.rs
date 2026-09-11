@@ -136,7 +136,7 @@ impl FarcasterApp {
                             if start_task {
                                 "Start task"
                             } else {
-                                "Comment on code"
+                                "Send to chat"
                             },
                             error,
                             cx,
@@ -151,7 +151,7 @@ impl FarcasterApp {
                         input.auto_grow(1, 8).placeholder(if start_task {
                             "What should the agent do?"
                         } else {
-                            "Comment…"
+                            "Message…"
                         })
                     },
                     FarcasterApp::add_code_comment,

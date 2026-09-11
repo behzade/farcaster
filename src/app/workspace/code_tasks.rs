@@ -36,9 +36,9 @@ impl CodeTasks {
             (true, None) => "Starting task…",
             (true, Some(true)) => "Task started",
             (true, Some(false)) => "Task couldn’t start",
-            (false, None) => "Sending comment…",
-            (false, Some(true)) => "Comment sent",
-            (false, Some(false)) => "Comment couldn’t send · Saved in chat draft",
+            (false, None) => "Sending to chat…",
+            (false, Some(true)) => "Sent to chat",
+            (false, Some(false)) => "Couldn’t send · Saved in chat draft",
         })
     }
 

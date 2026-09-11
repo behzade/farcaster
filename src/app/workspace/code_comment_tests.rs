@@ -1,4 +1,4 @@
-use super::destinations::choices;
+use super::destinations::{choices, cycle_destination};
 use super::*;
 use crate::sessions::SessionSummary;
 use std::path::Path;
@@ -19,6 +19,19 @@ fn comment_preserves_unsaved_code_and_nested_fences() {
     assert!(prompt.starts_with("Explain this\n\nCode context: /project/it's code.md:2:1–4:3"));
     assert!(prompt.contains("buffer has unsaved edits"));
     assert!(prompt.contains("\n````\n```rust\nسلام\n```\n````"));
+}
+
+#[test]
+fn destination_cycling_wraps_through_new_task_and_chats_in_both_directions() {
+    let mut selected = None;
+    for expected in [Some(0), Some(1), Some(2), None] {
+        selected = cycle_destination(selected, 3, true);
+        assert_eq!(selected, expected);
+    }
+    for expected in [Some(2), Some(1), Some(0), None] {
+        selected = cycle_destination(selected, 3, false);
+        assert_eq!(selected, expected);
+    }
 }
 
 #[test]
