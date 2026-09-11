@@ -38,7 +38,7 @@ fn dollar_suggestions_compose_prompts_and_skills() {
             .into_iter()
             .map(|suggestion| suggestion.name)
             .collect::<Vec<_>>(),
-        ["commit", "simplify", "simplify-commit", "show-me", "review"]
+        ["commit", "simplify", "simplify-commit", "show", "review"]
     );
     let suggestion = suggestions("please $com", &commands)
         .into_iter()
@@ -64,6 +64,8 @@ fn invocation_detection_uses_the_command_catalog() {
 
     assert!(contains_invocation("please $simplify this", &commands));
     assert!(contains_invocation("$commit.", &commands));
+    assert!(contains_invocation("$show changes", &commands));
+    assert!(!contains_invocation("$show-me", &commands));
     assert!(contains_invocation(
         "please $simplify, then $commit!",
         &commands

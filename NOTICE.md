@@ -79,12 +79,6 @@ Linux AppImages explicitly bundle libxcb, Wayland client/EGL, the Vulkan
 loader, and libglvnd's libEGL and libGLdispatch. Their license and attribution
 texts are included under `THIRD_PARTY_LICENSES`.
 
-`prompts/show-me.md` reproduces the show-me skill by Dex Horthy / HumanLayer,
-with attribution metadata added. Upstream:
-<https://github.com/humanlayer/skills/blob/main/plugins/show-me/skills/show-me/SKILL.md>.
-Copyright (c) 2026 HumanLayer, distributed under MIT. The license is included at
-`THIRD_PARTY_LICENSES/HUMANLAYER-SKILLS-MIT.txt`.
-
 File-type icons under `assets/file-icons` are from Material Icon Theme,
 distributed under MIT, and retain their upstream colors. The exact upstream
 license is included at `THIRD_PARTY_LICENSES/MATERIAL-ICON-THEME-MIT.txt`.

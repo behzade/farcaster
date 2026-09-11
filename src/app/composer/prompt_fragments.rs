@@ -7,7 +7,7 @@ const SOURCES: &[(&str, &str)] = &[
         "simplify-commit",
         include_str!("../../../prompts/simplify-commit.md"),
     ),
-    ("show-me", include_str!("../../../prompts/show-me.md")),
+    ("show", include_str!("../../../prompts/show.md")),
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]

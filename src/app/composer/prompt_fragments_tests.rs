@@ -21,8 +21,8 @@ fn catalog_comes_from_the_checked_in_fragments() {
                     Some("Simplify your changes, then commit them".into())
                 ),
                 (
-                    "show-me".into(),
-                    Some("Help the user understand the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts.".into())
+                    "show".into(),
+                    Some("Show relevant files and line ranges with concise notes.".into())
                 )
             ]
         );
@@ -87,10 +87,10 @@ fn cycles_stop_at_the_repeated_reference() {
 }
 
 #[test]
-fn show_me_expands_without_attribution_metadata() {
-    for input in ["$show-me", "$prompt:show-me"] {
-        let expansion = expand(input).expect("show-me prompt should expand");
-        let (_, body) = include_str!("../../../prompts/show-me.md")
+fn show_expands_without_frontmatter() {
+    for input in ["$show", "$prompt:show"] {
+        let expansion = expand(input).expect("show prompt should expand");
+        let (_, body) = include_str!("../../../prompts/show.md")
             .strip_prefix("---\n")
             .expect("test operation should succeed")
             .split_once("\n---\n")
