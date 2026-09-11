@@ -121,8 +121,9 @@ fn reveal_session_row(list: &ListState, rows: &RefCell<Vec<String>>, reveal: &mu
         && let Some(index) = rows.borrow().iter().position(|row| row == &key)
     {
         list.scroll_to_reveal_item(index);
-        // On first expansion there may be no viewport measurement yet.
-        if list.logical_scroll_top().item_ix > index {
+        // Without a measured viewport, reveal can land at the selected row's
+        // bottom edge. Keep the whole row visible, including at that boundary.
+        if list.logical_scroll_top().item_ix >= index {
             list.scroll_to(gpui::ListOffset {
                 item_ix: index,
                 offset_in_item: gpui::px(0.0),
