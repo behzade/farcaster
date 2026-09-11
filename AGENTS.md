@@ -1,5 +1,8 @@
 # Agent Instructions
 
+Use Farcaster MCP to track substantial work with `workgraph_*` and coordinate overlapping changes with `worker_notices`.
+When asked to show code or changes, use `submit_review` with relevant files, line ranges, and concise notes.
+
 Never edit `README.md` or any user facing file in `docs` unless explicitly requesed by the user.
 
 Keep Farcaster backend-neutral above its protocol adapters. Pi-specific session,
