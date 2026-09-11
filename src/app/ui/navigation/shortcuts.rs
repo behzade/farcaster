@@ -100,9 +100,6 @@ pub(crate) fn help_shortcuts() -> Vec<(&'static str, String, &'static str)> {
         "ctrl-g".into(),
         "Activate app keys for 2 seconds (no focus change)",
     )];
-    if cfg!(target_os = "macos") {
-        rows.push(("App-owned contexts", "cmd-g".into(), "Focus chat composer"));
-    }
     rows.push((
         "From anywhere",
         "ctrl-g ctrl-g".into(),

@@ -63,7 +63,6 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
     use super::registry_for_platform;
     use crate::app::{
         APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, RestoreSession, SetRuntime, SetSandbox,
-        ShowEditor, ShowTerminal,
     };
 
     for (platform, prefix) in [
@@ -85,6 +84,9 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
             ),
             ("n", Box::new(crate::app::NewSession)),
             ("w", Box::new(crate::app::CloseCurrent)),
+            ("/", Box::new(crate::app::FocusSessionSearch)),
+            ("shift-/", Box::new(crate::app::ShowKeybindings)),
+            ("?", Box::new(crate::app::ShowKeybindings)),
             ("shift-s", Box::new(SetSandbox) as Box<dyn gpui::Action>),
             ("shift-m", Box::new(SetRuntime) as Box<dyn gpui::Action>),
             (
@@ -92,8 +94,6 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
                 Box::new(crate::app::SetHarness) as Box<dyn gpui::Action>,
             ),
             ("shift-a", Box::new(RestoreSession) as Box<dyn gpui::Action>),
-            ("e", Box::new(ShowEditor) as Box<dyn gpui::Action>),
-            ("t", Box::new(ShowTerminal) as Box<dyn gpui::Action>),
             (
                 "shift-p",
                 Box::new(crate::app::ShowActionPicker) as Box<dyn gpui::Action>,
@@ -239,28 +239,6 @@ fn composer_completion_keys_require_visible_suggestions() {
 }
 
 #[test]
-fn legacy_global_actions_are_scoped_to_app_owned_contexts() {
-    use crate::app::APP_SHORTCUT_CONTEXT;
-    let app_context = gpui::KeyBindingContextPredicate::parse(APP_SHORTCUT_CONTEXT)
-        .expect("app shortcut context");
-    let shortcuts = registry();
-    for keystroke in ["f1", "f2", "f3", "f4", "ctrl-tab", "ctrl-shift-tab"] {
-        let matches = shortcuts
-            .iter()
-            .filter(|shortcut| shortcut.keystroke == keystroke)
-            .collect::<Vec<_>>();
-        assert!(!matches.is_empty(), "{keystroke} must remain registered");
-        for shortcut in matches {
-            assert_eq!(
-                shortcut.binding.predicate().as_deref(),
-                Some(&app_context),
-                "{keystroke} must not be a global None-context binding"
-            );
-        }
-    }
-}
-
-#[test]
 fn application_shortcuts_stay_in_app_owned_contexts() {
     use super::registry_for_platform;
     use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
@@ -275,19 +253,7 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
         [gpui::KeyContext::parse(APP_INPUT_CONTEXT).expect("test operation should succeed")];
     let native_contexts =
         [gpui::KeyContext::parse(NATIVE_INPUT_CONTEXT).expect("test operation should succeed")];
-    for key in [
-        "cmd-n",
-        "cmd-e",
-        "cmd-t",
-        "cmd-shift-p",
-        "cmd-g",
-        "cmd--",
-        "cmd-=",
-        "cmd-+",
-    ] {
-        if key == "cmd-g" && !cfg!(target_os = "macos") {
-            continue;
-        }
+    for key in ["cmd-n", "cmd-shift-p", "cmd--", "cmd-=", "cmd-+"] {
         let stroke = gpui::Keystroke::parse(key).expect("test operation should succeed");
         let (app_bindings, _) =
             keymap.bindings_for_input(std::slice::from_ref(&stroke), &app_contexts);
@@ -298,7 +264,7 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
             "{key} must not reach embedded views"
         );
     }
-    for key in ["f1", "f2", "f3", "f4", "ctrl-tab", "ctrl-shift-tab"] {
+    for key in ["f1", "f2", "f3", "f4"] {
         let stroke = gpui::Keystroke::parse(key).expect("test operation should succeed");
         let (native_bindings, _) =
             keymap.bindings_for_input(std::slice::from_ref(&stroke), &native_contexts);
@@ -308,6 +274,60 @@ fn application_shortcuts_stay_in_app_owned_contexts() {
         );
         let (app_bindings, _) = keymap.bindings_for_input(&[stroke], &app_contexts);
         assert!(!app_bindings.is_empty(), "{key} missing in app context");
+    }
+}
+
+#[test]
+fn workspace_shortcuts_route_by_context_on_both_platforms() {
+    use crate::app::{APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
+    use gpui::Action;
+
+    for platform in ["cmd", "ctrl"] {
+        let keymap = gpui::Keymap::new(
+            super::registry_for_platform(platform)
+                .into_iter()
+                .map(|shortcut| shortcut.binding)
+                .collect(),
+        );
+        for context in [APP_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT, "Input"] {
+            let app = context == APP_INPUT_CONTEXT;
+            let workspace = app || context == NATIVE_INPUT_CONTEXT;
+            for (key, expected) in [
+                ("f1", app.then_some(super::FocusComposer.name())),
+                ("f2", app.then_some(super::ShowEditor.name())),
+                ("f3", app.then_some(super::ShowTerminal.name())),
+                (
+                    "ctrl-tab",
+                    workspace.then_some(super::CycleWorkspaceForward.name()),
+                ),
+                (
+                    "ctrl-shift-tab",
+                    workspace.then_some(super::CycleWorkspaceBackward.name()),
+                ),
+                ("cmd-g", None),
+                ("ctrl-e", None),
+                ("cmd-e", None),
+                ("super-e", None),
+                ("ctrl-t", None),
+                ("cmd-t", None),
+                ("super-t", None),
+            ] {
+                let (bindings, _) = keymap.bindings_for_input(
+                    &[gpui::Keystroke::parse(key).expect("test keystroke")],
+                    &[gpui::KeyContext::parse(context).expect("test context")],
+                );
+                assert_eq!(
+                    bindings.len(),
+                    usize::from(expected.is_some()),
+                    "{platform}: {key} in {context}"
+                );
+                assert_eq!(
+                    bindings.first().map(|binding| binding.action().name()),
+                    expected,
+                    "{platform}: {key} in {context}"
+                );
+            }
+        }
     }
 }
 

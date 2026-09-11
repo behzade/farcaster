@@ -214,8 +214,4 @@ fn help_lists_ctrl_g_prefix_and_direct_composer_return() {
                 && key == "ctrl-g ctrl-g"
                 && *label == "Return to chat composer")
     );
-    let has_cmd_g = rows
-        .iter()
-        .any(|(_, key, label)| key == "cmd-g" && *label == "Focus chat composer");
-    assert_eq!(has_cmd_g, cfg!(target_os = "macos"));
 }

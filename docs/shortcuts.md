@@ -23,18 +23,17 @@ mod+shift+m -> set provider/model/effort
 mod+shift+h -> set harness (unsubmitted draft)
 mod+shift+a -> restore session
 mod+shift+p -> open action picker
-mod+j/k -> prev/next session
+mod+[ / mod+] -> previous/next session
+mod+j/k -> next/previous session, including archived (chat only)
+mod+/ -> focus sidebar search
+mod+shift+/ -> keyboard help
+mod+. -> abort current run
+mod+shift+i -> open/close project work
+mod+= / mod++ -> increase transcript font size
+mod+- -> decrease transcript font size
 ```
 
-Workspace shortcuts use the same letters as the leader commands:
-
-```text
-mod+e -> jump to editor
-mod+t -> jump to terminal
-Cmd+g -> jump to chat composer (macOS)
-```
-
-`F1` / `F2` / `F3` jump to chat / editor / terminal in app views. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle them.
+`F1` / `F2` / `F3` jump to chat / editor / terminal in app views. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle them from any view, including terminal/Neovim. `F4` opens the action picker.
 
 ## Leader shortcuts
 
@@ -61,6 +60,7 @@ The second group also works inside Neovim and the terminal:
 <leader> a -> restore session
 <leader> q -> quit (confirms if work is active)
 <leader> Space -> open action picker
+<leader> / -> focus sidebar search
 ```
 
 For session shortcuts, `1–9` select sessions and `0` opens the first unsubmitted draft. Ctrl+0–9 works in app views on both platforms.
@@ -84,24 +84,3 @@ These keys require focus in the composer:
 | Esc | Apply queued steering; otherwise press twice to abort. |
 
 In dialogs, Tab / Shift+Tab move focus and Esc closes. In the action picker, Tab / Shift+Tab or Ctrl+N / Ctrl+P select items; Enter chooses one.
-
-## Review rows
-
-Click a review row, or focus it and press Enter, to open its first valid location
-in Neovim's largest eligible editing pane and show reviewed files in the right
-sidebar's compact change tree. Quickfix is populated without opening its window:
-existing next/previous quickfix bindings still work,
-and `:copen` shows the native list when wanted.
-
-Click a file to open it and show its notes and ranges below the tree. Click a
-range to open that location and update quickfix's position. **Last opened here**
-marks the last successful sidebar jump, not Neovim's live cursor. Missing files
-and stale ranges show warnings in the selected file's details. **Close review**
-restores the usual sidebar; opening an unrelated file leaves the review available.
-Reviews are scoped to
-their session's editor. On narrow layouts the list uses the sidebar sheet;
-choosing a location dismisses it and returns focus to Neovim.
-
-Alt-click (Option-click on macOS) on the transcript review row expands or
-collapses its locations. Its context menu also offers **Open in Neovim** and
-**Show/Hide locations**.

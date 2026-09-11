@@ -233,15 +233,6 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             ComposerCompletionNext,
             Some(COMPOSER_COMPLETION_CONTEXT)
         ),
-        #[cfg(target_os = "macos")]
-        shortcut!(
-            "Workspace",
-            "Chat composer",
-            "cmd-g",
-            FocusComposer,
-            Some(APP_SHORTCUT_CONTEXT)
-        )
-        .in_picker(true),
         shortcut!(
             "Workspace",
             "Chat and composer",
@@ -250,8 +241,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(APP_SHORTCUT_CONTEXT),
             false
         )
-        .in_picker(!cfg!(target_os = "macos")),
-        application_shortcut!("Workspace", "Open Neovim", "e", ShowEditor),
+        .in_picker(true),
         shortcut!(
             "Workspace",
             "Open transcript in Neovim",
@@ -265,24 +255,23 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Open Neovim",
             "f2",
             ShowEditor,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
-        application_shortcut!("Workspace", "Open terminal", "t", ShowTerminal),
+            Some(APP_SHORTCUT_CONTEXT)
+        )
+        .in_picker(true),
         shortcut!(
             "Workspace",
             "Open terminal",
             "f3",
             ShowTerminal,
-            Some(APP_SHORTCUT_CONTEXT),
-            false
-        ),
+            Some(APP_SHORTCUT_CONTEXT)
+        )
+        .in_picker(true),
         shortcut!(
             "Workspace",
             "Next workspace surface",
             "ctrl-tab",
             CycleWorkspaceForward,
-            Some(APP_SHORTCUT_CONTEXT)
+            Some("FarcasterApp")
         )
         .in_picker(true),
         shortcut!(
@@ -290,7 +279,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Previous workspace surface",
             "ctrl-shift-tab",
             CycleWorkspaceBackward,
-            Some(APP_SHORTCUT_CONTEXT)
+            Some("FarcasterApp")
         )
         .in_picker(true),
         Shortcut {
@@ -409,7 +398,13 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(APP_SHORTCUT_CONTEXT),
             false
         ),
-        application_shortcut!("Application", "Keyboard shortcuts", "/", ShowKeybindings),
+        application_shortcut!(
+            "Sessions",
+            "Focus session search",
+            "/",
+            crate::app::FocusSessionSearch
+        ),
+        application_shortcut!("Application", "Keyboard shortcuts", "shift-/", ShowKeybindings),
         application_shortcut!(
             "Application",
             "Keyboard shortcuts",
