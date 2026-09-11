@@ -78,6 +78,11 @@ fn close_window_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {
 #[gpui::test]
 fn native_window_close_prompts_for_active_work(cx: &mut TestAppContext) {
     assert_quit_prompts(cx, |cx| {
+        cx.update(|window, _| window.activate_window());
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            assert_eq!(cx.active_window(), Some(window.window_handle()));
+        });
         assert!(!cx.simulate_close(), "window closed before confirmation");
     });
 }

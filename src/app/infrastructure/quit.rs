@@ -27,8 +27,9 @@ pub(super) fn install<T: 'static>(
 }
 
 pub(super) fn install_window(window: &Window, cx: &App) {
-    window.on_window_should_close(cx, |_, cx| {
-        cx.dispatch_action(&QuitApplication);
+    window.on_window_should_close(cx, |window, cx| {
+        // The close callback already holds this window; do not re-enter it via App.
+        window.dispatch_action(Box::new(QuitApplication), cx);
         false
     });
 }
