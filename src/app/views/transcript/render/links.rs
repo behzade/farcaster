@@ -4,10 +4,7 @@ use gpui::{ClickEvent, MouseButton, WeakEntity};
 use gpui_component::text::TextView;
 use url::Url;
 
-use crate::{
-    app::FarcasterApp,
-    app::views::transcript::visualizations::{is_visualization_link, prepare_visualization},
-};
+use crate::app::FarcasterApp;
 
 pub(super) fn with_file_links(text: TextView, entity: WeakEntity<FarcasterApp>) -> TextView {
     text.on_link_click(move |url, event, window, cx| {
@@ -19,17 +16,6 @@ pub(super) fn with_file_links(text: TextView, entity: WeakEntity<FarcasterApp>) 
             ClickEvent::Touch(click) => !click.long_press,
         };
         if !activate || url.is_empty() || url.starts_with('#') {
-            return;
-        }
-        if is_visualization_link(url) {
-            match prepare_visualization(url) {
-                Ok(visualization) => cx.open_url(visualization.as_str()),
-                Err(error) => {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.notify_workspace_error("Open visualization", error, cx);
-                    });
-                }
-            }
             return;
         }
         let _ = entity.update(cx, |this, cx| {

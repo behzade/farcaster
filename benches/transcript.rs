@@ -45,7 +45,7 @@ mod app {
     pub(crate) mod views {
         pub(crate) use crate::attachment_cards as attachments;
         pub(crate) mod transcript {
-            pub(crate) use crate::{net_changes, visualizations};
+            pub(crate) use crate::net_changes;
             pub(crate) mod attachments {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
@@ -270,8 +270,6 @@ pub(crate) mod change_tree;
 pub(crate) mod file_icons;
 #[path = "../src/app/views/transcript/net_changes.rs"]
 pub(crate) mod net_changes;
-#[path = "../src/app/views/transcript/visualizations.rs"]
-pub(crate) mod visualizations;
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]

@@ -3,8 +3,6 @@ use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
 use gpui::{AppContext as _, Entity};
 use gpui_component::text::TextViewState;
 
-use super::visualizations::visualization_markdown;
-
 const MAX_CACHED_MARKDOWN_ROWS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -109,12 +107,11 @@ impl TranscriptMarkdownCache {
         cx: &mut gpui::App,
     ) -> Entity<TextViewState> {
         let (state, hit) = self.states.borrow_mut().get_or_insert_with(key, || {
-            let text = visualization_markdown(text);
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::MarkdownParse,
                 text.len(),
             );
-            cx.new(|cx| TextViewState::markdown(&text, cx))
+            cx.new(|cx| TextViewState::markdown(text, cx))
         });
         if hit {
             crate::app::infrastructure::performance::count_markdown_cache_hit();
