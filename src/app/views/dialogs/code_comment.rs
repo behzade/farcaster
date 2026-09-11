@@ -1,7 +1,7 @@
 use crate::app::{
     FarcasterApp, OVERLAY_KEY_CONTEXT,
     ui::{
-        primitives::{ButtonTone, button, modal},
+        primitives::{ButtonTone, button, modal, submit_textarea},
         theme::THEME,
     },
 };
@@ -92,7 +92,7 @@ pub(in crate::app::views) fn render(
                                     .map_or("Default model", |model| model.name.as_str())
                             ))
                     }))
-                    .child(Textarea::new(&comment.input).aria_label(title).w_full())
+                    .child(submit_textarea(Textarea::new(&comment.input).aria_label(title)))
                     .children(comment.error.as_ref().map(|error| {
                         div()
                             .text_size(THEME.type_scale.caption)

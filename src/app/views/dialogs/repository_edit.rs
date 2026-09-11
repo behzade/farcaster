@@ -8,7 +8,7 @@ use crate::{
     app::{
         FarcasterApp, OVERLAY_KEY_CONTEXT,
         ui::{
-            primitives::{ButtonTone, button, modal},
+            primitives::{ButtonTone, button, modal, submit_textarea},
             theme::{MONO_FONT_FAMILY, THEME},
         },
     },
@@ -96,7 +96,7 @@ pub(in crate::app::views) fn render(
                             ),
                     )
                     .when(commit, |body| {
-                        body.child(Textarea::new(&pending.input).w_full())
+                        body.child(submit_textarea(Textarea::new(&pending.input)))
                     })
                     .when(pending.preparing(), |body| {
                         body.child(div().child("Checking selected files…"))

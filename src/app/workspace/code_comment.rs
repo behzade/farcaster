@@ -1,8 +1,8 @@
-use gpui::{AppContext as _, Context, Entity, FocusHandle, Focusable as _, Subscription, Window};
-use gpui_component::input::{InputEvent, TextareaState};
+use gpui::{Context, Entity, FocusHandle, Focusable as _, Subscription, Window};
+use gpui_component::input::TextareaState;
 
 use super::neovim::CodeContext;
-use crate::app::{AppSurface, FarcasterApp};
+use crate::app::{AppSurface, FarcasterApp, ui::primitives::create_submit_textarea};
 use crate::runtime::TaskSettings;
 
 #[path = "code_destinations.rs"]
@@ -144,22 +144,18 @@ impl FarcasterApp {
                         return;
                     }
                 };
-                let input = cx.new(|cx| {
-                    TextareaState::new(window, cx)
-                        .auto_grow(1, 8)
-                        .submit_on_enter(true)
-                        .placeholder(if start_task {
+                let (input, subscription) = create_submit_textarea(
+                    window,
+                    cx,
+                    |input| {
+                        input.auto_grow(1, 8).placeholder(if start_task {
                             "What should the agent do?"
                         } else {
                             "Comment…"
                         })
-                });
-                let subscription = cx.subscribe_in(&input, window, |this, _, event, window, cx| {
-                    if matches!(event, InputEvent::PressEnter { shift: false, .. }) {
-                        this.add_code_comment(window, cx);
-                    }
-                    cx.notify();
-                });
+                    },
+                    FarcasterApp::add_code_comment,
+                );
                 this.cover_native_workspace_surface(cx);
                 let input_focus = input.read(cx).focus_handle(cx);
                 let current = CodeDestination {

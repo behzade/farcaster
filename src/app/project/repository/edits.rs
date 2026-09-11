@@ -1,10 +1,10 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use gpui::{AppContext as _, Context, Entity, FocusHandle, Focusable as _, Subscription, Window};
-use gpui_component::input::{InputEvent, TextareaState};
+use gpui_component::input::TextareaState;
 
 use crate::{
-    app::FarcasterApp,
+    app::{FarcasterApp, ui::primitives::create_submit_textarea},
     repository::{RepositoryEdit, RepositoryEditReview, WorkingCopySnapshot},
 };
 
@@ -111,13 +111,16 @@ impl FarcasterApp {
         if selected.is_empty() {
             return;
         }
-        let input = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(2, 6)
-                .submit_on_enter(false)
-                .placeholder("Commit message")
-        });
-        let subscription = cx.subscribe(&input, |_, _, _: &InputEvent, cx| cx.notify());
+        let (input, subscription) = create_submit_textarea(
+            window,
+            cx,
+            |input| input.auto_grow(2, 6).placeholder("Commit message"),
+            move |this, window, cx| {
+                if action == RepositoryEdit::Commit {
+                    this.confirm_repository_edit(window, cx);
+                }
+            },
+        );
         let focus = cx.focus_handle();
         let return_focus = window.focused(cx);
         self.cover_native_workspace_surface(cx);
