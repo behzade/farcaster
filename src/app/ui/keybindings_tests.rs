@@ -154,11 +154,13 @@ fn application_and_picker_shortcuts_route_only_in_their_owned_contexts() {
 }
 
 #[test]
-fn tab_navigation_stays_in_picker_input() {
+fn picker_navigation_stays_in_picker_input() {
     let keymap = gpui::Keymap::new(bindings());
     for (key, action) in [
         ("tab", &super::SelectDown as &dyn gpui::Action),
         ("shift-tab", &super::SelectUp as &dyn gpui::Action),
+        ("ctrl-n", &super::SelectDown as &dyn gpui::Action),
+        ("ctrl-p", &super::SelectUp as &dyn gpui::Action),
     ] {
         for context in [
             "PiPicker",
@@ -249,7 +251,7 @@ fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
     ]
     .map(|context| gpui::KeyContext::parse(context).unwrap());
     let mut inside = outside.to_vec();
-    inside.insert(1, gpui::KeyContext::parse("FarcasterCodeComment").unwrap());
+    inside.insert(1, gpui::KeyContext::parse("FarcasterSendToChat").unwrap());
     for platform in ["ctrl", "cmd"] {
         let keymap = gpui::Keymap::new(
             super::registry_for_platform(platform)
@@ -258,10 +260,10 @@ fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
                 .collect(),
         );
         for (key, action) in [
-            ("ctrl-n", super::SelectDown.name()),
-            ("ctrl-p", super::SelectUp.name()),
-            ("cmd-n", super::SelectDown.name()),
-            ("cmd-p", super::SelectUp.name()),
+            ("ctrl-n", super::NextCodeDestination.name()),
+            ("ctrl-p", super::PreviousCodeDestination.name()),
+            ("cmd-n", super::NextCodeDestination.name()),
+            ("cmd-p", super::PreviousCodeDestination.name()),
         ] {
             let strokes = [gpui::Keystroke::parse(key).unwrap()];
             let (baseline, _) = keymap.bindings_for_input(&strokes, &outside);

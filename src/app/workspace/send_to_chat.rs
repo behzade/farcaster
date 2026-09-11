@@ -27,7 +27,7 @@ impl CodeContext {
         }
     }
 
-    pub fn prompt(&self, comment: &str) -> String {
+    pub fn prompt(&self, instruction: &str) -> String {
         // A selection may itself contain Markdown fences.
         let longest = self
             .text
@@ -44,7 +44,7 @@ impl CodeContext {
         };
         format!(
             "{}\n\nCode context: {}\n{kind}{} (captured from the editor):\n{fence}\n{}\n{fence}",
-            comment.trim(),
+            instruction.trim(),
             self.location(),
             if self.modified {
                 "; buffer has unsaved edits"
@@ -56,7 +56,7 @@ impl CodeContext {
     }
 }
 
-pub(in crate::app) struct CodeComment {
+pub(in crate::app) struct SendToChat {
     pub focus: FocusHandle,
     pub input: Entity<TextareaState>,
     pub context: CodeContext,
@@ -70,14 +70,18 @@ pub(in crate::app) struct CodeComment {
     _subscription: Subscription,
 }
 
-impl CodeComment {
+impl SendToChat {
     pub(in crate::app) fn destination(&self) -> Option<&CodeDestination> {
         self.destination.map(|index| &self.destinations[index])
     }
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn comment_on_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::app) fn open_send_to_chat(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.capture_code_prompt(false, window, cx);
     }
 
@@ -97,7 +101,7 @@ impl FarcasterApp {
     ) {
         if self.surface != AppSurface::Editor
             || self.native_workspace_covered_by_overlay()
-            || self.code_comment_capture.is_some()
+            || self.send_to_chat_capture.is_some()
         {
             return;
         }
@@ -115,10 +119,10 @@ impl FarcasterApp {
         let generation = self.editor_request_generation;
         let return_focus = window.focused(cx);
         let capture = editor.update(cx, |editor, cx| editor.capture_code(cx));
-        self.code_comment_capture = Some(cx.spawn_in(window, async move |weak, cx| {
+        self.send_to_chat_capture = Some(cx.spawn_in(window, async move |weak, cx| {
             let result = capture.await;
             let _ = weak.update_in(cx, |this, window, cx| {
-                this.code_comment_capture = None;
+                this.send_to_chat_capture = None;
                 // Never open a late capture over another session, editor, or modal.
                 if this.composer_sessions.current_target() != target
                     || this.editor_request_generation != generation
@@ -154,7 +158,7 @@ impl FarcasterApp {
                             "Message…"
                         })
                     },
-                    FarcasterApp::add_code_comment,
+                    FarcasterApp::confirm_send_to_chat,
                 );
                 this.cover_native_workspace_surface(cx);
                 let input_focus = input.read(cx).focus_handle(cx);
@@ -166,7 +170,7 @@ impl FarcasterApp {
                 };
                 let destinations =
                     destinations::choices(&settings.project, current, &this.all_sessions);
-                this.code_comment = Some(CodeComment {
+                this.send_to_chat = Some(SendToChat {
                     focus: cx.focus_handle(),
                     input,
                     context,
@@ -185,64 +189,68 @@ impl FarcasterApp {
         }));
     }
 
-    pub(in crate::app) fn close_code_comment(
+    pub(in crate::app) fn close_send_to_chat(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self
-            .code_comment
+            .send_to_chat
             .as_ref()
-            .is_some_and(|comment| comment.picker.is_some())
+            .is_some_and(|dialog| dialog.picker.is_some())
         {
             self.close_code_destination_picker(window, cx);
             return;
         }
-        let Some(comment) = self.code_comment.take() else {
+        let Some(dialog) = self.send_to_chat.take() else {
             return;
         };
-        self.restore_overlay_focus(comment.return_focus, &comment.focus, window, cx);
+        self.restore_overlay_focus(dialog.return_focus, &dialog.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
     }
 
-    pub(in crate::app) fn add_code_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(comment) = self.code_comment.as_mut() else {
+    pub(in crate::app) fn confirm_send_to_chat(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.send_to_chat.as_mut() else {
             return;
         };
-        comment.error = None;
-        if comment.picker.is_some() {
+        dialog.error = None;
+        if dialog.picker.is_some() {
             return;
         }
-        if comment.target != self.composer_sessions.current_target() {
-            self.code_comment_error(
+        if dialog.target != self.composer_sessions.current_target() {
+            self.send_to_chat_error(
                 "Return to the original session to use this code capture.".into(),
                 cx,
             );
             return;
         }
-        let instruction = comment.input.read(cx).value();
+        let instruction = dialog.input.read(cx).value();
         if instruction.trim().is_empty() {
             return;
         }
-        let prompt = comment.context.prompt(&instruction);
-        if let Some(destination) = comment.destination().cloned() {
-            let project = comment.settings.project.clone();
-            self.submit_code_comment(destination, project, prompt, window, cx);
+        let prompt = dialog.context.prompt(&instruction);
+        if let Some(destination) = dialog.destination().cloned() {
+            let project = dialog.settings.project.clone();
+            self.submit_to_chat(destination, project, prompt, window, cx);
         } else {
-            let settings = comment.settings.clone();
+            let settings = dialog.settings.clone();
             self.submit_code_task(settings, prompt, window, cx);
         }
     }
 
-    pub(super) fn code_comment_error(&mut self, message: String, cx: &mut Context<Self>) {
-        if let Some(comment) = self.code_comment.as_mut() {
-            comment.error = Some(message);
+    pub(super) fn send_to_chat_error(&mut self, message: String, cx: &mut Context<Self>) {
+        if let Some(dialog) = self.send_to_chat.as_mut() {
+            dialog.error = Some(message);
             cx.notify();
         }
     }
 }
 
 #[cfg(test)]
-#[path = "code_comment_tests.rs"]
+#[path = "send_to_chat_tests.rs"]
 mod tests;

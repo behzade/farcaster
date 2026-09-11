@@ -73,15 +73,15 @@ pub(super) fn cycle_destination(
 
 impl FarcasterApp {
     pub(in crate::app) fn cycle_code_destination(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let Some(comment) = self.code_comment.as_mut() else {
+        let Some(dialog) = self.send_to_chat.as_mut() else {
             return;
         };
         // The open picker's list owns navigation until it is confirmed or cancelled.
-        if comment.picker.is_some() {
+        if dialog.picker.is_some() {
             return;
         }
-        comment.destination =
-            cycle_destination(comment.destination, comment.destinations.len(), forward);
+        dialog.destination =
+            cycle_destination(dialog.destination, dialog.destinations.len(), forward);
         cx.notify();
     }
 
@@ -90,7 +90,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(comment) = self.code_comment.as_ref() else {
+        let Some(dialog) = self.send_to_chat.as_ref() else {
             return;
         };
         let mut rows = vec![PickerRow::new(
@@ -102,7 +102,7 @@ impl FarcasterApp {
             "",
         )];
         rows.extend(
-            comment
+            dialog
                 .destinations
                 .iter()
                 .enumerate()
@@ -118,20 +118,20 @@ impl FarcasterApp {
                 }),
         );
         let (delegate, handles) = PickerDelegate::new(rows);
-        let selected = comment.destination.map_or(0, |index| index + 1);
+        let selected = dialog.destination.map_or(0, |index| index + 1);
         let list = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
         let subscription =
             cx.subscribe_in(&list, window, move |_, _, event, window, cx| match event {
                 ListEvent::Confirm(_) => {
                     let id = handles.confirmed_id.borrow_mut().take();
                     cx.defer_in(window, move |this, window, cx| {
-                        if let (Some(comment), Some(id)) = (this.code_comment.as_mut(), id) {
+                        if let (Some(dialog), Some(id)) = (this.send_to_chat.as_mut(), id) {
                             if id == "new" {
-                                comment.destination = None;
+                                dialog.destination = None;
                             } else if let Ok(index) = id.parse::<usize>()
-                                && index < comment.destinations.len()
+                                && index < dialog.destinations.len()
                             {
-                                comment.destination = Some(index);
+                                dialog.destination = Some(index);
                             }
                         }
                         this.close_code_destination_picker(window, cx);
@@ -157,7 +157,7 @@ impl FarcasterApp {
             );
             list.focus(window, cx);
         });
-        self.code_comment.as_mut().expect("open capture").picker = Some(DestinationPicker {
+        self.send_to_chat.as_mut().expect("open capture").picker = Some(DestinationPicker {
             list,
             _subscription: subscription,
         });
@@ -169,9 +169,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(comment) = self.code_comment.as_mut() {
-            comment.picker = None;
-            comment.input.read(cx).focus_handle(cx).focus(window, cx);
+        if let Some(dialog) = self.send_to_chat.as_mut() {
+            dialog.picker = None;
+            dialog.input.read(cx).focus_handle(cx).focus(window, cx);
             cx.notify();
         }
     }

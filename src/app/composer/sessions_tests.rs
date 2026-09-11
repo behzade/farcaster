@@ -17,7 +17,7 @@ fn switch_restores_text_cursor_and_selection_per_session() {
 }
 
 #[test]
-fn failed_code_comment_keeps_both_drafts_and_destination_cursor() {
+fn failed_send_to_chat_keeps_both_drafts_and_destination_cursor() {
     let mut sessions = sessions("session:destination");
     let destination = ComposerSnapshot::new("existing draft".into(), 3, 1..3);
     sessions.switch_to("session:source".into(), destination.clone());
@@ -27,10 +27,10 @@ fn failed_code_comment_keeps_both_drafts_and_destination_cursor() {
     sessions.set_attachments("session:destination", vec![attachment.clone()]);
     let source = ComposerSnapshot::new("source draft".into(), 2, 2..2);
     sessions.capture_current(source.clone());
-    sessions.record_submission("session:destination", "code comment");
+    sessions.record_submission("session:destination", "message");
     assert_eq!(sessions.snapshot_for("session:destination"), destination);
-    let recovered = sessions.append_to_draft("session:destination", "code comment");
-    assert_eq!(recovered.text, "existing draft\n\ncode comment");
+    let recovered = sessions.append_to_draft("session:destination", "message");
+    assert_eq!(recovered.text, "existing draft\n\nmessage");
     assert_eq!(recovered.cursor, destination.cursor);
     assert_eq!(recovered.selection, destination.selection);
     assert_eq!(sessions.snapshot_for("session:source"), source);

@@ -136,8 +136,8 @@ impl FarcasterApp {
                 root.child(dialogs::archive_confirmation::render(self, entity.clone()))
             })
             .when(
-                self.code_comment.is_some() && !self.overlays.project_trust,
-                |root| root.child(dialogs::code_comment::render(self, entity.clone(), cx)),
+                self.send_to_chat.is_some() && !self.overlays.project_trust,
+                |root| root.child(dialogs::send_to_chat::render(self, entity.clone(), cx)),
             )
             .when(self.pending_delete.is_some(), |root| {
                 root.child(dialogs::delete_confirmation::render(self, entity.clone()))

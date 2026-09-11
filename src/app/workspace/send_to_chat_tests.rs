@@ -4,7 +4,7 @@ use crate::sessions::SessionSummary;
 use std::path::Path;
 
 #[test]
-fn comment_preserves_unsaved_code_and_nested_fences() {
+fn message_preserves_unsaved_code_and_nested_fences() {
     let context = CodeContext {
         path: "/project/it's code.md".into(),
         cursor_line: 2,

@@ -1,4 +1,5 @@
 use crate::app::ui::keyboard::CopySelection;
+use crate::app::views::dialogs::send_to_chat::{NextCodeDestination, PreviousCodeDestination};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{APP_SHORTCUT_CONTEXT, TRANSCRIPT_SELECTION_KEY_CONTEXT};
 use crate::app::{
@@ -15,6 +16,8 @@ use gpui::{KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
 const COMPOSER_COMPLETION_CONTEXT: &str = "(FarcasterComposer && Completions) > Input";
+const PICKER_NAVIGATION_CONTEXT: &str =
+    "(PiPicker > Input) || (FarcasterSendToChat > List > Input)";
 
 pub(crate) fn application_key(suffix: &str) -> String {
     format!("{}-{suffix}", platform_key("cmd", "ctrl"))
@@ -416,15 +419,15 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "Send to chat",
             "Previous destination",
             "ctrl-p",
-            SelectUp,
-            Some("FarcasterCodeComment")
+            PreviousCodeDestination,
+            Some("FarcasterSendToChat")
         ),
         shortcut!(
             "Send to chat",
             "Next destination",
             "ctrl-n",
-            SelectDown,
-            Some("FarcasterCodeComment")
+            NextCodeDestination,
+            Some("FarcasterSendToChat")
         ),
         shortcut!(
             "Application",
@@ -439,7 +442,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             keystroke: "ctrl-p".into(),
             show_in_help: false,
             show_in_picker: false,
-            binding: KeyBinding::new("ctrl-p", SelectUp, Some("PiPicker > Input")),
+            binding: KeyBinding::new("ctrl-p", SelectUp, Some(PICKER_NAVIGATION_CONTEXT)),
         },
         Shortcut {
             section: "Application",
@@ -447,7 +450,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             keystroke: "ctrl-n".into(),
             show_in_help: false,
             show_in_picker: false,
-            binding: KeyBinding::new("ctrl-n", SelectDown, Some("PiPicker > Input")),
+            binding: KeyBinding::new("ctrl-n", SelectDown, Some(PICKER_NAVIGATION_CONTEXT)),
         },
         shortcut!(
             "Application",

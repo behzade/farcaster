@@ -7,25 +7,29 @@ use crate::app::{
 };
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _,
-    WeakEntity, div,
+    WeakEntity, actions, div,
 };
-use gpui_base::actions::{SelectDown, SelectUp};
 use gpui_component::{input::Textarea, list::List};
+
+actions!(farcaster, [NextCodeDestination, PreviousCodeDestination]);
 
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
     entity: WeakEntity<FarcasterApp>,
     cx: &gpui::App,
 ) -> AnyElement {
-    let comment = app.code_comment.as_ref().expect("visible code comment");
-    let destination = comment.destination();
+    let dialog = app
+        .send_to_chat
+        .as_ref()
+        .expect("visible Send to chat dialog");
+    let destination = dialog.destination();
     let cancel = entity.clone();
     let submit = entity.clone();
     let choose = entity.clone();
     let next = entity.clone();
     let previous = entity.clone();
-    let enabled = !comment.input.read(cx).value().trim().is_empty();
-    let title = if comment.picker.is_some() {
+    let enabled = !dialog.input.read(cx).value().trim().is_empty();
+    let title = if dialog.picker.is_some() {
         "Send to"
     } else if destination.is_none() {
         "Start task"
@@ -33,15 +37,15 @@ pub(in crate::app::views) fn render(
         "Send to chat"
     };
     modal(
-        "code-comment",
+        "send-to-chat",
         title,
-        &comment.focus,
+        &dialog.focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
-            let _ = cancel.update(cx, |this, cx| this.close_code_comment(window, cx));
+            let _ = cancel.update(cx, |this, cx| this.close_send_to_chat(window, cx));
         },
         |surface| {
-            if let Some(picker) = &comment.picker {
+            if let Some(picker) = &dialog.picker {
                 return surface.child(
                     div()
                         .flex()
@@ -85,7 +89,7 @@ pub(in crate::app::views) fn render(
                         },
                     ))
                     .children(destination.is_none().then(|| {
-                        let settings = &comment.settings;
+                        let settings = &dialog.settings;
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
@@ -98,8 +102,10 @@ pub(in crate::app::views) fn render(
                                     .map_or("Default model", |model| model.name.as_str())
                             ))
                     }))
-                    .child(submit_textarea(Textarea::new(&comment.input).aria_label(title)))
-                    .children(comment.error.as_ref().map(|error| {
+                    .child(submit_textarea(
+                        Textarea::new(&dialog.input).aria_label(title),
+                    ))
+                    .children(dialog.error.as_ref().map(|error| {
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.danger)
@@ -111,17 +117,17 @@ pub(in crate::app::views) fn render(
                             .justify_end()
                             .gap(THEME.space.sm)
                             .child(button(
-                                "cancel-code-comment",
+                                "cancel-send-to-chat",
                                 "Cancel",
                                 ButtonTone::Neutral,
                                 true,
                                 move |window, cx| {
                                     let _ = entity
-                                        .update(cx, |this, cx| this.close_code_comment(window, cx));
+                                        .update(cx, |this, cx| this.close_send_to_chat(window, cx));
                                 },
                             ))
                             .child(button(
-                                "add-code-comment",
+                                "confirm-send-to-chat",
                                 if destination.is_none() {
                                     "Start task"
                                 } else {
@@ -130,20 +136,25 @@ pub(in crate::app::views) fn render(
                                 ButtonTone::Accent,
                                 enabled,
                                 move |window, cx| {
-                                    let _ = submit
-                                        .update(cx, |this, cx| this.add_code_comment(window, cx));
+                                    let _ = submit.update(cx, |this, cx| {
+                                        this.confirm_send_to_chat(window, cx)
+                                    });
                                 },
                             )),
                     ),
             )
         },
     )
-    .key_context("FarcasterCodeComment")
-    .on_action(move |_: &SelectDown, _, cx| {
+    .key_context("FarcasterSendToChat")
+    .on_action(move |_: &NextCodeDestination, _, cx| {
         let _ = next.update(cx, |this, cx| this.cycle_code_destination(true, cx));
     })
-    .on_action(move |_: &SelectUp, _, cx| {
+    .on_action(move |_: &PreviousCodeDestination, _, cx| {
         let _ = previous.update(cx, |this, cx| this.cycle_code_destination(false, cx));
     })
     .into_any_element()
 }
+
+#[cfg(test)]
+#[path = "send_to_chat_tests.rs"]
+mod tests;

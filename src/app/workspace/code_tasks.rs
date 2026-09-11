@@ -56,9 +56,9 @@ impl CodeTasks {
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn submit_code_comment(
+    pub(in crate::app) fn submit_to_chat(
         &mut self,
-        destination: super::code_comment::CodeDestination,
+        destination: super::send_to_chat::CodeDestination,
         project: PathBuf,
         message: String,
         window: &mut Window,
@@ -66,7 +66,7 @@ impl FarcasterApp {
     ) {
         let target = destination.target;
         if self.pending_submissions.contains_key(&target) {
-            self.code_comment_error(
+            self.send_to_chat_error(
                 "A message is still being sent to this chat. Try again shortly.".into(),
                 cx,
             );
@@ -90,7 +90,7 @@ impl FarcasterApp {
             project,
             message: message.clone(),
         }) {
-            self.code_comment_error(error, cx);
+            self.send_to_chat_error(error, cx);
             return;
         }
         self.capture_composer_session(cx);
@@ -102,7 +102,7 @@ impl FarcasterApp {
             self.set_session_active(path, cx);
         }
         self.track_code_submission(chat, message, cx);
-        self.close_code_comment(window, cx);
+        self.close_send_to_chat(window, cx);
         self.notify_session_rail(cx);
     }
 
@@ -131,7 +131,7 @@ impl FarcasterApp {
         let draft = match draft {
             Ok(draft) => draft,
             Err(error) => {
-                self.code_comment_error(error, cx);
+                self.send_to_chat_error(error, cx);
                 return;
             }
         };
@@ -156,7 +156,7 @@ impl FarcasterApp {
                 self.show_code_task_notice(chat, Some(false), cx);
             }
         }
-        self.close_code_comment(window, cx);
+        self.close_send_to_chat(window, cx);
         self.notify_session_rail(cx);
     }
 

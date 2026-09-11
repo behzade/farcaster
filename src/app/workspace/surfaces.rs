@@ -73,11 +73,11 @@ impl FarcasterApp {
         _window: &Window,
         cx: &gpui::App,
     ) -> Option<FocusHandle> {
-        if let Some(comment) = &self.code_comment
+        if let Some(dialog) = &self.send_to_chat
             && !self.overlays.project_trust
         {
-            Some(comment.picker.as_ref().map_or_else(
-                || comment.input.read(cx).focus_handle(cx),
+            Some(dialog.picker.as_ref().map_or_else(
+                || dialog.input.read(cx).focus_handle(cx),
                 |picker| picker.list.read(cx).focus_handle(cx),
             ))
         } else if self.image_preview.is_some() {
@@ -355,7 +355,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_workspace_modal_active(&self) -> bool {
-        self.code_comment.is_some()
+        self.send_to_chat.is_some()
             || self.picker.is_some()
             || self.overlays.sessions
             || self.overlays.run
@@ -848,8 +848,8 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.code_comment.is_some() && !self.overlays.project_trust {
-            self.close_code_comment(window, cx);
+        if self.send_to_chat.is_some() && !self.overlays.project_trust {
+            self.close_send_to_chat(window, cx);
         } else if self.image_preview.is_some() {
             self.close_image_preview(window, cx);
         } else if self.repository.edits.pending.is_some() {
