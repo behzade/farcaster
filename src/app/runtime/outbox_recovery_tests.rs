@@ -67,6 +67,149 @@ fn sent_messages(sent: &Rc<RefCell<Vec<SessionCommand>>>) -> Vec<String> {
 }
 
 #[test]
+fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    for message in ["active task", "next task", "last task"] {
+        store.enqueue_prompt(
+            "draft:abort-replay",
+            "pi",
+            temp.path(),
+            None,
+            PromptMode::Normal,
+            message,
+            &[],
+        )?;
+    }
+    let recovered = store.queued_prompts()?;
+    let unrelated_id = store.enqueue_prompt(
+        "draft:unrelated",
+        "pi",
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "unrelated task",
+        &[],
+    )?;
+    let (mut owner, _) = owner_without_process(temp.path().to_path_buf());
+    let sent = Rc::new(RefCell::new(Vec::new()));
+    owner.process = Some(Box::new(Recorder(sent.clone())));
+    owner.state = Some(store);
+    owner.active_session = Some(temp.path().join("session.jsonl"));
+    owner.snapshot.session = Some(empty_session());
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    for prompt in recovered {
+        owner.deliver_queued(prompt);
+    }
+    owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
+    assert_eq!(sent_messages(&sent), ["active task"]);
+
+    owner.apply_command(RuntimeCommand::Abort);
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
+    owner.maybe_send_deferred_prompt();
+    assert_eq!(
+        sent_messages(&sent),
+        ["active task"],
+        "Abort must not dispatch the next recovered task"
+    );
+    assert!(
+        sent.borrow()
+            .iter()
+            .any(|command| matches!(command, SessionCommand::Abort))
+    );
+    assert!(owner.queued_prompts.is_empty());
+    drop(owner);
+    let reopened = StateStore::open_at(&database)?;
+    assert_eq!(
+        reopened
+            .queued_prompts()?
+            .iter()
+            .map(|prompt| prompt.id)
+            .collect::<Vec<_>>(),
+        [unrelated_id],
+        "cancelled work must not return on restart"
+    );
+    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+    let rows = connection
+        .prepare("SELECT message, state FROM outbox ORDER BY id")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        rows,
+        [
+            ("next task".into(), "failed".into()),
+            ("last task".into(), "failed".into()),
+            ("unrelated task".into(), "queued".into())
+        ],
+        "keep cancelled payloads, but remove them from automatic delivery"
+    );
+    Ok(())
+}
+
+#[test]
+fn abort_reports_failed_durable_cancellation_and_still_stops_this_run() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    store.enqueue_prompt(
+        "draft:failed-cancel",
+        "pi",
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "must not start this run",
+        &[],
+    )?;
+    let connection = rusqlite::Connection::open(&database).map_err(|e| e.to_string())?;
+    connection
+        .execute_batch(
+            "CREATE TRIGGER reject_cancellation BEFORE UPDATE OF state ON outbox
+         WHEN NEW.state='failed' BEGIN SELECT RAISE(FAIL, 'storage failure fixture'); END;",
+        )
+        .map_err(|e| e.to_string())?;
+    let (mut owner, _) = owner_without_process(temp.path().into());
+    let sent = Rc::new(RefCell::new(Vec::new()));
+    owner.process = Some(Box::new(Recorder(sent.clone())));
+    owner.queued_prompts.extend(store.queued_prompts()?);
+    owner.state = Some(store);
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.apply_command(RuntimeCommand::Abort);
+    owner.maybe_send_deferred_prompt();
+    assert!(sent_messages(&sent).is_empty());
+    assert!(owner.queued_prompts.is_empty());
+    assert!(
+        owner
+            .active_snapshot()
+            .conversation
+            .items
+            .iter()
+            .any(|item| {
+                item.text.contains("They may return after restart")
+                    && item.text.contains("storage failure fixture")
+            }),
+        "a persistence failure must show the restart risk"
+    );
+    drop(owner);
+    let reopened = StateStore::open_at(&database)?;
+    assert_eq!(
+        reopened.queued_prompts()?.len(),
+        1,
+        "failed storage cannot be claimed as durable cancellation"
+    );
+    Ok(())
+}
+
+#[test]
 fn abort_cancels_a_prompt_deferred_for_startup() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");

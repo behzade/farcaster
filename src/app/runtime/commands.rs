@@ -1,6 +1,35 @@
 use super::*;
 
 impl RuntimeOwner {
+    fn cancel_recovered_prompts(&mut self) {
+        if self.queued_prompts.is_empty() {
+            return;
+        }
+        let ids = self
+            .queued_prompts
+            .iter()
+            .map(|prompt| prompt.id)
+            .collect::<Vec<_>>();
+        let result = self
+            .state
+            .as_ref()
+            .ok_or_else(|| "State unavailable".to_owned())
+            .and_then(|state| state.cancel_queued_prompts(&ids));
+        // Stop this run even if the disk write fails. In that case make the
+        // missing durability explicit: we cannot promise safety after restart.
+        self.queued_prompts.clear();
+        if let Err(error) = result {
+            let message = format!(
+                "Stopped pending messages for this run, but could not save their cancellation. \
+                 They may return after restart. Resolve the storage error before restarting: {error}"
+            );
+            conversation_mut(self.active_snapshot_mut())
+                .push_local_error("Queue cancellation was not saved", message.clone());
+            self.notify_attention("Queue cancellation was not saved", Some(&message));
+            self.publish();
+        }
+    }
+
     pub(super) fn apply_command(&mut self, runtime_command: RuntimeCommand) {
         match runtime_command {
             RuntimeCommand::SendToSession {
@@ -57,6 +86,7 @@ impl RuntimeOwner {
                 }
             }
             RuntimeCommand::Abort => {
+                self.cancel_recovered_prompts();
                 self.cancel_deferred_prompt();
                 self.send(SessionCommand::Abort);
             }
