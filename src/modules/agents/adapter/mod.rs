@@ -228,20 +228,14 @@ fn load_pi_configuration(
     let mut efforts_loaded = false;
     while std::time::Instant::now() < deadline && !(models_loaded && efforts_loaded) {
         match process.poll() {
-            Some(crate::agents::SessionEvent::Response(response)) if response.success => {
-                match response.operation {
-                    crate::agents::SessionOperation::ListModels => {
-                        catalog.models = serde_json::from_value(
-                            response.data.get("models").cloned().unwrap_or_default(),
-                        )
-                        .map_err(|error| format!("decode Pi model catalog: {error}"))?;
+            Some(crate::agents::SessionEvent::Response(response)) => {
+                match response.result.map_err(|error| error.to_string())? {
+                    crate::agents::SessionResponsePayload::ListModels(models) => {
+                        catalog.models = models;
                         models_loaded = true;
                     }
-                    crate::agents::SessionOperation::ListReasoningLevels => {
-                        catalog.efforts = serde_json::from_value(
-                            response.data.get("levels").cloned().unwrap_or_default(),
-                        )
-                        .map_err(|error| format!("decode Pi effort catalog: {error}"))?;
+                    crate::agents::SessionResponsePayload::ListReasoningLevels(levels) => {
+                        catalog.efforts = levels;
                         efforts_loaded = true;
                     }
                     _ => {}

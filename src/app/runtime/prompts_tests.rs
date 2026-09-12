@@ -123,10 +123,9 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         let commands = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         owner.process = Some(Box::new(Recorder(commands.clone())));
         owner.active_session = Some(std::env::temp_dir().join("existing-session"));
-        let history = serde_json::json!([{"role": "user", "content": "Earlier task"}]);
+        let history = vec![serde_json::json!({"role": "user", "content": "Earlier task"})];
         if preserve {
-            conversation_mut(&mut owner.snapshot)
-                .replace_history(history.as_array().expect("history"));
+            conversation_mut(&mut owner.snapshot).replace_history(&history);
         }
         owner.pending_prompt_item = Some(
             conversation_mut(&mut owner.snapshot).push_local_user_with_prompt_images(
@@ -146,20 +145,20 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
 
         assert!(owner.deferred_prompt.is_some());
         assert!(commands.borrow().is_empty());
-        let state = crate::agents::SessionResponse {
-            id: None,
-            operation: crate::agents::SessionOperation::LoadState,
-            success: true,
-            data: empty_session_json(),
-            error: None,
-        };
-        let history = crate::agents::SessionResponse {
-            id: None,
-            operation: crate::agents::SessionOperation::LoadHistory,
-            success: true,
-            data: serde_json::json!({"messages": history, "preserve": preserve}),
-            error: None,
-        };
+        let state = crate::agents::SessionResponse::success(
+            None,
+            crate::agents::SessionResponsePayload::LoadState(
+                serde_json::from_value(empty_session_json()).expect("state fixture"),
+            ),
+        );
+        let history = crate::agents::SessionResponse::success(
+            None,
+            crate::agents::SessionResponsePayload::LoadHistory(if preserve {
+                crate::agents::SessionHistory::Preserve
+            } else {
+                crate::agents::SessionHistory::Replace(history)
+            }),
+        );
         let responses = if history_first {
             [history, state]
         } else {

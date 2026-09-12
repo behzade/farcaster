@@ -196,13 +196,11 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
             .iter()
             .any(|command| matches!(command, SessionCommand::Prompt { .. }))
     );
-    owner.apply_response(crate::agents::SessionResponse {
-        id: Some("1".into()),
-        operation: SessionOperation::SelectModel,
-        success: false,
-        data: Value::Null,
-        error: Some("Model not found".into()),
-    });
+    owner.apply_response(crate::agents::SessionResponse::failure(
+        Some("1".into()),
+        SessionOperation::SelectModel,
+        "Model not found".into(),
+    ));
     assert!(owner.deferred_prompt.is_none());
     assert!(!owner.snapshot.conversation.running);
     assert!(events.try_iter().any(|event| matches!(
@@ -236,13 +234,10 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         vec![],
         false,
     );
-    owner.apply_response(crate::agents::SessionResponse {
-        id: Some(id),
-        operation: SessionOperation::SelectModel,
-        success: true,
-        data: serde_json::to_value(model).expect("test operation should succeed"),
-        error: None,
-    });
+    owner.apply_response(crate::agents::SessionResponse::success(
+        Some(id),
+        crate::agents::SessionResponsePayload::SelectModel(model),
+    ));
     owner.maybe_send_deferred_prompt();
     assert!(owner.deferred_prompt.is_none());
     assert_eq!(
@@ -1488,24 +1483,24 @@ fn first_session_path_publishes_metadata_without_a_catalog_refresh() {
     let session = project.join("new-session.jsonl");
     let (mut owner, events) = owner_without_process(project);
 
-    owner.apply_response(crate::agents::SessionResponse {
-        id: Some("state".into()),
-        operation: crate::agents::SessionOperation::LoadState,
-        success: true,
-        data: json!({
-            "model": null,
-            "thinkingLevel": "off",
-            "isStreaming": true,
-            "isCompacting": false,
-            "sessionFile": session,
-            "sessionId": "new-session",
-            "sessionName": null,
-            "autoCompactionEnabled": true,
-            "messageCount": 1,
-            "pendingMessageCount": 0
-        }),
-        error: None,
-    });
+    owner.apply_response(crate::agents::SessionResponse::success(
+        Some("state".into()),
+        crate::agents::SessionResponsePayload::LoadState(
+            serde_json::from_value(json!({
+                "model": null,
+                "thinkingLevel": "off",
+                "isStreaming": true,
+                "isCompacting": false,
+                "sessionFile": session,
+                "sessionId": "new-session",
+                "sessionName": null,
+                "autoCompactionEnabled": true,
+                "messageCount": 1,
+                "pendingMessageCount": 0
+            }))
+            .expect("state fixture"),
+        ),
+    ));
 
     assert_eq!(owner.active_session, Some(session));
     assert_eq!(owner.session_generation, 0);
@@ -1523,24 +1518,24 @@ fn get_state_canonicalizes_a_symlinked_session_path() -> Result<(), Box<dyn std:
     symlink(&session, &link)?;
     let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
 
-    owner.apply_response(crate::agents::SessionResponse {
-        id: Some("state".into()),
-        operation: crate::agents::SessionOperation::LoadState,
-        success: true,
-        data: json!({
-            "model": null,
-            "thinkingLevel": "off",
-            "isStreaming": false,
-            "isCompacting": false,
-            "sessionFile": link,
-            "sessionId": "session",
-            "sessionName": null,
-            "autoCompactionEnabled": true,
-            "messageCount": 0,
-            "pendingMessageCount": 0
-        }),
-        error: None,
-    });
+    owner.apply_response(crate::agents::SessionResponse::success(
+        Some("state".into()),
+        crate::agents::SessionResponsePayload::LoadState(
+            serde_json::from_value(json!({
+                "model": null,
+                "thinkingLevel": "off",
+                "isStreaming": false,
+                "isCompacting": false,
+                "sessionFile": link,
+                "sessionId": "session",
+                "sessionName": null,
+                "autoCompactionEnabled": true,
+                "messageCount": 0,
+                "pendingMessageCount": 0
+            }))
+            .expect("state fixture"),
+        ),
+    ));
 
     assert_eq!(owner.active_session, Some(session.canonicalize()?));
     assert_eq!(

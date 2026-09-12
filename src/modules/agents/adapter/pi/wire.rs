@@ -48,25 +48,21 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             if response.success && response.command == "get_session_stats" {
                 add_usage_total(response.data.get_mut("tokens"));
             }
-            if response.success && response.command == "get_entries" {
-                let entries = response
-                    .data
-                    .get("entries")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| "Pi history response has no entries array".to_owned())?;
-                let messages = super::session_files::project_display_history(entries);
-                response.data = serde_json::json!({"messages": messages});
-            }
             let operation = response_operation(&response.command);
+            let result = if response.success {
+                super::response::decode(operation, response.data)
+            } else {
+                Err(response
+                    .error
+                    .unwrap_or_else(|| format!("Pi rejected {operation:?}")))
+            };
+            let decoded = match result {
+                Ok(payload) => SessionResponse::success(response.id, payload),
+                Err(error) => SessionResponse::failure(response.id, operation, error),
+            };
             Ok(PiWireMessage::Response {
                 command: response.command,
-                response: SessionResponse {
-                    id: response.id,
-                    operation,
-                    success: response.success,
-                    data: response.data,
-                    error: response.error,
-                },
+                response: decoded,
             })
         }
         "extension_ui_request" => parse_extension_request(value).map(PiWireMessage::ExtensionUi),

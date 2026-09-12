@@ -76,6 +76,9 @@ model_changed=0
 entries_loaded=0
 
 while IFS= read -r line; do
+  if [ "$case_name" = "cancelled-fork" ]; then
+    printf '%s\n' "$line" >> "$PWD/fork-requests"
+  fi
   if [ "$case_name" = "peer-delivery" ]; then
     printf '%s\n' "$line" >> "$PWD/peer-delivery.log"
   fi
@@ -96,6 +99,16 @@ while IFS= read -r line; do
     continue
   fi
   case "$type" in
+    fork)
+      if [ "$case_name" = "cancelled-fork" ]; then
+        data='{"text":null,"cancelled":true}'
+      else
+        data='{"text":null,"cancelled":false}'
+      fi
+      ;;
+    get_commands)
+      data='{"commands":[]}'
+      ;;
     get_messages)
       data='{"messages":[]}'
       ;;
@@ -108,13 +121,17 @@ while IFS= read -r line; do
       fi
       ;;
     get_available_models)
-      data='{"models":[]}'
+      if [ "$case_name" = "malformed-catalog" ]; then
+        data='{"models":[{"id":"valid","name":"Valid","provider":"test"},{"id":"incomplete"}]}'
+      else
+        data='{"models":[]}'
+      fi
       ;;
     get_available_thinking_levels)
       data='{"levels":["off"]}'
       ;;
     get_session_stats)
-      data='{"contextUsage":{"tokens":4096,"contextWindow":8192,"percent":50}}'
+      data='{"tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0},"contextUsage":{"tokens":4096,"contextWindow":8192,"percent":50}}'
       ;;
     get_state)
       if [ "$case_name" = "history-control" ] && [ "$model_changed" -eq 1 ]; then

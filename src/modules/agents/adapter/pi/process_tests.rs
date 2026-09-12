@@ -207,7 +207,7 @@ fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
         level: "medium".into(),
     })?;
     assert_eq!(
-        response.operation,
+        response.operation(),
         crate::agents::SessionOperation::SelectReasoning
     );
     rpc.terminate()?;
@@ -232,22 +232,11 @@ fn handshake_routes_async_event_and_correlates_unique_ids() -> TestResult {
     while Instant::now() < deadline && responses < 3 {
         if let Some(SessionEvent::Response(response)) = rpc.try_next() {
             responses += 1;
-            context_shape |= response.operation == crate::agents::SessionOperation::LoadUsage
-                && response
-                    .data
-                    .pointer("/contextUsage/tokens")
-                    .and_then(serde_json::Value::as_u64)
-                    == Some(4096)
-                && response
-                    .data
-                    .pointer("/contextUsage/contextWindow")
-                    .and_then(serde_json::Value::as_u64)
-                    == Some(8192)
-                && response
-                    .data
-                    .pointer("/contextUsage/percent")
-                    .and_then(serde_json::Value::as_u64)
-                    == Some(50);
+            context_shape |= matches!(response.result,
+                Ok(crate::agents::SessionResponsePayload::LoadUsage(usage))
+                if usage.context_usage.is_some_and(|context|
+                    context.tokens == Some(4096) && context.context_window == 8192 && context.percent == Some(50.0))
+            );
         }
         thread::sleep(Duration::from_millis(5));
     }
@@ -559,4 +548,21 @@ fn only_the_pi_adapter_selects_the_pi_executable() {
         ..neutral
     };
     assert_eq!(launch_configuration(&explicit).program, explicit.program);
+}
+
+#[test]
+fn malformed_catalog_fails_its_request_without_poisoning_the_transport() -> TestResult {
+    let (temp, command) = fake("malformed-catalog")?;
+    let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    let error = rpc
+        .request_and_wait(SessionCommand::ListModels)
+        .expect_err("invalid model catalog");
+    assert!(error.contains("ListModels"), "{error}");
+    let response = rpc.request_and_wait(SessionCommand::LoadState)?;
+    assert!(matches!(
+        response.result,
+        Ok(crate::agents::SessionResponsePayload::LoadState(_))
+    ));
+    rpc.terminate()?;
+    Ok(())
 }

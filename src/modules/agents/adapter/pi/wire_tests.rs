@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 
 #[test]
 fn parses_response_and_activity_frames() {
@@ -6,13 +7,10 @@ fn parses_response_and_activity_frames() {
         parse_frame(br#"{"type":"response","id":"1","command":"abort","success":true}"#),
         Ok(PiWireMessage::Response {
             command: "abort".into(),
-            response: SessionResponse {
-                id: Some("1".into()),
-                operation: SessionOperation::Abort,
-                success: true,
-                data: Value::Null,
-                error: None,
-            },
+            response: crate::agents::SessionResponse::success(
+                Some("1".into()),
+                crate::agents::SessionResponsePayload::Abort
+            ),
         })
     );
     assert_eq!(
@@ -40,7 +38,10 @@ fn normalizes_missing_usage_totals() {
         else {
             panic!("expected response");
         };
-    assert_eq!(response.data["tokens"]["totalTokens"], 8);
+    let Ok(Payload::LoadUsage(usage)) = response.result else {
+        panic!("expected usage")
+    };
+    assert_eq!(usage.tokens.total_tokens, 8);
 }
 
 #[test]
@@ -48,12 +49,17 @@ fn history_response_projects_pi_entries_before_leaving_adapter() {
     let PiWireMessage::Response { response, .. } = parse_frame(
             br#"{"type":"response","command":"get_entries","success":true,"data":{"entries":[{"type":"message","id":"a","parentId":null,"message":{"role":"user","content":"hello"}}]}}"#,
         ).expect("history") else { panic!("expected response"); };
-    assert_eq!(response.data["messages"][0]["content"], "hello");
-    assert!(response.data.get("entries").is_none());
-    assert!(
+    let Ok(Payload::LoadHistory(SessionHistory::Replace(messages))) = response.result else {
+        panic!("expected history")
+    };
+    assert_eq!(messages[0]["content"], "hello");
+    let PiWireMessage::Response { response, .. } =
         parse_frame(br#"{"type":"response","command":"get_entries","success":true,"data":{}}"#)
-            .is_err()
-    );
+            .expect("response envelope")
+    else {
+        panic!("expected response")
+    };
+    assert!(response.result.is_err());
 }
 
 #[test]
@@ -63,14 +69,14 @@ fn adds_per_model_efforts_to_pi_model_catalogs() {
         "command": "get_available_models",
         "success": true,
         "data": {"models": [
-            {"id": "plain", "reasoning": false},
-            {"id": "default", "reasoning": true},
-            {"id": "mapped", "reasoning": true, "thinkingLevelMap": {
+            {"id": "plain", "name": "Plain", "provider": "test", "reasoning": false},
+            {"id": "default", "name": "Default", "provider": "test", "reasoning": true},
+            {"id": "mapped", "name": "Mapped", "provider": "test", "reasoning": true, "thinkingLevelMap": {
                 "minimal": null,
                 "xhigh": "xhigh",
                 "max": null
             }},
-            {"id": "future", "reasoning": true, "efforts": ["custom"]}
+            {"id": "future", "name": "Future", "provider": "test", "reasoning": true, "efforts": ["custom"]}
         ]}
     }))
     .expect("model frame");
@@ -79,10 +85,12 @@ fn adds_per_model_efforts_to_pi_model_catalogs() {
         panic!("expected response");
     };
 
-    let models = response.data["models"].as_array().expect("models");
+    let Ok(Payload::ListModels(models)) = response.result else {
+        panic!("expected models")
+    };
     let efforts = models
         .iter()
-        .map(|model| model["efforts"].clone())
+        .map(|model| serde_json::json!(model.efforts))
         .collect::<Vec<_>>();
     assert_eq!(
         efforts,
@@ -110,4 +118,127 @@ fn keeps_unknown_extension_methods_observable() {
 fn rejects_malformed_frames() {
     assert!(parse_frame(b"{").is_err());
     assert!(parse_frame(br#"{"command":"abort"}"#).is_err());
+}
+
+#[test]
+fn malformed_catalogs_are_correlated_failures_not_empty_successes() {
+    for (command, operation, bodies) in [
+        (
+            "get_available_models",
+            SessionOperation::ListModels,
+            vec![
+                serde_json::json!({}),
+                serde_json::json!({"models":null}),
+                serde_json::json!({"models":[{"id":"incomplete"}]}),
+                serde_json::json!({"models":[{"id":"valid","name":"Valid","provider":"test"},42]}),
+            ],
+        ),
+        (
+            "get_available_thinking_levels",
+            SessionOperation::ListReasoningLevels,
+            vec![
+                serde_json::json!({}),
+                serde_json::json!({"levels":["high",7]}),
+            ],
+        ),
+        (
+            "get_modes",
+            SessionOperation::ListModes,
+            vec![
+                serde_json::json!({}),
+                serde_json::json!({"modes":[{"id":"plan"}]}),
+                serde_json::json!({"modes":[],"selected":3}),
+            ],
+        ),
+        (
+            "get_commands",
+            SessionOperation::ListCommands,
+            vec![
+                serde_json::json!({}),
+                serde_json::json!({"commands":[{"name":"bad","source":"unknown"}]}),
+            ],
+        ),
+    ] {
+        for data in bodies {
+            let frame = serde_json::to_vec(&serde_json::json!({
+                "type":"response", "id":"refresh", "command":command, "success":true, "data":data,
+            }))
+            .expect("wire fixture");
+            let PiWireMessage::Response { response, .. } = parse_frame(&frame).expect("envelope")
+            else {
+                panic!("expected correlated response");
+            };
+            assert_eq!(response.id.as_deref(), Some("refresh"));
+            assert_eq!(response.operation(), operation);
+            assert!(response.result.is_err(), "{command}: {data}");
+        }
+    }
+}
+
+#[test]
+fn empty_catalogs_are_valid_and_backend_rejections_keep_the_error() {
+    for (command, data) in [
+        ("get_available_models", serde_json::json!({"models":[]})),
+        (
+            "get_available_thinking_levels",
+            serde_json::json!({"levels":[]}),
+        ),
+        ("get_modes", serde_json::json!({"modes":[]})),
+        ("get_commands", serde_json::json!({"commands":[]})),
+    ] {
+        let frame = serde_json::to_vec(&serde_json::json!({
+            "type":"response", "command":command, "success":true, "data":data,
+        }))
+        .expect("wire fixture");
+        let PiWireMessage::Response { response, .. } = parse_frame(&frame).expect("envelope")
+        else {
+            panic!("response")
+        };
+        assert!(response.result.is_ok(), "{command}: {:?}", response.result);
+    }
+    let PiWireMessage::Response { response, .. } = parse_frame(
+        br#"{"type":"response","id":"model","command":"set_model","success":false,"error":"provider unavailable","data":{}}"#
+    ).expect("envelope") else { panic!("response") };
+    assert_eq!(response.operation(), SessionOperation::SelectModel);
+    assert_eq!(
+        response.result.expect_err("rejected").message,
+        "provider unavailable"
+    );
+}
+
+#[test]
+fn state_and_model_payloads_are_validated_before_leaving_pi() {
+    for command in [
+        "get_state",
+        "set_model",
+        "get_session_stats",
+        "export_html",
+        "fork",
+    ] {
+        let frame = serde_json::to_vec(&serde_json::json!({
+            "type":"response", "command":command, "success":true, "data":{},
+        }))
+        .expect("wire fixture");
+        let PiWireMessage::Response { response, .. } = parse_frame(&frame).expect("envelope")
+        else {
+            panic!("response")
+        };
+        assert!(response.result.is_err(), "{command}");
+    }
+}
+
+#[test]
+fn usage_preserves_cost_and_unknown_post_compaction_context() {
+    let PiWireMessage::Response { response, .. } = parse_frame(
+        br#"{"type":"response","command":"get_session_stats","success":true,"data":{"tokens":{"input":1,"output":2,"cacheRead":3,"cacheWrite":4,"total":10},"cost":0.25,"contextUsage":{"tokens":null,"contextWindow":1000,"percent":null}}}"#
+    ).expect("usage frame") else { panic!("response") };
+    let Ok(Payload::LoadUsage(usage)) = response.result else {
+        panic!("usage")
+    };
+    assert_eq!(usage.tokens.total_tokens, 10);
+    assert_eq!(usage.total_cost, Some(0.25));
+    let context = usage.context_usage.expect("context");
+    assert_eq!(context.tokens, None);
+    assert_eq!(context.percent, None);
+    assert_eq!(context.context_window, 1000);
 }

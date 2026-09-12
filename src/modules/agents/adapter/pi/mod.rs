@@ -3,6 +3,7 @@ mod framing;
 mod mcp_config;
 mod process;
 mod protocol;
+mod response;
 pub(super) mod session_files;
 mod tool;
 pub(super) mod transfer;

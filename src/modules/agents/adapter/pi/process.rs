@@ -367,13 +367,16 @@ impl PiRpcProcess {
                 Ok(ReaderItem::StderrEof) => {}
                 Ok(item) => match self.route(item) {
                     SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
-                        return if response.success {
-                            Ok(response)
-                        } else {
-                            Err(response
-                                .error
-                                .unwrap_or_else(|| format!("Pi could not {operation}")))
-                        };
+                        match &response.result {
+                            Err(error) => return Err(error.to_string()),
+                            Ok(crate::agents::SessionResponsePayload::ForkAt {
+                                cancelled: true,
+                            }) => {
+                                return Err("Pi cancelled the session fork".into());
+                            }
+                            _ => {}
+                        }
+                        return Ok(response);
                     }
                     SessionEvent::Failure(error) => return Err(error),
                     other => self.queued.push_back(other),
@@ -406,13 +409,10 @@ impl PiRpcProcess {
                     Some(SessionEvent::Response(response))
                         if response.id.as_deref() == Some(&id) =>
                     {
-                        return if response.success {
-                            Ok(())
-                        } else {
-                            Err(response
-                                .error
-                                .unwrap_or_else(|| "Pi rejected the session name".to_owned()))
-                        };
+                        return response
+                            .result
+                            .map(|_| ())
+                            .map_err(|error| error.to_string());
                     }
                     Some(SessionEvent::Failure(error)) => return Err(error),
                     Some(_) | None => thread::sleep(Duration::from_millis(10)),
@@ -540,17 +540,14 @@ impl PiRpcProcess {
                 Ok(ReaderItem::StderrEof) => continue,
                 Ok(item) => match self.route(item) {
                     SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
-                        if response.operation != crate::agents::SessionOperation::LoadState {
+                        if response.operation() != crate::agents::SessionOperation::LoadState {
                             return Err(format!(
                                 "readiness response was for {:?}",
-                                response.operation
+                                response.operation()
                             ));
                         }
-                        if !response.success {
-                            return Err(format!(
-                                "Pi readiness failed: {}",
-                                response.error.unwrap_or_default()
-                            ));
+                        if let Err(error) = response.result {
+                            return Err(format!("Pi readiness failed: {error}"));
                         }
                         return Ok(());
                     }
@@ -596,9 +593,9 @@ impl PiRpcProcess {
                         "response {id} was for {command}, expected {expected_command}"
                     ));
                 }
-                if !response.success
+                if response.result.is_err()
                     && matches!(
-                        response.operation,
+                        response.operation(),
                         crate::agents::SessionOperation::Prompt(
                             crate::protocol::PromptMode::Normal
                         )
@@ -606,10 +603,10 @@ impl PiRpcProcess {
                 {
                     self.set_activity(WorkerActivityState::Idle);
                 }
-                if response.success
-                    && response.operation == crate::agents::SessionOperation::LoadState
+                if let Ok(crate::agents::SessionResponsePayload::LoadState(state)) =
+                    &response.result
                 {
-                    let session = response.data["sessionFile"].as_str();
+                    let session = state.session_file.as_deref();
                     if let Some(expected) = self.expected_resume.take() {
                         let actual = session
                             .map(|path| crate::sessions::normalize_session_path(Path::new(path)));

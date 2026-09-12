@@ -38,16 +38,11 @@ impl PendingSessionControls {
         if let Some(id) = &response.id {
             self.model_requests.remove(id);
         }
-        self.model_error = if response.success {
-            None
-        } else {
-            Some(
-                response
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "Model switch failed".into()),
-            )
-        };
+        self.model_error = response
+            .result
+            .as_ref()
+            .err()
+            .map(|error| error.message.clone());
     }
 
     pub(super) fn is_empty(&self) -> bool {

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::process::{PiRpcProcess, SessionLaunch};
 use crate::{
-    agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode, SessionState},
+    agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
     agents::{
         AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, WorkerContext,
         WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
@@ -190,24 +190,22 @@ impl WorkerSession for PiWorkerSession {
                     Ok(None) => {}
                     Err(error) => return Some(WorkerEvent::Failed(error)),
                 },
-                SessionEvent::Response(response) if !response.success => {
-                    return Some(WorkerEvent::Failed(
-                        response
-                            .error
-                            .unwrap_or_else(|| format!("Pi rejected {:?}", response.operation)),
-                    ));
+                SessionEvent::Response(crate::agents::SessionResponse {
+                    result: Err(error),
+                    ..
+                }) => {
+                    return Some(WorkerEvent::Failed(error.to_string()));
                 }
                 SessionEvent::Response(response)
                     if response.id.as_ref() == self.state_request.as_ref() =>
                 {
                     self.state_request = None;
-                    let state = match serde_json::from_value::<SessionState>(response.data) {
-                        Ok(state) => state,
-                        Err(error) => {
-                            return Some(WorkerEvent::Failed(format!(
-                                "invalid Pi worker session state: {error}"
-                            )));
-                        }
+                    let Ok(crate::agents::SessionResponsePayload::LoadState(state)) =
+                        response.result
+                    else {
+                        return Some(WorkerEvent::Failed(
+                            "Pi worker expected session state".into(),
+                        ));
                     };
                     if let Some(locator) = state.session_file {
                         self.has_session_locator = true;

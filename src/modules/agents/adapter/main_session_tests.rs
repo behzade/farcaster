@@ -7,6 +7,7 @@ use std::{
 };
 
 use super::*;
+use crate::agents::extensions::SessionState;
 
 struct IdleWorker;
 
@@ -113,7 +114,7 @@ fn prompt_response_does_not_precede_worker_rejection() {
         .expect("worker write");
 
     assert!(
-        matches!(transport.poll(), Some(SessionEvent::Response(response)) if !response.success),
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.result.is_err()),
         "a successful bridge response currently arrives before the worker reports rejection"
     );
 }
@@ -130,16 +131,19 @@ fn neutral_metadata_events_refresh_session_state_and_modes() {
     )
     .expect("test operation should succeed");
     transport.enqueue_activity(WorkerActivity::TitleChanged("Generated title".into()));
-    assert_eq!(transport.state()["sessionName"], "Generated title");
+    assert_eq!(
+        transport.state().session_name.as_deref().expect("title"),
+        "Generated title"
+    );
     assert!(
-        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.operation == SessionOperation::LoadState)
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.operation() == SessionOperation::LoadState)
     );
     transport.enqueue_activity(WorkerActivity::ModeChanged("plan".into()));
     assert!(
-        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.data["selected"] == "plan")
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if matches!(&response.result, Ok(Payload::ListModes { selected: Some(selected), .. }) if selected == "plan"))
     );
     transport.enqueue_activity(WorkerActivity::ConfigurationChanged {
-        models: vec![json!({"id":"model-fast","provider":"example"})],
+        models: vec![json!({"id":"model-fast","name":"Fast","provider":"example"})],
         efforts: vec!["high".into()],
         modes: Vec::new(),
         selected_model: Some(
@@ -147,21 +151,30 @@ fn neutral_metadata_events_refresh_session_state_and_modes() {
         ),
         selected_effort: Some("high".into()),
     });
-    assert_eq!(transport.state()["model"]["id"], "model-fast");
-    assert_eq!(transport.state()["model"]["contextWindow"], 1000000);
-    assert_eq!(transport.state()["thinkingLevel"], "high");
+    assert_eq!(transport.state().model.expect("model").id, "model-fast");
+    assert_eq!(
+        transport.state().model.expect("model").context_window,
+        1000000
+    );
+    assert_eq!(
+        transport.state().thinking_level.as_deref().expect("effort"),
+        "high"
+    );
     transport.enqueue_activity(WorkerActivity::ServiceTierChanged {
         selected: Some("priority".into()),
         options: vec!["standard".into(), "priority".into()],
     });
-    assert_eq!(transport.state()["serviceTier"], "priority");
-    assert_eq!(transport.state()["model"]["id"], "model-fast");
+    assert_eq!(
+        transport.state().service_tier.as_deref().expect("tier"),
+        "priority"
+    );
+    assert_eq!(transport.state().model.expect("model").id, "model-fast");
     transport.enqueue_activity(WorkerActivity::ServiceTierChanged {
         selected: None,
         options: Vec::new(),
     });
-    assert!(transport.state()["serviceTier"].is_null());
-    assert_eq!(transport.state()["serviceTiers"], json!([]));
+    assert!(transport.state().service_tier.is_none());
+    assert!(transport.state().service_tiers.is_empty());
 }
 
 #[test]
@@ -502,8 +515,8 @@ fn worker_session_state_retains_titles_and_counts_new_messages() {
         None,
     )
     .expect("transport");
-    assert_eq!(transport.state()["messageCount"], 0);
-    assert_eq!(transport.state()["sessionName"], Value::Null);
+    assert_eq!(transport.state().message_count, 0);
+    assert!(transport.state().session_name.is_none());
 
     for turn in 0..2 {
         let prompt = format!("Request {turn}");
@@ -514,7 +527,7 @@ fn worker_session_state_retains_titles_and_counts_new_messages() {
                 images: Vec::new(),
             })
             .expect("send prompt");
-        assert_eq!(transport.state()["messageCount"], turn * 2 + 1);
+        assert_eq!(transport.state().message_count, turn * 2 + 1);
         transport.enqueue_worker_event(WorkerEvent::Started);
         transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
             mode: WorkerSendMode::Prompt,
@@ -537,8 +550,9 @@ fn worker_session_state_retains_titles_and_counts_new_messages() {
         let Some(SessionEvent::Response(response)) = transport.poll() else {
             panic!("expected state response");
         };
-        assert_eq!(response.data["sessionName"], "Generated title");
-        assert_eq!(response.data["messageCount"], (turn + 1) * 2);
+        let state = state_of(response.result.expect("state response"));
+        assert_eq!(state.session_name.as_deref(), Some("Generated title"));
+        assert_eq!(state.message_count, (turn + 1) * 2);
     }
 }
 
@@ -565,9 +579,11 @@ fn resumed_transport_returns_persisted_history() {
     let SessionEvent::Response(response) = transport.poll().expect("history response") else {
         panic!("expected history response");
     };
-    assert_eq!(response.operation, SessionOperation::LoadHistory);
-    assert_eq!(response.data["preserve"], false);
-    assert_eq!(response.data["messages"][0]["content"], "persisted");
+    assert_eq!(response.operation(), SessionOperation::LoadHistory);
+    let Ok(Payload::LoadHistory(SessionHistory::Replace(messages))) = response.result else {
+        panic!("expected replacement history");
+    };
+    assert_eq!(messages[0]["content"], "persisted");
 
     transport
         .send(SessionCommand::LoadState)
@@ -575,9 +591,10 @@ fn resumed_transport_returns_persisted_history() {
     let SessionEvent::Response(response) = transport.poll().expect("state response") else {
         panic!("expected state response");
     };
-    assert_eq!(response.data["messageCount"], 1);
-    assert_eq!(response.data["model"]["id"], "gpt-test");
-    assert_eq!(response.data["thinkingLevel"], "high");
+    let state = state_of(response.result.expect("state response"));
+    assert_eq!(state.message_count, 1);
+    assert_eq!(state.model.expect("model").id, "gpt-test");
+    assert_eq!(state.thinking_level.as_deref(), Some("high"));
 
     transport
         .send(SessionCommand::Prompt {
@@ -586,7 +603,7 @@ fn resumed_transport_returns_persisted_history() {
             images: Vec::new(),
         })
         .expect("send prompt");
-    assert_eq!(transport.state()["messageCount"], 2);
+    assert_eq!(transport.state().message_count, 2);
 }
 
 #[test]
@@ -615,7 +632,11 @@ fn a_new_transport_without_a_picked_effort_reports_no_level() {
     let SessionEvent::Response(response) = transport.poll().expect("state response") else {
         panic!("expected state response");
     };
-    assert_eq!(response.data["thinkingLevel"], Value::Null);
+    assert!(
+        state_of(response.result.expect("state response"))
+            .thinking_level
+            .is_none()
+    );
 }
 
 #[test]
@@ -630,5 +651,53 @@ fn completion_is_an_authoritative_message_before_settling() {
             json!({"type": "thinking", "thinking": "plan"}),
             json!({"type": "text", "text": "final"}),
         ]
+    );
+}
+
+fn state_of(payload: Payload) -> SessionState {
+    let Payload::LoadState(state) = payload else {
+        panic!("expected state")
+    };
+    *state
+}
+
+#[test]
+fn malformed_worker_catalogs_fail_without_dropping_invalid_entries() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "example",
+        "session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata {
+            models: vec![
+                json!({"id":"valid","name":"Valid","provider":"example"}),
+                json!({"id":"bad"}),
+            ],
+            modes: vec![json!({"id":"plan"})],
+            commands: vec![json!({"name":"review","source":"unknown"})],
+            ..Default::default()
+        },
+        None,
+    )
+    .expect("transport");
+    for command in [
+        SessionCommand::ListModels,
+        SessionCommand::ListModes,
+        SessionCommand::ListCommands,
+    ] {
+        let operation = command.response_operation();
+        let id = transport.send(command).expect("request");
+        let Some(SessionEvent::Response(response)) = transport.poll() else {
+            panic!("response")
+        };
+        assert_eq!(response.id.as_deref(), Some(id.as_str()));
+        assert_eq!(response.operation(), operation);
+        assert!(response.result.is_err());
+    }
+    transport
+        .send(SessionCommand::LoadState)
+        .expect("state request");
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.result.is_ok())
     );
 }

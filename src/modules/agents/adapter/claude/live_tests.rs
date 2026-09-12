@@ -116,8 +116,11 @@ fn settled(session: &mut dyn SessionTransport, expected: &str, tool: bool) -> Re
                 })?;
             }
             Some(SessionEvent::Failure(error)) => return Err(error),
-            Some(SessionEvent::Response(response)) if !response.success => {
-                return Err(response.error.unwrap_or_default());
+            Some(SessionEvent::Response(crate::agents::SessionResponse {
+                result: Err(error),
+                ..
+            })) => {
+                return Err(error.to_string());
             }
             _ => thread::sleep(Duration::from_millis(10)),
         }

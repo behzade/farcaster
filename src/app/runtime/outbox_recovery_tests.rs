@@ -42,12 +42,17 @@ fn empty_session() -> SessionState {
 }
 
 fn prompt_response(id: &str, mode: PromptMode, success: bool) -> crate::agents::SessionResponse {
-    crate::agents::SessionResponse {
-        id: Some(id.into()),
-        operation: SessionOperation::Prompt(mode),
-        success,
-        data: Value::Null,
-        error: (!success).then(|| "rejected by test harness".into()),
+    if success {
+        crate::agents::SessionResponse::success(
+            Some(id.into()),
+            crate::agents::SessionResponsePayload::Prompt(mode),
+        )
+    } else {
+        crate::agents::SessionResponse::failure(
+            Some(id.into()),
+            SessionOperation::Prompt(mode),
+            "rejected by test harness".into(),
+        )
     }
 }
 
@@ -208,13 +213,10 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
         "an RPC acknowledgement does not start a second normal prompt before the turn settles"
     );
 
-    owner.apply_response(crate::agents::SessionResponse {
-        id: Some("request-2".into()),
-        operation: SessionOperation::LoadState,
-        success: true,
-        data: empty_session_value(),
-        error: None,
-    });
+    owner.apply_response(crate::agents::SessionResponse::success(
+        Some("request-2".into()),
+        crate::agents::SessionResponsePayload::LoadState(Box::new(empty_session())),
+    ));
     assert!(
         owner.snapshot.conversation.running,
         "an idle state response must not hide a normal prompt awaiting its terminal event"

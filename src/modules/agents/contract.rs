@@ -258,6 +258,7 @@ pub(crate) enum SessionCommand {
 }
 
 impl SessionCommand {
+    #[cfg(test)]
     pub(crate) const fn response_operation(&self) -> SessionOperation {
         match self {
             Self::ConfigureSteering => SessionOperation::ConfigureSteering,
@@ -335,14 +336,11 @@ pub(crate) enum SessionOperation {
     Other,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SessionResponse {
-    pub(crate) id: Option<String>,
-    pub(crate) operation: SessionOperation,
-    pub(crate) success: bool,
-    pub(crate) data: serde_json::Value,
-    pub(crate) error: Option<String>,
-}
+mod response;
+pub(crate) use response::{
+    SessionContextUsage, SessionHistory, SessionResponse, SessionResponsePayload, SessionUsage,
+    SessionUsageTokens,
+};
 
 pub(crate) trait SessionTransport {
     fn send(&mut self, command: SessionCommand) -> Result<String, String>;

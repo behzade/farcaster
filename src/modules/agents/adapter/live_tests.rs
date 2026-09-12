@@ -1,3 +1,4 @@
+use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 use std::io::Write as _;
 use std::{
     collections::{HashMap, HashSet},
@@ -356,77 +357,71 @@ fn cleanup_error(
 
 fn exercise_catalog(session: &mut dyn SessionTransport, coverage: Coverage) -> Result<(), String> {
     request(session, SessionCommand::ConfigureSteering)?;
-    let state = request(session, SessionCommand::LoadState)?;
+    let Payload::LoadState(state) = request(session, SessionCommand::LoadState)? else {
+        return Err("expected state response".into());
+    };
     if coverage.history {
         request(session, SessionCommand::LoadHistory)?;
     }
     if coverage.models {
-        let data = request(session, SessionCommand::ListModels)?;
-        let models = data
-            .get("models")
-            .and_then(Value::as_array)
-            .ok_or_else(|| "model catalog omitted models".to_owned())?;
+        let Payload::ListModels(models) = request(session, SessionCommand::ListModels)? else {
+            return Err("expected model catalog".into());
+        };
         if models.is_empty() {
             return Err("live model catalog is empty".into());
         }
         if coverage.select_model {
             let model = state
-                .get("model")
-                .filter(|model| !model.is_null())
+                .model
+                .as_ref()
                 .or_else(|| models.first())
                 .ok_or_else(|| "live model catalog is empty".to_owned())?;
-            if model.get("contextWindow").and_then(Value::as_u64) != Some(0) {
-                let provider = model
-                    .get("provider")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "catalog model omitted provider".to_owned())?;
-                let model_id = model
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "catalog model omitted id".to_owned())?;
+            if model.context_window != 0 {
                 request(
                     session,
                     SessionCommand::SelectModel {
-                        provider: provider.into(),
-                        model_id: model_id.into(),
+                        provider: model.provider.clone(),
+                        model_id: model.id.clone(),
                     },
                 )?;
             }
         }
     }
     if coverage.reasoning {
-        let data = request(session, SessionCommand::ListReasoningLevels)?;
-        if let Some(level) = data
-            .get("levels")
-            .and_then(Value::as_array)
-            .and_then(|levels| levels.first())
-            .and_then(Value::as_str)
-        {
+        let Payload::ListReasoningLevels(levels) =
+            request(session, SessionCommand::ListReasoningLevels)?
+        else {
+            return Err("expected effort catalog".into());
+        };
+        if let Some(level) = levels.first() {
             request(
                 session,
                 SessionCommand::SelectReasoning {
-                    level: level.into(),
+                    level: level.clone(),
                 },
             )?;
         }
     }
     if coverage.modes {
-        let data = request(session, SessionCommand::ListModes)?;
-        if let Some(mode) = data
-            .get("modes")
-            .and_then(Value::as_array)
-            .and_then(|modes| modes.first())
-            .and_then(|mode| mode.get("id"))
-            .and_then(Value::as_str)
-        {
-            request(session, SessionCommand::SelectMode { mode: mode.into() })?;
+        let Payload::ListModes { modes, .. } = request(session, SessionCommand::ListModes)? else {
+            return Err("expected mode catalog".into());
+        };
+        if let Some(mode) = modes.first() {
+            request(
+                session,
+                SessionCommand::SelectMode {
+                    mode: mode.id.clone(),
+                },
+            )?;
         }
     }
-    if coverage.commands {
-        let data = request(session, SessionCommand::ListCommands)?;
-        if data.get("commands").and_then(Value::as_array).is_none() {
-            return Err("command catalog omitted commands".into());
-        }
+    if coverage.commands
+        && !matches!(
+            request(session, SessionCommand::ListCommands)?,
+            Payload::ListCommands(_)
+        )
+    {
+        return Err("expected command catalog".into());
     }
     Ok(())
 }
@@ -658,10 +653,10 @@ fn exercise_abort(session: &mut dyn SessionTransport) -> Result<(), String> {
             }
             Some(SessionEvent::Response(response)) => {
                 if abort_id.as_deref() == response.id.as_deref() {
-                    if !response.success {
-                        return Err(response.error.unwrap_or_else(|| "abort failed".into()));
+                    if let Err(error) = &response.result {
+                        return Err(error.to_string());
                     }
-                    abort_response = response.operation == SessionOperation::Abort;
+                    abort_response = response.operation() == SessionOperation::Abort;
                 }
             }
             Some(SessionEvent::Interaction(request)) => approve(session, request)?,
@@ -698,15 +693,15 @@ fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String>
                 }
             }
             Some(SessionEvent::Response(item)) if item.id.as_deref() == Some(&id) => {
-                if !item.success {
-                    let error = item.error.unwrap_or_else(|| "compaction failed".into());
+                if let Err(error) = &item.result {
+                    let error = error.to_string();
                     return if compaction_not_needed(&error) {
                         Ok(())
                     } else {
                         Err(error)
                     };
                 }
-                response = item.operation == SessionOperation::Compact;
+                response = item.operation() == SessionOperation::Compact;
             }
             Some(SessionEvent::Interaction(request)) => approve(session, request)?,
             Some(SessionEvent::Failure(error)) if compaction_not_needed(&error) => return Ok(()),
@@ -820,31 +815,29 @@ fn verify_persistence_and_cleanup(
 }
 
 fn session_path(session: &mut dyn SessionTransport) -> Result<PathBuf, String> {
-    let data = request(session, SessionCommand::LoadState)?;
-    data.get("sessionFile")
-        .and_then(Value::as_str)
+    let Payload::LoadState(state) = request(session, SessionCommand::LoadState)? else {
+        return Err("expected state response".into());
+    };
+    state
+        .session_file
         .map(PathBuf::from)
         .ok_or_else(|| "session state omitted its locator path".to_owned())
 }
 
-fn request(session: &mut dyn SessionTransport, command: SessionCommand) -> Result<Value, String> {
+fn request(session: &mut dyn SessionTransport, command: SessionCommand) -> Result<Payload, String> {
     let operation = command.response_operation();
     let id = session.send(command)?;
     let deadline = Instant::now() + COMMAND_TIMEOUT;
     while Instant::now() < deadline {
         match session.poll() {
             Some(SessionEvent::Response(response)) if response.id.as_deref() == Some(&id) => {
-                if response.operation != operation {
+                if response.operation() != operation {
                     return Err(format!(
                         "command {id} returned {:?}, expected {operation:?}",
-                        response.operation
+                        response.operation()
                     ));
                 }
-                return if response.success {
-                    Ok(response.data)
-                } else {
-                    Err(response.error.unwrap_or_else(|| "command failed".into()))
-                };
+                return response.result.map_err(|error| error.to_string());
             }
             Some(SessionEvent::Interaction(request)) => approve(session, request)?,
             Some(SessionEvent::Failure(error)) => return Err(error),
@@ -858,8 +851,12 @@ fn require_history_response(
     session: &mut dyn SessionTransport,
     expected: &str,
 ) -> Result<(), String> {
-    let history = request(session, SessionCommand::LoadHistory)?;
-    history
+    let Payload::LoadHistory(SessionHistory::Replace(messages)) =
+        request(session, SessionCommand::LoadHistory)?
+    else {
+        return Err("expected replacement history".into());
+    };
+    json!(messages)
         .to_string()
         .contains(expected)
         .then_some(())
@@ -867,31 +864,14 @@ fn require_history_response(
 }
 
 fn require_usage_response(session: &mut dyn SessionTransport) -> Result<(), String> {
-    let data = request(session, SessionCommand::LoadUsage)?;
-    require_usage(&json!({
-        "type": "turn_end",
-        "contextWindow": data.pointer("/contextUsage/contextWindow"),
-        "usage": data.get("tokens"),
-    }))?;
-    Ok(())
-}
-
-fn require_usage(event: &Value) -> Result<(), String> {
-    let usage = event
-        .get("usage")
-        .ok_or_else(|| "turn usage is missing".to_owned())?;
-    for key in ["input", "output", "cacheRead", "cacheWrite", "totalTokens"] {
-        if usage.get(key).and_then(Value::as_u64).is_none() {
-            return Err(format!("turn usage omitted {key}"));
-        }
+    let Payload::LoadUsage(usage) = request(session, SessionCommand::LoadUsage)? else {
+        return Err("expected usage response".into());
+    };
+    if usage.tokens.input == 0 || usage.tokens.output == 0 {
+        return Err(format!("session usage is empty: {usage:?}"));
     }
-    if usage.get("input").and_then(Value::as_u64).unwrap_or(0) == 0
-        || usage.get("output").and_then(Value::as_u64).unwrap_or(0) == 0
-    {
-        return Err(format!("turn usage is empty: {usage}"));
-    }
-    if event.get("contextWindow").and_then(Value::as_u64).is_none() {
-        return Err("backend omitted the model context window".into());
+    if usage.context_usage.is_none() {
+        return Err("backend omitted context usage".into());
     }
     Ok(())
 }
@@ -939,7 +919,7 @@ fn require_response(
     let response = responses
         .get(id)
         .ok_or_else(|| format!("missing response for {operation:?}"))?;
-    if response.operation == operation && response.success {
+    if response.operation() == operation && response.result.is_ok() {
         Ok(())
     } else {
         Err(format!("invalid {operation:?} response: {response:?}"))

@@ -1,3 +1,6 @@
+mod responses;
+use responses::CatalogQuery;
+
 use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
@@ -6,10 +9,11 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::agents::{
-    SessionCommand, SessionEvent, SessionOperation, SessionResponse, SessionTransport, TokenUsage,
-    ToolReviewState, WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode,
-    WorkerSession, WorkerUsage,
-    extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
+    SessionCommand, SessionEvent, SessionHistory, SessionOperation, SessionResponse,
+    SessionResponsePayload as Payload, SessionTransport, TokenUsage, ToolReviewState,
+    WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession,
+    WorkerUsage,
+    extensions::{ExtensionUiRequest, ExtensionUiResponse, Model, PromptMode},
 };
 
 #[derive(Default)]
@@ -35,6 +39,12 @@ fn finished_tool_result(result: Value) -> Value {
     }
 }
 
+struct PendingPrompt {
+    requested_mode: PromptMode,
+    delivery_mode: PromptMode,
+    queued_message: Option<String>,
+}
+
 pub(super) struct WorkerSessionTransport {
     harness: String,
     locator: String,
@@ -42,7 +52,7 @@ pub(super) struct WorkerSessionTransport {
     worker: Box<dyn WorkerSession>,
     pending: VecDeque<SessionEvent>,
     next_id: u64,
-    pending_prompts: BTreeMap<String, (SessionOperation, PromptMode, Option<String>)>,
+    pending_prompts: BTreeMap<String, PendingPrompt>,
     running: bool,
     steering: Vec<String>,
     follow_up: Vec<String>,
@@ -120,35 +130,28 @@ impl WorkerSessionTransport {
         })
     }
 
-    fn response(&mut self, id: String, operation: SessionOperation, data: Value) {
-        self.pending
-            .push_back(SessionEvent::Response(SessionResponse {
-                id: Some(id),
-                operation,
-                success: true,
-                data,
-                error: None,
-            }));
-    }
-
     fn finish_prompt_ack(&mut self, id: String, result: Result<(), String>) {
-        let Some((operation, mode, message)) = self.pending_prompts.remove(&id) else {
+        let Some(PendingPrompt {
+            requested_mode,
+            delivery_mode,
+            queued_message,
+        }) = self.pending_prompts.remove(&id)
+        else {
             return;
         };
         if result.is_ok() {
             self.message_count = self.message_count.saturating_add(1);
-            if let Some(message) = message {
-                self.enqueue_message(mode, message);
+            if let Some(message) = queued_message {
+                self.enqueue_message(delivery_mode, message);
             }
         }
-        self.pending
-            .push_back(SessionEvent::Response(SessionResponse {
-                id: Some(id),
-                operation,
-                success: result.is_ok(),
-                data: json!({}),
-                error: result.err(),
-            }));
+        let response = match result {
+            Ok(()) => SessionResponse::success(Some(id), Payload::Prompt(requested_mode)),
+            Err(error) => {
+                SessionResponse::failure(Some(id), SessionOperation::Prompt(requested_mode), error)
+            }
+        };
+        self.pending.push_back(SessionEvent::Response(response));
     }
 
     fn drain_prompt_acks(&mut self) {
@@ -193,32 +196,6 @@ impl WorkerSessionTransport {
         self.steering.clear();
         self.follow_up.clear();
         self.enqueue_queue_update();
-    }
-
-    fn state(&self) -> Value {
-        let model = self.model.as_ref().map(|(provider, id)| {
-            json!({
-                "id": id,
-                "name": id,
-                "provider": provider,
-                "contextWindow": self.usage.context_window,
-                "reasoning": true,
-            })
-        });
-        json!({
-            "model": model,
-            "serviceTier": self.metadata.service_tier,
-            "serviceTiers": self.metadata.service_tiers,
-            "thinkingLevel": self.effort.clone(),
-            "isStreaming": self.running,
-            "isCompacting": false,
-            "sessionFile": self.path.to_string_lossy(),
-            "sessionId": self.locator,
-            "sessionName": self.metadata.session_name,
-            "autoCompactionEnabled": true,
-            "messageCount": self.message_count,
-            "pendingMessageCount": 0,
-        })
     }
 
     fn enqueue_worker_event(&mut self, event: WorkerEvent) {
@@ -407,29 +384,23 @@ impl WorkerSessionTransport {
             }
             WorkerActivity::CommandsChanged { commands } => {
                 self.metadata.commands.clone_from(&commands);
-                self.enqueue_catalog_response(
-                    SessionOperation::ListCommands,
-                    json!({"commands": commands}),
-                );
+                self.catalog_response(None, CatalogQuery::Commands);
                 return;
             }
             WorkerActivity::TitleChanged(title) => {
                 self.metadata.session_name = Some(title);
-                self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
+                self.response(None, Payload::LoadState(Box::new(self.state())));
                 return;
             }
             WorkerActivity::ServiceTierChanged { selected, options } => {
                 self.metadata.service_tier = selected;
                 self.metadata.service_tiers = options;
-                self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
+                self.response(None, Payload::LoadState(Box::new(self.state())));
                 return;
             }
             WorkerActivity::ModeChanged(mode) => {
                 self.selected_mode = Some(mode);
-                self.enqueue_catalog_response(
-                    SessionOperation::ListModes,
-                    json!({"modes": self.metadata.modes, "selected": self.selected_mode}),
-                );
+                self.catalog_response(None, CatalogQuery::Modes);
                 return;
             }
             WorkerActivity::ConfigurationChanged {
@@ -454,19 +425,10 @@ impl WorkerSessionTransport {
                 self.metadata.models.clone_from(&models);
                 self.metadata.efforts.clone_from(&efforts);
                 self.metadata.modes.clone_from(&modes);
-                self.enqueue_catalog_response(
-                    SessionOperation::ListModels,
-                    json!({"models": models}),
-                );
-                self.enqueue_catalog_response(
-                    SessionOperation::ListReasoningLevels,
-                    json!({"levels": efforts}),
-                );
-                self.enqueue_catalog_response(
-                    SessionOperation::ListModes,
-                    json!({"modes": modes, "selected": self.selected_mode}),
-                );
-                self.enqueue_catalog_response(SessionOperation::LoadState, self.state());
+                self.catalog_response(None, CatalogQuery::Models);
+                self.response(None, Payload::ListReasoningLevels(efforts));
+                self.catalog_response(None, CatalogQuery::Modes);
+                self.response(None, Payload::LoadState(Box::new(self.state())));
                 return;
             }
             WorkerActivity::ServiceStatusChanged {
@@ -501,17 +463,6 @@ impl WorkerSessionTransport {
             }),
         };
         self.pending.push_back(activity(event));
-    }
-
-    fn enqueue_catalog_response(&mut self, operation: SessionOperation, data: Value) {
-        self.pending
-            .push_back(SessionEvent::Response(SessionResponse {
-                id: None,
-                operation,
-                success: true,
-                data,
-                error: None,
-            }));
     }
 
     fn input_delivered(&mut self, mode: WorkerSendMode, text: &str, content: Value) {
@@ -591,66 +542,48 @@ impl SessionTransport for WorkerSessionTransport {
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
         self.next_id = self.next_id.saturating_add(1);
         let id = format!("{}-{}", self.harness, self.next_id);
-        let operation = command.response_operation();
         match command {
             SessionCommand::ConfigureSteering => {
-                self.response(id.clone(), operation, json!({}))
+                self.response(Some(id.clone()), Payload::ConfigureSteering)
             }
             SessionCommand::ApplySteering => {
                 self.worker.apply_steering()?;
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::ApplySteering);
             }
             SessionCommand::LoadState => {
-                self.response(id.clone(), operation, self.state());
+                self.response(Some(id.clone()), Payload::LoadState(Box::new(self.state())))
             }
             SessionCommand::LoadHistory => {
-                let data = self.history.as_ref().map_or_else(
-                    || json!({"messages": [], "preserve": true}),
-                    |messages| json!({"messages": messages, "preserve": false}),
-                );
-                self.response(id.clone(), operation, data);
+                let history = self
+                    .history
+                    .as_ref()
+                    .map_or(SessionHistory::Preserve, |messages| {
+                        SessionHistory::Replace(messages.clone())
+                    });
+                self.response(Some(id.clone()), Payload::LoadHistory(history));
             }
-            SessionCommand::LoadUsage => self.response(
-                id.clone(),
-                operation,
-                json!({
-                    "contextUsage": {
-                        "tokens": self.usage.turn.total(),
-                        "contextWindow": self.usage.context_window,
-                        "percent": if self.usage.context_window > 0 {
-                            self.usage.turn.total() as f64 * 100.0 / self.usage.context_window as f64
-                        } else {
-                            0.0
-                        },
-                    },
-                    "tokens": usage_json(self.usage.session),
-                }),
-            ),
-            SessionCommand::ListModels => self.response(
-                id.clone(),
-                operation,
-                json!({"models": self.metadata.models.clone()}),
-            ),
+            SessionCommand::LoadUsage => {
+                self.response(Some(id.clone()), Payload::LoadUsage(self.session_usage()))
+            }
+            SessionCommand::ListModels => {
+                self.catalog_response(Some(id.clone()), CatalogQuery::Models)
+            }
+            SessionCommand::ListModes => {
+                self.catalog_response(Some(id.clone()), CatalogQuery::Modes)
+            }
+            SessionCommand::ListCommands => {
+                self.catalog_response(Some(id.clone()), CatalogQuery::Commands)
+            }
             SessionCommand::ListReasoningLevels => self.response(
-                id.clone(),
-                operation,
-                json!({"levels": self.metadata.efforts.clone()}),
-            ),
-            SessionCommand::ListModes => self.response(
-                id.clone(),
-                operation,
-                json!({"modes": self.metadata.modes.clone(), "selected": self.selected_mode}),
-            ),
-            SessionCommand::ListCommands => self.response(
-                id.clone(),
-                operation,
-                json!({"commands": self.metadata.commands.clone()}),
+                Some(id.clone()),
+                Payload::ListReasoningLevels(self.metadata.efforts.clone()),
             ),
             SessionCommand::Prompt {
                 mode,
                 message,
                 images,
             } => {
+                let requested_mode = mode;
                 // Cursor has no mid-turn steering; show and deliver it as a follow-up.
                 let mode = if self.harness == super::cursor::PROFILE.backend
                     && mode == PromptMode::Steer
@@ -665,8 +598,17 @@ impl SessionTransport for WorkerSessionTransport {
                     PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
                 let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
-                let accepted = self.worker.submit_prompt(id.clone(), message, worker_mode, images)?;
-                self.pending_prompts.insert(id.clone(), (operation, mode, queued_message));
+                let accepted =
+                    self.worker
+                        .submit_prompt(id.clone(), message, worker_mode, images)?;
+                self.pending_prompts.insert(
+                    id.clone(),
+                    PendingPrompt {
+                        requested_mode,
+                        delivery_mode: mode,
+                        queued_message,
+                    },
+                );
                 if accepted {
                     self.finish_prompt_ack(id.clone(), Ok(()));
                 }
@@ -674,21 +616,29 @@ impl SessionTransport for WorkerSessionTransport {
             SessionCommand::Abort => {
                 self.worker.abort()?;
                 self.clear_queue();
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::Abort);
             }
             SessionCommand::SelectModel { provider, model_id } => {
                 self.worker.select_model(&provider, &model_id)?;
                 self.model = Some((provider.clone(), model_id.clone()));
                 self.response(
-                    id.clone(),
-                    operation,
-                    json!({"id": model_id, "name": model_id, "provider": provider, "contextWindow": 0, "reasoning": true}),
+                    Some(id.clone()),
+                    Payload::SelectModel(Model {
+                        id: model_id.clone(),
+                        name: model_id,
+                        provider,
+                        context_window: 0,
+                        reasoning: true,
+                        efforts: None,
+                        resolved_model: None,
+                        access_modes: None,
+                    }),
                 );
             }
             SessionCommand::SelectReasoning { level } => {
                 self.worker.select_effort(&level)?;
                 self.effort = Some(level);
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::SelectReasoning);
             }
             SessionCommand::SelectServiceTier { tier } => {
                 if !self.metadata.service_tiers.contains(&tier) {
@@ -696,21 +646,21 @@ impl SessionTransport for WorkerSessionTransport {
                 }
                 self.worker.select_service_tier(&tier)?;
                 self.metadata.service_tier = Some(tier);
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::SelectServiceTier);
             }
             SessionCommand::SelectMode { mode } => {
                 self.worker.select_mode(&mode)?;
                 self.selected_mode = Some(mode);
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::SelectMode);
             }
             SessionCommand::Compact { .. } => {
                 self.worker.compact()?;
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::Compact);
             }
             SessionCommand::Rename { name } => {
                 self.worker.rename(&name)?;
                 self.metadata.session_name = Some(name);
-                self.response(id.clone(), operation, json!({}));
+                self.response(Some(id.clone()), Payload::Rename);
             }
             SessionCommand::ExportHtml { .. } | SessionCommand::ForkAt { .. } => {
                 return Err(format!(

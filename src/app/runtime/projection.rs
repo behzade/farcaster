@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 
 pub(super) fn stable_session_stats(previous: &Value, next: Value, running: bool) -> Value {
     if !running || context_usage_is_meaningful(&next) {
@@ -122,10 +123,11 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
 
 impl RuntimeOwner {
     pub(super) fn apply_response(&mut self, response: crate::agents::SessionResponse) {
-        let operation = response.operation;
+        let operation = response.operation();
+        let success = response.result.is_ok();
         if operation == SessionOperation::SelectModel {
             self.pending_session_controls.model_response(&response);
-            if !response.success {
+            if !success {
                 if self.deferred_prompt.take().is_some() {
                     self.rollback_failed_prompt("The selected model could not be applied");
                     if let Some(target) = self.pending_prompt_target.take() {
@@ -139,10 +141,10 @@ impl RuntimeOwner {
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
         if is_prompt_response {
             self.pending_prompt_id = None;
-            if !response.success && operation == SessionOperation::Prompt(PromptMode::Normal) {
+            if !success && operation == SessionOperation::Prompt(PromptMode::Normal) {
                 self.normal_prompt_in_flight = false;
             }
-            if response.success {
+            if success {
                 let target = self.pending_prompt_target.clone().unwrap_or_default();
                 let session = self.active_session.clone();
                 if let Some(id) = self.pending_outbox_id
@@ -156,25 +158,20 @@ impl RuntimeOwner {
                     }
                     self.pending_outbox_id = None;
                 }
-            } else {
+            } else if let Err(error) = &response.result {
                 self.invalidate_auto_title_generation();
-                self.mark_outbox_failed(
-                    response
-                        .error
-                        .as_deref()
-                        .unwrap_or("The harness rejected the prompt"),
-                );
+                self.mark_outbox_failed(&error.message);
             }
-            if response.success {
+            if success {
                 self.pending_prompt_item = None;
             } else {
                 self.rollback_pending_prompt();
             }
             if let Some(target) = self.pending_prompt_target.take() {
-                self.emit_prompt_result(&target, response.success);
+                self.emit_prompt_result(&target, success);
             }
         }
-        if !response.success {
+        if let Err(error) = &response.result {
             let startup_query = matches!(
                 operation,
                 SessionOperation::LoadState | SessionOperation::LoadHistory
@@ -183,20 +180,14 @@ impl RuntimeOwner {
             let blocks_session_command_resume =
                 !self.pending_session_controls.is_empty() && startup_query;
             if blocks_session_command_resume {
-                let details = format!(
-                    "{operation:?}: {}",
-                    response.error.unwrap_or_else(|| "command failed".into())
-                );
+                let details = format!("{operation:?}: {}", error.message);
                 self.fail_session_control_resume("Command not sent", "Command not sent", details);
                 return;
             }
             let snapshot = self.active_snapshot_mut();
             conversation_mut(snapshot).push_local_error(
                 "Command failed",
-                format!(
-                    "{operation:?}: {}",
-                    response.error.unwrap_or_else(|| "command failed".into())
-                ),
+                format!("{operation:?}: {}", error.message),
             );
             snapshot.status = "Command failed".into();
             if blocks_resume {
@@ -223,147 +214,85 @@ impl RuntimeOwner {
             }
             return;
         }
-        match operation {
-            SessionOperation::LoadState => {
-                match serde_json::from_value::<SessionState>(response.data) {
-                    Ok(state) => {
-                        let normal_prompt_in_flight = self.normal_prompt_in_flight;
-                        let selected_session = state
-                            .session_file
-                            .as_ref()
-                            .map(PathBuf::from)
-                            .map(|path| crate::sessions::normalize_session_path(&path))
-                            .or_else(|| self.active_session.clone());
-                        self.active_session = selected_session.clone();
-                        let snapshot = self.active_snapshot_mut();
-                        snapshot.selected_session = selected_session;
-                        conversation_mut(snapshot).running =
-                            state.is_streaming || normal_prompt_in_flight;
-                        snapshot.session = Some(state);
-                        snapshot.status = "Ready".into();
-                        self.startup_state_loaded = true;
-                        self.publish_session_metadata();
-                    }
-                    Err(error) => {
-                        self.fail(format!("decode get_state: {error}"));
-                        return;
-                    }
-                }
+        let Ok(payload) = response.result else { return };
+        match payload {
+            Payload::LoadState(state) => {
+                let normal_prompt_in_flight = self.normal_prompt_in_flight;
+                let selected_session = state
+                    .session_file
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .map(|path| crate::sessions::normalize_session_path(&path))
+                    .or_else(|| self.active_session.clone());
+                self.active_session = selected_session.clone();
+                let snapshot = self.active_snapshot_mut();
+                snapshot.selected_session = selected_session;
+                conversation_mut(snapshot).running = state.is_streaming || normal_prompt_in_flight;
+                snapshot.session = Some(*state);
+                snapshot.status = "Ready".into();
+                self.startup_state_loaded = true;
+                self.publish_session_metadata();
             }
-            SessionOperation::LoadHistory => {
-                if response.data.get("preserve").and_then(Value::as_bool) != Some(true) {
-                    let Some(mut messages) = response
-                        .data
-                        .get("messages")
-                        .and_then(Value::as_array)
-                        .cloned()
-                    else {
-                        self.fail("History response has no messages array".into());
-                        return;
-                    };
+            Payload::LoadHistory(history) => {
+                if let SessionHistory::Replace(mut messages) = history {
                     if let (Some(state), Some(session)) =
                         (self.state.as_ref(), self.active_session.as_deref())
                     {
                         annotate_history_presentations(Some(state), session, &mut messages);
                     }
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
-                    // The replacement removed the local row. Let deferred delivery
-                    // restore it after history and state have both loaded.
+                    // Deferred delivery restores the local row after both startup responses.
                     self.pending_prompt_item = None;
                 }
                 self.startup_history_loaded = true;
                 self.publish_session_metadata();
             }
-            SessionOperation::ListModels => {
-                self.active_snapshot_mut().models = response
-                    .data
-                    .get("models")
-                    .cloned()
-                    .and_then(|value| serde_json::from_value(value).ok())
-                    .unwrap_or_default();
+            Payload::ListModels(models) => self.active_snapshot_mut().models = models,
+            Payload::ListReasoningLevels(levels) => {
+                self.active_snapshot_mut().thinking_levels = levels
             }
-            SessionOperation::ListReasoningLevels => {
-                self.active_snapshot_mut().thinking_levels = response
-                    .data
-                    .get("levels")
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+            Payload::ListModes { modes, selected } => {
+                let snapshot = self.active_snapshot_mut();
+                snapshot.modes = modes;
+                snapshot.selected_mode = selected;
             }
-            SessionOperation::ListModes => {
-                self.active_snapshot_mut().modes = response
-                    .data
-                    .get("modes")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|mode| serde_json::from_value(mode.clone()).ok())
-                    .collect();
-                self.active_snapshot_mut().selected_mode = response
-                    .data
-                    .get("selected")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-            }
-            SessionOperation::LoadUsage => {
+            Payload::LoadUsage(usage) => {
                 let running = self.active_snapshot().conversation.running;
                 let previous = self.active_snapshot().stats.clone();
+                // The transcript/activity projection still uses a JSON stats document.
+                // Response validation has already happened at the adapter boundary.
                 self.active_snapshot_mut().stats =
-                    stable_session_stats(&previous, response.data, running);
+                    stable_session_stats(&previous, json!(usage), running);
                 self.publish_session_metadata();
             }
-            SessionOperation::ListCommands => {
-                self.active_snapshot_mut().commands = response
-                    .data
-                    .get("commands")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|command| serde_json::from_value(command.clone()).ok())
-                    .collect()
-            }
-            SessionOperation::SelectModel => {
-                if let Ok(model) = serde_json::from_value::<Model>(response.data)
-                    && let Some(state) = self.active_snapshot_mut().session.as_mut()
-                {
+            Payload::ListCommands(commands) => self.active_snapshot_mut().commands = commands,
+            Payload::SelectModel(model) => {
+                if let Some(state) = self.active_snapshot_mut().session.as_mut() {
                     state.model = Some(model);
                 }
                 self.send(SessionCommand::ListReasoningLevels);
                 self.send(SessionCommand::LoadState);
             }
-            SessionOperation::SelectReasoning | SessionOperation::SelectServiceTier => {
+            Payload::SelectReasoning | Payload::SelectServiceTier => {
                 self.send(SessionCommand::LoadState);
             }
-            SessionOperation::SelectMode => {
+            Payload::SelectMode => {
                 self.send(SessionCommand::ListModes);
                 self.send(SessionCommand::LoadState);
             }
-            SessionOperation::Prompt(_) => {
+            Payload::Prompt(_) => {
                 self.active_snapshot_mut().status = "Accepted".into();
                 self.send(SessionCommand::LoadState);
             }
-            SessionOperation::Abort => self.active_snapshot_mut().status = "Stopping".into(),
-            SessionOperation::Compact => self.send(SessionCommand::LoadState),
-            SessionOperation::Rename => {
+            Payload::Abort => self.active_snapshot_mut().status = "Stopping".into(),
+            Payload::Compact => self.send(SessionCommand::LoadState),
+            Payload::Rename => {
                 self.active_snapshot_mut().status = "Session named".into();
                 self.send(SessionCommand::LoadState);
                 self.publish_session_metadata();
             }
-            SessionOperation::ExportHtml => {
-                self.active_snapshot_mut().status = response
-                    .data
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .map_or_else(
-                        || "Session exported".into(),
-                        |path| format!("Exported to {path}"),
-                    );
+            Payload::ExportHtml { path } => {
+                self.active_snapshot_mut().status = format!("Exported to {path}");
             }
             _ => {}
         }
@@ -401,3 +330,7 @@ pub(super) fn update_session_goal_from_event(
     *goal = updated;
     true
 }
+
+#[cfg(test)]
+#[path = "projection_tests.rs"]
+mod tests;
