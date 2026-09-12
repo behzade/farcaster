@@ -1,5 +1,34 @@
 use super::*;
 
+#[cfg(test)]
+fn stored_family_identity(
+    locator_root: &Path,
+    project: &Path,
+    harness: &str,
+    locator: Option<String>,
+    backend_id: Option<String>,
+) -> String {
+    let Some(locator) = locator else {
+        return backend_id.unwrap_or_default();
+    };
+    let Some(backend_id) = backend_id else {
+        return locator;
+    };
+    let encoded = url::form_urlencoded::byte_serialize(backend_id.as_bytes()).collect::<String>();
+    let legacy_synthetic = locator_root.join(harness).join(&encoded);
+    let scoped_synthetic = super::identity::family_locator_root(locator_root, project)
+        .join(harness)
+        .join(encoded);
+    let locator = crate::sessions::normalize_session_path(Path::new(&locator));
+    if locator == crate::sessions::normalize_session_path(&legacy_synthetic)
+        || locator == crate::sessions::normalize_session_path(&scoped_synthetic)
+    {
+        backend_id
+    } else {
+        locator.to_string_lossy().into_owned()
+    }
+}
+
 impl StateStore {
     pub(crate) fn load_expand_transcript_folders(&self) -> Result<bool, String> {
         self.connection
@@ -75,17 +104,25 @@ impl StateStore {
             .unchecked_transaction()
             .map_err(|error| error.to_string())?;
         let project_id = ensure_project(&transaction, &link.project, u64_to_i64(now_ms()))?;
+        let locator_root = self
+            .image_directory
+            .parent()
+            .ok_or("state image directory has no parent")?
+            .join("session-locators");
+        let locator_root = super::identity::family_locator_root(&locator_root, &link.project);
         let parent_id = ensure_locator_session(
             &transaction,
             &link.parent_backend,
             &link.parent_session,
             project_id,
+            &locator_root,
         )?;
         let child_id = ensure_locator_session(
             &transaction,
             &link.child_backend,
             &link.child_session,
             project_id,
+            &locator_root,
         )?;
         transaction
             .execute(
@@ -125,10 +162,16 @@ impl StateStore {
     pub(crate) fn load_worker_families(
         &self,
     ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
+        let locator_root = self
+            .image_directory
+            .parent()
+            .ok_or("state image directory has no parent")?
+            .join("session-locators");
         let mut statement = self
             .connection
             .prepare(
-                "SELECT child.id, child.harness, child.locator, parent.harness, parent.locator,
+                "SELECT child.harness, child.locator, child.backend_id,
+                        parent.harness, parent.locator, parent.backend_id,
                         p.path, f.execution_json
                    FROM worker_families f
                    JOIN sessions child ON child.id = f.child_id
@@ -139,12 +182,14 @@ impl StateStore {
         statement
             .query_map([], |row| {
                 Ok((
-                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, Option<String>>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
                 ))
             })
             .map_err(|error| error.to_string())?
@@ -152,8 +197,10 @@ impl StateStore {
                 let (
                     child_backend,
                     child_locator,
+                    child_backend_id,
                     parent_backend,
                     parent_locator,
+                    parent_backend_id,
                     project,
                     execution,
                 ) = row.map_err(|error| error.to_string())?;
@@ -164,10 +211,22 @@ impl StateStore {
                     .flatten();
                 Ok(crate::agents::WorkerFamilyLink {
                     project: crate::sessions::normalize_session_path(Path::new(&project)),
+                    child_session: stored_family_identity(
+                        &locator_root,
+                        Path::new(&project),
+                        &child_backend,
+                        child_locator,
+                        child_backend_id,
+                    ),
                     child_backend,
-                    child_session: child_locator.unwrap_or_default(),
+                    parent_session: stored_family_identity(
+                        &locator_root,
+                        Path::new(&project),
+                        &parent_backend,
+                        parent_locator,
+                        parent_backend_id,
+                    ),
                     parent_backend,
-                    parent_session: parent_locator.unwrap_or_default(),
                     execution,
                 })
             })

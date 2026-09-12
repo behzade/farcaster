@@ -71,7 +71,9 @@ impl StateStore {
                     migration
                         .execute_batch("ALTER TABLE composer_sessions ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]';")
                         .map_err(|error| format!("add composer attachments: {error}"))?;
+                    migrate_v14_to_v15(&migration)?;
                 }
+                Some(14) => migrate_v14_to_v15(&migration)?,
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -123,7 +125,7 @@ impl StateStore {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
-            if !matches!(version, 7 | 11 | 12 | 13 | SCHEMA_VERSION) {
+            if !matches!(version, 7 | 11 | 12 | 13 | 14 | SCHEMA_VERSION) {
                 return Err(format!(
                     "legacy pi-gpui state schema {version} is not supported by this build"
                 ));
@@ -151,6 +153,42 @@ impl StateStore {
             .map_err(|error| format!("detach legacy pi-gpui state: {error}"));
         result.and(detached)
     }
+}
+
+fn migrate_v14_to_v15(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute_batch(
+        "ALTER TABLE outbox RENAME TO outbox_v14;
+         CREATE TABLE outbox (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+           submission_event_seq INTEGER,
+           mode TEXT NOT NULL,
+           message TEXT NOT NULL,
+           display_message TEXT,
+           invocation TEXT,
+           images_json TEXT NOT NULL DEFAULT '[]',
+           provider TEXT,
+           model TEXT,
+           effort TEXT,
+           service_tier TEXT,
+           state TEXT NOT NULL DEFAULT 'queued'
+             CHECK (state IN ('queued', 'sending', 'failed', 'unknown')),
+           error TEXT,
+           created_ms INTEGER NOT NULL
+         );
+         INSERT INTO outbox(
+           id, session_id, submission_event_seq, mode, message, display_message,
+           invocation, images_json, provider, model, effort, service_tier, state,
+           error, created_ms
+         )
+         SELECT id, session_id, submission_event_seq, mode, message, display_message,
+                invocation, images_json, provider, model, effort, service_tier, state,
+                error, created_ms
+           FROM outbox_v14;
+         DROP TABLE outbox_v14;
+         CREATE INDEX outbox_session_state ON outbox(session_id, state, id);",
+    )
+    .map_err(|error| format!("add interrupted prompt recovery state: {error}"))
 }
 
 fn enable_wal(connection: &Connection) -> Result<(), String> {

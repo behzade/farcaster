@@ -23,7 +23,8 @@ pub(super) fn migrate_v11_to_v12(tx: &Transaction<'_>) -> Result<(), String> {
            submitted=COALESCE((SELECT submitted FROM drafts WHERE id=sessions.client_key), 0);
          UPDATE sessions AS child SET parent_id=(
            SELECT parent.id FROM sessions parent
-            WHERE parent.harness=child.harness AND parent.backend_id=child.parent_backend_id
+            WHERE parent.harness=child.harness AND parent.project_id=child.project_id
+              AND parent.backend_id=child.parent_backend_id
               AND parent.id != child.id LIMIT 1
          ) WHERE child.parent_backend_id IS NOT NULL;"
     ).map_err(|error| format!("copy backend session identities: {error}"))?;
@@ -40,7 +41,8 @@ pub(super) fn migrate_v11_to_v12(tx: &Transaction<'_>) -> Result<(), String> {
          DROP TABLE IF EXISTS app_sessions;
          DROP TABLE IF EXISTS sessions_legacy;
          DROP TABLE IF EXISTS projects_legacy;
-         DELETE FROM meta WHERE key != 'schema_version';
+         DELETE FROM meta
+          WHERE key != 'schema_version' AND key NOT GLOB 'worker_family:*';
 ",
     )
     .map_err(|error| format!("replace legacy tables for v12: {error}"))?;
@@ -318,21 +320,32 @@ fn copy_ui_state(tx: &Transaction<'_>) -> Result<(), String> {
 
 fn copy_worker_families(tx: &Transaction<'_>) -> Result<(), String> {
     let mut statement = tx
-        .prepare("SELECT value FROM meta WHERE key GLOB 'worker_family:*'")
+        .prepare("SELECT key, value FROM meta WHERE key GLOB 'worker_family:*'")
         .map_err(|error| format!("read worker families: {error}"))?;
     let rows = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|error| format!("query worker families: {error}"))?;
-    for row in rows {
-        let value = row.map_err(|error| format!("decode worker family: {error}"))?;
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("query worker families: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("decode worker families: {error}"))?;
+    drop(statement);
+    for (key, value) in rows {
         let Ok(link) = serde_json::from_str::<crate::agents::WorkerFamilyLink>(&value) else {
             continue;
         };
-        let Some(child_id) = resolve_target(tx, "", Some(&link.child_session))?.or_else(|| {
-            resolve_target(tx, "", Some(&link.child_session))
-                .ok()
-                .flatten()
-        }) else {
+        let Some(child_id) =
+            resolve_family_member(tx, &link.child_backend, &link.project, &link.child_session)?
+        else {
+            continue;
+        };
+        let Some(parent_id) = resolve_family_member(
+            tx,
+            &link.parent_backend,
+            &link.project,
+            &link.parent_session,
+        )?
+        else {
             continue;
         };
         let execution = serde_json::to_string(&link.execution).ok();
@@ -341,15 +354,43 @@ fn copy_worker_families(tx: &Transaction<'_>) -> Result<(), String> {
             params![child_id, execution],
         )
         .map_err(|error| format!("copy worker family: {error}"))?;
-        if let Some(parent_id) = resolve_target(tx, "", Some(&link.parent_session))? {
-            tx.execute(
-                "UPDATE sessions SET parent_id=?2 WHERE id=?1 AND parent_id IS NULL",
-                params![child_id, parent_id],
-            )
-            .map_err(|error| format!("copy worker parent: {error}"))?;
-        }
+        tx.execute(
+            "UPDATE sessions SET parent_id=?2 WHERE id=?1 AND parent_id IS NULL",
+            params![child_id, parent_id],
+        )
+        .map_err(|error| format!("copy worker parent: {error}"))?;
+        tx.execute("DELETE FROM meta WHERE key=?1", [&key])
+            .map_err(|error| format!("remove migrated worker family {key}: {error}"))?;
     }
     Ok(())
+}
+
+fn resolve_family_member(
+    tx: &Transaction<'_>,
+    backend: &str,
+    project: &Path,
+    identity: &str,
+) -> Result<Option<i64>, String> {
+    let mut statement = tx
+        .prepare(
+            "SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id
+              WHERE s.harness=?1 AND p.path=?2
+                AND (s.locator=?3 OR s.backend_id=?3)
+              ORDER BY s.locator=?3 DESC, s.id LIMIT 2",
+        )
+        .map_err(|error| format!("prepare worker family identity: {error}"))?;
+    let ids = statement
+        .query_map(
+            params![backend, project.to_string_lossy(), identity],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("query worker family identity: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("decode worker family identity: {error}"))?;
+    Ok(match ids.as_slice() {
+        [id] => Some(*id),
+        _ => None,
+    })
 }
 
 fn resolve_target(

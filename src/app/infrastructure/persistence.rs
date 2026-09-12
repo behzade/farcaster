@@ -35,7 +35,7 @@ mod transcript;
 
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
-const SCHEMA_VERSION: i64 = 14;
+const SCHEMA_VERSION: i64 = 15;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];

@@ -434,7 +434,9 @@ fn missing_path_parent_stays_an_orphan_id_and_header_reads_are_bounded() -> Test
         .find(|session| session.id == "child")
         .expect("orphan child should remain discoverable");
     assert_eq!(child.parent_session.as_deref(), Some("missing-parent-id"));
-    assert!(root_sessions(&sessions).is_empty());
+    let roots = root_sessions(&sessions);
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0].id, "child");
     assert!(
         resolve_parent_session(&child.path, "/")
             .is_some_and(|id| id.starts_with("unresolved-parent-"))

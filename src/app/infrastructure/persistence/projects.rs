@@ -79,20 +79,18 @@ impl StateStore {
         for row in rows {
             let (id, client_key, harness, project, created_ms, locator, title, submitted) =
                 row.map_err(|error| error.to_string())?;
-            if let Some(project) = existing_directory(&project) {
-                drafts.push(DraftSession {
-                    id: client_key,
-                    app_session_id: id,
-                    harness,
-                    project,
-                    created_ms,
-                    submitted,
-                    session_path: locator
-                        .map(PathBuf::from)
-                        .map(|path| crate::sessions::normalize_session_path(&path)),
-                    title: (!title.is_empty()).then_some(title),
-                });
-            }
+            drafts.push(DraftSession {
+                id: client_key,
+                app_session_id: id,
+                harness,
+                project: crate::sessions::normalize_session_path(Path::new(&project)),
+                created_ms,
+                submitted,
+                session_path: locator
+                    .map(PathBuf::from)
+                    .map(|path| crate::sessions::normalize_session_path(&path)),
+                title: (!title.is_empty()).then_some(title),
+            });
         }
         Ok(Registry {
             projects,
@@ -113,12 +111,6 @@ impl StateStore {
             .into_iter()
             .filter(|project| !active_projects.contains(project))
             .collect::<Vec<_>>();
-        transaction
-            .execute(
-                "UPDATE projects SET deleted_at=COALESCE(deleted_at, ?1)",
-                [now],
-            )
-            .map_err(|error| format!("hide projects: {error}"))?;
         for (index, project) in projects.iter().enumerate() {
             let project_id =
                 ensure_project(&transaction, project, now.saturating_add(index as i64))?;

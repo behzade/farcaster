@@ -64,6 +64,7 @@ pub(crate) struct SessionSummary {
     pub first_user_message: String,
     pub timestamp: String,
     pub parent_session: Option<String>,
+    pub parent_harness: Option<String>,
     pub modified: SystemTime,
     pub message_count: usize,
     pub usage: UsageSummary,
@@ -81,6 +82,7 @@ impl SessionSummary {
                 .duration_since(value.modified)
                 .unwrap_or_default()
                 <= RUNNING_ACTIVITY_TIMEOUT;
+        let parent_harness = value.parent_session.as_ref().map(|_| value.harness.clone());
         Self {
             id: value.id,
             app_session_id: 0,
@@ -91,6 +93,7 @@ impl SessionSummary {
             first_user_message: value.first_user_message,
             timestamp: value.timestamp,
             parent_session: value.parent_session,
+            parent_harness,
             modified: value.modified,
             message_count: value.message_count,
             usage: value.usage,
@@ -176,6 +179,7 @@ impl SessionSummary {
                 .duration_since(modified)
                 .unwrap_or_default()
                 <= RUNNING_ACTIVITY_TIMEOUT;
+        let parent_harness = parent_session.as_ref().map(|_| harness.clone());
         Self {
             id,
             app_session_id: 0,
@@ -186,6 +190,7 @@ impl SessionSummary {
             first_user_message,
             timestamp,
             parent_session,
+            parent_harness,
             modified,
             message_count,
             usage,

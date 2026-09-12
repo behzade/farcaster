@@ -22,7 +22,8 @@ impl StateStore {
                         s.output_tokens, s.cache_read_tokens, s.cache_write_tokens,
                         s.total_tokens, s.cost_micros, s.search_text,
                         s.archived_at IS NOT NULL, s.harness,
-                        m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator)
+                        m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
+                        parent.harness
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
@@ -56,19 +57,38 @@ impl StateStore {
             .map_err(|error| error.to_string())?;
         let now = u64_to_i64(now_ms());
         let project = ensure_project(&tx, &update.project, now)?;
-        let existing = tx
-            .query_row(
-                "SELECT id FROM sessions WHERE harness=?1 AND locator=?2",
-                params![update.harness, path.to_string_lossy()],
+        let mut statement = tx
+            .prepare(
+                "SELECT id FROM sessions
+                  WHERE harness=?1 AND project_id=?2
+                    AND (backend_id=?3 OR locator=?4)
+                  ORDER BY backend_id=?3 DESC, locator=?4 DESC, id",
+            )
+            .map_err(|error| error.to_string())?;
+        let mut candidates = statement
+            .query_map(
+                params![update.harness, project, update.id, path.to_string_lossy()],
                 |row| row.get(0),
             )
-            .optional()
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<i64>>>()
             .map_err(|error| error.to_string())?;
-        let existing = if existing.is_some() {
-            existing
-        } else {
-            super::identity::legacy_session_id_for_locator(&tx, &update.harness, &path)?
-        };
+        drop(statement);
+        if let Some(legacy) = super::identity::legacy_session_id_for_locator(
+            &tx,
+            &update.harness,
+            &path,
+            &update.project,
+        )? && !candidates.contains(&legacy)
+        {
+            candidates.push(legacy);
+        }
+        let existing = candidates.first().copied();
+        if let Some(keep) = existing {
+            for other in candidates.into_iter().skip(1) {
+                super::identity::merge_session(&tx, keep, other)?;
+            }
+        }
         let id = if let Some(id) = existing {
             id
         } else {
@@ -93,7 +113,8 @@ impl StateStore {
                title=COALESCE(?5,NULLIF(title,''),?6,''),
                first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?6,'') ELSE first_user_message END,
                parent_backend_id=COALESCE(?7,parent_backend_id),
-               parent_id=COALESCE((SELECT id FROM sessions WHERE harness=?8 AND backend_id=?7 LIMIT 1),parent_id),
+               parent_id=COALESCE((SELECT id FROM sessions
+                 WHERE harness=?8 AND project_id=?2 AND backend_id=?7 LIMIT 1),parent_id),
                message_count=COALESCE(?9,message_count), modified_ms=?10
              WHERE id=?1",
             params![id, project, path.to_string_lossy(), update.id, update.title,
@@ -173,7 +194,7 @@ impl StateStore {
             .execute_batch(
                 "UPDATE sessions AS child SET parent_id=COALESCE(
                (SELECT parent.id FROM sessions parent
-                 WHERE parent.harness=child.harness
+                 WHERE parent.harness=child.harness AND parent.project_id=child.project_id
                    AND (parent.backend_id=child.parent_backend_id
                         OR parent.locator=child.parent_backend_id)
                    AND parent.id != child.id LIMIT 1), child.parent_id)
@@ -227,7 +248,7 @@ impl StateStore {
                     "SELECT EXISTS(
                        SELECT 1 FROM outbox o
                        JOIN sessions s ON s.id = o.session_id
-                      WHERE s.locator=?1 AND o.state IN ('queued','sending')
+                      WHERE s.locator=?1 AND o.state IN ('queued','sending','unknown')
                      )",
                     [locator.to_string_lossy()],
                     |row| row.get::<_, bool>(0),
@@ -246,7 +267,7 @@ impl StateStore {
             .prepare(
                 "SELECT s.locator FROM outbox o
                    JOIN sessions s ON s.id=o.session_id
-                  WHERE o.state IN ('queued','sending') AND s.locator IS NOT NULL",
+                  WHERE o.state IN ('queued','sending','unknown') AND s.locator IS NOT NULL",
             )
             .map_err(|error| format!("prepare legacy queued locator index: {error}"))?;
         let locators = statement
@@ -301,7 +322,7 @@ impl StateStore {
         if !missing.is_empty() {
             let legacy_locators = legacy_session_locator_index(&transaction)?;
             for (source, target) in missing {
-                let Some(id) = legacy_session_id_from_index(&legacy_locators, &source, None)?
+                let Some(id) = legacy_session_id_from_index(&legacy_locators, &source, None, None)?
                 else {
                     continue;
                 };
@@ -345,7 +366,8 @@ impl StateStore {
         if !missing.is_empty() {
             let legacy_locators = legacy_session_locator_index(&transaction)?;
             for locator in missing {
-                let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None)?
+                let Some(id) =
+                    legacy_session_id_from_index(&legacy_locators, &locator, None, None)?
                 else {
                     continue;
                 };
@@ -378,7 +400,7 @@ impl StateStore {
             return Ok(());
         }
         let legacy_locators = legacy_session_locator_index(&self.connection)?;
-        let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None)? else {
+        let Some(id) = legacy_session_id_from_index(&legacy_locators, &locator, None, None)? else {
             return Ok(());
         };
         self.connection
@@ -430,7 +452,12 @@ fn upsert_bound_session(
     let existing = if existing.is_some() {
         existing
     } else {
-        legacy_session_id_from_index(legacy_locators, &locator, Some(&session.harness))?
+        legacy_session_id_from_index(
+            legacy_locators,
+            &locator,
+            Some(&session.harness),
+            Some(project_id),
+        )?
     };
     let existing = existing.or_else(|| {
         (session.app_session_id > 0)
@@ -530,29 +557,30 @@ fn upsert_bound_session(
     Ok(())
 }
 
-type LegacyLocatorIndex = BTreeMap<PathBuf, BTreeMap<String, Vec<i64>>>;
+type LegacyLocatorIndex = BTreeMap<PathBuf, BTreeMap<(String, i64), Vec<i64>>>;
 
 fn legacy_session_locator_index(connection: &Connection) -> Result<LegacyLocatorIndex, String> {
     let mut statement = connection
-        .prepare("SELECT id, harness, locator FROM sessions WHERE locator IS NOT NULL")
+        .prepare("SELECT id, harness, project_id, locator FROM sessions WHERE locator IS NOT NULL")
         .map_err(|error| format!("prepare legacy locator index: {error}"))?;
     let rows = statement
         .query_map([], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
             ))
         })
         .map_err(|error| format!("query legacy locator index: {error}"))?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(|error| format!("decode legacy locator index: {error}"))?;
     let mut index = BTreeMap::new();
-    for (id, harness, locator) in rows {
+    for (id, harness, project_id, locator) in rows {
         index
             .entry(crate::sessions::normalize_session_path(Path::new(&locator)))
             .or_insert_with(BTreeMap::new)
-            .entry(harness)
+            .entry((harness, project_id))
             .or_insert_with(Vec::new)
             .push(id);
     }
@@ -563,25 +591,22 @@ fn legacy_session_id_from_index(
     index: &LegacyLocatorIndex,
     locator: &Path,
     harness: Option<&str>,
+    project_id: Option<i64>,
 ) -> Result<Option<i64>, String> {
     let Some(harnesses) = index.get(locator) else {
         return Ok(None);
     };
-    match harness {
-        Some(harness) => legacy_session_id(
-            harnesses
-                .get(harness)
-                .into_iter()
-                .flat_map(|ids| ids.iter().copied()),
-            locator,
-            Some(harness),
-        ),
-        None => legacy_session_id(
-            harnesses.values().flat_map(|ids| ids.iter().copied()),
-            locator,
-            None,
-        ),
-    }
+    legacy_session_id(
+        harnesses
+            .iter()
+            .filter(|((candidate_harness, candidate_project), _)| {
+                harness.is_none_or(|harness| harness == candidate_harness)
+                    && project_id.is_none_or(|project_id| project_id == *candidate_project)
+            })
+            .flat_map(|(_, ids)| ids.iter().copied()),
+        locator,
+        harness,
+    )
 }
 
 fn legacy_session_id(
@@ -636,6 +661,12 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     )
     .with_app_session_id(id);
     session.parent_session = row.get(6)?;
+    session.parent_harness = row.get::<_, Option<String>>(22)?.or_else(|| {
+        session
+            .parent_session
+            .as_ref()
+            .map(|_| session.harness.clone())
+    });
     if let (Some(provider), Some(model)) = (provider, model) {
         session.model = Some((provider, model));
         session.thinking_level = effort;

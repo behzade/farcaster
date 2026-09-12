@@ -78,6 +78,55 @@ impl StateStore {
     }
 
     pub(crate) fn queued_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
+        self.prompts_in_state("queued")
+    }
+
+    pub(crate) fn recover_interrupted_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("start interrupted prompt recovery: {error}"))?;
+        transaction
+            .execute(
+                "UPDATE outbox SET state='unknown', error='Delivery status unknown after app interruption'
+                  WHERE state='sending'",
+                [],
+            )
+            .map_err(|error| format!("mark interrupted prompt delivery unknown: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit interrupted prompt recovery: {error}"))?;
+        self.prompts_in_state("unknown")
+    }
+
+    pub(crate) fn unknown_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
+        self.prompts_in_state("unknown")
+    }
+
+    pub(crate) fn cancel_queued_prompts(&self, ids: &[i64]) -> Result<(), String> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("start queued prompt cancellation: {error}"))?;
+        for id in ids {
+            let changed = transaction
+                .execute(
+                    "UPDATE outbox
+                        SET state='failed', error='Prompt cancelled before delivery'
+                      WHERE id=?1 AND state='queued'",
+                    [id],
+                )
+                .map_err(|error| format!("cancel queued prompt {id}: {error}"))?;
+            if changed != 1 {
+                return Err(format!("queued prompt {id} is no longer ready to cancel"));
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit queued prompt cancellation: {error}"))
+    }
+
+    fn prompts_in_state(&self, state: &str) -> Result<Vec<QueuedPrompt>, String> {
         let mut statement = self
             .connection
             .prepare(
@@ -86,11 +135,11 @@ impl StateStore {
                    FROM outbox o
                    JOIN sessions s ON s.id = o.session_id
                    JOIN projects p ON p.id = s.project_id
-                  WHERE o.state='queued' ORDER BY o.id",
+                  WHERE o.state=?1 ORDER BY o.id",
             )
             .map_err(|error| format!("prepare prompt queue: {error}"))?;
         statement
-            .query_map([], |row| {
+            .query_map([state], |row| {
                 let mode = row.get::<_, String>(5)?;
                 let images_json = row.get::<_, String>(9)?;
                 let images = self.decode_prompt_images(&images_json).map_err(|error| {
@@ -122,6 +171,67 @@ impl StateStore {
             .map_err(|error| format!("query prompt queue: {error}"))?
             .map(|row| row.map_err(|error| format!("decode queued prompt: {error}")))
             .collect()
+    }
+
+    pub(crate) fn discard_unknown_prompt(
+        &self,
+        id: i64,
+        target: &str,
+        session: Option<&Path>,
+    ) -> Result<(), String> {
+        let Some(session_id) = self.session_id_for_target(target, session, None)? else {
+            return Err(format!(
+                "interrupted prompt {id} does not belong to {target}"
+            ));
+        };
+        let changed = self
+            .connection
+            .execute(
+                "DELETE FROM outbox WHERE id=?1 AND session_id=?2 AND state='unknown'",
+                params![id, session_id],
+            )
+            .map_err(|error| format!("discard interrupted prompt {id}: {error}"))?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(format!(
+                "interrupted prompt {id} is no longer awaiting disposition"
+            ))
+        }
+    }
+
+    pub(crate) fn reconcile_unknown_prompt(
+        &mut self,
+        id: i64,
+        target: &str,
+        session: Option<&Path>,
+    ) -> Result<(), String> {
+        let Some(session_id) = self.session_id_for_target(target, session, None)? else {
+            return Err(format!(
+                "interrupted prompt {id} does not belong to {target}"
+            ));
+        };
+        let claimed = self
+            .connection
+            .execute(
+                "UPDATE outbox SET state='sending'
+                  WHERE id=?1 AND session_id=?2 AND state='unknown'",
+                params![id, session_id],
+            )
+            .map_err(|error| format!("claim interrupted prompt {id}: {error}"))?;
+        if claimed != 1 {
+            return Err(format!(
+                "interrupted prompt {id} is no longer awaiting disposition"
+            ));
+        }
+        if let Err(error) = self.complete_prompt(id, target, session) {
+            let _ = self.connection.execute(
+                "UPDATE outbox SET state='unknown' WHERE id=?1 AND state='sending'",
+                [id],
+            );
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub(crate) fn prompt_presentations(
