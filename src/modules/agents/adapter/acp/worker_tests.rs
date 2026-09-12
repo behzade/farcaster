@@ -213,7 +213,7 @@ done
 #[cfg(unix)]
 #[test]
 fn acp_transport_admits_on_execution_and_recovers_after_preexecution_rejection() {
-    use crate::agents::extensions::{ExtensionUiResponse, PromptMode};
+    use crate::agents::extensions::PromptMode;
     use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
@@ -228,18 +228,22 @@ update() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"session
 tool() { printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"one","update":{"sessionUpdate":"tool_call","toolCallId":"fixture-tool","title":"Read fixture","kind":"read","rawInput":{"path":"fixture.txt"}}}}'; }
 permission() { printf '{"jsonrpc":"2.0","id":"%s","method":"session/request_permission","params":{"sessionId":"one","toolCall":{"toolCallId":"tool","title":"Read fixture","kind":"read","status":"pending"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Decline","kind":"reject_once"}]}}\n' "$1"; }
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*) reply '{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}}}' ;;
     *'"method":"session/new"'*) reply '{"sessionId":"one"}' ;;
     *'"method":"session/prompt"'*'reject before execution'*) reject ;;
+    *'"method":"session/prompt"'*'cancel before evidence'*) prompt_id=$id ;;
+    *'"method":"session/prompt"'*'waiting handoff'*) prompt_id=$id ;;
+    *'"method":"session/prompt"'*'never dispatch'*) exit 3 ;;
     *'"method":"session/prompt"'*'recover'*) prompt_id=$id; update 'recovered'; id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
     *'"method":"session/prompt"'*'text evidence'*) prompt_id=$id; update 'text evidence' ;;
     *'"method":"session/prompt"'*'tool evidence'*) prompt_id=$id; tool ;;
     *'"method":"session/prompt"'*'cancel after evidence'*) prompt_id=$id; permission 'approval-cancel' ;;
     *'"method":"session/prompt"'*'first turn'*) prompt_id=$id; permission 'approval-first' ;;
-    *'"method":"session/prompt"'*'queued turn'*) prompt_id=$id; update 'queued'; id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
-    *'"id":"approval-first"'*) update 'first'; id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
+    *'"method":"session/prompt"'*'queued turn'*) prompt_id=$id; tool ;;
+    *'"id":"approval-first"'*) ;;
     *'"id":"approval-cancel"'*) ;;
     *'"method":"session/cancel"'*) id=$prompt_id; reply '{"stopReason":"cancelled"}' ;;
     *'"method":"session/close"'*) reply '{}'; exit 0 ;;
@@ -254,12 +258,13 @@ done
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
         .expect("make ACP fixture executable");
     let command = AgentLaunchConfig {
-        program: executable,
+        program: executable.clone(),
         prefix_args: Vec::new(),
         access_mode: HarnessAccessMode::Sandboxed,
         app_proxy: None,
         session_locator_root: None,
     };
+
     let (session, _, _) = spawn_session(&command, &PROFILE, project.path(), None, None, None)
         .expect("start ACP fixture");
     let mut transport = WorkerSessionTransport::new(
@@ -327,6 +332,95 @@ done
             }
         }
     };
+
+    let waiting = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "waiting handoff".into(),
+            images: Vec::new(),
+        })
+        .expect("submit waiting prompt");
+    let never_dispatched = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "never dispatch".into(),
+            images: Vec::new(),
+        })
+        .expect("queue cancelled handoff");
+    transport
+        .send(SessionCommand::ApplySteering)
+        .expect("begin waiting handoff");
+    transport
+        .send(SessionCommand::Abort)
+        .expect("cancel waiting handoff");
+    let mut waiting_unknown = 0;
+    let mut local_rejections = 0;
+    let mut waiting_settled = false;
+    while !waiting_settled || waiting_unknown == 0 || local_rejections == 0 {
+        match next_event(&mut transport, deadline(), "cancel waiting handoff") {
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&waiting) => {
+                assert_eq!(
+                    response
+                        .result
+                        .expect_err("active request is uncertain")
+                        .kind,
+                    crate::agents::SessionResponseErrorKind::DeliveryUnknown
+                );
+                waiting_unknown += 1;
+            }
+            SessionEvent::Response(response)
+                if response.id.as_deref() == Some(&never_dispatched) =>
+            {
+                assert_eq!(
+                    response.result.expect_err("local prompt is rejected").kind,
+                    crate::agents::SessionResponseErrorKind::RejectedBeforeAcceptance
+                );
+                local_rejections += 1;
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                waiting_settled = true;
+            }
+            SessionEvent::Failure(error) => panic!("waiting handoff cancellation failed: {error}"),
+            _ => {}
+        }
+    }
+    assert_eq!(waiting_unknown, 1);
+    assert_eq!(local_rejections, 1);
+
+    let cancelled_before_ack = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "cancel before evidence".into(),
+            images: Vec::new(),
+        })
+        .expect("submit prompt cancelled before evidence");
+    transport
+        .send(SessionCommand::Abort)
+        .expect("cancel prompt before evidence");
+    let mut unknown = 0;
+    let mut settled = false;
+    while !settled || unknown == 0 {
+        match next_event(&mut transport, deadline(), "pre-evidence cancellation") {
+            SessionEvent::Response(response)
+                if response.id.as_deref() == Some(&cancelled_before_ack) =>
+            {
+                assert_eq!(
+                    response
+                        .result
+                        .expect_err("delivery must stay unknown")
+                        .kind,
+                    crate::agents::SessionResponseErrorKind::DeliveryUnknown
+                );
+                unknown += 1;
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                settled = true;
+            }
+            SessionEvent::Failure(error) => panic!("pre-evidence cancellation failed: {error}"),
+            _ => {}
+        }
+    }
+    assert_eq!(unknown, 1);
 
     let rejected = transport
         .send(SessionCommand::Prompt {
@@ -430,7 +524,7 @@ done
         })
         .expect("submit first prompt");
     let mut first_acks = 0;
-    let interaction = loop {
+    let _interaction = loop {
         match next_event(&mut transport, deadline(), "first permission") {
             SessionEvent::Interaction(interaction) => break interaction,
             SessionEvent::Response(response) if response.id.as_deref() == Some(&first) => {
@@ -441,24 +535,51 @@ done
             _ => {}
         }
     };
-    let queued = transport
+    let queued_steer = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "queued turn".into(),
+            images: vec![crate::protocol::PromptImage::new(
+                "aW1hZ2U=".into(),
+                "image/png".into(),
+            )],
+        })
+        .expect("submit mid-turn steer");
+    let queued_follow_up = transport
         .send(SessionCommand::Prompt {
             mode: PromptMode::FollowUp,
             message: "queued turn".into(),
-            images: Vec::new(),
+            images: vec![crate::protocol::PromptImage::new(
+                "BAUG".into(),
+                "image/png".into(),
+            )],
         })
-        .expect("submit mid-turn follow-up");
+        .expect("submit identical mid-turn follow-up");
     transport
-        .respond(ExtensionUiResponse::Value {
-            id: interaction.dialog_id().expect("permission id").into(),
-            value: "Allow".into(),
-        })
-        .expect("allow first prompt");
-    let mut accepted = HashMap::from([(first, first_acks), (queued, 0usize)]);
+        .send(SessionCommand::ApplySteering)
+        .expect("apply ACP steering handoff");
+    let mut accepted = HashMap::from([
+        (first, first_acks),
+        (queued_steer.clone(), 0usize),
+        (queued_follow_up.clone(), 0usize),
+    ]);
     let mut settlements = 0;
     let mut queued_starts = 0;
+    let mut delivered = HashMap::from([
+        (queued_steer.clone(), 0usize),
+        (queued_follow_up.clone(), 0usize),
+    ]);
+    let mut delivered_images = HashMap::new();
+    let mut handoff_aborted = false;
+    let mut boundaries = Vec::new();
+    let mut conversation =
+        crate::app::views::transcript::conversation::ConversationState::default();
     while settlements < 2 || accepted.values().any(|count| *count == 0) {
-        match next_event(&mut transport, deadline(), "queued turn") {
+        let event = next_event(&mut transport, deadline(), "queued turn");
+        if let SessionEvent::Activity(activity) = &event {
+            conversation.reduce(activity.value());
+        }
+        match event {
             SessionEvent::Response(response) if response.id.as_deref() == Some(&cancelled) => {
                 panic!("cancelled prompt was acknowledged or rejected again: {response:?}")
             }
@@ -470,17 +591,108 @@ done
             }
             SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
                 settlements += 1;
+                boundaries.push("settled");
             }
             SessionEvent::Activity(activity) if activity.value()["type"] == "agent_start" => {
                 queued_starts += 1;
+                boundaries.push("started");
+            }
+            SessionEvent::Activity(activity)
+                if activity.value()["type"] == "prompt_delivery"
+                    && activity.value()["status"] == "delivered" =>
+            {
+                if let Some(count) = activity.value()["submissionId"]
+                    .as_str()
+                    .and_then(|id| delivered.get_mut(id))
+                {
+                    *count += 1;
+                    let image = activity.value()["message"]["content"]
+                        .as_array()
+                        .and_then(|content| content.get(1))
+                        .and_then(|image| image.get("data"))
+                        .and_then(Value::as_str)
+                        .expect("correlated delivery image")
+                        .to_owned();
+                    delivered_images.insert(
+                        activity.value()["submissionId"]
+                            .as_str()
+                            .expect("delivery submission id")
+                            .to_owned(),
+                        image,
+                    );
+                }
             }
             SessionEvent::Failure(error) => panic!("queued ACP turn failed: {error}"),
             _ => {}
         }
+        if !handoff_aborted
+            && accepted.values().all(|count| *count == 1)
+            && delivered.values().all(|count| *count == 1)
+        {
+            transport
+                .send(SessionCommand::Abort)
+                .expect("abort the started handoff");
+            handoff_aborted = true;
+        }
     }
     assert!(accepted.values().all(|count| *count == 1));
+    assert!(delivered.values().all(|count| *count == 1));
+    assert_eq!(delivered_images[&queued_steer], "aW1hZ2U=");
+    assert_eq!(delivered_images[&queued_follow_up], "BAUG");
+    assert!(handoff_aborted);
     assert_eq!(queued_starts, 1, "queued prompt must begin a new turn");
+    assert_eq!(boundaries, ["settled", "started", "settled"]);
+    let users = conversation
+        .items
+        .iter()
+        .filter(|item| {
+            item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(users.len(), 5);
+    let handoff_users = users
+        .iter()
+        .filter(|item| item.text == "queued turn")
+        .collect::<Vec<_>>();
+    assert_eq!(handoff_users.len(), 2);
+    assert!(handoff_users.iter().all(|item| item.label.is_empty()));
+    assert!(handoff_users.iter().all(|item| item.images.len() == 1));
+    assert_ne!(handoff_users[0].images, handoff_users[1].images);
+    for (text, label) in [
+        ("first turn", ""),
+        ("waiting handoff", "Delivery unknown"),
+        ("cancel before evidence", "Delivery unknown"),
+    ] {
+        let prior = users
+            .iter()
+            .filter(|item| item.text == text && item.label == label)
+            .collect::<Vec<_>>();
+        assert_eq!(prior.len(), 1, "unexpected projected rows for {text}");
+        assert!(prior[0].images.is_empty());
+    }
     transport.close().expect("close ACP fixture");
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .expect("read ACP fixture requests");
+    assert!(!requests.contains("never dispatch"), "{requests}");
+    let handoff_request = requests
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|request| {
+            request["method"] == "session/prompt"
+                && request["params"]["prompt"]
+                    .as_array()
+                    .is_some_and(|prompt| prompt.len() == 4)
+        })
+        .expect("batched ACP handoff request");
+    assert_eq!(
+        handoff_request["params"]["prompt"],
+        json!([
+            {"type":"text", "text":"queued turn"},
+            {"type":"image", "mimeType":"image/png", "data":"aW1hZ2U="},
+            {"type":"text", "text":"queued turn"},
+            {"type":"image", "mimeType":"image/png", "data":"BAUG"},
+        ])
+    );
 }
 
 const PROFILE: AcpProfile = AcpProfile {
@@ -510,11 +722,11 @@ fn inert_session() -> AcpWorkerSession {
         .expect("test operation should succeed"),
         session_id: "one".into(),
         current_prompt: Some(AcpRequestId::Number(1)),
-        next_prompt_ack: None,
-        prompt_requests: HashMap::new(),
+        current_inputs: Vec::new(),
+        current_prompt_proven: false,
         prompt_acks: VecDeque::new(),
-        pending_steers: HashMap::new(),
         queued_prompts: VecDeque::new(),
+        handoff: None,
         output: String::new(),
         thought_started: false,
         pending_inputs: HashMap::new(),
@@ -522,12 +734,19 @@ fn inert_session() -> AcpWorkerSession {
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
         config_ids: ConfigIds::default(),
-        features: AcpFeatures {
-            steering: false,
-            close: false,
-        },
+        features: AcpFeatures { close: false },
         caller_identity: None,
     }
+}
+
+#[cfg(unix)]
+fn track_inert_submission(session: &mut AcpWorkerSession, id: &str) {
+    session.current_inputs.push(PendingPrompt {
+        mode: WorkerSendMode::Prompt,
+        message: "work".into(),
+        images: Vec::new(),
+        submission_id: Some(id.into()),
+    });
 }
 
 #[cfg(unix)]
@@ -942,33 +1161,28 @@ fn live_cursor_session_round_trip() {
 
 #[test]
 fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
-    for (reply, accepted) in [
-        (
-            AcpInbound::Response {
-                id: AcpRequestId::Number(1),
-                result: json!({"stopReason":"end_turn"}),
-            },
-            true,
-        ),
-        (
-            AcpInbound::Error {
-                id: AcpRequestId::Number(1),
-                message: "rejected".into(),
-            },
-            false,
-        ),
-        (
-            AcpInbound::Response {
-                id: AcpRequestId::Number(1),
-                result: json!({}),
-            },
-            false,
-        ),
-    ] {
+    let mut cases = ["end_turn", "max_tokens", "max_turn_requests", "refusal"]
+        .into_iter()
+        .map(|stop_reason| {
+            (
+                AcpInbound::Response {
+                    id: AcpRequestId::Number(1),
+                    result: json!({"stopReason":stop_reason}),
+                },
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    cases.push((
+        AcpInbound::Error {
+            id: AcpRequestId::Number(1),
+            message: "rejected".into(),
+        },
+        false,
+    ));
+    for (reply, accepted) in cases {
         let mut session = inert_session();
-        session
-            .prompt_requests
-            .insert(AcpRequestId::Number(1), "submission".into());
+        track_inert_submission(&mut session, "submission");
         assert!(session.poll_prompt_ack().is_none());
         session.connection.restore_queued(VecDeque::from([reply]));
         session.poll();
@@ -976,6 +1190,95 @@ fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
         assert_eq!(id, "submission");
         assert_eq!(result.is_ok(), accepted);
     }
+}
+
+#[test]
+fn acp_terminal_response_without_evidence_is_unknown_not_rejected() {
+    for result in [
+        json!({"stopReason":"cancelled"}),
+        json!({"stopReason":"not_an_acp_stop_reason"}),
+        json!({}),
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "submission");
+        session
+            .connection
+            .restore_queued(VecDeque::from([AcpInbound::Response {
+                id: AcpRequestId::Number(1),
+                result,
+            }]));
+
+        assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
+                if submission_id == "submission"
+        ));
+    }
+}
+
+#[test]
+fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
+    use std::os::unix::net::UnixStream;
+
+    let mut session = inert_session();
+    let (client, _peer) = UnixStream::pair().unwrap();
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().unwrap()),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .unwrap();
+    session
+        .submit_prompt(
+            "steer".into(),
+            "same".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .unwrap();
+    session
+        .submit_prompt(
+            "follow-up".into(),
+            "same".into(),
+            WorkerSendMode::Queue,
+            vec![crate::protocol::PromptImage::new(
+                "aW1hZ2U=".into(),
+                "image/png".into(),
+            )],
+        )
+        .unwrap();
+
+    session.apply_steering().unwrap();
+    assert!(session.queued_prompts.is_empty());
+    let handoff = session.handoff.as_ref().expect("claimed handoff");
+    assert_eq!(handoff.inputs.len(), 2);
+    assert_eq!(handoff.inputs[0].submission_id.as_deref(), Some("steer"));
+    assert_eq!(
+        handoff.inputs[1].submission_id.as_deref(),
+        Some("follow-up")
+    );
+    assert_eq!(handoff.inputs[1].images.len(), 1);
+    assert!(session.poll_prompt_ack().is_none());
+
+    session.abort().unwrap();
+    assert!(session.handoff.is_none());
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some((
+            "steer".into(),
+            Err("Prompt cancelled before delivery".into())
+        ))
+    );
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some((
+            "follow-up".into(),
+            Err("Prompt cancelled before delivery".into())
+        ))
+    );
+    assert_eq!(session.current_inputs.len(), 0);
 }
 
 #[test]
@@ -993,7 +1296,12 @@ fn acp_in_memory_queue_is_not_an_acknowledgement() {
     );
     assert!(session.poll_prompt_ack().is_none());
     assert_eq!(
-        session.queued_prompts.back().unwrap().3.as_deref(),
+        session
+            .queued_prompts
+            .back()
+            .unwrap()
+            .submission_id
+            .as_deref(),
         Some("queued")
     );
 }
@@ -1001,9 +1309,7 @@ fn acp_in_memory_queue_is_not_an_acknowledgement() {
 #[test]
 fn acp_prompt_admission_does_not_wait_for_turn_completion() {
     let mut session = inert_session();
-    session
-        .prompt_requests
-        .insert(AcpRequestId::Number(1), "prompt".into());
+    track_inert_submission(&mut session, "prompt");
     assert!(session.poll_prompt_ack().is_none());
 
     session
@@ -1028,6 +1334,12 @@ fn acp_prompt_admission_does_not_wait_for_turn_completion() {
             id: current,
             result: json!({"stopReason":"cancelled"}),
         }]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+        )) if submission_id == "prompt"
+    ));
     assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert!(session.poll_prompt_ack().is_none());
 }
@@ -1035,9 +1347,7 @@ fn acp_prompt_admission_does_not_wait_for_turn_completion() {
 #[test]
 fn acp_permission_request_proves_prompt_admission() {
     let mut session = inert_session();
-    session
-        .prompt_requests
-        .insert(AcpRequestId::Number(1), "prompt".into());
+    track_inert_submission(&mut session, "prompt");
     session
         .connection
         .restore_queued(VecDeque::from([AcpInbound::AgentRequest {
@@ -1060,9 +1370,7 @@ fn acp_permission_request_proves_prompt_admission() {
 #[test]
 fn acp_pre_execution_rejection_is_request_local() {
     let mut session = inert_session();
-    session
-        .prompt_requests
-        .insert(AcpRequestId::Number(1), "prompt".into());
+    track_inert_submission(&mut session, "prompt");
     session
         .connection
         .restore_queued(VecDeque::from([AcpInbound::Error {
@@ -1081,9 +1389,7 @@ fn acp_pre_execution_rejection_is_request_local() {
 #[test]
 fn acp_metadata_does_not_acknowledge_prompt_execution() {
     let mut session = inert_session();
-    session
-        .prompt_requests
-        .insert(AcpRequestId::Number(1), "prompt".into());
+    track_inert_submission(&mut session, "prompt");
     session
         .connection
         .restore_queued(VecDeque::from([AcpInbound::Notification {
