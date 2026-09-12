@@ -112,6 +112,29 @@ fn wait_for_response(rpc: &mut PiRpcProcess, expected_id: &str) -> TestResult {
     Err(format!("Pi did not acknowledge {expected_id}").into())
 }
 
+fn wait_for_established_installed_request(
+    rpc: &mut PiRpcProcess,
+    project: &Path,
+    message: &str,
+) -> TestResult {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let provider_received = fs::read_to_string(project.join("fixture-requests"))
+            .is_ok_and(|requests| requests.contains(message));
+        let session_persisted = rpc.session_locator.as_ref().is_some_and(|session| {
+            fs::read_to_string(session).is_ok_and(|history| history.contains(message))
+        });
+        if provider_received && session_persisted {
+            return Ok(());
+        }
+        if let Some(SessionEvent::Failure(error)) = rpc.try_next() {
+            return Err(error.into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Err(format!("installed Pi did not establish request: {message}").into())
+}
+
 #[test]
 fn abort_stops_active_pi_work_and_discards_steering_and_follow_up() -> TestResult {
     let project = tempdir()?;
@@ -163,7 +186,7 @@ fn abort_stops_active_pi_work_and_discards_steering_and_follow_up() -> TestResul
 }
 
 #[test]
-fn apply_steering_runs_the_queued_pi_steering() -> TestResult {
+fn apply_steering_runs_all_queued_pi_inputs() -> TestResult {
     let project = tempdir()?;
     let command = queue_rpc_fixture(project.path())?;
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
@@ -173,23 +196,266 @@ fn apply_steering_runs_the_queued_pi_steering() -> TestResult {
         "hold before steering",
     )?;
     wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentStarted)?;
-    let steering = prompt(
-        &mut rpc,
-        crate::protocol::PromptMode::Steer,
-        "apply steering",
-    )?;
-    wait_for_response(&mut rpc, &steering)?;
+    let queued = [
+        prompt(
+            &mut rpc,
+            crate::protocol::PromptMode::FollowUp,
+            "equal queued",
+        )?,
+        prompt(
+            &mut rpc,
+            crate::protocol::PromptMode::FollowUp,
+            "second follow-up",
+        )?,
+        prompt(&mut rpc, crate::protocol::PromptMode::Steer, "equal queued")?,
+        prompt(&mut rpc, crate::protocol::PromptMode::Steer, "second steer")?,
+    ];
+    for id in queued {
+        wait_for_response(&mut rpc, &id)?;
+    }
     assert_eq!(
         fs::read_to_string(project.path().join("fixture-admissions"))?,
-        "steer:apply steering\n"
+        concat!(
+            "follow_up:equal queued\n",
+            "follow_up:second follow-up\n",
+            "steer:equal queued\n",
+            "steer:second steer\n",
+        )
     );
-    rpc.send_request(SessionCommand::ApplySteering)?;
-    wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentSettled)?;
+    let apply = rpc.send_request(SessionCommand::ApplySteering)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut apply_acknowledged = false;
+    let mut settled = false;
+    while Instant::now() < deadline && !(apply_acknowledged && settled) {
+        match rpc.try_next() {
+            Some(SessionEvent::Response(response)) if response.id.as_deref() == Some(&apply) => {
+                assert_eq!(
+                    response.operation(),
+                    crate::agents::SessionOperation::ApplySteering
+                );
+                response.result?;
+                apply_acknowledged = true;
+            }
+            Some(SessionEvent::Activity(activity))
+                if activity.kind() == &crate::agents::SessionActivityKind::AgentSettled =>
+            {
+                settled = true;
+            }
+            Some(SessionEvent::Failure(error)) => return Err(error.into()),
+            _ => {}
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(apply_acknowledged && settled);
 
     let requests = fs::read_to_string(project.path().join("fixture-requests"))?;
     assert_eq!(
         requests.lines().collect::<Vec<_>>(),
-        ["hold before steering", "apply steering"]
+        [
+            "hold before steering",
+            "equal queued",
+            "second steer",
+            "equal queued",
+            "second follow-up",
+        ]
+    );
+    rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn configuring_pi_queues_sets_steering_and_follow_up_to_all() -> TestResult {
+    let project = tempdir()?;
+    let command = queue_rpc_fixture(project.path())?;
+    let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    rpc.request_and_wait(SessionCommand::ConfigureSteering)?;
+    assert_eq!(
+        fs::read_to_string(project.path().join("fixture-steering-configurations"))?,
+        "steering:all\nfollow_up:all\n"
+    );
+    rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn transformed_native_user_event_remains_visible_without_false_correlation() -> TestResult {
+    let project = tempdir()?;
+    let command = queue_rpc_fixture(project.path())?;
+    let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    assert!(!crate::agents::SessionTransport::tracks_prompt_delivery(
+        &rpc,
+        crate::protocol::PromptMode::Normal,
+    ));
+    let id = rpc.send_request(SessionCommand::Prompt {
+        mode: crate::protocol::PromptMode::Normal,
+        message: "event-first-transform image".into(),
+        images: vec![crate::protocol::PromptImage::new(
+            "aGVsbG8=".into(),
+            "image/png".into(),
+        )],
+    })?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut acknowledged = false;
+    let mut raw_user_events = Vec::new();
+    while Instant::now() < deadline && !(acknowledged && raw_user_events.len() == 2) {
+        match rpc.try_next() {
+            Some(SessionEvent::Response(response)) if response.id.as_deref() == Some(&id) => {
+                response.result?;
+                acknowledged = true;
+            }
+            Some(SessionEvent::Activity(activity))
+                if matches!(
+                    activity.value().get("type").and_then(Value::as_str),
+                    Some("message_start" | "message_end")
+                ) && activity.value()["message"]["role"] == "user" =>
+            {
+                raw_user_events.push(activity.value()["message"].clone());
+            }
+            Some(SessionEvent::Failure(error)) => return Err(error.into()),
+            _ => {}
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(acknowledged);
+    assert_eq!(raw_user_events.len(), 2);
+    for message in raw_user_events {
+        assert_eq!(message["content"][0]["text"], "extension transformed");
+        assert_eq!(
+            message["content"][1],
+            serde_json::json!({
+                "type": "image",
+                "data": "dHJhbnNmb3JtZWQ=",
+                "mimeType": "image/webp",
+            })
+        );
+    }
+    rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn resumed_pi_history_loads_one_persisted_prompt() -> TestResult {
+    let project = tempdir()?;
+    let command = queue_rpc_fixture_case(project.path(), "history")?;
+    let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    let id = prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::Normal,
+        "history prompt",
+    )?;
+    wait_for_response(&mut rpc, &id)?;
+    wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentSettled)?;
+    let session = rpc
+        .session_locator
+        .clone()
+        .ok_or("missing session locator")?;
+    rpc.terminate()?;
+
+    let mut resumed = PiRpcProcess::spawn(&command, project.path(), Some(&session))?;
+    let response = resumed.request_and_wait(SessionCommand::LoadHistory)?;
+    let crate::agents::SessionResponsePayload::LoadHistory(crate::agents::SessionHistory::Replace(
+        history,
+    )) = response.result?
+    else {
+        return Err("expected replacement history".into());
+    };
+    let user = history
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .count();
+    assert_eq!(user, 1, "{history:?}");
+    resumed.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn abort_marks_only_unacknowledged_dispatched_prompt_unknown() -> TestResult {
+    let project = tempdir()?;
+    let command = queue_rpc_fixture(project.path())?;
+    let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    let id = prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::Normal,
+        "unconfirmed dispatch",
+    )?;
+    rpc.send_request(SessionCommand::Abort)?;
+    let mut response = None;
+    while let Some(event) = rpc.try_next() {
+        if let SessionEvent::Response(candidate) = event
+            && candidate.id.as_deref() == Some(&id)
+        {
+            response = Some(candidate);
+        }
+    }
+    let error = response
+        .ok_or("missing delivery-unknown response")?
+        .result
+        .unwrap_err();
+    assert_eq!(
+        error.kind,
+        crate::agents::SessionResponseErrorKind::DeliveryUnknown
+    );
+    rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn second_abort_cancels_an_in_progress_apply_handoff() -> TestResult {
+    let project = tempdir()?;
+    let command = queue_rpc_fixture_case(project.path(), "slow-handoff")?;
+    let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::Normal,
+        "hold handoff",
+    )?;
+    wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentStarted)?;
+    let steering = prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::Steer,
+        "cancelled steering",
+    )?;
+    let follow_up = prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::FollowUp,
+        "cancelled follow-up",
+    )?;
+    wait_for_response(&mut rpc, &steering)?;
+    wait_for_response(&mut rpc, &follow_up)?;
+    let apply = rpc.send_request(SessionCommand::ApplySteering)?;
+    rpc.send_request(SessionCommand::Abort)?;
+
+    let mut cancelled_apply = false;
+    while let Some(event) = rpc.try_next() {
+        if let SessionEvent::Response(response) = event
+            && response.id.as_deref() == Some(&apply)
+        {
+            assert_eq!(
+                response.operation(),
+                crate::agents::SessionOperation::ApplySteering
+            );
+            assert!(response.result.is_err());
+            cancelled_apply = true;
+        }
+    }
+    assert!(cancelled_apply);
+    prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::Normal,
+        "after cancelled handoff",
+    )?;
+    wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentSettled)?;
+    let requests = fs::read_to_string(project.path().join("fixture-requests"))?;
+    assert_eq!(
+        requests.lines().collect::<Vec<_>>(),
+        ["hold handoff", "after cancelled handoff"]
+    );
+    assert_eq!(
+        fs::read_to_string(project.path().join("fixture-sessions"))?
+            .lines()
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        1
     );
     rpc.terminate()?;
     Ok(())
@@ -273,7 +539,7 @@ fn abort_restores_pi_model_reasoning_and_steering_configuration() -> TestResult 
         fs::read_to_string(project.path().join("fixture-steering-configurations"))?
             .lines()
             .count(),
-        2
+        4
     );
     assert_eq!(
         fs::read_to_string(project.path().join("session.jsonl"))?,
@@ -439,6 +705,14 @@ fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestR
     let project = tempdir()?;
     let command = installed_pi_fixture(project.path())?;
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+    rpc.request_and_wait(SessionCommand::ConfigureSteering)?;
+
+    prompt(
+        &mut rpc,
+        crate::protocol::PromptMode::Normal,
+        "installed persistence seed",
+    )?;
+    wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentSettled)?;
 
     prompt(
         &mut rpc,
@@ -446,6 +720,7 @@ fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestR
         "hold installed stop",
     )?;
     wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentStarted)?;
+    wait_for_established_installed_request(&mut rpc, project.path(), "hold installed stop")?;
     let steering = prompt(
         &mut rpc,
         crate::protocol::PromptMode::Steer,
@@ -468,12 +743,32 @@ fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestR
         "hold installed apply",
     )?;
     wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentStarted)?;
-    let steering = prompt(
-        &mut rpc,
-        crate::protocol::PromptMode::Steer,
-        "run installed steering",
-    )?;
-    wait_for_response(&mut rpc, &steering)?;
+    wait_for_established_installed_request(&mut rpc, project.path(), "hold installed apply")?;
+    let queued = [
+        prompt(
+            &mut rpc,
+            crate::protocol::PromptMode::FollowUp,
+            "run installed queued",
+        )?,
+        prompt(
+            &mut rpc,
+            crate::protocol::PromptMode::FollowUp,
+            "run installed second follow-up",
+        )?,
+        prompt(
+            &mut rpc,
+            crate::protocol::PromptMode::Steer,
+            "run installed queued",
+        )?,
+        prompt(
+            &mut rpc,
+            crate::protocol::PromptMode::Steer,
+            "run installed second steer",
+        )?,
+    ];
+    for id in queued {
+        wait_for_response(&mut rpc, &id)?;
+    }
     rpc.send_request(SessionCommand::ApplySteering)?;
     wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentSettled)?;
 
@@ -485,13 +780,26 @@ fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestR
     wait_for_activity(&mut rpc, crate::agents::SessionActivityKind::AgentSettled)?;
     rpc.request_and_wait(SessionCommand::LoadState)?;
     assert_eq!(rpc.session_locator, stopped_session);
-    let requests = fs::read_to_string(project.path().join("fixture-requests"))?;
+    let request_log = fs::read_to_string(project.path().join("fixture-requests"))?;
+    let requests = request_log
+        .lines()
+        .map(serde_json::from_str::<Vec<String>>)
+        .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(
-        requests.lines().collect::<Vec<_>>(),
+        requests
+            .last()
+            .ok_or("installed Pi fixture made no requests")?
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         [
+            "installed persistence seed",
             "hold installed stop",
             "hold installed apply",
-            "run installed steering",
+            "run installed queued",
+            "run installed second steer",
+            "run installed queued",
+            "run installed second follow-up",
             "installed submit again",
         ]
     );

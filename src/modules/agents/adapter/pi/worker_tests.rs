@@ -7,6 +7,221 @@ const PARENT_WITH_WORKER_CALL: &str = concat!(
     "{\"type\":\"message\",\"id\":\"assistant-1\",\"parentId\":\"user-1\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"name\":\"worker_start\"}]}}\n"
 );
 
+fn queue_worker(
+    project: &std::path::Path,
+    case_name: &str,
+) -> Result<Box<dyn WorkerSession>, Box<dyn std::error::Error>> {
+    let script = project.join("queue-worker-rpc.sh");
+    std::fs::write(&script, include_str!("test_queue_rpc.sh"))?;
+    let factory = PiWorkerFactory::new(AgentLaunchConfig::test_script(
+        &script,
+        vec![case_name.into()],
+    ));
+    Ok(factory.create(WorkerLaunch {
+        slot: None,
+        worker_id: "pi-child".into(),
+        worker_name: "Pi-child".into(),
+        project: project.to_path_buf(),
+        parent_session: "parent".into(),
+        parent_worker_id: None,
+        context: WorkerContext::Fresh,
+        provider: None,
+        model: None,
+        effort: None,
+        access_mode: crate::agents::HarnessAccessMode::Auto,
+        app_proxy: None,
+        ephemeral: false,
+    })?)
+}
+
+fn wait_for_prompt_acks(
+    worker: &mut dyn WorkerSession,
+    count: usize,
+) -> Vec<(String, Result<(), String>)> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut acknowledgements = Vec::new();
+    while std::time::Instant::now() < deadline && acknowledgements.len() < count {
+        while let Some(acknowledgement) = worker.poll_prompt_ack() {
+            acknowledgements.push(acknowledgement);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    acknowledgements
+}
+
+fn wait_for_worker_event(worker: &mut dyn WorkerSession) -> Option<WorkerEvent> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if let Some(event) = worker.poll() {
+            return Some(event);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    None
+}
+
+#[test]
+fn worker_process_correlates_images_and_applies_all_queue_modes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut worker = queue_worker(temp.path(), "normal")?;
+    assert!(!worker.tracks_prompt_delivery(WorkerSendMode::Prompt));
+    worker.submit_prompt(
+        "active".into(),
+        "hold child".into(),
+        WorkerSendMode::Prompt,
+        Vec::new(),
+    )?;
+    let active = wait_for_prompt_acks(worker.as_mut(), 1);
+    assert!(matches!(active.as_slice(), [(id, Ok(()))] if id == "active"));
+
+    let image = crate::protocol::PromptImage::new("aGVsbG8=".into(), "image/png".into());
+    for (id, mode, message) in [
+        ("follow-1", WorkerSendMode::Queue, "equal child"),
+        ("follow-2", WorkerSendMode::Queue, "second child follow-up"),
+        ("steer-1", WorkerSendMode::Steer, "equal child"),
+        ("steer-2", WorkerSendMode::Steer, "second child steer"),
+    ] {
+        worker.submit_prompt(id.into(), message.into(), mode, vec![image.clone()])?;
+    }
+    let acknowledgements = wait_for_prompt_acks(worker.as_mut(), 4);
+    assert_eq!(
+        acknowledgements
+            .iter()
+            .map(|(id, result)| (id.as_str(), result.is_ok()))
+            .collect::<Vec<_>>(),
+        [
+            ("follow-1", true),
+            ("follow-2", true),
+            ("steer-1", true),
+            ("steer-2", true),
+        ]
+    );
+
+    worker.apply_steering()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if matches!(worker.poll(), Some(WorkerEvent::Settled { .. })) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("fixture-requests"))?
+            .lines()
+            .collect::<Vec<_>>(),
+        [
+            "hold child",
+            "equal child",
+            "second child steer",
+            "equal child",
+            "second child follow-up",
+        ]
+    );
+    let rpc_lines = std::fs::read_to_string(temp.path().join("fixture-rpc-lines"))?;
+    assert_eq!(rpc_lines.matches(r#""data":"aGVsbG8=""#).count(), 4);
+    worker.close()?;
+    Ok(())
+}
+
+#[test]
+fn worker_abort_reports_unacknowledged_dispatch_as_nonfatal_unknown()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut worker = queue_worker(temp.path(), "normal")?;
+    worker.submit_prompt(
+        "uncertain-child".into(),
+        "unconfirmed child dispatch".into(),
+        WorkerSendMode::Prompt,
+        vec![crate::protocol::PromptImage::new(
+            "aGVsbG8=".into(),
+            "image/png".into(),
+        )],
+    )?;
+    worker.abort()?;
+    assert!(worker.poll_prompt_ack().is_none());
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let event = loop {
+        if let Some(event) = worker.poll() {
+            break event;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("missing Pi child delivery-unknown event".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(matches!(
+        event,
+        WorkerEvent::PromptDeliveryUnknown { submission_id, .. }
+            if submission_id == "uncertain-child"
+    ));
+    worker.close()?;
+
+    let legacy = tempfile::tempdir()?;
+    let mut worker = queue_worker(legacy.path(), "normal")?;
+    worker.send(
+        "unconfirmed legacy child dispatch".into(),
+        WorkerSendMode::Prompt,
+    )?;
+    worker.abort()?;
+    assert!(matches!(
+        wait_for_worker_event(worker.as_mut()),
+        Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
+            if submission_id.starts_with("pi-worker-input-")
+    ));
+    worker.close()?;
+    Ok(())
+}
+
+#[test]
+fn legacy_worker_send_rejection_fails_only_an_initial_prompt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let mut worker = queue_worker(temp.path(), "normal")?;
+    worker.send("reject initial prompt".into(), WorkerSendMode::Prompt)?;
+    assert!(matches!(
+        wait_for_worker_event(worker.as_mut()),
+        Some(WorkerEvent::Failed(error)) if error == "prompt rejected"
+    ));
+
+    worker.send("reject active steer".into(), WorkerSendMode::Steer)?;
+    assert!(matches!(
+        wait_for_worker_event(worker.as_mut()),
+        Some(WorkerEvent::RequestFailed { .. })
+    ));
+    assert!(worker.poll().is_none(), "steer rejection settled the run");
+    worker.close()?;
+    Ok(())
+}
+
+#[test]
+fn worker_process_failure_is_terminal_before_or_after_prompt_ack()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (message, expects_ack) in [
+        ("exit-before-ack child", false),
+        ("exit-after-ack child", true),
+    ] {
+        let temp = tempfile::tempdir()?;
+        let mut worker = queue_worker(temp.path(), "normal")?;
+        worker.submit_prompt(
+            "child-submission".into(),
+            message.into(),
+            WorkerSendMode::Prompt,
+            Vec::new(),
+        )?;
+        let acknowledgements = wait_for_prompt_acks(worker.as_mut(), usize::from(expects_ack));
+        assert_eq!(acknowledgements.len(), usize::from(expects_ack));
+        assert!(matches!(
+            wait_for_worker_event(worker.as_mut()),
+            Some(WorkerEvent::Failed(_))
+        ));
+        assert!(worker.poll().is_none(), "terminal failure repeated");
+        worker.close()?;
+    }
+    Ok(())
+}
+
 #[test]
 fn worker_output_uses_only_final_assistant_text() {
     let message = json!({

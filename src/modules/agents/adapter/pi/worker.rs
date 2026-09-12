@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs::File,
     io::{BufRead as _, BufReader},
     path::{Path, PathBuf},
@@ -11,9 +11,9 @@ use super::process::{PiRpcProcess, SessionLaunch};
 use crate::{
     agents::extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
     agents::{
-        AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, WorkerContext,
-        WorkerEvent, WorkerInput, WorkerInputResponse, WorkerLaunch, WorkerSendMode, WorkerSession,
-        WorkerSessionFactory,
+        AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent,
+        SessionResponseErrorKind, WorkerContext, WorkerEvent, WorkerInput, WorkerInputResponse,
+        WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
 };
 
@@ -90,7 +90,13 @@ impl WorkerSessionFactory for PiWorkerFactory {
             state_request: None,
             has_session_locator: false,
             settled: false,
+            run_active: false,
             pending_inputs: HashMap::new(),
+            prompt_requests: HashMap::new(),
+            prompt_acks: VecDeque::new(),
+            pending_session_events: VecDeque::new(),
+            pending_worker_events: VecDeque::new(),
+            terminal: false,
         }))
     }
 }
@@ -101,7 +107,19 @@ struct PiWorkerSession {
     state_request: Option<String>,
     has_session_locator: bool,
     settled: bool,
+    run_active: bool,
     pending_inputs: HashMap<String, InputKind>,
+    prompt_requests: HashMap<String, PendingPrompt>,
+    prompt_acks: VecDeque<(String, Result<(), String>)>,
+    pending_session_events: VecDeque<SessionEvent>,
+    pending_worker_events: VecDeque<WorkerEvent>,
+    terminal: bool,
+}
+
+struct PendingPrompt {
+    submission_id: String,
+    mode: PromptMode,
+    reports_ack: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -112,17 +130,32 @@ enum InputKind {
 
 impl WorkerSession for PiWorkerSession {
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
-        let mode = match mode {
-            WorkerSendMode::Prompt => PromptMode::Normal,
-            WorkerSendMode::Queue => PromptMode::FollowUp,
-            WorkerSendMode::Steer => PromptMode::Steer,
-        };
-        self.process.send_request(SessionCommand::Prompt {
-            mode,
-            message,
-            images: Vec::new(),
-        })?;
-        Ok(())
+        self.send_prompt(None, message, mode, Vec::new())
+    }
+
+    fn send_with_images(
+        &mut self,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<(), String> {
+        self.send_prompt(None, message, mode, images)
+    }
+
+    fn submit_prompt(
+        &mut self,
+        id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_prompt(Some(id), message, mode, images)?;
+        Ok(false)
+    }
+
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.pump();
+        self.prompt_acks.pop_front()
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -161,12 +194,40 @@ impl WorkerSession for PiWorkerSession {
         Ok(())
     }
 
+    fn apply_steering(&mut self) -> Result<(), String> {
+        self.process
+            .send_request(SessionCommand::ApplySteering)
+            .map(|_| ())
+    }
+
     fn poll(&mut self) -> Option<WorkerEvent> {
+        if let Some(event) = self.pending_worker_events.pop_front() {
+            return Some(event);
+        }
         loop {
-            match self.process.try_next()? {
+            let event = if let Some(event) = self.pending_session_events.pop_front() {
+                event
+            } else if self.terminal {
+                return None;
+            } else {
+                self.process.try_next()?
+            };
+            match event {
+                SessionEvent::Response(response)
+                    if response
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| self.prompt_requests.contains_key(id)) =>
+                {
+                    self.route_prompt_response(response);
+                    if let Some(event) = self.pending_worker_events.pop_front() {
+                        return Some(event);
+                    }
+                }
                 SessionEvent::Activity(event) => match event.kind() {
                     SessionActivityKind::AgentStarted => {
                         self.settled = false;
+                        self.run_active = true;
                         self.latest_output.clear();
                         if let Err(error) = self.request_session_state() {
                             return Some(WorkerEvent::Failed(error));
@@ -180,6 +241,7 @@ impl WorkerSession for PiWorkerSession {
                     }
                     SessionActivityKind::AgentSettled => {
                         self.settled = true;
+                        self.run_active = false;
                         if let Err(error) = self.request_session_state() {
                             return Some(WorkerEvent::Failed(error));
                         }
@@ -197,12 +259,6 @@ impl WorkerSession for PiWorkerSession {
                     Ok(None) => {}
                     Err(error) => return Some(WorkerEvent::Failed(error)),
                 },
-                SessionEvent::Response(crate::agents::SessionResponse {
-                    result: Err(error),
-                    ..
-                }) => {
-                    return Some(WorkerEvent::Failed(error.to_string()));
-                }
                 SessionEvent::Response(response)
                     if response.id.as_ref() == self.state_request.as_ref() =>
                 {
@@ -224,7 +280,20 @@ impl WorkerSession for PiWorkerSession {
                         ));
                     }
                 }
-                SessionEvent::Failure(error) => return Some(WorkerEvent::Failed(error)),
+                SessionEvent::Response(crate::agents::SessionResponse {
+                    result: Err(error),
+                    ..
+                }) => {
+                    return Some(WorkerEvent::RequestFailed {
+                        operation: format!("Pi {:?}", error.operation),
+                        error: error.to_string(),
+                    });
+                }
+                SessionEvent::Failure(error) => {
+                    self.terminal = true;
+                    self.pending_session_events.clear();
+                    return Some(WorkerEvent::Failed(error));
+                }
                 SessionEvent::Response(_) | SessionEvent::Stderr(_) => {}
             }
         }
@@ -236,11 +305,111 @@ impl WorkerSession for PiWorkerSession {
 }
 
 impl PiWorkerSession {
+    fn send_prompt(
+        &mut self,
+        submission_id: Option<String>,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<(), String> {
+        let mode = prompt_mode(mode);
+        let request_id = self.process.send_request(SessionCommand::Prompt {
+            mode,
+            message,
+            images,
+        })?;
+        let reports_ack = submission_id.is_some();
+        let submission_id =
+            submission_id.unwrap_or_else(|| format!("pi-worker-input-{}", uuid::Uuid::new_v4()));
+        self.prompt_requests.insert(
+            request_id,
+            PendingPrompt {
+                submission_id,
+                mode,
+                reports_ack,
+            },
+        );
+        Ok(())
+    }
+
+    fn pump(&mut self) {
+        if self.terminal {
+            return;
+        }
+        while let Some(event) = self.process.try_next() {
+            match event {
+                SessionEvent::Response(response)
+                    if response
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| self.prompt_requests.contains_key(id)) =>
+                {
+                    self.route_prompt_response(response);
+                }
+                SessionEvent::Failure(error) => {
+                    self.terminal = true;
+                    self.pending_session_events.clear();
+                    self.pending_worker_events
+                        .push_back(WorkerEvent::Failed(error));
+                    break;
+                }
+                event => {
+                    self.pending_session_events.push_back(event);
+                }
+            }
+        }
+    }
+
+    fn route_prompt_response(&mut self, response: crate::agents::SessionResponse) {
+        let Some(request_id) = response.id.as_ref() else {
+            return;
+        };
+        let Some(prompt) = self.prompt_requests.remove(request_id) else {
+            return;
+        };
+        match response.result {
+            Ok(_) if prompt.reports_ack => {
+                self.prompt_acks.push_back((prompt.submission_id, Ok(())))
+            }
+            Ok(_) => {}
+            Err(error) if error.kind == SessionResponseErrorKind::DeliveryUnknown => {
+                self.pending_worker_events
+                    .push_back(WorkerEvent::PromptDeliveryUnknown {
+                        submission_id: prompt.submission_id,
+                        error: error.to_string(),
+                    });
+            }
+            Err(error) if prompt.reports_ack => self
+                .prompt_acks
+                .push_back((prompt.submission_id, Err(error.to_string()))),
+            Err(error) => {
+                if prompt.mode == PromptMode::Normal && !self.run_active {
+                    self.pending_worker_events
+                        .push_back(WorkerEvent::Failed(error.to_string()));
+                } else {
+                    self.pending_worker_events
+                        .push_back(WorkerEvent::RequestFailed {
+                            operation: format!("Pi {:?}", error.operation),
+                            error: error.to_string(),
+                        });
+                }
+            }
+        }
+    }
+
     fn request_session_state(&mut self) -> Result<(), String> {
         if !self.has_session_locator && self.state_request.is_none() {
             self.state_request = Some(self.process.send_request(SessionCommand::LoadState)?);
         }
         Ok(())
+    }
+}
+
+const fn prompt_mode(mode: WorkerSendMode) -> PromptMode {
+    match mode {
+        WorkerSendMode::Prompt => PromptMode::Normal,
+        WorkerSendMode::Queue => PromptMode::FollowUp,
+        WorkerSendMode::Steer => PromptMode::Steer,
     }
 }
 

@@ -18,18 +18,32 @@ if [ -f "$PWD/fixture-launch-count" ]; then
 fi
 printf '%s' "$launch_count" > "$PWD/fixture-launch-count"
 test -f "$PWD/fixture-thinking" || printf 'off' > "$PWD/fixture-thinking"
-queued_steering=''
-queued_follow_up=''
+steering_queue="$PWD/fixture-steering-queue.$$"
+follow_up_queue="$PWD/fixture-follow-up-queue.$$"
+: > "$steering_queue"
+: > "$follow_up_queue"
 
 read_id() {
   printf '%s' "$1" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p'
 }
 
 read_type() {
-  printf '%s' "$1" | sed -n 's/.*"type":"\([^"]*\)".*/\1/p'
+  for candidate in get_state get_commands prompt steer follow_up abort set_model set_thinking_level set_steering_mode set_follow_up_mode get_entries; do
+    case "$1" in
+      *\"type\":\"$candidate\"*) printf '%s' "$candidate"; return ;;
+    esac
+  done
+  printf 'unknown'
+}
+
+emit_queue_update() {
+  steering=$(awk 'BEGIN { separator = "" } { printf "%s\"queued\"", separator; separator = "," }' "$steering_queue")
+  follow_up=$(awk 'BEGIN { separator = "" } { printf "%s\"queued\"", separator; separator = "," }' "$follow_up_queue")
+  printf '{"type":"queue_update","steering":[%s],"followUp":[%s]}\n' "$steering" "$follow_up"
 }
 
 while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$PWD/fixture-rpc-lines"
   id=$(read_id "$line")
   type=$(read_type "$line")
   case "$type" in
@@ -59,31 +73,98 @@ while IFS= read -r line; do
     prompt)
       message=$(printf '%s' "$line" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
       printf '%s\n' "$message" >> "$PWD/fixture-requests"
-      printf '%s\n' "$message" >> "$session_file"
-      printf '{"type":"response","id":"%s","command":"prompt","success":true}\n' "$id"
+      case "$message" in
+        unconfirmed*) continue ;;
+        exit-before-ack*) exit 21 ;;
+        exit-after-ack*)
+          printf '{"type":"response","id":"%s","command":"prompt","success":true}\n' "$id"
+          exit 22
+          ;;
+        reject*)
+          printf '{"type":"response","id":"%s","command":"prompt","success":false,"error":"prompt rejected"}\n' "$id"
+          continue
+          ;;
+      esac
+      if [ "$case_name" = 'history' ]; then
+        printf '{"type":"message","id":"user-%s","parentId":null,"message":{"role":"user","content":"%s"}}\n' "$launch_count" "$message" >> "$session_file"
+      else
+        printf '%s\n' "$message" >> "$session_file"
+      fi
+      image=''
+      case "$line" in
+        *'"type":"image"'*)
+          data=$(printf '%s' "$line" | sed -n 's/.*"data":"\([^"]*\)".*/\1/p')
+          mime_type=$(printf '%s' "$line" | sed -n 's/.*"mimeType":"\([^"]*\)".*/\1/p')
+          image=$(printf ',{"type":"image","data":"%s","mimeType":"%s"}' "$data" "$mime_type")
+          ;;
+      esac
+      event_message=$message
+      case "$message" in
+        event-first-transform*)
+          event_message='extension transformed'
+          image=',{"type":"image","data":"dHJhbnNmb3JtZWQ=","mimeType":"image/webp"}'
+          ;;
+      esac
+      case "$message" in
+        event-first*) ;;
+        *) printf '{"type":"response","id":"%s","command":"prompt","success":true}\n' "$id" ;;
+      esac
       printf '{"type":"agent_start"}\n'
+      printf '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"%s"}%s]}}\n' "$event_message" "$image"
+      printf '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"%s"}%s]}}\n' "$event_message" "$image"
+      case "$message" in
+        event-first*) printf '{"type":"response","id":"%s","command":"prompt","success":true}\n' "$id" ;;
+      esac
       case "$message" in
         hold*) ;;
         *) printf '{"type":"agent_settled"}\n' ;;
       esac
       ;;
     steer)
-      queued_steering=$(printf '%s' "$line" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
-      printf 'steer:%s\n' "$queued_steering" >> "$PWD/fixture-admissions"
+      message=$(printf '%s' "$line" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
+      case "$message" in
+        reject*)
+          printf '{"type":"response","id":"%s","command":"steer","success":false,"error":"steer rejected"}\n' "$id"
+          continue
+          ;;
+      esac
+      printf '%s\n' "$message" >> "$steering_queue"
+      printf 'steer:%s\n' "$message" >> "$PWD/fixture-admissions"
+      emit_queue_update
       printf '{"type":"response","id":"%s","command":"steer","success":true}\n' "$id"
       ;;
     follow_up)
-      queued_follow_up=$(printf '%s' "$line" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
-      printf 'follow_up:%s\n' "$queued_follow_up" >> "$PWD/fixture-admissions"
+      message=$(printf '%s' "$line" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
+      printf '%s\n' "$message" >> "$follow_up_queue"
+      printf 'follow_up:%s\n' "$message" >> "$PWD/fixture-admissions"
+      emit_queue_update
       printf '{"type":"response","id":"%s","command":"follow_up","success":true}\n' "$id"
       ;;
     abort)
+      if [ "$case_name" = 'slow-handoff' ]; then sleep 1; fi
       printf '{"type":"response","id":"%s","command":"abort","success":true}\n' "$id"
-      if [ -n "$queued_steering" ]; then
-        printf '%s\n' "$queued_steering" >> "$PWD/fixture-requests"
-        queued_steering=''
+      while [ -s "$steering_queue" ]; do
+        delivering=$(sed -n '1p' "$steering_queue")
+        printf '%s\n' "$delivering" >> "$PWD/fixture-requests"
+        printf '%s\n' "$delivering" >> "$session_file"
+        sed '1d' "$steering_queue" > "$steering_queue.next"
+        mv "$steering_queue.next" "$steering_queue"
+        emit_queue_update
+        printf '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' "$delivering"
+        printf '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' "$delivering"
         printf '{"type":"agent_start"}\n'
-      fi
+      done
+      while [ -s "$follow_up_queue" ]; do
+        delivering=$(sed -n '1p' "$follow_up_queue")
+        printf '%s\n' "$delivering" >> "$PWD/fixture-requests"
+        printf '%s\n' "$delivering" >> "$session_file"
+        sed '1d' "$follow_up_queue" > "$follow_up_queue.next"
+        mv "$follow_up_queue.next" "$follow_up_queue"
+        emit_queue_update
+        printf '{"type":"message_start","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' "$delivering"
+        printf '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"%s"}]}}\n' "$delivering"
+        printf '{"type":"agent_start"}\n'
+      done
       printf '{"type":"agent_settled"}\n'
       ;;
     set_model)
@@ -106,11 +187,20 @@ while IFS= read -r line; do
       printf '{"type":"response","id":"%s","command":"set_thinking_level","success":true}\n' "$id"
       ;;
     set_steering_mode)
-      printf 'all\n' >> "$PWD/fixture-steering-configurations"
+      printf 'steering:all\n' >> "$PWD/fixture-steering-configurations"
       printf '{"type":"response","id":"%s","command":"set_steering_mode","success":true}\n' "$id"
       ;;
+    set_follow_up_mode)
+      printf 'follow_up:all\n' >> "$PWD/fixture-steering-configurations"
+      printf '{"type":"response","id":"%s","command":"set_follow_up_mode","success":true}\n' "$id"
+      ;;
     get_entries)
-      printf '{"type":"response","id":"%s","command":"get_entries","success":true,"data":{"entries":[],"leafId":null}}\n' "$id"
+      if [ "$case_name" = 'history' ]; then
+        entries=$(paste -sd, "$session_file")
+        printf '{"type":"response","id":"%s","command":"get_entries","success":true,"data":{"entries":[%s],"leafId":null}}\n' "$id" "$entries"
+      else
+        printf '{"type":"response","id":"%s","command":"get_entries","success":true,"data":{"entries":[],"leafId":null}}\n' "$id"
+      fi
       ;;
     *)
       printf '{"type":"response","id":"%s","command":"%s","success":true,"data":{}}\n' "$id" "$type"

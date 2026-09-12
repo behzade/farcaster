@@ -10,17 +10,19 @@ export default function fixtureProvider(pi) {
       id: "fixture",
       name: "Farcaster fixture",
       reasoning: false,
-      input: ["text"],
+      input: ["text", "image"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 8192,
       maxTokens: 1024,
     }],
     streamSimple(model, context, options) {
-      const latest = [...context.messages].reverse().find((message) => message.role === "user");
-      const text = typeof latest?.content === "string"
-        ? latest.content
-        : (latest?.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("");
-      appendFileSync(logPath, `${text}\n`);
+      const userTexts = context.messages
+        .filter((message) => message.role === "user")
+        .map((message) => typeof message.content === "string"
+          ? message.content
+          : (message.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join(""));
+      const text = userTexts.at(-1) ?? "";
+      appendFileSync(logPath, `${JSON.stringify(userTexts)}\n`);
 
       const output = {
         role: "assistant",

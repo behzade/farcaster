@@ -232,6 +232,10 @@ fn serve(
             "get_available_thinking_levels" => json!({"levels":["off"]}),
             "get_commands" => json!({"commands":[]}),
             "get_modes" => json!({"modes":[]}),
+            "set_follow_up_mode" => {
+                assert_eq!(request["mode"], "all");
+                json!({})
+            }
             "set_steering_mode" | "get_session_stats" | "prompt" | "abort" => json!({}),
             _ => panic!("unhandled fixture request: {request}"),
         };

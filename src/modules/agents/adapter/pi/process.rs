@@ -2,7 +2,7 @@
 mod metadata;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs::OpenOptions,
     io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Path, PathBuf},
@@ -121,11 +121,14 @@ pub(crate) struct PiRpcProcess {
     selected_model: Option<(String, String)>,
     selected_reasoning: Option<String>,
     pending_configurations: HashMap<String, PendingConfiguration>,
+    pending_queue_configurations: HashMap<String, PendingQueueConfiguration>,
+    apply_steering_requests: HashSet<String>,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
     queued: VecDeque<SessionEvent>,
     pending: HashMap<String, String>,
+    pending_prompt_modes: HashMap<String, crate::protocol::PromptMode>,
     peer_messages: VecDeque<PeerMessage>,
     next_id: u64,
     activity: WorkerActivityState,
@@ -137,9 +140,13 @@ pub(crate) struct PiRpcProcess {
 }
 
 enum PendingConfiguration {
-    Steering,
     Model { provider: String, model_id: String },
     Reasoning(String),
+}
+
+enum PendingQueueConfiguration {
+    Steering { public_id: String },
+    FollowUp { public_id: String },
 }
 
 impl PiRpcProcess {
@@ -312,11 +319,14 @@ impl PiRpcProcess {
             selected_model: None,
             selected_reasoning: None,
             pending_configurations: HashMap::new(),
+            pending_queue_configurations: HashMap::new(),
+            apply_steering_requests: HashSet::new(),
             child,
             stdin: Arc::new(Mutex::new(stdin)),
             incoming,
             queued: VecDeque::new(),
             pending: HashMap::new(),
+            pending_prompt_modes: HashMap::new(),
             peer_messages: VecDeque::new(),
             next_id: 0,
             activity: WorkerActivityState::Idle,
@@ -387,8 +397,26 @@ impl PiRpcProcess {
             ));
             return Ok(id);
         }
+        if matches!(&request, SessionCommand::ConfigureSteering) {
+            let public_id = self.next_request_id();
+            let id = self.send_command(serde_json::json!({
+                "type": "set_steering_mode",
+                "mode": "all",
+            }))?;
+            self.pending_queue_configurations.insert(
+                id,
+                PendingQueueConfiguration::Steering {
+                    public_id: public_id.clone(),
+                },
+            );
+            return Ok(public_id);
+        }
+        let prompt_mode = match &request {
+            SessionCommand::Prompt { mode, .. } => Some(*mode),
+            _ => None,
+        };
+        let apply_steering = matches!(&request, SessionCommand::ApplySteering);
         let configuration = match &request {
-            SessionCommand::ConfigureSteering => Some(PendingConfiguration::Steering),
             SessionCommand::SelectModel { provider, model_id } => {
                 Some(PendingConfiguration::Model {
                     provider: provider.clone(),
@@ -401,6 +429,12 @@ impl PiRpcProcess {
             _ => None,
         };
         let id = self.send_command(super::protocol::encode_request(request)?)?;
+        if let Some(mode) = prompt_mode {
+            self.pending_prompt_modes.insert(id.clone(), mode);
+        }
+        if apply_steering {
+            self.apply_steering_requests.insert(id.clone());
+        }
         if let Some(configuration) = configuration {
             self.pending_configurations
                 .insert(id.clone(), configuration);
@@ -497,18 +531,14 @@ impl PiRpcProcess {
             .queued
             .drain(..)
             .filter(|event| {
-                matches!(
-                    event,
-                    SessionEvent::Response(response)
-                        if matches!(
-                            response.operation(),
-                            crate::agents::SessionOperation::Prompt(_)
-                        )
-                )
+                matches!(event, SessionEvent::Response(response)
+                    if matches!(response.operation(), crate::agents::SessionOperation::Prompt(_)))
             })
             .collect::<Vec<_>>();
         let abandoned = std::mem::take(&mut self.pending);
+        let abandoned_apply_steering = std::mem::take(&mut self.apply_steering_requests);
         self.pending_configurations.clear();
+        self.pending_queue_configurations.clear();
         self.stderr.clear();
         self.expected_resume = session
             .as_deref()
@@ -538,14 +568,31 @@ impl PiRpcProcess {
             ));
         }
         self.queued.extend(completed);
-        self.queued
-            .extend(abandoned.into_iter().map(|(id, command)| {
-                SessionEvent::Response(SessionResponse::failure(
-                    Some(id),
-                    super::wire::response_operation(&command),
-                    "request cancelled because Pi stopped".into(),
-                ))
-            }));
+        let abandoned = abandoned
+            .into_iter()
+            .map(|(id, command)| {
+                let operation = if abandoned_apply_steering.contains(&id) {
+                    crate::agents::SessionOperation::ApplySteering
+                } else {
+                    super::wire::response_operation(&command)
+                };
+                if let Some(mode) = self.pending_prompt_modes.remove(&id) {
+                    SessionEvent::Response(SessionResponse::prompt_delivery_unknown(
+                        id,
+                        mode,
+                        "prompt dispatch was interrupted before Pi acknowledged it".into(),
+                    ))
+                } else {
+                    SessionEvent::Response(SessionResponse::failure(
+                        Some(id),
+                        operation,
+                        "request cancelled because Pi stopped".into(),
+                    ))
+                }
+            })
+            .collect::<Vec<_>>();
+        self.queued.extend(abandoned);
+        self.pending_prompt_modes.clear();
         Ok(())
     }
 
@@ -854,14 +901,14 @@ impl PiRpcProcess {
         self.retry_parent_stamp();
         match item {
             ReaderItem::Wire(Ok(PiWireMessage::Response {
-                response,
+                mut response,
                 command,
                 commands,
             })) => {
-                let Some(id) = response.id.as_deref() else {
+                let Some(id) = response.id.clone() else {
                     return SessionEvent::Failure(format!("uncorrelated response for {command}"));
                 };
-                let Some(expected_command) = self.pending.remove(id) else {
+                let Some(expected_command) = self.pending.remove(&id) else {
                     return SessionEvent::Failure(format!("response used unknown request id {id}"));
                 };
                 if command != expected_command {
@@ -869,11 +916,20 @@ impl PiRpcProcess {
                         "response {id} was for {command}, expected {expected_command}"
                     ));
                 }
-                if let Some(configuration) = self.pending_configurations.remove(id)
+                if let Some(configuration) = self.pending_queue_configurations.remove(&id) {
+                    return self.route_queue_configuration(response, configuration);
+                }
+                if self.apply_steering_requests.remove(&id) {
+                    response = remap_response(
+                        response,
+                        crate::agents::SessionOperation::ApplySteering,
+                        crate::agents::SessionResponsePayload::ApplySteering,
+                    );
+                }
+                if let Some(configuration) = self.pending_configurations.remove(&id)
                     && response.result.is_ok()
                 {
                     match configuration {
-                        PendingConfiguration::Steering => self.steering_configured = true,
                         PendingConfiguration::Model { provider, model_id } => {
                             self.caller_identity.select_model(&provider, &model_id);
                             self.selected_model = Some((provider, model_id));
@@ -890,15 +946,18 @@ impl PiRpcProcess {
                 ) {
                     self.commands = commands;
                 }
-                if response.result.is_err()
-                    && matches!(
-                        response.operation(),
-                        crate::agents::SessionOperation::Prompt(
-                            crate::protocol::PromptMode::Normal
+                let prompt_operation = response.operation();
+                if matches!(prompt_operation, crate::agents::SessionOperation::Prompt(_)) {
+                    self.pending_prompt_modes.remove(&id);
+                }
+                if response.result.is_err() {
+                    if prompt_operation
+                        == crate::agents::SessionOperation::Prompt(
+                            crate::protocol::PromptMode::Normal,
                         )
-                    )
-                {
-                    self.set_activity(WorkerActivityState::Idle);
+                    {
+                        self.set_activity(WorkerActivityState::Idle);
+                    }
                 }
                 if let Ok(crate::agents::SessionResponsePayload::LoadState(state)) =
                     &response.result
@@ -969,6 +1028,52 @@ impl PiRpcProcess {
         }
     }
 
+    fn route_queue_configuration(
+        &mut self,
+        response: SessionResponse,
+        configuration: PendingQueueConfiguration,
+    ) -> SessionEvent {
+        match configuration {
+            PendingQueueConfiguration::Steering { public_id } => {
+                if let Err(error) = response.result {
+                    return SessionEvent::Response(SessionResponse::failure(
+                        Some(public_id),
+                        crate::agents::SessionOperation::ConfigureSteering,
+                        error.to_string(),
+                    ));
+                }
+                match self.send_command(serde_json::json!({
+                    "type": "set_follow_up_mode",
+                    "mode": "all",
+                })) {
+                    Ok(id) => {
+                        self.pending_queue_configurations
+                            .insert(id, PendingQueueConfiguration::FollowUp { public_id });
+                        SessionEvent::Stderr(String::new())
+                    }
+                    Err(error) => SessionEvent::Response(SessionResponse::failure(
+                        Some(public_id),
+                        crate::agents::SessionOperation::ConfigureSteering,
+                        error,
+                    )),
+                }
+            }
+            PendingQueueConfiguration::FollowUp { public_id } => {
+                if response.result.is_ok() {
+                    self.steering_configured = true;
+                }
+                SessionEvent::Response(remap_response(
+                    SessionResponse {
+                        id: Some(public_id),
+                        result: response.result,
+                    },
+                    crate::agents::SessionOperation::ConfigureSteering,
+                    crate::agents::SessionResponsePayload::ConfigureSteering,
+                ))
+            }
+        }
+    }
+
     fn retry_parent_stamp(&mut self) {
         let (Some(path), Some(parent)) = (
             self.pending_parent_stamp.as_deref(),
@@ -989,16 +1094,8 @@ impl PiRpcProcess {
                 Ok(ReaderItem::Stderr(chunk)) => self.stderr.push_str(&chunk),
                 Ok(ReaderItem::StderrEof) => break,
                 Ok(ReaderItem::Wire(wire)) => {
-                    self.queued.push_back(match wire {
-                        Ok(PiWireMessage::Response { response, .. }) => {
-                            SessionEvent::Response(response)
-                        }
-                        Ok(PiWireMessage::ExtensionUi(request)) => {
-                            SessionEvent::Interaction(request)
-                        }
-                        Ok(PiWireMessage::Event(event)) => SessionEvent::Activity(event.into()),
-                        Err(error) => SessionEvent::Failure(error),
-                    });
+                    let event = self.route(ReaderItem::Wire(wire));
+                    self.queued.push_back(event);
                 }
                 Ok(ReaderItem::Eof) => {}
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1042,6 +1139,17 @@ impl PiRpcProcess {
 impl Drop for PiRpcProcess {
     fn drop(&mut self) {
         let _ = self.terminate();
+    }
+}
+
+fn remap_response(
+    response: SessionResponse,
+    operation: crate::agents::SessionOperation,
+    payload: crate::agents::SessionResponsePayload,
+) -> SessionResponse {
+    match response.result {
+        Ok(_) => SessionResponse::success(response.id, payload),
+        Err(error) => SessionResponse::failure(response.id, operation, error.to_string()),
     }
 }
 
