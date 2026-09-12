@@ -20,38 +20,44 @@ fn pi_startup_skips_unsupported_mode_query() {
 
 #[test]
 fn access_modes_require_both_backend_and_model_support() {
-    for backend in ["pi", "cursor-cli", "opencode2", "claude", "antigravity-acp"] {
+    for backend in ["cursor-cli", "opencode2", "claude", "antigravity-acp"] {
         assert_eq!(
-            available_access_modes(backend, None),
+            available_access_modes(backend, None, None),
             [Sandboxed, Full],
             "{backend}"
         );
     }
     assert_eq!(
-        available_access_modes("codex-cli", None),
+        available_access_modes("codex-cli", None, None),
         [Sandboxed, Auto, Full]
     );
-    assert_eq!(available_access_modes("custom", None), [Full]);
+    assert_eq!(available_access_modes("custom", None, None), [Full]);
+    assert_eq!(available_access_modes("pi", None, None), [Auto]);
+    assert_eq!(
+        available_access_modes("pi", None, Some("pi-nono")),
+        [Sandboxed, Full]
+    );
+    assert!(available_access_modes("pi", None, Some("missing")).is_empty());
     let mut model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
         "id":"model", "name":"Model", "provider":"claude"
     }))
     .expect("test operation should succeed");
     assert_eq!(
-        available_access_modes("claude", Some(&model)),
+        available_access_modes("claude", Some(&model), None),
         [Sandboxed, Full]
     );
     model.access_modes = Some(vec![Sandboxed, Auto, Full]);
     assert_eq!(
-        available_access_modes("claude", Some(&model)),
+        available_access_modes("claude", Some(&model), None),
         [Sandboxed, Auto, Full]
     );
     assert_eq!(
-        available_access_modes("pi", Some(&model)),
+        available_access_modes("pi", Some(&model), Some("pi-nono")),
         [Sandboxed, Full]
     );
     model.access_modes = Some(vec![Sandboxed, Full]);
     assert_eq!(
-        available_access_modes("claude", Some(&model)),
+        available_access_modes("claude", Some(&model), None),
         [Sandboxed, Full]
     );
 }

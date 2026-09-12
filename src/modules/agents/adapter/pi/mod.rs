@@ -4,6 +4,7 @@ mod mcp_config;
 mod process;
 mod protocol;
 mod response;
+pub(super) mod sandbox;
 pub(super) mod session_files;
 mod tool;
 pub(super) mod transfer;
@@ -22,7 +23,6 @@ use super::super::contract::{
 };
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
-    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
     use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
@@ -49,7 +49,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
-                access_modes: &[Sandboxed, Full],
+                access_modes: &[],
                 model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,

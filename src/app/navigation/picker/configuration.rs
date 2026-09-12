@@ -59,6 +59,7 @@ impl FarcasterApp {
                 .snapshot
                 .available_access_modes()
                 .iter()
+                .filter(|_| self.snapshot.sandbox_controls_available())
                 .enumerate()
                 .map(|(index, mode)| {
                     let label = match mode {

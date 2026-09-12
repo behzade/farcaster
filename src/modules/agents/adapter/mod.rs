@@ -40,7 +40,11 @@ fn external_acp_profile(harness: &str) -> Option<&'static acp::AcpProfile> {
 pub(crate) fn available_access_modes(
     harness: &str,
     model: Option<&crate::protocol::Model>,
+    sandbox_adapter: Option<&str>,
 ) -> Vec<crate::agents::HarnessAccessMode> {
+    if harness == "pi" {
+        return pi::sandbox::access_modes(sandbox_adapter).to_vec();
+    }
     let Some(descriptor) = known_backend_descriptors()
         .into_iter()
         .find(|descriptor| descriptor.id.as_str() == harness)
@@ -60,6 +64,10 @@ pub(crate) fn available_access_modes(
             )
         })
         .collect()
+}
+
+pub(crate) fn supports_sandbox_discovery(harness: &str) -> bool {
+    harness == "pi"
 }
 
 pub(crate) fn supports_steering(harness: &str) -> bool {

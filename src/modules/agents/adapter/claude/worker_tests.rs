@@ -455,7 +455,7 @@ fn access_modes_preserve_claude_model_auto_support() {
         let mut session = session(&command, directory.path());
         let model: crate::protocol::Model = serde_json::from_value(session.models[0].clone())
             .expect("test operation should succeed");
-        let modes = crate::agents::available_access_modes(BACKEND, Some(&model));
+        let modes = crate::agents::available_access_modes(BACKEND, Some(&model), None);
         assert_eq!(
             modes.contains(&HarnessAccessMode::Auto),
             support == Some(true)

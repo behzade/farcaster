@@ -90,12 +90,14 @@ pub(in crate::app::views) fn render(
         .flex()
         .items_center()
         .child(runtime)
-        .child(separator())
-        .child(access_selector(
-            app.snapshot.access_mode,
-            app.snapshot.available_access_modes(),
-            entity,
-        ))
+        .when(app.snapshot.sandbox_controls_available(), |content| {
+            content.child(separator()).child(access_selector(
+                app.snapshot.access_mode,
+                app.snapshot.available_access_modes(),
+                app.snapshot.sandbox_state,
+                entity,
+            ))
+        })
         .into_any_element()
 }
 
@@ -130,6 +132,7 @@ fn effort_label(level: &str) -> String {
 fn access_selector(
     selected: HarnessAccessMode,
     supported: Vec<HarnessAccessMode>,
+    state: crate::agents::SandboxState,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let content = div()
@@ -138,10 +141,10 @@ fn access_selector(
         .gap(px(5.0))
         .text_color(access_mode_color(selected))
         .child(app_icon(AppIcon::Shield, AppIconSize::Inline))
-        .child(access_mode_label(selected));
+        .child(sandbox_state_label(state));
     dropdown_content_button(
         "harness-access",
-        format!("Sandbox settings: {}", access_mode_label(selected)),
+        format!("Sandbox settings: {}", sandbox_state_label(state)),
         content,
         ButtonTone::Quiet,
         supported.len() > 1,
@@ -160,6 +163,15 @@ fn access_selector(
         menu
     })
     .into_any_element()
+}
+
+fn sandbox_state_label(state: crate::agents::SandboxState) -> &'static str {
+    match state {
+        crate::agents::SandboxState::Unmanaged => "Sandbox: Not managed",
+        crate::agents::SandboxState::Checking => "Sandbox: Checking",
+        crate::agents::SandboxState::Failed => "Sandbox: Unavailable",
+        crate::agents::SandboxState::Active(mode) => access_mode_label(mode),
+    }
 }
 
 const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {

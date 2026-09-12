@@ -108,6 +108,7 @@ impl RuntimeOwner {
         let available = crate::agents::available_access_modes(
             &self.harness,
             Some(self.snapshot.catalog_model(&model)),
+            self.selected_sandbox_adapter().as_deref(),
         );
         let current = self.process_command.access_mode;
         let requested = self.access_mode_changes.requested_mode(current);

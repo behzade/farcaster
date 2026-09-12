@@ -113,7 +113,7 @@ impl FarcasterApp {
             harness: self.active_harness().to_owned(),
             model: self.snapshot.session_identity().model.cloned(),
             effort: self.snapshot.session_identity().effort.map(str::to_owned),
-            access_mode: self.snapshot.access_mode,
+            access_mode: self.snapshot.access_mode_for_new_session(),
         };
         let target = self.composer_sessions.current_target().to_owned();
         let generation = self.editor_request_generation;

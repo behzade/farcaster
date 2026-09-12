@@ -6,6 +6,7 @@ fn parses_response_and_activity_frames() {
     assert_eq!(
         parse_frame(br#"{"type":"response","id":"1","command":"abort","success":true}"#),
         Ok(PiWireMessage::Response {
+            commands: Vec::new(),
             command: "abort".into(),
             response: crate::agents::SessionResponse::success(
                 Some("1".into()),

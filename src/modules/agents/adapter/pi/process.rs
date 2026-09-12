@@ -90,9 +90,6 @@ fn rpc_command(
     prepared
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
-    if matches!(command.access_mode, HarnessAccessMode::Full) {
-        prepared.env("PI_NONO_DISABLED", "1");
-    }
     match launch {
         SessionLaunch::Catalog => {
             prepared.arg("--no-session");
@@ -109,6 +106,9 @@ fn rpc_command(
 }
 
 pub(crate) struct PiRpcProcess {
+    commands: Vec<super::wire::PiCommand>,
+    sandbox_adapter: Option<&'static dyn super::sandbox::PiSandboxAdapter>,
+    sandbox_mode: Option<HarnessAccessMode>,
     caller_identity: crate::modules::agents::core::CallerIdentity,
     _mcp_config: Option<TransientMcpConfig>,
     child: Arc<Mutex<Child>>,
@@ -276,6 +276,9 @@ impl PiRpcProcess {
         spawn_stdout_reader(stdout, sender.clone());
         spawn_stderr_reader(stderr, sender);
         let mut rpc = Self {
+            commands: Vec::new(),
+            sandbox_adapter: None,
+            sandbox_mode: None,
             caller_identity,
             _mcp_config: mcp_config,
             child,
@@ -295,7 +298,23 @@ impl PiRpcProcess {
             },
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
+        rpc.configure_sandbox(command.access_mode)?;
         Ok(rpc)
+    }
+
+    fn configure_sandbox(&mut self, requested: HarnessAccessMode) -> Result<(), String> {
+        self.sandbox_mode = None;
+        self.request_and_wait(SessionCommand::ListCommands)?;
+        let commands = std::mem::take(&mut self.commands);
+        if let Some((adapter, control)) = super::sandbox::discover(&commands)? {
+            self.sandbox_adapter = Some(adapter);
+            let mode = adapter.launch_mode(requested)?;
+            adapter.confirm(self, control, mode)?;
+            self.sandbox_mode = Some(mode);
+        } else if requested != HarnessAccessMode::Auto {
+            return Err("Pi cannot confirm the requested access mode: no supported sandbox control was detected".into());
+        }
+        Ok(())
     }
 
     fn set_activity(&mut self, activity: WorkerActivityState) {
@@ -304,6 +323,12 @@ impl PiRpcProcess {
     }
 
     pub(crate) fn send_request(&mut self, mut request: SessionCommand) -> Result<String, String> {
+        if matches!(&request, SessionCommand::Prompt { .. })
+            && self.sandbox_adapter.is_some()
+            && self.sandbox_mode.is_none()
+        {
+            return Err("The sandbox adapter has not confirmed an active mode".into());
+        }
         if let SessionCommand::Prompt { images, .. } = &mut request {
             *images = std::mem::take(images)
                 .into_iter()
@@ -359,6 +384,11 @@ impl PiRpcProcess {
         &mut self,
         request: SessionCommand,
     ) -> Result<SessionResponse, String> {
+        let recheck_sandbox = matches!(&request, SessionCommand::ForkAt { .. });
+        let sandbox_mode = self.sandbox_mode;
+        if recheck_sandbox {
+            self.sandbox_mode = None;
+        }
         let operation = request.operation();
         let id = self.send_request(request)?;
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -375,6 +405,9 @@ impl PiRpcProcess {
                                 return Err("Pi cancelled the session fork".into());
                             }
                             _ => {}
+                        }
+                        if recheck_sandbox && let Some(mode) = sandbox_mode {
+                            self.configure_sandbox(mode)?;
                         }
                         return Ok(response);
                     }
@@ -567,6 +600,56 @@ impl PiRpcProcess {
         ))
     }
 
+    /// A local extension command must acknowledge both the RPC request and its
+    /// effect. Neither a successful prompt response nor a status alone is enough.
+    pub(super) fn confirm_control(
+        &mut self,
+        command: Value,
+        timeout: Duration,
+        mut confirmation: impl FnMut(&SessionEvent) -> Option<Result<(), String>>,
+    ) -> Result<(), String> {
+        let id = self.send_command(command)?;
+        let deadline = Instant::now() + timeout;
+        let mut acknowledged = false;
+        let mut confirmed = false;
+        while Instant::now() < deadline {
+            let item = match self.incoming.recv_timeout(Duration::from_millis(50)) {
+                Ok(ReaderItem::StderrEof) => continue,
+                Ok(item) => item,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("Pi disconnected during sandbox confirmation".into());
+                }
+            };
+            let event = self.route(item);
+            if let Some(result) = confirmation(&event) {
+                result?;
+                confirmed = true;
+            } else {
+                match event {
+                    SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                        response.result.map_err(|error| error.to_string())?;
+                        acknowledged = true;
+                    }
+                    SessionEvent::Failure(error) => return Err(error),
+                    other => self.queued.push_back(other),
+                }
+            }
+            if acknowledged && confirmed {
+                return Ok(());
+            }
+        }
+        Err("Pi sandbox adapter did not confirm the requested mode in time".into())
+    }
+
+    pub(super) fn sandbox_adapter_id(&self) -> Option<&str> {
+        self.sandbox_adapter.map(|adapter| adapter.id())
+    }
+
+    pub(super) fn confirmed_sandbox_mode(&self) -> Option<HarnessAccessMode> {
+        self.sandbox_mode
+    }
+
     fn write(&self, bytes: &[u8]) -> Result<(), String> {
         let mut stdin = self
             .stdin
@@ -581,7 +664,11 @@ impl PiRpcProcess {
     fn route(&mut self, item: ReaderItem) -> SessionEvent {
         self.retry_parent_stamp();
         match item {
-            ReaderItem::Wire(Ok(PiWireMessage::Response { response, command })) => {
+            ReaderItem::Wire(Ok(PiWireMessage::Response {
+                response,
+                command,
+                commands,
+            })) => {
                 let Some(id) = response.id.as_deref() else {
                     return SessionEvent::Failure(format!("uncorrelated response for {command}"));
                 };
@@ -592,6 +679,12 @@ impl PiRpcProcess {
                     return SessionEvent::Failure(format!(
                         "response {id} was for {command}, expected {expected_command}"
                     ));
+                }
+                if matches!(
+                    &response.result,
+                    Ok(crate::agents::SessionResponsePayload::ListCommands(_))
+                ) {
+                    self.commands = commands;
                 }
                 if response.result.is_err()
                     && matches!(
@@ -631,6 +724,17 @@ impl PiRpcProcess {
                 SessionEvent::Response(response)
             }
             ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(request))) => {
+                if let (Some(adapter), Some(expected)) = (self.sandbox_adapter, self.sandbox_mode)
+                    && let Some(report) = adapter.mode_report(&request)
+                {
+                    match report {
+                        Ok(mode) if mode == expected => return SessionEvent::Stderr(String::new()),
+                        report => {
+                            self.sandbox_mode = None;
+                            return SessionEvent::Failure(report.err().unwrap_or_else(|| "Sandbox mode changed outside Farcaster. Restart the session to confirm its mode.".into()));
+                        }
+                    }
+                }
                 SessionEvent::Interaction(request)
             }
             ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => {

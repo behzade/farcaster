@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
 case_name=$1
+case "$case_name" in
+  sandbox-*|history-control)
+    mkdir -p "$PWD/sandbox-extension"
+    printf '{"name":"pi-nono"}\n' > "$PWD/sandbox-extension/package.json"
+    : > "$PWD/sandbox-extension/index.js"
+    if [ "$case_name" = "sandbox-unrelated" ]; then
+      printf '{"name":"another-sandbox"}\n' > "$PWD/sandbox-extension/package.json"
+    fi
+    ;;
+esac
 session_file=''
 previous=''
 for argument in "$@"; do
@@ -84,17 +94,17 @@ while IFS= read -r line; do
   fi
   id=$(read_id "$line")
   type=$(read_type "$line")
-  if [ "$case_name" = "eof" ]; then
+  if [ "$case_name" = "eof" ] && [ "$type" != "get_commands" ]; then
     printf 'fake stderr before exit\n' >&2
     exit 7
   fi
-  if [ "$case_name" = "delayed-stderr" ]; then
+  if [ "$case_name" = "delayed-stderr" ] && [ "$type" != "get_commands" ]; then
     (sleep 0.1; printf 'delayed final stderr\n' >&2) &
     exec 1>&-
     wait
     exit 8
   fi
-  if [ "$case_name" = "mismatch-response" ]; then
+  if [ "$case_name" = "mismatch-response" ] && [ "$type" != "get_commands" ]; then
     printf '{"type":"response","id":"%s","command":"get_state","success":true,"data":{}}\n' "$id"
     continue
   fi
@@ -107,7 +117,42 @@ while IFS= read -r line; do
       fi
       ;;
     get_commands)
-      data='{"commands":[]}'
+      case "$case_name" in
+        sandbox-missing) data='{"commands":[]}' ;;
+        sandbox-template) data='{"commands":[{"name":"sandbox-mode","source":"prompt"}]}' ;;
+        sandbox-no-source) data='{"commands":[{"name":"sandbox-mode","source":"extension"}]}' ;;
+        sandbox-*|history-control)
+          control_name=sandbox-mode
+          if [ "$case_name" = "sandbox-collision" ]; then control_name=sandbox-mode:2; fi
+          source_path=$(printf '%s' "$PWD/sandbox-extension/index.js" | sed 's/\\/\\\\/g; s/"/\\"/g')
+          data=$(printf '{"commands":[{"name":"%s","source":"extension","sourceInfo":{"path":"%s"}}]}' "$control_name" "$source_path")
+          ;;
+        *) data='{"commands":[]}' ;;
+      esac
+      ;;
+    prompt)
+      if [ "$case_name" = "peer-delivery" ]; then
+        printf '{"type":"agent_start"}\n'
+      fi
+      case "$line" in
+        *'/sandbox-mode '*|*'/sandbox-mode:2 '*)
+          printf '%s\n' "$line" >> "$PWD/sandbox-controls"
+          request_id=$(printf '%s' "$line" | sed -n 's/.*\\"requestId\\":\\"\([^\\]*\)\\".*/\1/p')
+          mode=$(printf '%s' "$line" | sed -n 's/.*\\"files\\":\\"\([^\\]*\)\\".*/\1/p')
+          success=true
+          case "$case_name" in
+            sandbox-failed) success=false ;;
+            sandbox-stale) request_id=old ;;
+            sandbox-wrong-mode) mode=full ;;
+            sandbox-rejected)
+              printf '{"type":"response","id":"%s","command":"prompt","success":false,"error":"control rejected"}\n' "$id"
+              continue ;;
+          esac
+          printf '{"type":"extension_ui_request","method":"setStatus","id":"sandbox","statusKey":"\\u001fpi-gpui-sandbox-mode\\u001f","statusText":"{\\"version\\":1,\\"requestId\\":\\"%s\\",\\"files\\":\\"%s\\",\\"network\\":\\"%s\\",\\"success\\":%s}"}\n' "$request_id" "$mode" "$mode" "$success"
+          ;;
+        *) printf '%s\n' "$line" >> "$PWD/agent-prompts" ;;
+      esac
+      data='{}'
       ;;
     get_messages)
       data='{"messages":[]}'
@@ -153,12 +198,6 @@ while IFS= read -r line; do
       fi
       model_changed=1
       data='{"id":"new-model","name":"New Model","provider":"new-provider","reasoning":true}'
-      ;;
-    prompt)
-      if [ "$case_name" = "peer-delivery" ]; then
-        printf '{"type":"agent_start"}\n'
-      fi
-      data='{}'
       ;;
     *)
       data='{}'

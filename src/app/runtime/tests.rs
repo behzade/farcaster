@@ -172,6 +172,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
         .expect("test operation should succeed"),
     );
     let commands = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    owner.process_command.access_mode = HarnessAccessMode::Auto;
     owner.process = Some(Box::new(Recorder(commands.clone())));
     owner.startup_state_loaded = true;
     owner.startup_history_loaded = true;
@@ -261,7 +262,7 @@ fn preview_history(owner: &mut RuntimeOwner, session: PathBuf, message: &str) {
     owner.parked_snapshot = Some(RuntimeSnapshot::default());
 }
 
-fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&RuntimeOwner) -> bool) {
+pub(super) fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&RuntimeOwner) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
         while let Some(item) = owner.process.as_mut().and_then(|process| process.poll()) {
@@ -275,7 +276,7 @@ fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&RuntimeOwner) -
 }
 
 #[test]
-fn access_mode_before_connection_configures_the_first_process() -> Result<(), String> {
+fn unmanaged_pi_rejects_access_mode_changes_before_discovery() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
@@ -283,12 +284,14 @@ fn access_mode_before_connection_configures_the_first_process() -> Result<(), St
     let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
     let target = HarnessAccessMode::Full;
+    owner.publish();
 
     owner.apply_command(RuntimeCommand::SetAccessMode(target));
 
     assert!(owner.process.is_none());
-    assert_eq!(owner.process_command.access_mode, target);
-    assert_eq!(owner.snapshot.access_mode, target);
+    assert_eq!(owner.process_command.access_mode, HarnessAccessMode::Auto);
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Auto);
+    assert!(!owner.snapshot.sandbox_controls_available());
     assert!(owner.snapshot.conversation.items.is_empty());
 
     owner.start_process(None);
@@ -300,7 +303,8 @@ fn access_mode_before_connection_configures_the_first_process() -> Result<(), St
         "{:?}",
         owner.snapshot.conversation.diagnostics
     );
-    assert_eq!(owner.snapshot.access_mode, target);
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Auto);
+    assert!(!owner.snapshot.sandbox_controls_available());
     Ok(())
 }
 
@@ -341,6 +345,7 @@ fn runtime_failure_releases_the_running_flag() {
 #[test]
 fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.harness = "claude".into();
     conversation_mut(owner.active_snapshot_mut()).running = true;
     let full = HarnessAccessMode::Full;
 

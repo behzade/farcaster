@@ -137,6 +137,7 @@ impl RuntimeOwner {
         let preserved_prompt_item = preserved_conversation
             .as_ref()
             .and(self.pending_prompt_item.clone());
+        let sandbox_adapter = self.selected_sandbox_adapter();
         let available_access_modes = self.available_access_modes();
         let configuration = (self.snapshot.selected_session == session
             || fork
@@ -200,6 +201,7 @@ impl RuntimeOwner {
             snapshot.thinking_levels = thinking_levels;
             snapshot.prefill_model = selected_model;
         }
+        self.snapshot.sandbox_adapter = sandbox_adapter;
         let _ = self.event_tx.send(RuntimeEvent::SessionReset {
             generation: self.process_generation,
             preserve_submission: preserve_transcript,
@@ -224,6 +226,10 @@ impl RuntimeOwner {
         );
         match process {
             Ok(process) => {
+                if let Some(mode) = process.sandbox_mode() {
+                    self.process_command.access_mode = mode;
+                    self.access_mode_changes = Default::default();
+                }
                 self.process = Some(process);
                 let snapshot = self.active_snapshot_mut();
                 snapshot.connected = true;
@@ -477,6 +483,26 @@ impl RuntimeOwner {
         self.snapshot.access_mode = self
             .access_mode_changes
             .requested_mode(self.process_command.access_mode);
+        self.snapshot.sandbox_adapter = self.selected_sandbox_adapter();
+        self.snapshot.sandbox_state = if !self.snapshot.sandbox_controls_available() {
+            crate::agents::SandboxState::Unmanaged
+        } else if self.snapshot.sandbox_adapter.is_some() {
+            match self
+                .process
+                .as_ref()
+                .and_then(|process| process.sandbox_mode())
+            {
+                Some(mode) if mode == self.snapshot.access_mode => {
+                    crate::agents::SandboxState::Active(mode)
+                }
+                _ if self.active_snapshot().status == "Failed" => {
+                    crate::agents::SandboxState::Failed
+                }
+                _ => crate::agents::SandboxState::Checking,
+            }
+        } else {
+            crate::agents::SandboxState::Active(self.snapshot.access_mode)
+        };
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();

@@ -162,7 +162,7 @@ fn resolves_agent_symlink_to_a_fixed_executable() -> TestResult {
 }
 
 #[test]
-fn pi_delegates_sandboxing_to_the_harness() -> TestResult {
+fn pi_without_a_sandbox_adapter_leaves_extension_settings_alone() -> TestResult {
     let project = tempdir()?;
     let pi = project.path().join("pi");
     fs::write(&pi, b"#!/bin/sh\nexit 0\n")?;
@@ -193,9 +193,12 @@ fn pi_delegates_sandboxing_to_the_harness() -> TestResult {
     );
 
     let full = prepare(HarnessAccessMode::Full)?;
-    assert!(full.get_envs().any(|(name, value)| {
-        name == "PI_NONO_DISABLED" && value == Some(std::ffi::OsStr::new("1"))
-    }));
+    assert!(!full.get_envs().any(|(name, _)| name == "PI_NONO_DISABLED"));
+    assert!(
+        !full
+            .get_args()
+            .any(|arg| arg.to_string_lossy().starts_with("--sandbox"))
+    );
     Ok(())
 }
 
@@ -211,6 +214,207 @@ fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
         crate::agents::SessionOperation::SelectReasoning
     );
     rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn sandbox_adapter_detects_each_launch_and_blocks_failed_control() -> TestResult {
+    use HarnessAccessMode::{Full, Sandboxed};
+    for mode in [Sandboxed, Full] {
+        let (temp, mut command) = fake("sandbox-ready")?;
+        command.access_mode = mode;
+        let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
+        assert_eq!(process.confirmed_sandbox_mode(), Some(mode));
+        assert!(!temp.path().join("agent-prompts").exists());
+        process.request_and_wait(SessionCommand::Prompt {
+            mode: crate::protocol::PromptMode::Normal,
+            message: "user prompt".into(),
+            images: vec![],
+        })?;
+        assert!(fs::read_to_string(temp.path().join("agent-prompts"))?.contains("user prompt"));
+        process.terminate()?;
+    }
+    for (case, message) in [
+        ("sandbox-failed", "unavailable"),
+        ("sandbox-stale", "Stale"),
+        ("sandbox-wrong-mode", "requested"),
+        ("sandbox-rejected", "rejected"),
+    ] {
+        let (temp, mut command) = fake(case)?;
+        command.access_mode = Sandboxed;
+        let error = PiRpcProcess::spawn(&command, temp.path(), None)
+            .err()
+            .ok_or("sandbox startup unexpectedly succeeded")?;
+        assert!(error.contains(message), "{case}: {error}");
+        assert!(!temp.path().join("agent-prompts").exists());
+    }
+    Ok(())
+}
+
+#[test]
+fn sandbox_control_needs_more_than_a_successful_rpc_response() -> TestResult {
+    let (temp, command) = fake("quiet")?;
+    let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    let result = process.confirm_control(
+        serde_json::json!({"type":"get_state"}),
+        Duration::from_millis(50),
+        |_| None,
+    );
+    assert!(result.unwrap_err().contains("did not confirm"));
+    Ok(())
+}
+
+#[test]
+fn sandbox_mode_drift_revokes_confirmation_and_blocks_further_prompts() -> TestResult {
+    let (temp, mut command) = fake("sandbox-ready")?;
+    command.access_mode = HarnessAccessMode::Sandboxed;
+    let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    let report = serde_json::json!({"version":1,"requestId":"external","files":"full","network":"full","success":true});
+    let event = process.route(ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(
+        crate::agents::extensions::ExtensionUiRequest::SetStatus {
+            id: "mode-change".into(),
+            key: "\u{1f}pi-gpui-sandbox-mode\u{1f}".into(),
+            text: Some(report.to_string()),
+        },
+    ))));
+    assert!(matches!(event, SessionEvent::Failure(_)));
+    assert_eq!(process.confirmed_sandbox_mode(), None);
+    assert!(
+        process
+            .send_request(SessionCommand::Prompt {
+                mode: crate::protocol::PromptMode::Normal,
+                message: "must not execute".into(),
+                images: vec![],
+            })
+            .is_err()
+    );
+    assert!(!temp.path().join("agent-prompts").exists());
+    Ok(())
+}
+
+#[test]
+fn sandbox_worker_discovers_control_and_rechecks_after_fork() -> TestResult {
+    let (temp, command) = fake("sandbox-ready")?;
+    let mut worker = PiRpcProcess::spawn_worker(
+        &command,
+        temp.path(),
+        SessionLaunch::New,
+        "sandbox-child".into(),
+        "child".into(),
+        None,
+    )?;
+    assert_eq!(
+        worker.confirmed_sandbox_mode(),
+        Some(HarnessAccessMode::Sandboxed)
+    );
+    worker.request_and_wait(SessionCommand::ForkAt {
+        entry_id: "branch".into(),
+    })?;
+    assert_eq!(
+        worker.confirmed_sandbox_mode(),
+        Some(HarnessAccessMode::Sandboxed)
+    );
+    assert!(!temp.path().join("agent-prompts").exists());
+    assert_eq!(
+        fs::read_to_string(temp.path().join("sandbox-controls"))?
+            .lines()
+            .count(),
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn sandbox_discovery_ignores_unrelated_commands_without_sending_control() -> TestResult {
+    for case in [
+        "quiet",
+        "sandbox-missing",
+        "sandbox-template",
+        "sandbox-no-source",
+        "sandbox-unrelated",
+    ] {
+        let (temp, mut command) = fake(case)?;
+        let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
+        assert_eq!(process.sandbox_adapter_id(), None, "{case}");
+        assert_eq!(process.confirmed_sandbox_mode(), None, "{case}");
+        assert!(!temp.path().join("sandbox-controls").exists(), "{case}");
+        assert!(!temp.path().join("agent-prompts").exists(), "{case}");
+        process.terminate()?;
+        command.access_mode = HarnessAccessMode::Sandboxed;
+        assert!(
+            PiRpcProcess::spawn(&command, temp.path(), None).is_err(),
+            "{case}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn sandbox_discovery_uses_the_qualified_command_name() -> TestResult {
+    let (temp, command) = fake("sandbox-collision")?;
+    let process = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    assert_eq!(
+        process.confirmed_sandbox_mode(),
+        Some(HarnessAccessMode::Sandboxed)
+    );
+    assert!(fs::read_to_string(temp.path().join("sandbox-controls"))?.contains("/sandbox-mode:2 "));
+    assert!(!temp.path().join("agent-prompts").exists());
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FARCASTER_TEST_PI and FARCASTER_TEST_PI_NONO plus native sandbox support"]
+fn live_pi_nono_sandbox_discovery_without_inference() -> TestResult {
+    let program = std::env::var("FARCASTER_TEST_PI")?;
+    let extension = std::env::var("FARCASTER_TEST_PI_NONO")?;
+    for mode in [
+        None,
+        Some(HarnessAccessMode::Sandboxed),
+        Some(HarnessAccessMode::Full),
+    ] {
+        let temp = tempdir()?;
+        let mut args = vec![
+            format!(
+                "PI_CODING_AGENT_DIR={}",
+                temp.path().join("agent").display()
+            ),
+            "PI_OFFLINE=1".into(),
+            "PI_NONO_DISABLED=0".into(),
+            program.clone(),
+            "--no-session".into(),
+            "--no-extensions".into(),
+        ];
+        if mode.is_some() {
+            args.extend(["--extension".into(), extension.clone()]);
+        }
+        let command = AgentLaunchConfig {
+            program: "/usr/bin/env".into(),
+            prefix_args: args,
+            access_mode: mode.unwrap_or(HarnessAccessMode::Auto),
+            ..Default::default()
+        };
+        // Use the worker launch path to omit the unrelated MCP extension flag.
+        let mut process = PiRpcProcess::spawn_worker(
+            &command,
+            temp.path(),
+            SessionLaunch::Catalog,
+            "sandbox-probe".into(),
+            "sandbox-probe".into(),
+            None,
+        )?;
+        assert_eq!(process.sandbox_adapter_id(), mode.map(|_| "pi-nono"));
+        assert_eq!(process.confirmed_sandbox_mode(), mode);
+        let response = process.request_and_wait(SessionCommand::LoadState)?;
+        let Ok(crate::agents::SessionResponsePayload::LoadState(state)) = response.result else {
+            panic!("state");
+        };
+        assert_eq!(state.message_count, 0);
+        while let Some(event) = process.try_next() {
+            assert!(!matches!(event, SessionEvent::Activity(ref activity)
+                if matches!(activity.kind(), crate::agents::SessionActivityKind::AgentStarted)));
+        }
+        process.terminate()?;
+    }
     Ok(())
 }
 
@@ -523,7 +727,10 @@ fn resume_readiness_requires_the_requested_session_file() -> TestResult {
     let wrong = temp.path().join("different-session.jsonl");
     let result = PiRpcProcess::spawn(&command, temp.path(), Some(&wrong));
     match result {
-        Err(error) => assert!(error.contains("did not resume the requested session"), "{error}"),
+        Err(error) => assert!(
+            error.contains("did not resume the requested session"),
+            "{error}"
+        ),
         Ok(mut process) => {
             process.terminate()?;
             panic!("readiness accepted a different session file");

@@ -9,18 +9,18 @@ pub(crate) use adapter::{
     discover_sessions_for, external_session_identity, generate_session_title,
     load_configuration_catalog, load_session_history, move_session_family, project_trust,
     project_trust_description, rename_session, saved_project_trust, spawn_session,
-    supports_auto_title_generation, supports_reasoning_effort, supports_session_fork,
-    supports_session_move, supports_startup_command, supports_steering, validate_launch,
-    validate_session_move, worker_factories,
+    supports_auto_title_generation, supports_reasoning_effort, supports_sandbox_discovery,
+    supports_session_fork, supports_session_move, supports_startup_command, supports_steering,
+    validate_launch, validate_session_move, worker_factories,
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentLaunchConfig, ConfigurationCatalog, DiscoveredHistory, DiscoveredSession, DiscoveredUsage,
-    HarnessAccessMode, PeerMessage, PromptPresentation, QueuedPrompt, SessionActivityKind,
-    SessionCommand, SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionLaunch,
-    SessionMetadata, SessionOperation, SessionResponse, SessionResponsePayload, SessionStart,
-    SessionTransport, SessionUsage, SessionUsageTokens, StartWorker, WorkerContext, WorkerInput,
-    WorkerInputResponse, valid_worker_name,
+    HarnessAccessMode, PeerMessage, PromptPresentation, QueuedPrompt, SandboxState,
+    SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
+    SessionHistory, SessionLaunch, SessionMetadata, SessionOperation, SessionResponse,
+    SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
+    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, valid_worker_name,
 };
 pub(crate) use core::{
     CallerContext, CallerProfile, CallerRegistry, CommonTool, PromptStore, TokenUsage,

@@ -11,9 +11,24 @@ pub(crate) enum PiWireMessage {
     Response {
         response: SessionResponse,
         command: String,
+        commands: Vec<PiCommand>,
     },
     ExtensionUi(ExtensionUiRequest),
     Event(Value),
+}
+
+/// Pi-only provenance for discovering controls; it never enters the shared catalog.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct PiCommand {
+    pub name: String,
+    pub source: crate::agents::extensions::SlashCommandSource,
+    #[serde(rename = "sourceInfo")]
+    pub source_info: Option<CommandSource>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(super) struct CommandSource {
+    pub path: Option<std::path::PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -49,8 +64,18 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
                 add_usage_total(response.data.get_mut("tokens"));
             }
             let operation = response_operation(&response.command);
+            let mut commands = Vec::new();
             let result = if response.success {
-                super::response::decode(operation, response.data)
+                let provenance = if response.command == "get_commands" {
+                    serde_json::from_value(response.data["commands"].clone())
+                        .map_err(|error| format!("invalid Pi command sources: {error}"))
+                } else {
+                    Ok(Vec::new())
+                };
+                provenance.and_then(|catalog| {
+                    commands = catalog;
+                    super::response::decode(operation, response.data)
+                })
             } else {
                 Err(response
                     .error
@@ -63,6 +88,7 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             Ok(PiWireMessage::Response {
                 command: response.command,
                 response: decoded,
+                commands,
             })
         }
         "extension_ui_request" => parse_extension_request(value).map(PiWireMessage::ExtensionUi),

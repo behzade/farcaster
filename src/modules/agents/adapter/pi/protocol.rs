@@ -67,6 +67,12 @@ pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
 }
 
 impl SessionTransport for PiRpcProcess {
+    fn sandbox_adapter(&self) -> Option<&str> {
+        self.sandbox_adapter_id()
+    }
+    fn sandbox_mode(&self) -> Option<crate::agents::HarnessAccessMode> {
+        self.confirmed_sandbox_mode()
+    }
     fn send(&mut self, request: SessionCommand) -> Result<String, String> {
         self.send_request(request)
     }

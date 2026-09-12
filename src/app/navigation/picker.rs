@@ -538,7 +538,8 @@ impl FarcasterApp {
                     None,
                     Some(application_key("shift-s")),
                     "access permissions approval",
-                ),
+                )
+                .disabled(!self.snapshot.sandbox_controls_available()),
                 picker_row(
                     &mut commands,
                     "action:runtime",

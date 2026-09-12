@@ -106,7 +106,16 @@ impl RuntimeOwner {
         crate::agents::available_access_modes(
             &self.harness,
             self.active_snapshot().access_mode_model(),
+            self.selected_sandbox_adapter().as_deref(),
         )
+    }
+
+    pub(super) fn selected_sandbox_adapter(&self) -> Option<String> {
+        if let Some(process) = &self.process {
+            process.sandbox_adapter().map(str::to_owned)
+        } else {
+            self.snapshot.sandbox_adapter.clone()
+        }
     }
 
     pub(super) fn access_mode_change_ready(&self) -> bool {

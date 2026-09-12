@@ -70,15 +70,61 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
 
 #[test]
 fn access_modes_restore_auto_after_an_unsupported_harness() {
-    use HarnessAccessMode::{Auto, Sandboxed};
+    use HarnessAccessMode::{Auto, Full, Sandboxed};
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.harness = "custom".into();
     owner.process_command.access_mode = Auto;
     owner.publish();
-    assert_eq!(owner.process_command.access_mode, Sandboxed);
+    assert_eq!(owner.process_command.access_mode, Full);
     owner.stage_draft("codex-cli".into(), std::env::temp_dir());
     assert_eq!(owner.snapshot.access_mode, Auto);
     assert_eq!(owner.process_command.access_mode, Auto);
     owner.set_access_mode(Sandboxed);
     owner.publish();
     assert_eq!(owner.snapshot.access_mode, Sandboxed);
+}
+
+#[test]
+fn sandbox_discovery_rechecks_every_restart_and_mode_changes_wait_for_idle()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::agents::SandboxState;
+    use crate::runtime::tests::drive_process_until;
+    let temp = tempfile::tempdir()?;
+    let script = temp.path().join("pi.sh");
+    std::fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
+    let (mut owner, _events) = owner_without_process(temp.path().to_owned());
+    owner.process_command = AgentLaunchConfig::test_script(&script, vec!["sandbox-ready".into()]);
+    owner.start_process(Some(temp.path().join("session.jsonl")));
+    drive_process_until(&mut owner, |owner| {
+        owner.startup_state_loaded && owner.startup_history_loaded
+    });
+    assert_eq!(
+        owner.snapshot.sandbox_state,
+        SandboxState::Active(HarnessAccessMode::Sandboxed)
+    );
+    let generation = owner.process_generation;
+    conversation_mut(owner.active_snapshot_mut()).running = true;
+    owner.set_access_mode(HarnessAccessMode::Full);
+    assert_eq!(owner.snapshot.sandbox_state, SandboxState::Checking);
+    owner.access_mode_changes.make_due();
+    owner.apply_queued_access_mode_change();
+    assert_eq!(owner.process_generation, generation);
+    conversation_mut(owner.active_snapshot_mut()).running = false;
+    owner.apply_queued_access_mode_change();
+    drive_process_until(&mut owner, |owner| {
+        owner.startup_state_loaded && owner.startup_history_loaded
+    });
+    assert_eq!(
+        owner.snapshot.sandbox_state,
+        SandboxState::Active(HarnessAccessMode::Full)
+    );
+    assert_eq!(owner.process_generation, generation + 1);
+    owner.set_access_mode(HarnessAccessMode::Sandboxed);
+    owner.process_command.prefix_args[1] = "sandbox-failed".into();
+    owner.access_mode_changes.make_due();
+    owner.apply_queued_access_mode_change();
+    assert!(owner.process.is_none());
+    assert_eq!(owner.snapshot.sandbox_state, SandboxState::Failed);
+    assert!(!temp.path().join("agent-prompts").exists());
+    Ok(())
 }

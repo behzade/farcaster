@@ -343,6 +343,12 @@ pub(crate) use response::{
 };
 
 pub(crate) trait SessionTransport {
+    fn sandbox_adapter(&self) -> Option<&str> {
+        None
+    }
+    fn sandbox_mode(&self) -> Option<HarnessAccessMode> {
+        None
+    }
     fn send(&mut self, command: SessionCommand) -> Result<String, String>;
     fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String>;
     fn poll(&mut self) -> Option<SessionEvent>;
@@ -511,6 +517,15 @@ pub(crate) enum HarnessAccessMode {
     Sandboxed,
     #[default]
     Auto,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SandboxState {
+    #[default]
+    Unmanaged,
+    Checking,
+    Active(HarnessAccessMode),
+    Failed,
 }
 
 #[cfg(test)]

@@ -228,6 +228,8 @@ pub(crate) struct RuntimeSnapshot {
     pub auto_retry: bool,
     pub access_mode: HarnessAccessMode,
     pub history_preview: bool,
+    pub sandbox_adapter: Option<String>,
+    pub sandbox_state: crate::agents::SandboxState,
     pub pending_question: Option<ExtensionUiRequest>,
     pub transcript_changed_from: Option<usize>,
 }

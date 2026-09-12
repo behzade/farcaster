@@ -42,7 +42,24 @@ fn effort_rank(effort: &str) -> Option<u8> {
 
 impl RuntimeSnapshot {
     pub(crate) fn available_access_modes(&self) -> Vec<crate::agents::HarnessAccessMode> {
-        crate::agents::available_access_modes(&self.harness, self.access_mode_model())
+        crate::agents::available_access_modes(
+            &self.harness,
+            self.access_mode_model(),
+            self.sandbox_adapter.as_deref(),
+        )
+    }
+
+    pub(crate) fn sandbox_controls_available(&self) -> bool {
+        !crate::agents::supports_sandbox_discovery(&self.harness) || self.sandbox_adapter.is_some()
+    }
+
+    pub(crate) fn access_mode_for_new_session(&self) -> crate::agents::HarnessAccessMode {
+        if self.sandbox_controls_available() {
+            self.access_mode
+        } else {
+            // Discovery, not a previous unmanaged session, chooses the new mode.
+            crate::agents::HarnessAccessMode::default()
+        }
     }
 
     pub(super) fn access_mode_model(&self) -> Option<&Model> {
