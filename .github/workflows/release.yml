@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  pull_request:
   push:
     tags:
       - "v*"
@@ -21,6 +22,8 @@ jobs:
     name: Linux x86_64
     runs-on: ubuntu-22.04
     timeout-minutes: 90
+    env:
+      BUILD_LABEL: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +47,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Verify tag matches Cargo version
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           package_version=$(cargo metadata --no-deps --format-version 1 \
@@ -72,8 +76,8 @@ jobs:
           mkdir -p dist
           appimage=$(find target/release -maxdepth 1 -type f -iname '*farcaster*.AppImage' -print -quit)
           test -n "$appimage"
-          cp "$appimage" "dist/Farcaster-${GITHUB_REF_NAME}-linux-x86_64.AppImage"
-          chmod 755 "dist/Farcaster-${GITHUB_REF_NAME}-linux-x86_64.AppImage"
+          cp "$appimage" "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
+          chmod 755 "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,8 +85,16 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  linux-startup:
+    name: AppImage release gate
+    needs: linux
+    uses: ./.github/workflows/appimage-startup.yml
+    with:
+      artifact: release-linux-x86_64
+
   macos:
     name: macOS arm64
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -127,7 +139,8 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [linux, macos]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, linux-startup, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

@@ -28,3 +28,8 @@ binaries = [
     { path = "io.github.behzade.farcaster" },
     { path = "farcaster" },
 ]
+
+[appimage]
+# Host Mesa drivers need the host Wayland ABI, including newly added symbols.
+# Exclude it from dependency collection as well as the explicit staged files.
+excluded-libraries = ["libwayland-client.so*"]

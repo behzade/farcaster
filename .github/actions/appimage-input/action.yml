@@ -1,0 +1,46 @@
+name: Prepare AppImage under test
+description: Download one candidate or released AppImage and record its checksum
+inputs:
+  artifact:
+    description: Artifact from the current workflow run; empty selects a release
+    default: ""
+  release:
+    description: Release tag for manual diagnosis
+    default: v0.2.0
+outputs:
+  path:
+    description: Absolute path to the AppImage
+    value: ${{ steps.select.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - name: Download the candidate AppImage
+      if: inputs.artifact != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact }}
+        path: candidate/
+
+    - name: Download a released AppImage for diagnosis
+      if: inputs.artifact == ''
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ inputs.release }}
+      run: |
+        [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        mkdir -p candidate artifacts
+        url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/Farcaster-${RELEASE_TAG}-linux-x86_64.AppImage"
+        printf '%s\n' "$url" > artifacts/release-url.txt
+        curl --fail --location --retry 3 "$url" -o candidate/Farcaster.AppImage
+
+    - name: Select and record the AppImage under test
+      id: select
+      shell: bash
+      run: |
+        shopt -s nullglob
+        appimages=(candidate/*.AppImage)
+        test "${#appimages[@]}" -eq 1
+        mkdir -p artifacts
+        chmod 755 "${appimages[0]}"
+        sha256sum "${appimages[0]}" > artifacts/appimage.sha256
+        printf 'path=%s\n' "$PWD/${appimages[0]}" >> "$GITHUB_OUTPUT"

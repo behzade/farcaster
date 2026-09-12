@@ -56,6 +56,7 @@
               systemd
               vulkan-loader
               wayland
+              zlib # Required by the downloaded linuxdeploy AppImage runtime.
             ];
         in
         {

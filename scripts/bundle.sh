@@ -58,13 +58,12 @@ EOF
             libxcb=$(ldd "$target_dir/release/farcaster" | awk \
                 '$1 == "libxcb.so.1" && $2 == "=>" { print $3; exit }')
             wayland_libdir=$(pkg-config --variable=libdir wayland-client)
-            libwayland_client="$wayland_libdir/libwayland-client.so.0"
             libwayland_egl="$wayland_libdir/libwayland-egl.so.1"
             libvulkan="$(pkg-config --variable=libdir vulkan)/libvulkan.so.1"
             egl_libdir=$(pkg-config --variable=libdir egl)
             libegl="$egl_libdir/libEGL.so.1"
             libgl_dispatch="$egl_libdir/libGLdispatch.so.0"
-            for library in "$libxcb" "$libwayland_client" "$libwayland_egl" \
+            for library in "$libxcb" "$libwayland_egl" \
                 "$libvulkan" "$libegl" "$libgl_dispatch"; do
                 if [ -z "$library" ] || [ ! -f "$library" ]; then
                     echo "could not locate AppImage runtime library: $library" >&2
@@ -73,20 +72,18 @@ EOF
             done
 
             staged_libxcb="$target_dir/release/libxcb.so.1.appimage"
-            staged_wayland_client="$target_dir/release/libwayland-client.so.0.appimage"
             staged_wayland_egl="$target_dir/release/libwayland-egl.so.1.appimage"
             staged_vulkan="$target_dir/release/libvulkan.so.1.appimage"
             staged_egl="$target_dir/release/libEGL.so.1.appimage"
             staged_gl_dispatch="$target_dir/release/libGLdispatch.so.0.appimage"
             generated_config=$(mktemp "$root/packaging/linux.XXXXXX.toml")
             cleanup_appimage_staging() {
-                rm -f "$staged_libxcb" "$staged_wayland_client" \
+                rm -f "$staged_libxcb" \
                     "$staged_wayland_egl" "$staged_vulkan" "$staged_egl" \
                     "$staged_gl_dispatch" "$generated_config"
             }
             trap cleanup_appimage_staging EXIT HUP INT TERM
             cp -L "$libxcb" "$staged_libxcb"
-            cp -L "$libwayland_client" "$staged_wayland_client"
             cp -L "$libwayland_egl" "$staged_wayland_egl"
             cp -L "$libvulkan" "$staged_vulkan"
             cp -L "$libegl" "$staged_egl"
@@ -96,7 +93,6 @@ EOF
 
 [appimage.files]
 "$staged_libxcb" = "/usr/lib/libxcb.so.1"
-"$staged_wayland_client" = "/usr/lib/libwayland-client.so.0"
 "$staged_wayland_egl" = "/usr/lib/libwayland-egl.so.1"
 "$staged_vulkan" = "/usr/lib/libvulkan.so.1"
 "$staged_egl" = "/usr/lib/libEGL.so.1"

@@ -1,0 +1,149 @@
+name: AppImage startup probe
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        description: AppImage artifact from the current workflow run
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag to test
+        default: v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    name: Wayland / ${{ matrix.distro }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu
+            image: ubuntu:24.04
+          - distro: arch
+            image: archlinux:base
+    container: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install desktop runtime and diagnostic tools
+        run: |
+          if command -v pacman >/dev/null; then
+            pacman -Syu --noconfirm --needed \
+              ca-certificates curl git weston wayland-utils mesa libglvnd \
+              vulkan-swrast libxkbcommon-x11 fontconfig ttf-dejavu dbus binutils file \
+              xorg-server-xvfb
+          else
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              ca-certificates curl git weston wayland-utils libegl1 libegl-mesa0 \
+              libgl1-mesa-dri mesa-vulkan-drivers libxkbcommon-x11-0 \
+              fontconfig fonts-dejavu-core dbus binutils file xvfb
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare AppImage
+        id: appimage
+        uses: ./.github/actions/appimage-input
+        with:
+          artifact: ${{ inputs.artifact }}
+          release: ${{ inputs.release || 'v0.2.0' }}
+
+      - name: Compare startup with the host Wayland preload
+        env:
+          APPIMAGE_PATH: ${{ steps.appimage.outputs.path }}
+        run: dbus-run-session -- bash scripts/probe-appimage-startup.sh "$APPIMAGE_PATH" "$PWD/artifacts"
+
+      - name: Publish probe summary
+        if: always()
+        run: |
+          if [ -f artifacts/summary.md ]; then
+            cat artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appimage-startup-${{ matrix.distro }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
+
+  nixos:
+    name: Wayland / ${{ matrix.channel }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [nixos-26.05, nixos-unstable]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare AppImage
+        id: appimage
+        uses: ./.github/actions/appimage-input
+        with:
+          artifact: ${{ inputs.artifact }}
+          release: ${{ inputs.release || 'v0.2.0' }}
+
+      - name: Check out the NixOS channel
+        uses: actions/checkout@v4
+        with:
+          repository: NixOS/nixpkgs
+          ref: ${{ matrix.channel }}
+          path: nixpkgs
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          enable_kvm: true
+
+      - name: Build the NixOS test VM
+        env:
+          APPIMAGE_PATH: ${{ steps.appimage.outputs.path }}
+        run: |
+          test -r /dev/kvm && test -w /dev/kvm
+          git -C nixpkgs rev-parse HEAD > artifacts/nixpkgs-revision.txt
+          nix-build packaging/appimage-startup-test.nix -A driver \
+            --argstr nixpkgs "$PWD/nixpkgs" --argstr appimage "$APPIMAGE_PATH" \
+            --out-link test-driver 2>&1 | tee artifacts/nix-build.log
+
+      - name: Run startup in NixOS with appimage-run
+        run: |
+          mkdir -p artifacts/nixos
+          test-driver/bin/nixos-test-driver -o "$PWD/artifacts/nixos" \
+            2>&1 | tee artifacts/nixos-driver.log
+
+      - name: Publish NixOS summary
+        if: always()
+        run: |
+          if [ -f artifacts/nixos/probe-logs/summary.md ]; then
+            cat artifacts/nixos/probe-logs/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appimage-startup-${{ matrix.channel }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
