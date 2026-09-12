@@ -615,6 +615,7 @@ enum NativeInputKind {
         claimed: bool,
         claim_lost: bool,
     },
+    Unknown,
 }
 
 struct PendingNativeInput {
@@ -637,6 +638,7 @@ struct Handoff {
     cancelled: bool,
     wait_for_active_turn: bool,
     target_turn: Option<String>,
+    batch_client_id: Option<String>,
 }
 
 struct CodexWorkerSession {
@@ -774,6 +776,9 @@ impl WorkerSession for CodexWorkerSession {
         }
         let mut has_pending = false;
         for input in self.native_inputs.values_mut() {
+            if matches!(input.kind, NativeInputKind::Unknown) {
+                continue;
+            }
             input.handoff = true;
             has_pending = true;
         }
@@ -785,6 +790,7 @@ impl WorkerSession for CodexWorkerSession {
             cancelled: false,
             wait_for_active_turn: false,
             target_turn: self.current_turn.clone(),
+            batch_client_id: None,
         });
         if let Some(turn_id) = self.current_turn.clone() {
             self.interrupt_turn(&turn_id)
@@ -862,7 +868,7 @@ impl WorkerSession for CodexWorkerSession {
             // Correlate the actual RPC reply, never a write or turn notification.
             match &inbound {
                 Ok(CodexInbound::Response { id, result }) => {
-                    if let Some(prompt) = self.prompt_requests.remove(id) {
+                    if let Some(prompt) = self.prompt_requests.get(id).cloned() {
                         let accepted = match self.pending.get(id) {
                             Some(PendingRequest::StartTurn) => {
                                 serde_json::from_value::<TurnResponse>(result.clone())
@@ -886,6 +892,7 @@ impl WorkerSession for CodexWorkerSession {
                             _ => Ok(()),
                         };
                         if accepted.is_ok() {
+                            self.prompt_requests.remove(id);
                             if let Some(PendingRequest::Control {
                                 client_id: Some(client_id),
                                 ..
@@ -924,16 +931,15 @@ impl WorkerSession for CodexWorkerSession {
                         }
                     }
                     Some(PendingRequest::StartTurn) => {
-                        let normal_client_id = self.normal_start_clients.remove(&id);
+                        self.normal_start_clients.remove(&id);
                         let turn = match serde_json::from_value::<TurnResponse>(result) {
                             Ok(response) => response.turn,
                             Err(error) => {
-                                if let Some(client_id) = normal_client_id {
-                                    self.batch_deliveries.remove(&client_id);
-                                }
-                                return Some(WorkerEvent::Failed(format!(
-                                    "decode Codex worker turn: {error}"
-                                )));
+                                let submission_id = self.prompt_requests.remove(&id)?;
+                                return Some(WorkerEvent::PromptDeliveryUnknown {
+                                    submission_id,
+                                    error: format!("decode Codex worker turn: {error}"),
+                                });
                             }
                         };
                         let started = self.begin_turn(&turn.id);
@@ -985,10 +991,22 @@ impl WorkerSession for CodexWorkerSession {
                         operation,
                         client_id,
                     }) => {
-                        if let Some(client_id) = client_id
-                            && let Err(error) =
-                                self.control_response(operation, &client_id, &result)
+                        if let Some(client_id) = client_id.as_deref()
+                            && let Err(error) = self.control_response(operation, client_id, &result)
                         {
+                            if let Some(submission_id) = self.prompt_requests.remove(&id) {
+                                if let Some(input) = self.native_inputs.get_mut(client_id) {
+                                    input.kind = NativeInputKind::Unknown;
+                                    input.handoff = false;
+                                }
+                                if let Err(handoff_error) = self.maybe_submit_handoff() {
+                                    self.events.push_back(WorkerEvent::Failed(handoff_error));
+                                }
+                                return Some(WorkerEvent::PromptDeliveryUnknown {
+                                    submission_id,
+                                    error,
+                                });
+                            }
                             return Some(WorkerEvent::Failed(error));
                         }
                     }
@@ -1006,17 +1024,19 @@ impl WorkerSession for CodexWorkerSession {
                             match serde_json::from_value::<TurnResponse>(result) {
                                 Ok(response) => Some(response.turn),
                                 Err(error) => {
-                                    return Some(WorkerEvent::Failed(format!(
-                                        "decode Codex handoff turn: {error}"
-                                    )));
+                                    return self.unknown_handoff_delivery(
+                                        &client_id,
+                                        format!("decode Codex handoff turn: {error}"),
+                                    );
                                 }
                             }
                         } else if result.get("turnId").and_then(Value::as_str).is_some() {
                             None
                         } else {
-                            return Some(WorkerEvent::Failed(
+                            return self.unknown_handoff_delivery(
+                                &client_id,
                                 "decode Codex handoff steer: missing turnId".into(),
-                            ));
+                            );
                         };
                         let mut admitted = Vec::new();
                         if let Some(deliveries) = self.batch_deliveries.get_mut(&client_id) {
@@ -1168,7 +1188,11 @@ impl WorkerSession for CodexWorkerSession {
                                     }
                                 }
                             }
-                            self.handoff = None;
+                            if self.handoff.as_ref().is_some_and(|handoff| {
+                                handoff.batch_client_id.as_deref() == Some(client_id.as_str())
+                            }) {
+                                self.handoff = None;
+                            }
                             return Some(WorkerEvent::RequestFailed {
                                 operation: "Codex steering handoff".into(),
                                 error: error.message,
@@ -1626,6 +1650,34 @@ impl CodexWorkerSession {
         }
     }
 
+    fn unknown_handoff_delivery(&mut self, client_id: &str, error: String) -> Option<WorkerEvent> {
+        let mut unknown = Vec::new();
+        if let Some(deliveries) = self.batch_deliveries.get_mut(client_id) {
+            for (delivery, needs_ack) in deliveries {
+                if *needs_ack {
+                    if let Some(submission_id) = delivery.submission_id.clone() {
+                        unknown.push(WorkerEvent::PromptDeliveryUnknown {
+                            submission_id,
+                            error: error.clone(),
+                        });
+                    }
+                    *needs_ack = false;
+                }
+            }
+        }
+        if self
+            .handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.batch_client_id.as_deref() == Some(client_id))
+        {
+            self.handoff = None;
+        }
+        let mut unknown = unknown.into_iter();
+        let first = unknown.next();
+        self.events.extend(unknown);
+        first
+    }
+
     fn input_delivery(&mut self, item: &Value) -> Option<WorkerActivity> {
         if item.get("type").and_then(Value::as_str) == Some("userMessage")
             && let Some(client_id) = item.get("clientId").and_then(Value::as_str)
@@ -1636,7 +1688,11 @@ impl CodexWorkerSession {
                     .map(|(delivery, _)| delivery.activity());
                 let first = activities.next();
                 self.events.extend(activities.map(WorkerEvent::Activity));
-                if client_id.starts_with(HANDOFF_CLIENT_ID_PREFIX) {
+                if self
+                    .handoff
+                    .as_ref()
+                    .is_some_and(|handoff| handoff.batch_client_id.as_deref() == Some(client_id))
+                {
                     self.handoff = None;
                 }
                 return first;
@@ -1911,6 +1967,7 @@ impl CodexWorkerSession {
                 NativeInputKind::Steer {
                     receipt: SteerReceipt::Accepted | SteerReceipt::RejectedByTurnRace,
                 } => selected.push(client_id.clone()),
+                NativeInputKind::Unknown => {}
                 NativeInputKind::Queue { queue_id: None, .. }
                 | NativeInputKind::Queue {
                     claim_pending: true,
@@ -1982,6 +2039,10 @@ impl CodexWorkerSession {
         }
         self.batch_deliveries
             .insert(batch_client_id.clone(), deliveries);
+        if let Some(handoff) = self.handoff.as_mut() {
+            handoff.phase = HandoffPhase::Submitted;
+            handoff.batch_client_id = Some(batch_client_id.clone());
+        }
         self.pending.insert(
             id,
             PendingRequest::HandoffTurn {
@@ -1989,9 +2050,6 @@ impl CodexWorkerSession {
                 starts_turn,
             },
         );
-        if let Some(handoff) = self.handoff.as_mut() {
-            handoff.phase = HandoffPhase::Submitted;
-        }
         if starts_turn {
             self.caller_identity
                 .set_activity(WorkerActivityState::Starting);
@@ -2055,15 +2113,15 @@ impl CodexWorkerSession {
     }
 
     fn finish_cancelled_handoff(&mut self) {
-        if !self
-            .handoff
-            .as_ref()
-            .is_some_and(|handoff| handoff.cancelled)
-        {
+        let Some(handoff) = self.handoff.as_ref().filter(|handoff| handoff.cancelled) else {
             return;
-        }
+        };
+        let current_batch = handoff.batch_client_id.clone();
         let has_originals = self.native_inputs.values().any(|input| input.handoff);
-        if !has_originals && self.batch_deliveries.is_empty() {
+        let has_current_batch = current_batch
+            .as_ref()
+            .is_some_and(|client_id| self.batch_deliveries.contains_key(client_id));
+        if !has_originals && !has_current_batch {
             self.handoff = None;
         }
     }

@@ -916,10 +916,18 @@ fn rejected_and_malformed_codex_replies_have_distinct_receipt_outcomes() {
                 "malformed success proves no rejection"
             );
             assert!(
-                events
+                events.iter().any(|event| matches!(
+                    event,
+                    WorkerEvent::PromptDeliveryUnknown { submission_id, .. }
+                        if submission_id == "submission"
+                )),
+                "malformed success must remain correlated as delivery unknown"
+            );
+            assert!(
+                !events
                     .iter()
                     .any(|event| matches!(event, WorkerEvent::Failed(_))),
-                "common transport must classify malformed success as delivery unknown"
+                "malformed success is request-local"
             );
         }
     }
@@ -1037,6 +1045,24 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
         MainSessionMetadata, WorkerSessionTransport,
     };
 
+    fn project(
+        transport: &mut WorkerSessionTransport,
+        conversation: &mut ConversationState,
+        responses: &mut Vec<crate::agents::SessionResponse>,
+        failures: &mut Vec<String>,
+    ) {
+        while let Some(event) = transport.poll() {
+            match event {
+                SessionEvent::Activity(activity) => {
+                    conversation.reduce(activity.value());
+                }
+                SessionEvent::Response(response) => responses.push(response),
+                SessionEvent::Failure(error) => failures.push(error),
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+    }
+
     for mode in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
         let (mut session, _sent) = writable_test_session();
         let (incoming, receiver) = mpsc::channel();
@@ -1077,16 +1103,13 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
 
         let mut conversation = ConversationState::default();
         let mut responses = Vec::new();
-        while let Some(event) = transport.poll() {
-            match event {
-                SessionEvent::Activity(activity) => {
-                    conversation.reduce(activity.value());
-                }
-                SessionEvent::Response(response) => responses.push(response),
-                SessionEvent::Failure(_) => {}
-                other => panic!("unexpected event: {other:?}"),
-            }
-        }
+        let mut failures = Vec::new();
+        project(
+            &mut transport,
+            &mut conversation,
+            &mut responses,
+            &mut failures,
+        );
         let response = responses
             .iter()
             .find(|response| response.id.as_deref() == Some(submission_id.as_str()))
@@ -1113,7 +1136,401 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
         assert_eq!(users[0].text, "retain unknown");
         assert_eq!(users[0].images.len(), 1);
         assert_eq!(users[0].label, "Delivery unknown");
+
+        let client_id = match mode {
+            PromptMode::Normal => "farcaster-normal-1",
+            PromptMode::Steer => "farcaster-steer-1",
+            PromptMode::FollowUp => "farcaster-queue-1",
+        };
+        incoming
+            .send(Ok(CodexInbound::Notification {
+                method: "item/started".into(),
+                params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                    "type":"userMessage","clientId":client_id,"content":[
+                        {"type":"text","text":"retain unknown"},
+                        {"type":"image","url":"data:image/png;base64,AQID"}
+                    ]
+                }}),
+            }))
+            .expect("late old delivery");
+        project(
+            &mut transport,
+            &mut conversation,
+            &mut responses,
+            &mut failures,
+        );
+        let users = conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .collect::<Vec<_>>();
+        assert_eq!(users.len(), 1, "late evidence must reconcile, not replay");
+        assert_eq!(users[0].text, "retain unknown");
+        assert_eq!(users[0].images.len(), 1);
+        assert!(users[0].label.is_empty());
+
+        let later_id = transport
+            .send(SessionCommand::Prompt {
+                mode,
+                message: "later prompt".into(),
+                images: Vec::new(),
+            })
+            .expect("later prompt remains live");
+        let result = match mode {
+            PromptMode::Normal => {
+                json!({"turn":{"id":"turn-2","status":"inProgress"}})
+            }
+            PromptMode::Steer => json!({"turnId":"turn-1"}),
+            PromptMode::FollowUp => json!({"queuedSubmission": {
+                "id":"queued-2","clientUserMessageId":"farcaster-queue-2","input":[]
+            }}),
+        };
+        incoming
+            .send(Ok(CodexInbound::Response {
+                id: CodexRequestId::Number(2),
+                result,
+            }))
+            .expect("later prompt response");
+        project(
+            &mut transport,
+            &mut conversation,
+            &mut responses,
+            &mut failures,
+        );
+        assert!(responses.iter().any(|response| {
+            response.id.as_deref() == Some(later_id.as_str()) && response.result.is_ok()
+        }));
+        assert!(failures.is_empty(), "malformed success is request-local");
     }
+}
+
+#[test]
+fn malformed_native_reply_stays_correlatable_but_never_joins_next_handoff() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "old".into(),
+            "old unknown".into(),
+            WorkerSendMode::Steer,
+            vec![crate::protocol::PromptImage::new(
+                "AQID".into(),
+                "image/png".into(),
+            )],
+        )
+        .expect("old steer");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("old steer request");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({}),
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. }) if submission_id == "old"
+    ));
+
+    session
+        .submit_prompt(
+            "new".into(),
+            "new accepted".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("new steer");
+    line.clear();
+    sent.read_line(&mut line).expect("new steer request");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(2),
+        result: json!({"turnId":"turn-1"}),
+    }));
+    assert!(session.poll().is_none());
+    session.apply_steering().expect("apply new steer");
+    line.clear();
+    sent.read_line(&mut line).expect("interrupt request");
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("new handoff batch");
+    let batch: Value = serde_json::from_str(&line).expect("decode new batch");
+    let text = batch["params"]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<String>();
+    assert_eq!(text, "new accepted");
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                "type":"userMessage","clientId":"farcaster-steer-1","content":[
+                    {"type":"text","text":"old unknown"},
+                    {"type":"image","url":"data:image/png;base64,AQID"}
+                ]
+            }}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id,
+                message,
+                images,
+                ..
+            }
+        )) if submission_id == "old" && message == "old unknown" && images.len() == 1
+    ));
+    assert_eq!(
+        session
+            .handoff
+            .as_ref()
+            .and_then(|handoff| handoff.batch_client_id.as_deref()),
+        Some("farcaster-handoff-4")
+    );
+}
+
+#[test]
+fn late_old_unknown_batch_delivery_does_not_clear_new_handoff() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "old".into(),
+            "old batch".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("old steer");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("old steer request");
+    session.apply_steering().expect("old apply");
+    line.clear();
+    sent.read_line(&mut line).expect("old interrupt");
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: CodexRequestId::Number(1),
+        error: super::super::contract::CodexRpcError {
+            code: -32000,
+            message: "no active turn to steer".into(),
+            data: Value::Null,
+        },
+    }));
+    let _ = session.poll();
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("old batch request");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(3),
+        result: json!({}),
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. }) if submission_id == "old"
+    ));
+    assert!(session.handoff.is_none());
+
+    session.current_turn = Some("turn-new".into());
+    session
+        .submit_prompt(
+            "new".into(),
+            "new batch".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("new steer");
+    line.clear();
+    sent.read_line(&mut line).expect("new steer request");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(4),
+        result: json!({"turnId":"turn-new"}),
+    }));
+    let _ = session.poll();
+    session.apply_steering().expect("new apply");
+    line.clear();
+    sent.read_line(&mut line).expect("new interrupt");
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-new","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("new batch request");
+    assert_eq!(
+        session
+            .handoff
+            .as_ref()
+            .and_then(|handoff| handoff.batch_client_id.as_deref()),
+        Some("farcaster-handoff-6")
+    );
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","turnId":"old-turn","item":{
+                "type":"userMessage","clientId":"farcaster-handoff-3",
+                "content":[{"type":"text","text":"old batch"}]
+            }}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            ..
+        })) if submission_id == "old"
+    ));
+    assert_eq!(
+        session
+            .handoff
+            .as_ref()
+            .and_then(|handoff| handoff.batch_client_id.as_deref()),
+        Some("farcaster-handoff-6"),
+        "old delivery cannot clear the new handoff"
+    );
+}
+
+#[test]
+fn old_unknown_batch_does_not_block_cancelled_handoff_cleanup_or_later_apply() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "old".into(),
+            "old batch".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("old steer");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("old steer request");
+    session.apply_steering().expect("old apply");
+    line.clear();
+    sent.read_line(&mut line).expect("old interrupt");
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: CodexRequestId::Number(1),
+        error: super::super::contract::CodexRpcError {
+            code: -32000,
+            message: "no active turn to steer".into(),
+            data: Value::Null,
+        },
+    }));
+    let _ = session.poll();
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("old batch request");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(3),
+        result: json!({}),
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. }) if submission_id == "old"
+    ));
+    assert!(session.batch_deliveries.contains_key("farcaster-handoff-3"));
+
+    session.current_turn = Some("turn-2".into());
+    session
+        .submit_prompt(
+            "cancelled".into(),
+            "cancel this handoff".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("new steer");
+    line.clear();
+    sent.read_line(&mut line).expect("new steer request");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(4),
+        result: json!({"turnId":"turn-2"}),
+    }));
+    let _ = session.poll();
+    session.apply_steering().expect("new apply");
+    line.clear();
+    sent.read_line(&mut line).expect("new interrupt");
+    let apply_interrupt: Value = serde_json::from_str(&line).expect("decode new interrupt");
+    assert_eq!(apply_interrupt["method"], "turn/interrupt");
+    let before_abort = session.next_id;
+    session.abort().expect("second escape");
+    if session.next_id != before_abort {
+        line.clear();
+        sent.read_line(&mut line).expect("abort request");
+        let abort: Value = serde_json::from_str(&line).expect("decode abort request");
+        assert_eq!(abort["method"], "turn/interrupt");
+        assert_eq!(abort["params"]["turnId"], "turn-2");
+    }
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-2","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    assert!(session.handoff.is_none());
+    assert!(session.batch_deliveries.contains_key("farcaster-handoff-3"));
+
+    session.current_turn = Some("turn-3".into());
+    session
+        .submit_prompt(
+            "later".into(),
+            "later steer".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("later steer");
+    line.clear();
+    sent.read_line(&mut line).expect("later steer request");
+    let later_request: Value = serde_json::from_str(&line).expect("decode later steer request");
+    let later_request_id: CodexRequestId =
+        serde_json::from_value(later_request["id"].clone()).expect("later steer request id");
+    assert_eq!(later_request["method"], "turn/steer");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: later_request_id,
+        result: json!({"turnId":"turn-3"}),
+    }));
+    let _ = session.poll();
+    session.apply_steering().expect("later apply");
+    line.clear();
+    sent.read_line(&mut line).expect("later interrupt");
+    let interrupt: Value = serde_json::from_str(&line).expect("decode later interrupt");
+    assert_eq!(interrupt["method"], "turn/interrupt");
+    assert_eq!(interrupt["params"]["turnId"], "turn-3");
 }
 
 #[test]
@@ -1915,7 +2332,8 @@ fn handoff_retries_only_turn_races_and_validates_batch_before_admission() {
         }));
         assert!(matches!(
             session.poll(),
-            Some(WorkerEvent::Failed(error)) if error.contains("missing field")
+            Some(WorkerEvent::PromptDeliveryUnknown { submission_id, error })
+                if submission_id == "steer-1" && error.contains("missing field")
         ));
         assert_eq!(
             session.poll_prompt_ack(),
