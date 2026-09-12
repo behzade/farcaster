@@ -172,6 +172,21 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    /// Workspace processes may hold unsaved work even with an empty composer.
+    /// Keep this sticky for the draft's lifetime, not just while a surface is visible.
+    pub(in crate::app) fn retain_workspace_draft(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected_draft.as_deref() else {
+            return;
+        };
+        let target = self.composer_sessions.current_target().to_owned();
+        if target != draft_target(id) || !self.composer_sessions.retain_current() {
+            return;
+        }
+        let composer = self.composer_sessions.current();
+        self.sync_current_draft(&composer, &target);
+        self.notify_session_rail(cx);
+    }
+
     pub(in crate::app) fn sync_current_draft(
         &mut self,
         composer: &crate::app::composer::sessions::ComposerSnapshot,
@@ -206,13 +221,14 @@ impl FarcasterApp {
                     .map(|draft| draft.app_session_id)
             })
             .unwrap_or_default();
+        let retain = has_content || self.composer_sessions.is_retained(target);
         let changed = sync_materialized_draft(
             &mut self.drafts,
             id,
             app_session_id,
             &self.project,
             &self.snapshot.harness,
-            has_content,
+            retain,
         );
         if changed {
             self.save_project_registry();
@@ -221,7 +237,7 @@ impl FarcasterApp {
             self.composer_images.remove(target);
             self.composer_pastes.remove(target);
         }
-        !has_content
+        !retain
     }
 
     pub(in crate::app) fn begin_draft_submission(&mut self, target: &str, prompt: &str) {
@@ -446,10 +462,10 @@ fn sync_materialized_draft(
     app_session_id: i64,
     project: &std::path::Path,
     harness: &str,
-    has_content: bool,
+    retain: bool,
 ) -> bool {
     let existing = drafts.iter().position(|draft| draft.id == id);
-    match (existing, has_content) {
+    match (existing, retain) {
         (None, true) => {
             let mut draft =
                 DraftSession::with_id(harness.to_owned(), id.to_owned(), project.to_path_buf());

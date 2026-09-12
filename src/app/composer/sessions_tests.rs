@@ -161,12 +161,15 @@ fn rejected_submission_restores_only_an_empty_composer() {
 #[test]
 fn saving_a_draft_promotes_its_full_composer_state() {
     let mut sessions = sessions("draft:one");
+    sessions.retain_current();
     sessions.record_submission("draft:one", "first prompt");
     sessions.capture_current(ComposerSnapshot::new("next prompt".into(), 4, 1..4));
 
     sessions.promote("draft:one", "session:one".into());
 
     assert_eq!(sessions.current_target(), "session:one");
+    assert!(!sessions.is_retained("draft:one"));
+    assert!(!sessions.is_retained("session:one"));
     assert_eq!(
         sessions.current(),
         ComposerSnapshot::new("next prompt".into(), 4, 1..4)
@@ -176,4 +179,32 @@ fn saving_a_draft_promotes_its_full_composer_state() {
         sessions.navigate_history("up", ComposerSnapshot::default()),
         HistoryNavigation::Handled(Some(ComposerSnapshot { text, .. })) if text == "first prompt"
     ));
+}
+
+#[test]
+fn retention_survives_empty_composer_switches_without_affecting_other_drafts() {
+    let mut sessions = sessions("draft:one");
+    assert!(sessions.retain_current());
+    assert!(!sessions.retain_current());
+    sessions.capture_current(ComposerSnapshot::new("text".into(), 4, 4..4));
+    sessions.capture_current(ComposerSnapshot::default());
+
+    sessions.switch_to("draft:two".into(), ComposerSnapshot::default());
+    assert!(sessions.is_retained("draft:one"));
+    assert!(!sessions.is_retained("draft:two"));
+    sessions.switch_to("draft:one".into(), ComposerSnapshot::default());
+    assert!(sessions.is_retained(sessions.current_target()));
+    assert_eq!(sessions.current(), ComposerSnapshot::default());
+}
+
+#[test]
+fn explicit_discard_or_removal_clears_retention() {
+    let mut sessions = sessions("draft:one");
+    sessions.retain_current();
+    sessions.discard_and_switch("draft:one", "draft:two".into());
+    assert!(!sessions.is_retained("draft:one"));
+
+    sessions.retain_current();
+    sessions.remove("draft:two");
+    assert!(!sessions.is_retained("draft:two"));
 }

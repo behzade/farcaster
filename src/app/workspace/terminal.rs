@@ -80,6 +80,7 @@ impl FarcasterApp {
             terminal
         };
 
+        self.retain_workspace_draft(cx);
         self.hide_terminal(cx);
         self.terminal = Some(terminal);
         self.terminal_project = Some(project);

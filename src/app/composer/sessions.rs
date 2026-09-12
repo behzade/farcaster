@@ -51,6 +51,8 @@ struct SessionComposer {
     history: Vec<String>,
     history_index: Option<usize>,
     history_draft: Option<ComposerSnapshot>,
+    // Live work outside the composer; cleared on removal or draft promotion.
+    retain_empty: bool,
 }
 
 impl SessionComposer {
@@ -65,6 +67,7 @@ impl SessionComposer {
             attachments: record.attachments,
             history_index: None,
             history_draft: None,
+            retain_empty: false,
         }
     }
 
@@ -146,6 +149,21 @@ impl ComposerSessions {
 
     pub(crate) fn current_target(&self) -> &str {
         &self.current_target
+    }
+
+    /// Returns whether this is the first request to retain the current draft.
+    pub(crate) fn retain_current(&mut self) -> bool {
+        let session = self
+            .sessions
+            .entry(self.current_target.clone())
+            .or_default();
+        !std::mem::replace(&mut session.retain_empty, true)
+    }
+
+    pub(crate) fn is_retained(&self, target: &str) -> bool {
+        self.sessions
+            .get(target)
+            .is_some_and(|session| session.retain_empty)
     }
 
     pub(crate) fn saved_attachments(
