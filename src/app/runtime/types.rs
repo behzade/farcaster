@@ -179,7 +179,7 @@ pub(crate) enum RuntimeEvent {
     },
     PromptResult {
         target: String,
-        accepted: bool,
+        outcome: crate::agents::PromptOutcome,
         session: Option<PathBuf>,
     },
     SessionStatus {

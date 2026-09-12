@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    agents::{self, QueuedPrompt, SessionCommand},
+    agents::{self, PromptOutcome, QueuedPrompt, SessionCommand},
     protocol::{PromptImage, PromptMode},
 };
 
@@ -278,10 +278,19 @@ impl RuntimeOwner {
             message,
             images,
         };
+        self.pending_prompt_delivery_tracked = self
+            .process
+            .as_ref()
+            .is_some_and(|process| process.tracks_prompt_delivery(mode));
         // File reads can fail before the backend accepts a request.
         self.pending_outbox_id = outbox_id;
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
+                if let Some(item) = self.pending_prompt_item.clone() {
+                    let delivery_tracked = self.pending_prompt_delivery_tracked;
+                    conversation_mut(self.active_snapshot_mut())
+                        .bind_submitted_prompt_with_evidence(&id, &item, delivery_tracked);
+                }
                 self.pending_prompt_id = Some(id);
                 self.pending_outbox_id = outbox_id;
                 self.normal_prompt_in_flight |= mode == PromptMode::Normal;
@@ -325,7 +334,7 @@ impl RuntimeOwner {
     pub(super) fn reject_prompt(&mut self, target: &str, message: String) {
         Arc::make_mut(&mut self.snapshot.conversation).push_local_error("Prompt not sent", message);
         self.snapshot.status = "Prompt not sent".into();
-        self.emit_prompt_result(target, false);
+        self.emit_prompt_result(target, PromptOutcome::RejectedBeforeAcceptance);
         self.publish();
     }
 
@@ -340,12 +349,14 @@ impl RuntimeOwner {
         conversation_mut(self.active_snapshot_mut()).running = running;
     }
 
-    pub(super) fn emit_prompt_result(&self, target: &str, accepted: bool) {
+    pub(super) fn emit_prompt_result(&self, target: &str, mut outcome: PromptOutcome) {
         let session = self.active_session.clone();
-        let accepted = accepted && session.is_some();
+        if outcome == PromptOutcome::Accepted && session.is_none() {
+            outcome = PromptOutcome::RejectedBeforeAcceptance;
+        }
         let _ = self.event_tx.send(RuntimeEvent::PromptResult {
             target: target.to_owned(),
-            accepted,
+            outcome,
             session,
         });
     }
@@ -419,7 +430,7 @@ impl RuntimeOwner {
         }
         self.rollback_failed_prompt("Prompt cancelled before delivery");
         if let Some(target) = self.pending_prompt_target.take() {
-            self.emit_prompt_result(&target, false);
+            self.emit_prompt_result(&target, PromptOutcome::RejectedBeforeAcceptance);
         }
         self.snapshot.status = "Stopped".into();
         self.publish();

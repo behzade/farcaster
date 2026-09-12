@@ -114,6 +114,8 @@ pub(super) fn owner_without_process(
             pending_prompt_target: None,
             pending_prompt_item: None,
             pending_outbox_id: None,
+            pending_prompt_delivery_unknown: false,
+            pending_prompt_delivery_tracked: false,
             title_generation: SessionTitleGeneration::default(),
             transcript_changed_from: None,
             event_tx,
@@ -207,7 +209,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
     assert!(events.try_iter().any(|event| matches!(
         event,
         RuntimeEvent::PromptResult {
-            accepted: false,
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
             ..
         }
     )));
@@ -1180,7 +1182,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
         event,
         RuntimeEvent::PromptResult {
             target,
-            accepted: false,
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
             session: None,
             ..
         } if target == "draft:a"
@@ -1199,12 +1201,12 @@ fn accepted_prompt_result_has_the_normalized_active_session_path()
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.active_session = Some(crate::sessions::normalize_session_path(&link));
 
-    owner.emit_prompt_result("draft:a", true);
+    owner.emit_prompt_result("draft:a", crate::agents::PromptOutcome::Accepted);
 
     assert!(events.try_iter().any(|event| matches!(
         event,
         RuntimeEvent::PromptResult {
-            accepted: true,
+            outcome: crate::agents::PromptOutcome::Accepted,
             session: Some(path),
             ..
         } if path == session.canonicalize().expect("canonical session")
@@ -2015,6 +2017,8 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
+        pending_prompt_delivery_unknown: false,
+        pending_prompt_delivery_tracked: false,
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,
@@ -2250,6 +2254,8 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
+        pending_prompt_delivery_unknown: false,
+        pending_prompt_delivery_tracked: false,
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,
@@ -2331,11 +2337,13 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     assert_eq!(owner.active_session, Some(new_path.clone()));
     assert!(owner.deferred_prompt.is_some());
     let resume_events = event_rx.try_iter().collect::<Vec<_>>();
-    assert!(
-        resume_events
-            .iter()
-            .all(|event| !matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
-    );
+    assert!(resume_events.iter().all(|event| !matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            outcome: crate::agents::PromptOutcome::Accepted,
+            ..
+        }
+    )));
     assert!(resume_events.iter().any(|event| matches!(
         event,
         RuntimeEvent::SessionReset {
@@ -2383,7 +2391,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         event,
         RuntimeEvent::PromptResult {
             target,
-            accepted: true,
+            outcome: crate::agents::PromptOutcome::Accepted,
             ..
         } if target == format!("session:{}", new_path.display())
     )));
@@ -2429,6 +2437,8 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         pending_prompt_target: Some(format!("session:{}", active_path.display())),
         pending_prompt_item: None,
         pending_outbox_id: None,
+        pending_prompt_delivery_unknown: false,
+        pending_prompt_delivery_tracked: false,
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,
         event_tx,

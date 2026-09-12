@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{Context, Window};
+use gpui::{Context, KeyDownEvent, Window};
 
 use super::{
     ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, prompt_fragments,
@@ -25,7 +25,7 @@ pub(in crate::app) struct PendingSubmission {
     pub(in crate::app) images: Vec<ComposerImage>,
     pub(in crate::app) pastes: Vec<ComposerPaste>,
     pub(in crate::app) append_on_failure: bool,
-    pub(in crate::app) result: Option<(bool, Option<std::path::PathBuf>)>,
+    pub(in crate::app) result: Option<(crate::agents::PromptOutcome, Option<std::path::PathBuf>)>,
 }
 
 impl FarcasterApp {
@@ -180,10 +180,13 @@ impl FarcasterApp {
     }
 
     pub(crate) fn handle_composer_escape(&mut self, cx: &mut Context<Self>) {
+        let target = self.composer_sessions.current_target();
         let (action, arm) = composer_escape(
             self.snapshot.conversation.running,
             !self.snapshot.conversation.queue.steering.is_empty(),
-            self.composer_sessions.current_target(),
+            !self.snapshot.conversation.queue.follow_up.is_empty(),
+            self.pending_submissions.contains_key(target),
+            target,
             self.composer_escape_armed.as_ref(),
             Instant::now(),
         );
@@ -193,6 +196,27 @@ impl FarcasterApp {
             ComposerEscapeAction::Abort => self.send(RuntimeCommand::Abort, cx),
             ComposerEscapeAction::None => {}
         }
+    }
+
+    pub(in crate::app) fn handle_composer_escape_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let key_action = composer_escape_key(event);
+        let owns_escape = self.surface == crate::app::AppSurface::Chat
+            && !self.native_workspace_covered_by_overlay()
+            && self.keyboard_overlay_focus(window, cx).is_none()
+            && self.composer_focus.contains_focused(window, cx)
+            && key_action != ComposerEscapeKeyAction::Ignore;
+        if !owns_escape {
+            return false;
+        }
+        if key_action == ComposerEscapeKeyAction::Dispatch {
+            self.handle_composer_escape(cx);
+        }
+        true
     }
 
     pub(crate) fn enter_mode(&self) -> PromptMode {
@@ -212,21 +236,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let completed = self
-            .pending_submissions
-            .iter()
-            .filter_map(|(target, pending)| {
-                pending
-                    .result
-                    .clone()
-                    .map(|(accepted, session)| (target.clone(), accepted, session))
-            })
-            .collect::<Vec<_>>();
-        for (target, accepted, session) in completed {
-            let Some(pending) = self.pending_submissions.remove(&target) else {
-                continue;
-            };
-            if accepted {
+        let completed = take_resolved_pending_submissions(&mut self.pending_submissions);
+        for (target, pending, outcome, session) in completed {
+            if !restores_composer(outcome) {
                 self.save_composer_attachments(&target);
                 continue;
             }
@@ -269,6 +281,37 @@ impl FarcasterApp {
             }
         }
     }
+}
+
+fn restores_composer(outcome: crate::agents::PromptOutcome) -> bool {
+    outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance
+}
+
+pub(in crate::app) fn take_resolved_pending_submissions(
+    pending: &mut std::collections::HashMap<String, PendingSubmission>,
+) -> Vec<(
+    String,
+    PendingSubmission,
+    crate::agents::PromptOutcome,
+    Option<std::path::PathBuf>,
+)> {
+    let completed = pending
+        .iter()
+        .filter_map(|(target, pending)| {
+            pending
+                .result
+                .clone()
+                .map(|result| (target.clone(), result))
+        })
+        .collect::<Vec<_>>();
+    completed
+        .into_iter()
+        .filter_map(|(target, (outcome, session))| {
+            pending
+                .remove(&target)
+                .map(|submission| (target, submission, outcome, session))
+        })
+        .collect()
 }
 
 fn can_submit_to(
@@ -347,25 +390,46 @@ enum ComposerEscapeAction {
 fn composer_escape(
     running: bool,
     has_queued_steer: bool,
+    has_queued_follow_up: bool,
+    has_pending_submission: bool,
     current_target: &str,
     armed: Option<&(String, Instant)>,
     now: Instant,
 ) -> (ComposerEscapeAction, Option<(String, Instant)>) {
-    if !running {
-        return (ComposerEscapeAction::None, None);
-    }
     let armed_here = armed.is_some_and(|(target, at)| {
         target == current_target && now.saturating_duration_since(*at) <= COMPOSER_ABORT_DOUBLE_TAP
     });
     if armed_here {
         (ComposerEscapeAction::Abort, None)
+    } else if has_queued_steer || has_queued_follow_up || has_pending_submission {
+        (
+            ComposerEscapeAction::ApplySteering,
+            Some((current_target.to_owned(), now)),
+        )
+    } else if running {
+        (
+            ComposerEscapeAction::None,
+            Some((current_target.to_owned(), now)),
+        )
     } else {
-        let action = if has_queued_steer {
-            ComposerEscapeAction::ApplySteering
-        } else {
-            ComposerEscapeAction::None
-        };
-        (action, Some((current_target.to_owned(), now)))
+        (ComposerEscapeAction::None, None)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComposerEscapeKeyAction {
+    Ignore,
+    Consume,
+    Dispatch,
+}
+
+fn composer_escape_key(event: &KeyDownEvent) -> ComposerEscapeKeyAction {
+    if event.keystroke.modifiers.modified() || !event.keystroke.key.eq_ignore_ascii_case("escape") {
+        ComposerEscapeKeyAction::Ignore
+    } else if event.is_held {
+        ComposerEscapeKeyAction::Consume
+    } else {
+        ComposerEscapeKeyAction::Dispatch
     }
 }
 

@@ -47,8 +47,21 @@ struct PromptDelivery {
     request_id: String,
     mode: PromptMode,
     message: String,
+    content: Value,
+    delivery_tracked: bool,
     acknowledged: bool,
     delivered: bool,
+    aborted: bool,
+}
+
+impl PromptDelivery {
+    fn event(&self, status: &str) -> SessionEvent {
+        activity(json!({
+            "type": "prompt_delivery", "submissionId": self.request_id, "status": status,
+            "message": {"role": "user", "content": self.content,
+                "queued": self.mode != PromptMode::Normal, "deliveryTracked": self.delivery_tracked},
+        }))
+    }
 }
 
 pub(super) struct WorkerSessionTransport {
@@ -58,6 +71,7 @@ pub(super) struct WorkerSessionTransport {
     worker: Box<dyn WorkerSession>,
     pending: VecDeque<SessionEvent>,
     next_id: u64,
+    request_namespace: uuid::Uuid,
     pending_prompts: BTreeMap<String, PendingPrompt>,
     prompt_deliveries: VecDeque<PromptDelivery>,
     running: bool,
@@ -114,6 +128,7 @@ impl WorkerSessionTransport {
             worker,
             pending: VecDeque::new(),
             next_id: 0,
+            request_namespace: uuid::Uuid::new_v4(),
             pending_prompts: BTreeMap::new(),
             prompt_deliveries: VecDeque::new(),
             running: false,
@@ -142,6 +157,16 @@ impl WorkerSessionTransport {
         let Some(PendingPrompt { requested_mode }) = self.pending_prompts.remove(&id) else {
             return;
         };
+        // A committed input is stronger evidence than a delayed request error.
+        let result = if self
+            .prompt_deliveries
+            .iter()
+            .any(|delivery| delivery.request_id == id && delivery.delivered)
+        {
+            Ok(())
+        } else {
+            result
+        };
         if result.is_ok() {
             self.message_count = self.message_count.saturating_add(1);
             if let Some(delivery) = self
@@ -151,12 +176,22 @@ impl WorkerSessionTransport {
             {
                 delivery.acknowledged = true;
                 if !delivery.delivered {
+                    self.pending.push_back(delivery.event("accepted"));
+                }
+                if !delivery.delivered && !delivery.aborted {
                     let mode = delivery.mode;
                     let message = delivery.message.clone();
                     self.enqueue_message(mode, message);
                 }
             }
         } else {
+            if let Some(delivery) = self
+                .prompt_deliveries
+                .iter()
+                .find(|delivery| delivery.request_id == id)
+            {
+                self.pending.push_back(delivery.event("rejected"));
+            }
             self.prompt_deliveries
                 .retain(|delivery| delivery.request_id != id);
         }
@@ -200,32 +235,41 @@ impl WorkerSessionTransport {
         submission_id: Option<&str>,
         mode: WorkerSendMode,
         message: &str,
-    ) {
+    ) -> Option<String> {
         let delivery_mode = match mode {
-            WorkerSendMode::Prompt => return,
+            WorkerSendMode::Prompt => PromptMode::Normal,
             WorkerSendMode::Steer => PromptMode::Steer,
             WorkerSendMode::Queue => PromptMode::FollowUp,
         };
-        let acknowledged = self
+        let matched = self
             .prompt_deliveries
             .iter_mut()
             .find(|delivery| {
                 !delivery.delivered
-                    && delivery.mode == delivery_mode
-                    && delivery.message == message
-                    && submission_id.is_none_or(|id| delivery.request_id == id)
+                    && match submission_id {
+                        Some(id) => delivery.request_id == id,
+                        None => delivery.mode == delivery_mode && delivery.message == message,
+                    }
             })
             .map(|delivery| {
                 delivery.delivered = true;
-                delivery.acknowledged
+                (
+                    delivery.request_id.clone(),
+                    delivery.acknowledged,
+                    delivery.mode,
+                    delivery.message.clone(),
+                )
             });
-        if acknowledged == Some(true) {
-            self.remove_queued_message(delivery_mode, message);
-        } else if acknowledged.is_none() && submission_id.is_none() {
+        if let Some((_, true, mode, text)) = &matched {
+            self.remove_queued_message(*mode, text);
+        } else if matched.is_none() && submission_id.is_none() {
             self.remove_queued_message(delivery_mode, message);
         }
         self.prompt_deliveries
             .retain(|delivery| !(delivery.acknowledged && delivery.delivered));
+        matched
+            .map(|(id, ..)| id)
+            .or_else(|| submission_id.map(str::to_owned))
     }
 
     fn remove_queued_message(&mut self, mode: PromptMode, message: &str) {
@@ -240,8 +284,15 @@ impl WorkerSessionTransport {
         }
     }
 
-    fn clear_queue(&mut self) {
-        self.prompt_deliveries.clear();
+    fn stop_queue(&mut self) {
+        // Sending an interrupt does not establish input rejection. Keep receipt
+        // correlation for late replies while removing cancelled execution intent.
+        for delivery in &mut self.prompt_deliveries {
+            delivery.aborted = true;
+            if !delivery.acknowledged && !delivery.delivered {
+                self.pending.push_back(delivery.event("unknown"));
+            }
+        }
         if self.steering.is_empty() && self.follow_up.is_empty() {
             return;
         }
@@ -290,9 +341,23 @@ impl WorkerSessionTransport {
             }
             WorkerEvent::Failed(error) => {
                 for id in self.pending_prompts.keys().cloned().collect::<Vec<_>>() {
-                    self.finish_prompt_ack(id, Err(error.clone()));
+                    if self
+                        .prompt_deliveries
+                        .iter()
+                        .any(|delivery| delivery.request_id == id && delivery.delivered)
+                    {
+                        self.finish_prompt_ack(id, Ok(()));
+                    } else if let Some(prompt) = self.pending_prompts.remove(&id) {
+                        self.pending.push_back(SessionEvent::Response(
+                            SessionResponse::prompt_delivery_unknown(
+                                id,
+                                prompt.requested_mode,
+                                error.clone(),
+                            ),
+                        ));
+                    }
                 }
-                self.clear_queue();
+                self.stop_queue();
                 self.pending.push_back(SessionEvent::Failure(error));
             }
         }
@@ -556,10 +621,16 @@ impl WorkerSessionTransport {
         text: &str,
         content: Value,
     ) {
-        self.acknowledge_delivery(submission_id, mode, text);
+        let submission_id = self.acknowledge_delivery(submission_id, mode, text);
         self.finish_assistant_message(None);
         let message =
             json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
+        if let Some(id) = submission_id {
+            self.pending.push_back(activity(json!({
+                "type": "prompt_delivery", "submissionId": id, "status": "delivered", "message": message,
+            })));
+            return;
+        }
         for event_type in ["message_start", "message_end"] {
             self.pending
                 .push_back(activity(json!({"type":event_type, "message":message})));
@@ -629,9 +700,20 @@ impl WorkerSessionTransport {
 }
 
 impl SessionTransport for WorkerSessionTransport {
+    fn tracks_prompt_delivery(&self, mode: PromptMode) -> bool {
+        self.worker.tracks_prompt_delivery(match mode {
+            PromptMode::Normal => WorkerSendMode::Prompt,
+            PromptMode::Steer => WorkerSendMode::Steer,
+            PromptMode::FollowUp => WorkerSendMode::Queue,
+        })
+    }
+
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
         self.next_id = self.next_id.saturating_add(1);
-        let id = format!("{}-{}", self.harness, self.next_id);
+        let id = format!(
+            "{}-{}-{}",
+            self.harness, self.request_namespace, self.next_id
+        );
         match command {
             SessionCommand::ConfigureSteering => {
                 self.response(Some(id.clone()), Payload::ConfigureSteering)
@@ -686,28 +768,40 @@ impl SessionTransport for WorkerSessionTransport {
                     PromptMode::Steer => WorkerSendMode::Steer,
                     PromptMode::FollowUp => WorkerSendMode::Queue,
                 };
-                let queued_message = (mode != PromptMode::Normal).then(|| message.clone());
+                // Inline attachment data before dispatch: a later cancellation
+                // must not depend on a temporary composer file still existing.
+                let images = images
+                    .into_iter()
+                    .map(|image| image.into_inline())
+                    .collect::<Result<Vec<_>, _>>()?;
+                let (tracked_message, content) = {
+                    let mut content = vec![json!({"type": "text", "text": message})];
+                    content.extend(images.iter().map(|image| json!({"type": "image", "data": image.data, "mimeType": image.mime_type})));
+                    (message.clone(), json!(content))
+                };
+                let delivery_tracked = self.worker.tracks_prompt_delivery(worker_mode);
                 let accepted =
                     self.worker
                         .submit_prompt(id.clone(), message, worker_mode, images)?;
                 self.pending_prompts
                     .insert(id.clone(), PendingPrompt { requested_mode });
-                if let Some(message) = queued_message {
-                    self.prompt_deliveries.push_back(PromptDelivery {
-                        request_id: id.clone(),
-                        mode,
-                        message,
-                        acknowledged: false,
-                        delivered: false,
-                    });
-                }
+                self.prompt_deliveries.push_back(PromptDelivery {
+                    request_id: id.clone(),
+                    mode,
+                    message: tracked_message,
+                    content,
+                    delivery_tracked,
+                    acknowledged: false,
+                    delivered: false,
+                    aborted: false,
+                });
                 if accepted {
                     self.finish_prompt_ack(id.clone(), Ok(()));
                 }
             }
             SessionCommand::Abort => {
                 self.worker.abort()?;
-                self.clear_queue();
+                self.stop_queue();
                 self.response(Some(id.clone()), Payload::Abort);
             }
             SessionCommand::SelectModel { provider, model_id } => {

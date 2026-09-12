@@ -19,6 +19,11 @@ mod notices_tests;
 
 #[path = "conversation/attachments.rs"]
 mod attachments;
+#[path = "conversation/delivery.rs"]
+mod delivery;
+#[cfg(test)]
+#[path = "conversation/delivery_tests.rs"]
+mod delivery_tests;
 #[path = "conversation/history.rs"]
 mod history;
 #[path = "conversation/stream.rs"]
@@ -213,6 +218,7 @@ pub(crate) struct ConversationState {
     projected_content: std::collections::BTreeSet<usize>,
     tools: HashMap<String, usize>,
     optimistic_user: Option<Arc<TranscriptItem>>,
+    submitted_users: HashMap<String, delivery::SubmittedUser>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -320,7 +326,7 @@ impl ConversationState {
         let Some(index) = self.items.rposition(|item| Arc::ptr_eq(item, optimistic)) else {
             return false;
         };
-        self.items.remove(index);
+        self.remove_transcript_item(index);
         if self
             .optimistic_user
             .as_ref()
@@ -329,6 +335,30 @@ impl ConversationState {
             self.optimistic_user = None;
         }
         true
+    }
+
+    fn remove_transcript_item(&mut self, index: usize) {
+        self.items.remove(index);
+        let shift = |offset: usize| offset - usize::from(offset > index);
+        if let Some(live) = &mut self.live_message {
+            if index < live.start {
+                live.start -= 1;
+            } else if index < live.start + live.len {
+                live.len -= 1;
+            }
+        }
+        self.tools.retain(|_, offset| {
+            if *offset == index {
+                return false;
+            }
+            *offset = shift(*offset);
+            true
+        });
+        self.run_started_at = self.run_started_at.map(shift);
+        for range in &mut self.completed_runs {
+            range.start = shift(range.start);
+            range.end = shift(range.end);
+        }
     }
 
     pub(crate) fn begin_run(&mut self) {
@@ -481,3 +511,7 @@ fn strings(value: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 #[path = "conversation/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "conversation/receipt_fallback_tests.rs"]
+mod receipt_fallback_tests;

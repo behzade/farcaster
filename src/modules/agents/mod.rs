@@ -16,20 +16,21 @@ pub(crate) use adapter::{
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AgentLaunchConfig, ConfigurationCatalog, DiscoveredHistory, DiscoveredSession, DiscoveredUsage,
-    HarnessAccessMode, PeerMessage, PromptPresentation, QueuedPrompt, SandboxState,
+    HarnessAccessMode, PeerMessage, PromptOutcome, PromptPresentation, QueuedPrompt, SandboxState,
     SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
     SessionHistory, SessionLaunch, SessionMetadata, SessionOperation, SessionResponse,
-    SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
-    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerSnapshot, WorkerStatus,
-    valid_worker_name,
+    SessionResponseErrorKind, SessionResponsePayload, SessionStart, SessionTransport, SessionUsage,
+    SessionUsageTokens, StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
+    WorkerSnapshot, WorkerStatus, valid_worker_name,
 };
 pub(crate) use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool, PromptStore,
     TokenUsage, ToolCategory, ToolMetadata, ToolReviewState, WorkerActivity, WorkerActivityState,
     WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerLaunch, WorkerPool,
     WorkerProfile, WorkerProfiles, WorkerSendMode, WorkerSession, WorkerSessionFactory,
-    WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt_with_presentation, fail_prompt,
-    has_queued_prompts_for, is_child_input_id, queued_prompts,
+    WorkerUsage, begin_prompt, complete_prompt_with_receipt, enqueue_prompt_with_presentation,
+    fail_prompt, has_queued_prompts_for, is_child_input_id, mark_prompt_delivery_unknown,
+    queued_prompts,
 };
 
 #[cfg(test)]

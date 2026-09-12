@@ -28,7 +28,22 @@ impl SessionResponse {
     ) -> Self {
         Self {
             id,
-            result: Err(SessionResponseError { operation, message }),
+            result: Err(SessionResponseError {
+                operation,
+                message,
+                kind: SessionResponseErrorKind::RejectedBeforeAcceptance,
+            }),
+        }
+    }
+
+    pub(crate) fn prompt_delivery_unknown(id: String, mode: PromptMode, message: String) -> Self {
+        Self {
+            id: Some(id),
+            result: Err(SessionResponseError {
+                operation: SessionOperation::Prompt(mode),
+                message,
+                kind: SessionResponseErrorKind::DeliveryUnknown,
+            }),
         }
     }
 
@@ -45,6 +60,23 @@ impl SessionResponse {
 pub(crate) struct SessionResponseError {
     pub(crate) operation: SessionOperation,
     pub(crate) message: String,
+    pub(crate) kind: SessionResponseErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SessionResponseErrorKind {
+    #[default]
+    RejectedBeforeAcceptance,
+    DeliveryUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PromptOutcome {
+    Accepted,
+    RejectedBeforeAcceptance,
+    /// The session ended without a native receipt. Durable outbox recovery owns
+    /// later disposition; the composer must release its in-memory submission.
+    DeliveryUnknown,
 }
 
 #[derive(Clone, Debug, PartialEq)]

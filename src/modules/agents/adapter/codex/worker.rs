@@ -2,7 +2,7 @@
 mod commands;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     io::{BufReader, Write as _},
     process::{Child, ChildStdin, Stdio},
     sync::mpsc,
@@ -130,7 +130,13 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             pending_inputs: HashMap::new(),
             prompt_requests: HashMap::new(),
             client_submissions: HashMap::new(),
+            native_inputs: HashMap::new(),
+            native_input_order: VecDeque::new(),
+            handoff: None,
+            batch_deliveries: HashMap::new(),
+            normal_start_clients: HashMap::new(),
             prompt_acks: VecDeque::new(),
+            acknowledged_prompts: HashSet::new(),
             queued_inbound: VecDeque::new(),
             peer_messages: VecDeque::new(),
             events: VecDeque::from([WorkerEvent::SessionChanged { locator: thread_id }]),
@@ -274,7 +280,13 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         pending_inputs: HashMap::new(),
         prompt_requests: HashMap::new(),
         client_submissions: HashMap::new(),
+        native_inputs: HashMap::new(),
+        native_input_order: VecDeque::new(),
+        handoff: None,
+        batch_deliveries: HashMap::new(),
+        normal_start_clients: HashMap::new(),
         prompt_acks: VecDeque::new(),
+        acknowledged_prompts: HashSet::new(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
@@ -543,6 +555,88 @@ enum PendingRequest {
         operation: &'static str,
         client_id: Option<String>,
     },
+    QueueDelete {
+        client_id: String,
+    },
+    HandoffTurn {
+        client_id: String,
+        starts_turn: bool,
+    },
+}
+
+#[derive(Clone)]
+struct NativeInputDelivery {
+    submission_id: Option<String>,
+    mode: WorkerSendMode,
+    message: String,
+    images: Vec<crate::protocol::PromptImage>,
+}
+
+impl NativeInputDelivery {
+    fn activity(self) -> WorkerActivity {
+        match (self.submission_id, self.images.is_empty()) {
+            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
+                submission_id,
+                mode: self.mode,
+                message: self.message,
+            },
+            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id,
+                mode: self.mode,
+                message: self.message,
+                images: self.images,
+            },
+            (None, true) => WorkerActivity::InputDelivered {
+                mode: self.mode,
+                message: self.message,
+            },
+            (None, false) => WorkerActivity::InputDeliveredWithImages {
+                mode: self.mode,
+                message: self.message,
+                images: self.images,
+            },
+        }
+    }
+}
+
+enum SteerReceipt {
+    Pending,
+    Accepted,
+    RejectedByTurnRace,
+}
+
+enum NativeInputKind {
+    Steer {
+        receipt: SteerReceipt,
+    },
+    Queue {
+        queue_id: Option<String>,
+        claim_pending: bool,
+        claimed: bool,
+        claim_lost: bool,
+    },
+}
+
+struct PendingNativeInput {
+    input: Vec<CodexUserInput>,
+    delivery: NativeInputDelivery,
+    kind: NativeInputKind,
+    handoff: bool,
+    cancel_on_delivery: bool,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HandoffPhase {
+    Interrupting,
+    Claiming,
+    Submitted,
+}
+
+struct Handoff {
+    phase: HandoffPhase,
+    cancelled: bool,
+    wait_for_active_turn: bool,
+    target_turn: Option<String>,
 }
 
 struct CodexWorkerSession {
@@ -570,7 +664,13 @@ struct CodexWorkerSession {
     pending_inputs: HashMap<String, CodexRequestId>,
     prompt_requests: HashMap<CodexRequestId, String>,
     client_submissions: HashMap<String, String>,
+    native_inputs: HashMap<String, PendingNativeInput>,
+    native_input_order: VecDeque<String>,
+    handoff: Option<Handoff>,
+    batch_deliveries: HashMap<String, Vec<(NativeInputDelivery, bool)>>,
+    normal_start_clients: HashMap<CodexRequestId, String>,
     prompt_acks: VecDeque<(String, Result<(), String>)>,
+    acknowledged_prompts: HashSet<String>,
     queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
     events: VecDeque<WorkerEvent>,
@@ -578,6 +678,10 @@ struct CodexWorkerSession {
 }
 
 impl WorkerSession for CodexWorkerSession {
+    fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
+        true
+    }
+
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
         self.send_with_images(message, mode, Vec::new())
     }
@@ -639,17 +743,61 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
+        let handoff_phase = self.handoff.as_ref().map(|handoff| handoff.phase);
+        if handoff_phase.is_some() {
+            self.cancel_handoff()?;
+            if handoff_phase != Some(HandoffPhase::Submitted) {
+                return Ok(());
+            }
+        }
         let Some(turn_id) = self.current_turn.clone() else {
-            if self
-                .pending
-                .values()
-                .any(|request| matches!(request, PendingRequest::StartTurn))
-            {
+            if self.pending.values().any(|request| {
+                matches!(
+                    request,
+                    PendingRequest::StartTurn
+                        | PendingRequest::HandoffTurn {
+                            starts_turn: true,
+                            ..
+                        }
+                )
+            }) {
                 self.abort_starting_turn = true;
             }
             return Ok(());
         };
         self.interrupt_turn(&turn_id)
+    }
+
+    fn apply_steering(&mut self) -> Result<(), String> {
+        if self.handoff.is_some() {
+            return Ok(());
+        }
+        let mut has_pending = false;
+        for input in self.native_inputs.values_mut() {
+            input.handoff = true;
+            has_pending = true;
+        }
+        if !has_pending {
+            return Ok(());
+        }
+        self.handoff = Some(Handoff {
+            phase: HandoffPhase::Interrupting,
+            cancelled: false,
+            wait_for_active_turn: false,
+            target_turn: self.current_turn.clone(),
+        });
+        if let Some(turn_id) = self.current_turn.clone() {
+            self.interrupt_turn(&turn_id)
+        } else if self
+            .pending
+            .values()
+            .any(|request| matches!(request, PendingRequest::StartTurn))
+        {
+            self.abort_starting_turn = true;
+            Ok(())
+        } else {
+            self.begin_handoff_claims()
+        }
     }
 
     fn compact(&mut self) -> Result<(), String> {
@@ -715,17 +863,40 @@ impl WorkerSession for CodexWorkerSession {
             match &inbound {
                 Ok(CodexInbound::Response { id, result }) => {
                     if let Some(prompt) = self.prompt_requests.remove(id) {
-                        let accepted =
-                            if matches!(self.pending.get(id), Some(PendingRequest::StartTurn)) {
+                        let accepted = match self.pending.get(id) {
+                            Some(PendingRequest::StartTurn) => {
                                 serde_json::from_value::<TurnResponse>(result.clone())
                                     .map(|_| ())
                                     .map_err(|error| {
                                         format!("decode Codex turn acknowledgement: {error}")
                                     })
-                            } else {
-                                Ok(())
-                            };
-                        self.prompt_acks.push_back((prompt, accepted));
+                            }
+                            Some(PendingRequest::Control {
+                                operation: "queue", ..
+                            }) => queue_submission_id(result).map(|_| ()),
+                            Some(PendingRequest::Control {
+                                operation: "steer", ..
+                            }) => result
+                                .get("turnId")
+                                .and_then(Value::as_str)
+                                .map(|_| ())
+                                .ok_or_else(|| {
+                                    "decode Codex steer acknowledgement: missing turnId".into()
+                                }),
+                            _ => Ok(()),
+                        };
+                        if accepted.is_ok() {
+                            if let Some(PendingRequest::Control {
+                                client_id: Some(client_id),
+                                ..
+                            }) = self.pending.get(id)
+                                && let Some(input) = self.native_inputs.get_mut(client_id)
+                                && let NativeInputKind::Steer { receipt } = &mut input.kind
+                            {
+                                *receipt = SteerReceipt::Accepted;
+                            }
+                            self.record_prompt_ack(prompt, Ok(()));
+                        }
                     }
                 }
                 _ => {}
@@ -753,15 +924,20 @@ impl WorkerSession for CodexWorkerSession {
                         }
                     }
                     Some(PendingRequest::StartTurn) => {
+                        let normal_client_id = self.normal_start_clients.remove(&id);
                         let turn = match serde_json::from_value::<TurnResponse>(result) {
                             Ok(response) => response.turn,
                             Err(error) => {
+                                if let Some(client_id) = normal_client_id {
+                                    self.batch_deliveries.remove(&client_id);
+                                }
                                 return Some(WorkerEvent::Failed(format!(
                                     "decode Codex worker turn: {error}"
                                 )));
                             }
                         };
                         let started = self.begin_turn(&turn.id);
+                        self.capture_handoff_target(&turn.id);
                         if let Err(error) = self.interrupt_started_turn_if_requested() {
                             return Some(WorkerEvent::Failed(error));
                         }
@@ -805,19 +981,97 @@ impl WorkerSession for CodexWorkerSession {
                             ));
                         }
                     }
+                    Some(PendingRequest::Control {
+                        operation,
+                        client_id,
+                    }) => {
+                        if let Some(client_id) = client_id
+                            && let Err(error) =
+                                self.control_response(operation, &client_id, &result)
+                        {
+                            return Some(WorkerEvent::Failed(error));
+                        }
+                    }
+                    Some(PendingRequest::QueueDelete { client_id }) => {
+                        let deleted = result.get("deleted").and_then(Value::as_bool);
+                        if let Err(error) = self.queue_delete_response(&client_id, deleted) {
+                            return Some(WorkerEvent::Failed(error));
+                        }
+                    }
+                    Some(PendingRequest::HandoffTurn {
+                        client_id,
+                        starts_turn,
+                    }) => {
+                        let started_turn = if starts_turn {
+                            match serde_json::from_value::<TurnResponse>(result) {
+                                Ok(response) => Some(response.turn),
+                                Err(error) => {
+                                    return Some(WorkerEvent::Failed(format!(
+                                        "decode Codex handoff turn: {error}"
+                                    )));
+                                }
+                            }
+                        } else if result.get("turnId").and_then(Value::as_str).is_some() {
+                            None
+                        } else {
+                            return Some(WorkerEvent::Failed(
+                                "decode Codex handoff steer: missing turnId".into(),
+                            ));
+                        };
+                        let mut admitted = Vec::new();
+                        if let Some(deliveries) = self.batch_deliveries.get_mut(&client_id) {
+                            for (delivery, needs_ack) in deliveries {
+                                if *needs_ack {
+                                    if let Some(submission_id) = delivery.submission_id.clone() {
+                                        admitted.push(submission_id);
+                                    }
+                                    *needs_ack = false;
+                                }
+                            }
+                        }
+                        for submission_id in admitted {
+                            self.record_prompt_ack(submission_id, Ok(()));
+                        }
+                        if let Some(turn) = started_turn {
+                            let started = self.begin_turn(&turn.id);
+                            if let Err(error) = self.interrupt_started_turn_if_requested() {
+                                return Some(WorkerEvent::Failed(error));
+                            }
+                            if started {
+                                self.events.push_back(WorkerEvent::Started);
+                            }
+                        }
+                    }
                     Some(
                         PendingRequest::Ignore
-                        | PendingRequest::Control { .. }
                         | PendingRequest::ObsoleteChildStatus
                         | PendingRequest::ObsoleteSkills,
                     )
                     | None => {}
                 },
                 Ok(CodexInbound::Error { id, error }) => {
+                    let retry_handoff_steer = match self.pending.get(&id) {
+                        Some(PendingRequest::Control {
+                            operation: "steer",
+                            client_id: Some(client_id),
+                        }) => self.native_inputs.get(client_id).is_some_and(|input| {
+                            steer_rejected_by_turn_race(&error)
+                                && input.handoff
+                                && self.handoff.as_ref().is_some_and(|handoff| {
+                                    !handoff.cancelled
+                                        && matches!(
+                                            handoff.phase,
+                                            HandoffPhase::Interrupting | HandoffPhase::Claiming
+                                        )
+                                })
+                        }),
+                        _ => false,
+                    };
                     let rejected_prompt = self.prompt_requests.remove(&id);
                     if let Some(prompt) = rejected_prompt.as_ref() {
-                        self.prompt_acks
-                            .push_back((prompt.clone(), Err(error.message.clone())));
+                        if !retry_handoff_steer {
+                            self.record_prompt_ack(prompt.clone(), Err(error.message.clone()));
+                        }
                     }
                     match self.pending.remove(&id) {
                         Some(PendingRequest::Command(request)) => {
@@ -844,6 +1098,9 @@ impl WorkerSession for CodexWorkerSession {
                             continue;
                         }
                         Some(PendingRequest::StartTurn) => {
+                            if let Some(client_id) = self.normal_start_clients.remove(&id) {
+                                self.batch_deliveries.remove(&client_id);
+                            }
                             self.abort_starting_turn = false;
                             self.caller_identity.set_activity(WorkerActivityState::Idle);
                         }
@@ -851,8 +1108,23 @@ impl WorkerSession for CodexWorkerSession {
                             operation,
                             client_id,
                         }) => {
+                            if retry_handoff_steer {
+                                if let Some(client_id) = client_id.as_deref()
+                                    && let Some(input) = self.native_inputs.get_mut(client_id)
+                                    && let NativeInputKind::Steer { receipt } = &mut input.kind
+                                {
+                                    *receipt = SteerReceipt::RejectedByTurnRace;
+                                }
+                                if let Err(submit_error) = self.maybe_submit_handoff() {
+                                    return Some(WorkerEvent::Failed(submit_error));
+                                }
+                                continue;
+                            }
                             if let Some(client_id) = client_id {
                                 self.client_submissions.remove(&client_id);
+                                self.native_inputs.remove(&client_id);
+                                self.native_input_order
+                                    .retain(|queued| queued != &client_id);
                             }
                             zlog::warn!(
                                 "Codex {operation} request was rejected: {}",
@@ -863,6 +1135,42 @@ impl WorkerSession for CodexWorkerSession {
                             }
                             return Some(WorkerEvent::RequestFailed {
                                 operation: format!("Codex {operation}"),
+                                error: error.message,
+                            });
+                        }
+                        Some(PendingRequest::QueueDelete { client_id }) => {
+                            if let Some(input) = self.native_inputs.get_mut(&client_id) {
+                                input.handoff = false;
+                                if let NativeInputKind::Queue { claim_pending, .. } =
+                                    &mut input.kind
+                                {
+                                    *claim_pending = false;
+                                }
+                            }
+                            if let Err(submit_error) = self.maybe_submit_handoff() {
+                                return Some(WorkerEvent::Failed(submit_error));
+                            }
+                            zlog::warn!(
+                                "Codex queue delete request was rejected: {}",
+                                error.message
+                            );
+                            continue;
+                        }
+                        Some(PendingRequest::HandoffTurn { client_id, .. }) => {
+                            if let Some(deliveries) = self.batch_deliveries.remove(&client_id) {
+                                for (delivery, needs_ack) in deliveries {
+                                    if needs_ack && let Some(submission_id) = delivery.submission_id
+                                    {
+                                        self.record_prompt_ack(
+                                            submission_id,
+                                            Err(error.message.clone()),
+                                        );
+                                    }
+                                }
+                            }
+                            self.handoff = None;
+                            return Some(WorkerEvent::RequestFailed {
+                                operation: "Codex steering handoff".into(),
                                 error: error.message,
                             });
                         }
@@ -913,6 +1221,10 @@ impl WorkerSession for CodexWorkerSession {
                         "turn/started" => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
                                 let started = self.begin_turn(turn_id);
+                                self.capture_handoff_target(turn_id);
+                                if let Err(error) = self.maybe_submit_handoff() {
+                                    return Some(WorkerEvent::Failed(error));
+                                }
                                 if let Err(error) = self.interrupt_started_turn_if_requested() {
                                     return Some(WorkerEvent::Failed(error));
                                 }
@@ -1150,8 +1462,35 @@ impl WorkerSession for CodexWorkerSession {
                             ));
                         }
                         "turn/completed" => {
+                            let Some(completed_turn) =
+                                params["turn"]["id"].as_str().map(str::to_owned)
+                            else {
+                                log_bad_codex_notification(
+                                    &method,
+                                    &params,
+                                    "turn completion is missing turn id",
+                                );
+                                continue;
+                            };
+                            if self.current_turn.as_deref() != Some(completed_turn.as_str()) {
+                                continue;
+                            }
                             self.current_turn = None;
                             self.caller_identity.set_activity(WorkerActivityState::Idle);
+                            if self.handoff.as_ref().is_some_and(|handoff| {
+                                handoff.phase == HandoffPhase::Interrupting
+                                    && handoff.target_turn.as_deref()
+                                        == Some(completed_turn.as_str())
+                            }) {
+                                if params["turn"]["status"].as_str() == Some("interrupted") {
+                                    if let Err(error) = self.begin_handoff_claims() {
+                                        return Some(WorkerEvent::Failed(error));
+                                    }
+                                    self.discard_cancelled_steers();
+                                } else if let Some(handoff) = self.handoff.as_mut() {
+                                    handoff.cancelled = true;
+                                }
+                            }
                             let failed = params["turn"]["status"].as_str() == Some("failed");
                             if self.manual_compaction {
                                 self.manual_compaction = false;
@@ -1281,7 +1620,44 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn record_prompt_ack(&mut self, id: String, result: Result<(), String>) {
+        if self.acknowledged_prompts.insert(id.clone()) {
+            self.prompt_acks.push_back((id, result));
+        }
+    }
+
     fn input_delivery(&mut self, item: &Value) -> Option<WorkerActivity> {
+        if item.get("type").and_then(Value::as_str) == Some("userMessage")
+            && let Some(client_id) = item.get("clientId").and_then(Value::as_str)
+        {
+            if let Some(deliveries) = self.batch_deliveries.remove(client_id) {
+                let mut activities = deliveries
+                    .into_iter()
+                    .map(|(delivery, _)| delivery.activity());
+                let first = activities.next();
+                self.events.extend(activities.map(WorkerEvent::Activity));
+                if client_id.starts_with(HANDOFF_CLIENT_ID_PREFIX) {
+                    self.handoff = None;
+                }
+                return first;
+            }
+            if let Some(input) = self.native_inputs.remove(client_id) {
+                self.native_input_order.retain(|queued| queued != client_id);
+                self.client_submissions.remove(client_id);
+                if input.cancel_on_delivery
+                    && let Some(turn_id) = self.current_turn.clone()
+                    && let Err(error) = self.interrupt_turn(&turn_id)
+                {
+                    self.events.push_back(WorkerEvent::Failed(error));
+                }
+                let activity = input.delivery.activity();
+                self.finish_cancelled_handoff();
+                if let Err(error) = self.maybe_submit_handoff() {
+                    self.events.push_back(WorkerEvent::Failed(error));
+                }
+                return Some(activity);
+            }
+        }
         let activity = codex_input_delivery(item)?;
         let submission_id = item
             .get("clientId")
@@ -1319,15 +1695,25 @@ impl CodexWorkerSession {
         images: Vec<crate::protocol::PromptImage>,
         submission_id: Option<&str>,
     ) -> Result<(), String> {
+        let delivery = NativeInputDelivery {
+            submission_id: submission_id.map(str::to_owned),
+            mode,
+            message: message.clone(),
+            images: images.clone(),
+        };
         let mut input = self.skills.input(message);
-        let images = images
+        let inline_images = images
             .into_iter()
             .map(crate::protocol::PromptImage::into_inline)
             .collect::<Result<Vec<_>, _>>()?;
-        input.extend(images.into_iter().map(|image| CodexUserInput::Image {
-            url: format!("data:{};base64,{}", image.mime_type, image.data),
-        }));
-        self.send_input(input, mode, submission_id)
+        input.extend(
+            inline_images
+                .into_iter()
+                .map(|image| CodexUserInput::Image {
+                    url: format!("data:{};base64,{}", image.mime_type, image.data),
+                }),
+        );
+        self.send_input(input, mode, submission_id, delivery)
     }
 
     fn interrupt_turn(&mut self, turn_id: &str) -> Result<(), String> {
@@ -1345,6 +1731,15 @@ impl CodexWorkerSession {
         Ok(())
     }
 
+    fn capture_handoff_target(&mut self, turn_id: &str) {
+        if let Some(handoff) = self.handoff.as_mut()
+            && handoff.phase == HandoffPhase::Interrupting
+            && handoff.target_turn.is_none()
+        {
+            handoff.target_turn = Some(turn_id.to_owned());
+        }
+    }
+
     fn interrupt_started_turn_if_requested(&mut self) -> Result<(), String> {
         if !self.abort_starting_turn {
             return Ok(());
@@ -1355,6 +1750,322 @@ impl CodexWorkerSession {
         self.interrupt_turn(&turn_id)?;
         self.abort_starting_turn = false;
         Ok(())
+    }
+
+    fn control_response(
+        &mut self,
+        operation: &'static str,
+        client_id: &str,
+        result: &Value,
+    ) -> Result<(), String> {
+        if operation == "steer" {
+            if result.get("turnId").and_then(Value::as_str).is_none() {
+                return Err("decode Codex steer acknowledgement: missing turnId".into());
+            }
+            return self.maybe_submit_handoff();
+        }
+        if operation != "queue" {
+            return Ok(());
+        }
+        let queue_id = queue_submission_id(result)?;
+        let should_delete = if let Some(input) = self.native_inputs.get_mut(client_id) {
+            let NativeInputKind::Queue {
+                queue_id: stored_id,
+                claim_pending,
+                ..
+            } = &mut input.kind
+            else {
+                return Ok(());
+            };
+            *stored_id = Some(queue_id.clone());
+            let should_delete = input.handoff
+                && self.handoff.as_ref().is_some_and(|handoff| {
+                    handoff.cancelled || handoff.phase == HandoffPhase::Claiming
+                });
+            if should_delete {
+                *claim_pending = true;
+            }
+            should_delete
+        } else {
+            false
+        };
+        if should_delete {
+            self.delete_queued_input(client_id, &queue_id)?;
+        }
+        Ok(())
+    }
+
+    fn begin_handoff_claims(&mut self) -> Result<(), String> {
+        let Some(handoff) = self.handoff.as_mut() else {
+            return Ok(());
+        };
+        handoff.phase = HandoffPhase::Claiming;
+        let mut deletes = Vec::new();
+        for client_id in &self.native_input_order {
+            let Some(input) = self.native_inputs.get_mut(client_id) else {
+                continue;
+            };
+            if !input.handoff {
+                continue;
+            }
+            if let NativeInputKind::Queue {
+                queue_id: Some(queue_id),
+                claim_pending,
+                claimed,
+                ..
+            } = &mut input.kind
+                && !*claim_pending
+                && !*claimed
+            {
+                *claim_pending = true;
+                deletes.push((client_id.clone(), queue_id.clone()));
+            }
+        }
+        for (client_id, queue_id) in deletes {
+            self.delete_queued_input(&client_id, &queue_id)?;
+        }
+        self.maybe_submit_handoff()
+    }
+
+    fn delete_queued_input(&mut self, client_id: &str, queue_id: &str) -> Result<(), String> {
+        let id = self.request(
+            "thread/queue/delete",
+            json!({"threadId": self.thread_id, "queuedSubmissionId": queue_id}),
+        )?;
+        self.pending.insert(
+            id,
+            PendingRequest::QueueDelete {
+                client_id: client_id.to_owned(),
+            },
+        );
+        Ok(())
+    }
+
+    fn queue_delete_response(
+        &mut self,
+        client_id: &str,
+        deleted: Option<bool>,
+    ) -> Result<(), String> {
+        let Some(input) = self.native_inputs.get_mut(client_id) else {
+            return Ok(());
+        };
+        let NativeInputKind::Queue {
+            claim_pending,
+            claimed,
+            claim_lost,
+            ..
+        } = &mut input.kind
+        else {
+            return Ok(());
+        };
+        *claim_pending = false;
+        let cancelled = self
+            .handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.cancelled);
+        match deleted {
+            Some(true) => *claimed = true,
+            Some(false) => {
+                *claim_lost = true;
+                if let Some(handoff) = self.handoff.as_mut() {
+                    handoff.wait_for_active_turn = true;
+                    input.cancel_on_delivery = handoff.cancelled;
+                }
+            }
+            None => {
+                input.handoff = false;
+                return Err("decode Codex queue deletion: missing deleted flag".into());
+            }
+        }
+        if deleted == Some(true) && cancelled {
+            self.native_inputs.remove(client_id);
+            self.native_input_order.retain(|queued| queued != client_id);
+            self.client_submissions.remove(client_id);
+            self.finish_cancelled_handoff();
+        }
+        self.maybe_submit_handoff()
+    }
+
+    fn maybe_submit_handoff(&mut self) -> Result<(), String> {
+        let Some(handoff) = self.handoff.as_ref() else {
+            return Ok(());
+        };
+        if handoff.cancelled || handoff.phase != HandoffPhase::Claiming {
+            return Ok(());
+        }
+        if handoff.wait_for_active_turn && self.current_turn.is_none() {
+            return Ok(());
+        }
+        let mut selected = Vec::new();
+        for client_id in &self.native_input_order {
+            let Some(input) = self.native_inputs.get(client_id) else {
+                continue;
+            };
+            if !input.handoff {
+                continue;
+            }
+            match &input.kind {
+                NativeInputKind::Steer {
+                    receipt: SteerReceipt::Pending,
+                } => return Ok(()),
+                NativeInputKind::Steer {
+                    receipt: SteerReceipt::Accepted | SteerReceipt::RejectedByTurnRace,
+                } => selected.push(client_id.clone()),
+                NativeInputKind::Queue { queue_id: None, .. }
+                | NativeInputKind::Queue {
+                    claim_pending: true,
+                    ..
+                } => return Ok(()),
+                NativeInputKind::Queue { claimed: true, .. } => selected.push(client_id.clone()),
+                NativeInputKind::Queue { claimed: false, .. } => {}
+            }
+        }
+        if selected.is_empty() {
+            self.handoff = None;
+            return Ok(());
+        }
+
+        let batch_client_id = format!(
+            "{HANDOFF_CLIENT_ID_PREFIX}{}",
+            self.next_id.saturating_add(1)
+        );
+        let mut batch_input = Vec::new();
+        let mut deliveries = Vec::new();
+        for client_id in &selected {
+            let input = self
+                .native_inputs
+                .get(client_id)
+                .expect("selected native input must still exist");
+            if !batch_input.is_empty() {
+                batch_input.push(CodexUserInput::text("\n\n"));
+            }
+            batch_input.extend(input.input.clone());
+            let needs_ack = input
+                .delivery
+                .submission_id
+                .as_ref()
+                .is_some_and(|id| !self.acknowledged_prompts.contains(id));
+            deliveries.push((input.delivery.clone(), needs_ack));
+        }
+        let active_turn = self.current_turn.clone();
+        let (method, params, starts_turn) = if let Some(turn_id) = active_turn {
+            (
+                "turn/steer",
+                json!({
+                    "threadId": self.thread_id,
+                    "expectedTurnId": turn_id,
+                    "clientUserMessageId": batch_client_id,
+                    "input": batch_input,
+                }),
+                false,
+            )
+        } else {
+            (
+                "turn/start",
+                json!({
+                    "threadId": self.thread_id,
+                    "clientUserMessageId": batch_client_id,
+                    "input": batch_input,
+                    "model": self.model,
+                    "effort": self.effort,
+                    "collaborationMode": self.collaboration_mode,
+                }),
+                true,
+            )
+        };
+        let id = self.submission_request(method, params)?;
+        for client_id in selected {
+            self.native_inputs.remove(&client_id);
+            self.client_submissions.remove(&client_id);
+            self.native_input_order
+                .retain(|queued| queued != &client_id);
+        }
+        self.batch_deliveries
+            .insert(batch_client_id.clone(), deliveries);
+        self.pending.insert(
+            id,
+            PendingRequest::HandoffTurn {
+                client_id: batch_client_id,
+                starts_turn,
+            },
+        );
+        if let Some(handoff) = self.handoff.as_mut() {
+            handoff.phase = HandoffPhase::Submitted;
+        }
+        if starts_turn {
+            self.caller_identity
+                .set_activity(WorkerActivityState::Starting);
+        }
+        Ok(())
+    }
+
+    fn cancel_handoff(&mut self) -> Result<(), String> {
+        let Some(handoff) = self.handoff.as_mut() else {
+            return Ok(());
+        };
+        handoff.cancelled = true;
+        let mut deletes = Vec::new();
+        for (client_id, input) in &mut self.native_inputs {
+            if !input.handoff {
+                continue;
+            }
+            if let NativeInputKind::Queue {
+                queue_id: Some(queue_id),
+                claim_pending,
+                claimed,
+                claim_lost,
+            } = &mut input.kind
+            {
+                if *claim_lost {
+                    input.cancel_on_delivery = true;
+                } else if !*claim_pending && !*claimed {
+                    *claim_pending = true;
+                    deletes.push((client_id.clone(), queue_id.clone()));
+                }
+            }
+        }
+        for (client_id, queue_id) in deletes {
+            self.delete_queued_input(&client_id, &queue_id)?;
+        }
+        Ok(())
+    }
+
+    fn discard_cancelled_steers(&mut self) {
+        if !self
+            .handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.cancelled)
+        {
+            return;
+        }
+        let discarded = self
+            .native_inputs
+            .iter()
+            .filter_map(|(client_id, input)| {
+                (input.handoff && matches!(input.kind, NativeInputKind::Steer { .. }))
+                    .then(|| client_id.clone())
+            })
+            .collect::<Vec<_>>();
+        for client_id in discarded {
+            self.native_inputs.remove(&client_id);
+            self.native_input_order
+                .retain(|queued| queued != &client_id);
+        }
+        self.finish_cancelled_handoff();
+    }
+
+    fn finish_cancelled_handoff(&mut self) {
+        if !self
+            .handoff
+            .as_ref()
+            .is_some_and(|handoff| handoff.cancelled)
+        {
+            return;
+        }
+        let has_originals = self.native_inputs.values().any(|input| input.handoff);
+        if !has_originals && self.batch_deliveries.is_empty() {
+            self.handoff = None;
+        }
     }
 
     fn wait_response(
@@ -1425,6 +2136,7 @@ impl CodexWorkerSession {
         input: Vec<CodexUserInput>,
         mode: WorkerSendMode,
         submission_id: Option<&str>,
+        delivery: NativeInputDelivery,
     ) -> Result<(), String> {
         if mode == WorkerSendMode::Steer {
             let turn_id = self
@@ -1432,7 +2144,7 @@ impl CodexWorkerSession {
                 .as_deref()
                 .ok_or_else(|| "Codex worker has not reported its active turn".to_owned())?;
             let client_id = format!("{STEER_CLIENT_ID_PREFIX}{}", self.next_id.saturating_add(1));
-            let id = self.request(
+            let id = self.submission_request(
                 "turn/steer",
                 json!({
                     "threadId": self.thread_id,
@@ -1449,14 +2161,27 @@ impl CodexWorkerSession {
                 id,
                 PendingRequest::Control {
                     operation: "steer",
-                    client_id: Some(client_id),
+                    client_id: Some(client_id.clone()),
+                },
+            );
+            self.native_input_order.push_back(client_id.clone());
+            self.native_inputs.insert(
+                client_id,
+                PendingNativeInput {
+                    input,
+                    delivery,
+                    kind: NativeInputKind::Steer {
+                        receipt: SteerReceipt::Pending,
+                    },
+                    handoff: false,
+                    cancel_on_delivery: false,
                 },
             );
             return Ok(());
         }
         if mode == WorkerSendMode::Queue && self.native_queue {
             let client_id = format!("{QUEUE_CLIENT_ID_PREFIX}{}", self.next_id.saturating_add(1));
-            let id = self.request(
+            let id = self.submission_request(
                 "thread/queue/add",
                 json!({
                     "threadId": self.thread_id,
@@ -1472,23 +2197,49 @@ impl CodexWorkerSession {
                 id,
                 PendingRequest::Control {
                     operation: "queue",
-                    client_id: Some(client_id),
+                    client_id: Some(client_id.clone()),
+                },
+            );
+            self.native_input_order.push_back(client_id.clone());
+            self.native_inputs.insert(
+                client_id,
+                PendingNativeInput {
+                    input,
+                    delivery,
+                    kind: NativeInputKind::Queue {
+                        queue_id: None,
+                        claim_pending: false,
+                        claimed: false,
+                        claim_lost: false,
+                    },
+                    handoff: false,
+                    cancel_on_delivery: false,
                 },
             );
             return Ok(());
         }
         self.output.clear();
         self.reasoning_started = false;
-        let id = self.request(
+        let client_id = format!(
+            "{NORMAL_CLIENT_ID_PREFIX}{}",
+            self.next_id.saturating_add(1)
+        );
+        let id = self.submission_request(
             "turn/start",
             json!({
                 "threadId": self.thread_id,
+                "clientUserMessageId": client_id,
                 "input": input,
                 "model": self.model,
                 "effort": self.effort,
                 "collaborationMode": self.collaboration_mode,
             }),
         )?;
+        if submission_id.is_some() {
+            self.batch_deliveries
+                .insert(client_id.clone(), vec![(delivery, false)]);
+            self.normal_start_clients.insert(id.clone(), client_id);
+        }
         self.pending.insert(id, PendingRequest::StartTurn);
         self.caller_identity
             .set_activity(WorkerActivityState::Starting);
@@ -1538,21 +2289,48 @@ impl CodexWorkerSession {
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<CodexRequestId, String> {
+        let (id, encoded) = self.prepare_request(method, params)?;
+        self.write_request(&encoded)?;
+        Ok(id)
+    }
+
+    fn submission_request(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<CodexRequestId, String> {
+        let (id, encoded) = self.prepare_request(method, params)?;
+        if let Err(error) = self.write_request(&encoded) {
+            self.events.push_back(WorkerEvent::Failed(format!(
+                "Codex prompt delivery is unknown: {error}"
+            )));
+        }
+        Ok(id)
+    }
+
+    fn prepare_request(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<(CodexRequestId, Vec<u8>), String> {
         self.next_id = self
             .next_id
             .checked_add(1)
             .ok_or_else(|| "Codex worker request id overflow".to_owned())?;
         let id = CodexRequestId::Number(self.next_id);
         let encoded = encode_request(&id, method, params)?;
+        Ok((id, encoded))
+    }
+
+    fn write_request(&mut self, encoded: &[u8]) -> Result<(), String> {
         let writer = self
             .writer
             .as_mut()
             .ok_or_else(|| "Codex worker input is closed".to_owned())?;
         writer
-            .write_all(&encoded)
+            .write_all(encoded)
             .and_then(|()| writer.flush())
-            .map_err(|error| format!("write Codex worker request: {error}"))?;
-        Ok(id)
+            .map_err(|error| format!("write Codex worker request: {error}"))
     }
 }
 
@@ -1588,6 +2366,23 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
 
 const STEER_CLIENT_ID_PREFIX: &str = "farcaster-steer-";
 const QUEUE_CLIENT_ID_PREFIX: &str = "farcaster-queue-";
+const HANDOFF_CLIENT_ID_PREFIX: &str = "farcaster-handoff-";
+const NORMAL_CLIENT_ID_PREFIX: &str = "farcaster-normal-";
+
+fn queue_submission_id(result: &Value) -> Result<String, String> {
+    result
+        .pointer("/queuedSubmission/id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| "decode Codex queue acknowledgement: missing queued submission id".into())
+}
+
+fn steer_rejected_by_turn_race(error: &super::contract::CodexRpcError) -> bool {
+    error.message == "no active turn to steer"
+        || (error.message.starts_with("expected active turn id `")
+            && error.message.contains("` but found `")
+            && error.message.ends_with('`'))
+}
 
 fn codex_input_delivery(item: &Value) -> Option<WorkerActivity> {
     if item.get("type").and_then(Value::as_str) != Some("userMessage") {
@@ -1598,6 +2393,10 @@ fn codex_input_delivery(item: &Value) -> Option<WorkerActivity> {
         WorkerSendMode::Steer
     } else if client_id.starts_with(QUEUE_CLIENT_ID_PREFIX) {
         WorkerSendMode::Queue
+    } else if client_id.starts_with(HANDOFF_CLIENT_ID_PREFIX) {
+        WorkerSendMode::Steer
+    } else if client_id.starts_with(NORMAL_CLIENT_ID_PREFIX) {
+        WorkerSendMode::Prompt
     } else {
         return None;
     };

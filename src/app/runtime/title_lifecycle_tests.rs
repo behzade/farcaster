@@ -380,9 +380,13 @@ impl Scenario {
                 .any(|event| matches!(event, RuntimeEvent::PromptResult { .. }))
         });
         assert!(
-            self.events[before..]
-                .iter()
-                .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. })),
+            self.events[before..].iter().any(|event| matches!(
+                event,
+                RuntimeEvent::PromptResult {
+                    outcome: crate::agents::PromptOutcome::Accepted,
+                    ..
+                }
+            )),
             "{} fixture prompt was rejected: {}",
             self.owner.harness,
             self.owner.snapshot.status

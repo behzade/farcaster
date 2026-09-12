@@ -260,12 +260,33 @@ pub(super) fn annotate_history_presentations(
     messages: &mut Vec<Value>,
 ) {
     let Some(state) = state else { return };
-    if messages.is_empty() {
-        match state.accepted_prompt_history(session) {
-            Ok(saved) => messages.extend(saved),
-            Err(error) => {
-                zlog::error!("Restore accepted prompts: {error}");
+    match state.accepted_prompt_history(session) {
+        Ok(saved) => {
+            let history_was_empty = messages.is_empty();
+            let mut submission_ids = messages
+                .iter()
+                .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<std::collections::HashSet<_>>();
+            for message in &saved {
+                let Some(id) = message.get("submissionId").and_then(Value::as_str) else {
+                    if history_was_empty {
+                        messages.push(message.clone());
+                    }
+                    continue;
+                };
+                if !history_was_empty
+                    && message.get("deliveryTracked").and_then(Value::as_bool) != Some(true)
+                {
+                    continue;
+                }
+                if submission_ids.insert(id.to_owned()) {
+                    messages.push(message.clone());
+                }
             }
+        }
+        Err(error) => {
+            zlog::error!("Restore accepted prompts: {error}");
         }
     }
     if let Ok(presentations) = state.prompt_presentations(session) {

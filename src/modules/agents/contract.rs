@@ -338,8 +338,8 @@ pub(crate) enum SessionOperation {
 
 mod response;
 pub(crate) use response::{
-    SessionContextUsage, SessionHistory, SessionResponse, SessionResponsePayload, SessionUsage,
-    SessionUsageTokens,
+    PromptOutcome, SessionContextUsage, SessionHistory, SessionResponse, SessionResponseErrorKind,
+    SessionResponsePayload, SessionUsage, SessionUsageTokens,
 };
 
 pub(crate) trait SessionTransport {
@@ -348,6 +348,9 @@ pub(crate) trait SessionTransport {
     }
     fn sandbox_mode(&self) -> Option<HarnessAccessMode> {
         None
+    }
+    fn tracks_prompt_delivery(&self, _mode: PromptMode) -> bool {
+        false
     }
     fn send(&mut self, command: SessionCommand) -> Result<String, String>;
     fn respond(&mut self, response: ExtensionUiResponse) -> Result<(), String>;

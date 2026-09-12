@@ -115,6 +115,8 @@ impl RuntimeOwner {
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
         self.pending_prompt_item = None;
+        self.pending_prompt_delivery_unknown = false;
+        self.pending_prompt_delivery_tracked = false;
         self.normal_prompt_in_flight = false;
         self.invalidate_auto_title_generation();
         self.title_generation.new_session = false;
@@ -298,6 +300,21 @@ impl RuntimeOwner {
             }
             SessionEvent::Interaction(request) => self.apply_interaction(request),
             SessionEvent::Activity(event) => {
+                if event.value().get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                    && event.value().get("status").and_then(Value::as_str) == Some("delivered")
+                    && let Some(receipt_id) =
+                        event.value().get("submissionId").and_then(Value::as_str)
+                {
+                    let outbox_id = (self.pending_prompt_id.as_deref() == Some(receipt_id))
+                        .then_some(self.pending_outbox_id)
+                        .flatten();
+                    if let Some(state) = self.state.as_mut()
+                        && let Err(error) =
+                            state.record_prompt_receipt_delivered(receipt_id, outbox_id)
+                    {
+                        zlog::error!("Record prompt delivery receipt: {error}");
+                    }
+                }
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
                 let conversation = &self.active_snapshot().conversation;
                 let notify_completion = settled
@@ -427,7 +444,28 @@ impl RuntimeOwner {
             && self.snapshot.history_preview
             && self.parked_snapshot.is_some();
         zlog::error!("agent runtime failed: {details}");
-        self.mark_outbox_failed(&details);
+        let delivery_unknown_was_reported = self.pending_prompt_delivery_unknown;
+        let prompt_delivery_unknown =
+            delivery_unknown_was_reported || self.pending_prompt_id.is_some();
+        if prompt_delivery_unknown {
+            if !delivery_unknown_was_reported {
+                self.mark_outbox_delivery_unknown(&details);
+            }
+            self.pending_outbox_id = None;
+            if let (Some(id), Some(item)) = (
+                self.pending_prompt_id.as_deref().map(str::to_owned),
+                self.pending_prompt_item.take(),
+            ) {
+                conversation_mut(self.active_snapshot_mut()).bind_submitted_prompt(&id, &item);
+                conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
+                    &id,
+                    &serde_json::Value::Null,
+                    "unknown",
+                );
+            }
+        } else {
+            self.mark_outbox_failed(&details);
+        }
         self.pending_prompt_id = None;
         self.normal_prompt_in_flight = false;
         self.deferred_prompt = None;
@@ -436,10 +474,23 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        self.rollback_pending_prompt();
-        if let Some(target) = self.pending_prompt_target.take() {
-            self.emit_prompt_result(&target, false);
+        if !prompt_delivery_unknown {
+            self.rollback_pending_prompt();
         }
+        if let Some(target) = self.pending_prompt_target.take() {
+            if prompt_delivery_unknown {
+                if !delivery_unknown_was_reported {
+                    self.emit_prompt_result(&target, crate::agents::PromptOutcome::DeliveryUnknown);
+                }
+            } else {
+                self.emit_prompt_result(
+                    &target,
+                    crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                );
+            }
+        }
+        self.pending_prompt_delivery_unknown = false;
+        self.pending_prompt_delivery_tracked = false;
         if preserve_history {
             let label = format!("Couldn’t start {}", self.backend_name());
             self.fail_session_control_resume("Failed", &label, details);
@@ -473,6 +524,15 @@ impl RuntimeOwner {
             && let Err(database_error) = agents::fail_prompt(state, id, error)
         {
             zlog::error!("Failed to mark queued prompt {id} as failed: {database_error}");
+        }
+    }
+
+    pub(super) fn mark_outbox_delivery_unknown(&self, error: &str) {
+        if let Some(id) = self.pending_outbox_id
+            && let Some(state) = &self.state
+            && let Err(database_error) = agents::mark_prompt_delivery_unknown(state, id, error)
+        {
+            zlog::error!("Failed to mark queued prompt {id} delivery unknown: {database_error}");
         }
     }
 

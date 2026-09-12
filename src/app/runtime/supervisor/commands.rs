@@ -50,7 +50,7 @@ impl Supervisor {
         } else {
             let _ = self.event_tx.send(RuntimeEvent::PromptResult {
                 target: target.clone(),
-                accepted: false,
+                outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 session: session.as_ref().map(|session| session.path.clone()),
             });
         }

@@ -254,7 +254,11 @@ fn abort_cancels_a_prompt_deferred_for_startup() -> Result<(), String> {
     assert!(matches!(sent.borrow().as_slice(), [SessionCommand::Abort]));
     assert!(events.try_iter().any(|event| matches!(
         event,
-        RuntimeEvent::PromptResult { target, accepted: false, .. } if target == "draft:startup"
+        RuntimeEvent::PromptResult {
+            target,
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            ..
+        } if target == "draft:startup"
     )));
 
     owner.startup_state_loaded = true;
@@ -566,6 +570,170 @@ fn unrelated_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), St
 }
 
 #[test]
+fn delivery_unknown_keeps_the_exact_prompt_until_a_late_acceptance() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(StateStore::open_at(&database)?);
+    owner.process = Some(Box::new(Recorder::default()));
+    owner.active_session = Some(temp.path().join("session.jsonl"));
+    owner.snapshot.session = Some(empty_session());
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    let image = crate::protocol::PromptImage::new("aGVsbG8=".into(), "image/png".into());
+
+    owner.send_prompt_with_presentation(
+        "draft:unknown".into(),
+        PromptMode::Normal,
+        "resolved prompt".into(),
+        Some("$review".into()),
+        Some("review".into()),
+        vec![image],
+        false,
+    );
+    let request_id = owner.pending_prompt_id.clone().expect("prompt request id");
+    assert_eq!(request_id, "request-1");
+    owner.apply_response(crate::agents::SessionResponse::prompt_delivery_unknown(
+        request_id.clone(),
+        PromptMode::Normal,
+        "socket closed after write".into(),
+    ));
+
+    let user = owner
+        .snapshot
+        .conversation
+        .items
+        .iter()
+        .find(|item| item.kind == crate::app::views::transcript::conversation::TranscriptKind::User)
+        .ok_or("unknown prompt was removed")?;
+    assert_eq!(user.text, "$review");
+    assert_eq!(user.label, "Delivery unknown");
+    assert_eq!(user.images.len(), 1);
+    assert_eq!(
+        owner.pending_prompt_id.as_deref(),
+        Some(request_id.as_str())
+    );
+
+    let reopened = StateStore::open_at(&database)?;
+    let unknown = reopened.unknown_prompts()?;
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(unknown[0].message, "resolved prompt");
+    assert_eq!(unknown[0].display_message.as_deref(), Some("$review"));
+    assert_eq!(unknown[0].invocation.as_deref(), Some("review"));
+    assert_eq!(unknown[0].images.len(), 1);
+
+    owner.apply_response(prompt_response(&request_id, PromptMode::Normal, true));
+    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.pending_prompt_target.is_none());
+    assert_eq!(
+        owner
+            .snapshot
+            .conversation
+            .items
+            .iter()
+            .filter(|item| {
+                item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
+            })
+            .count(),
+        1
+    );
+    let outcomes = events
+        .try_iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::PromptResult { outcome, .. } => Some(outcome),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        [
+            crate::agents::PromptOutcome::DeliveryUnknown,
+            crate::agents::PromptOutcome::Accepted,
+        ]
+    );
+    let accepted = owner
+        .state
+        .as_ref()
+        .expect("state")
+        .accepted_prompt_history(&temp.path().join("session.jsonl"))?;
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0]["submissionId"], request_id);
+    assert_eq!(accepted[0]["deliveryStatus"], "accepted");
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({
+            "type":"prompt_delivery",
+            "submissionId":request_id,
+            "status":"delivered",
+            "message":{"role":"user", "content":[{"type":"text", "text":"resolved prompt"}]},
+        })
+        .into(),
+    ));
+    drop(owner);
+    let reopened = StateStore::open_at(&database)?;
+    assert!(reopened.unknown_prompts()?.is_empty());
+    let accepted = reopened.accepted_prompt_history(&temp.path().join("session.jsonl"))?;
+    assert!(accepted.is_empty());
+    assert_eq!(
+        reopened.prompt_presentations(&temp.path().join("session.jsonl"))?,
+        [crate::agents::PromptPresentation {
+            resolved_message: "resolved prompt".into(),
+            display_message: "$review".into(),
+            invocation: "review".into(),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn fatal_transport_failure_after_dispatch_is_delivery_unknown_not_rejected() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(StateStore::open_at(&database)?);
+    owner.process = Some(Box::new(Recorder::default()));
+    owner.active_session = Some(temp.path().join("session.jsonl"));
+    owner.snapshot.session = Some(empty_session());
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+
+    owner.send_prompt(
+        "draft:fatal".into(),
+        PromptMode::Normal,
+        "retain after uncertain write".into(),
+        Vec::new(),
+        false,
+    );
+    assert_eq!(owner.pending_prompt_id.as_deref(), Some("request-1"));
+    owner.apply_process_item(SessionEvent::Failure(
+        "transport disconnected after dispatch".into(),
+    ));
+
+    let user = owner
+        .snapshot
+        .conversation
+        .items
+        .iter()
+        .find(|item| item.kind == crate::app::views::transcript::conversation::TranscriptKind::User)
+        .ok_or("fatal transport failure rolled back the prompt")?;
+    assert_eq!(user.text, "retain after uncertain write");
+    assert_eq!(user.label, "Delivery unknown");
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            outcome: crate::agents::PromptOutcome::DeliveryUnknown,
+            ..
+        }
+    )));
+    drop(owner);
+    let reopened = StateStore::open_at(&database)?;
+    let unknown = reopened.unknown_prompts()?;
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(unknown[0].message, "retain after uncertain write");
+    assert!(reopened.queued_prompts()?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
@@ -590,7 +758,8 @@ fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
 }
 
 #[test]
-fn failed_acknowledgement_commit_retains_prompt_and_reports_failure() -> Result<(), String> {
+fn failed_acknowledgement_commit_keeps_accepted_prompt_visible_and_recovers_unknown()
+-> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
@@ -620,20 +789,35 @@ fn failed_acknowledgement_commit_retains_prompt_and_reports_failure() -> Result<
     owner.startup_history_loaded = true;
     owner.deliver_queued(prompt);
     owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
+    assert!(owner.snapshot.conversation.items.iter().any(|item| {
+        item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
+            && item.text == "keep me"
+    }));
     let (message, state): (String, String) = connection
         .query_row("SELECT message, state FROM outbox", [], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .map_err(|error| error.to_string())?;
     assert_eq!(message, "keep me");
-    assert_eq!(state, "failed");
+    assert_eq!(state, "unknown");
     let results = events
         .try_iter()
         .filter_map(|event| match event {
-            RuntimeEvent::PromptResult { accepted, .. } => Some(accepted),
+            RuntimeEvent::PromptResult { outcome, .. } => Some(outcome),
             _ => None,
         })
         .collect::<Vec<_>>();
-    assert_eq!(results, [false]);
+    assert_eq!(results, [crate::agents::PromptOutcome::Accepted]);
+    drop(owner);
+    let reopened = StateStore::open_at(&database)?;
+    let recovered = reopened.recover_interrupted_prompts()?;
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].message, "keep me");
+    let state = connection
+        .query_row("SELECT state FROM outbox", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|error| error.to_string())?;
+    assert_eq!(state, "unknown");
     Ok(())
 }

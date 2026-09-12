@@ -551,17 +551,25 @@ impl FarcasterApp {
     fn project_prompt_result(
         &mut self,
         target: String,
-        accepted: bool,
+        outcome: crate::agents::PromptOutcome,
         session: Option<PathBuf>,
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
+        let accepted = outcome == crate::agents::PromptOutcome::Accepted;
         self.code_task_result(&target, accepted, session.as_deref(), cx);
-        self.record_draft_submission(&target, accepted, session.clone());
-        if !accepted {
+        self.record_draft_submission(
+            &target,
+            outcome != crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            session.clone(),
+        );
+        if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
             self.run_statuses.insert(target.clone(), "Failed".into());
+        } else if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
+            self.run_statuses
+                .insert(target.clone(), "Delivery unknown".into());
         }
-        record_pending_prompt_result(&mut self.pending_submissions, &target, accepted, session);
+        record_pending_prompt_result(&mut self.pending_submissions, &target, outcome, session);
         dirty.rail |= self.reconcile_submitted_drafts(cx);
     }
 
@@ -735,11 +743,11 @@ impl FarcasterApp {
             }
             RuntimeEvent::PromptResult {
                 target,
-                accepted,
+                outcome,
                 session,
             } => {
                 // Replies belong to a submission, even after navigation changes generations.
-                self.project_prompt_result(target, accepted, session, dirty, cx);
+                self.project_prompt_result(target, outcome, session, dirty, cx);
             }
             RuntimeEvent::SessionStatus {
                 target,
@@ -750,7 +758,10 @@ impl FarcasterApp {
                     let session_key = session.as_deref().map(session_target);
                     for (key, pending) in &mut self.pending_submissions {
                         if pending.submitted_target == target || Some(key) == session_key.as_ref() {
-                            pending.result.get_or_insert((false, session.clone()));
+                            pending.result.get_or_insert((
+                                crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                                session.clone(),
+                            ));
                         }
                     }
                     if let Some(path) = session.as_deref() {
@@ -861,14 +872,29 @@ fn project_dialog_dismissal(
 fn record_pending_prompt_result(
     pending: &mut HashMap<String, PendingSubmission>,
     target: &str,
-    accepted: bool,
+    outcome: crate::agents::PromptOutcome,
     session: Option<PathBuf>,
 ) {
     if let Some(pending) = pending
         .values_mut()
         .find(|pending| pending.submitted_target == target)
     {
-        pending.result = Some((accepted, session));
+        if pending.result.as_ref().is_some_and(|(previous, _)| {
+            matches!(
+                previous,
+                crate::agents::PromptOutcome::Accepted
+                    | crate::agents::PromptOutcome::RejectedBeforeAcceptance
+            )
+        }) {
+            return;
+        }
+        let session = session.or_else(|| {
+            pending
+                .result
+                .as_ref()
+                .and_then(|(_, session)| session.clone())
+        });
+        pending.result = Some((outcome, session));
     }
 }
 

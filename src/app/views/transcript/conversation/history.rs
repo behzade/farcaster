@@ -2,17 +2,52 @@ use super::*;
 
 impl ConversationState {
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
+        let history_is_empty = messages.is_empty();
+        let mut retained = std::mem::take(&mut self.submitted_users)
+            .into_iter()
+            .filter(|(_, entry)| {
+                !entry.delivered && (entry.unknown || entry.delivery_tracked || history_is_empty)
+            })
+            .filter_map(|(id, entry)| {
+                self.items
+                    .position(|item| Arc::ptr_eq(item, &entry.item))
+                    .map(|index| (index, id, entry))
+            })
+            .collect::<Vec<_>>();
+        retained.sort_by_key(|(index, ..)| *index);
         self.items.clear();
+        self.optimistic_user = None;
         self.run_started_at = None;
         self.completed_runs.clear();
         self.average_cache_hit_rate = None;
         self.cache_read_tokens = 0;
         self.prompt_tokens = 0;
         for message in messages {
+            if message.get("role").and_then(Value::as_str) == Some("user")
+                && let Some(id) = message.get("submissionId").and_then(Value::as_str)
+            {
+                self.record_prompt_delivery(
+                    id,
+                    message,
+                    message
+                        .get("deliveryStatus")
+                        .and_then(Value::as_str)
+                        .unwrap_or("delivered"),
+                );
+                continue;
+            }
             if message.get("role").and_then(Value::as_str) == Some("assistant") {
                 self.record_cache_hit_rate(message);
             }
             self.project_history_message(message);
+        }
+        // Backend history need not contain input that was only admitted or whose
+        // receipt is uncertain. Reconcile by identity, never equal message text.
+        for (_, id, entry) in retained {
+            if !self.submitted_users.contains_key(&id) {
+                self.items.push(entry.item.clone());
+                self.submitted_users.insert(id, entry);
+            }
         }
         self.live_message = None;
         self.content.clear();

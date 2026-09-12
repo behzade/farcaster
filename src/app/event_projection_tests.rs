@@ -340,7 +340,11 @@ fn stopping_selected_session_clears_archive_active_work_flags() {
 
 #[test]
 fn prompt_result_follows_submission_through_draft_promotion() {
-    for accepted in [true, false] {
+    for outcome in [
+        crate::agents::PromptOutcome::Accepted,
+        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+        crate::agents::PromptOutcome::DeliveryUnknown,
+    ] {
         for promoted_before_reply in [true, false] {
             let draft = "draft:new";
             let path = PathBuf::from("/sessions/new");
@@ -360,22 +364,121 @@ fn prompt_result_follows_submission_through_draft_promotion() {
                 let submission = pending.remove(draft).expect("draft submission");
                 pending.insert(session.clone(), submission);
             }
-            record_pending_prompt_result(&mut pending, draft, accepted, Some(path.clone()));
+            record_pending_prompt_result(&mut pending, draft, outcome, Some(path.clone()));
             let key = if promoted_before_reply {
                 &session
             } else {
                 draft
             };
-            assert_eq!(pending[key].result, Some((accepted, Some(path))));
+            assert_eq!(pending[key].result, Some((outcome, Some(path))));
             // An unrelated reply must not resolve or overwrite this submission.
-            record_pending_prompt_result(&mut pending, "draft:other", !accepted, None);
+            record_pending_prompt_result(
+                &mut pending,
+                "draft:other",
+                crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                None,
+            );
             assert_eq!(
                 pending[key].result.as_ref().map(|result| result.0),
-                Some(accepted)
+                Some(outcome)
             );
             assert_eq!(pending[key].text, "keep this on rejection");
         }
     }
+}
+
+#[test]
+fn unknown_activity_then_real_rejection_resolves_the_original_payload_once() {
+    let target = "draft:unknown";
+    let session = PathBuf::from("/sessions/unknown");
+    let image = crate::app::composer::ComposerImage::from_prompt(
+        crate::protocol::PromptImage::new(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
+            "image/png".into(),
+        ),
+    )
+    .expect("valid image");
+    let mut pending = HashMap::from([(
+        target.to_owned(),
+        PendingSubmission {
+            submitted_target: target.into(),
+            text: "exact unresolved text".into(),
+            images: vec![image.clone()],
+            pastes: Vec::new(),
+            append_on_failure: false,
+            result: None,
+        },
+    )]);
+
+    let mut conversation =
+        crate::app::views::transcript::conversation::ConversationState::default();
+    for _ in 0..2 {
+        conversation.reduce(&serde_json::json!({
+            "type":"prompt_delivery",
+            "submissionId":"request:unknown",
+            "status":"unknown",
+            "message":{"role":"user", "content":[{"type":"text", "text":"exact unresolved text"}]},
+        }));
+        assert_eq!(pending[target].result, None);
+        assert_eq!(pending[target].text, "exact unresolved text");
+        assert_eq!(pending[target].images, [image.clone()]);
+    }
+
+    record_pending_prompt_result(
+        &mut pending,
+        target,
+        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+        Some(session.clone()),
+    );
+    let resolved =
+        crate::app::composer::submissions::take_resolved_pending_submissions(&mut pending);
+    assert!(pending.is_empty());
+    assert_eq!(resolved.len(), 1);
+    let (resolved_target, submission, outcome, resolved_session) = &resolved[0];
+    assert_eq!(resolved_target, target);
+    assert_eq!(submission.text, "exact unresolved text");
+    assert_eq!(submission.images, [image]);
+    assert_eq!(
+        *outcome,
+        crate::agents::PromptOutcome::RejectedBeforeAcceptance
+    );
+    assert_eq!(resolved_session.as_ref(), Some(&session));
+    assert!(
+        crate::app::composer::submissions::take_resolved_pending_submissions(&mut pending)
+            .is_empty()
+    );
+}
+
+#[test]
+fn accepted_submission_cannot_be_downgraded_by_a_late_unknown_or_rejection() {
+    let target = "draft:accepted";
+    let mut pending = HashMap::from([(
+        target.to_owned(),
+        PendingSubmission {
+            submitted_target: target.into(),
+            text: "accepted".into(),
+            images: Vec::new(),
+            pastes: Vec::new(),
+            append_on_failure: false,
+            result: None,
+        },
+    )]);
+    record_pending_prompt_result(
+        &mut pending,
+        target,
+        crate::agents::PromptOutcome::Accepted,
+        None,
+    );
+    for late in [
+        crate::agents::PromptOutcome::DeliveryUnknown,
+        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+    ] {
+        record_pending_prompt_result(&mut pending, target, late, None);
+    }
+    assert_eq!(
+        pending[target].result,
+        Some((crate::agents::PromptOutcome::Accepted, None))
+    );
 }
 
 #[test]

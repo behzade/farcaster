@@ -39,6 +39,19 @@ impl ConversationState {
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        if kind == "prompt_delivery" {
+            return self.record_prompt_delivery(
+                event
+                    .get("submissionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                event.get("message").unwrap_or(&Value::Null),
+                event
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            );
+        }
         let previous_len = self.items.len();
         let previous_live_start = self.live_message.map(|live| live.start);
         let affected_tool = event
@@ -370,6 +383,20 @@ impl ConversationState {
             final_user.files.clone_from(&optimistic.files);
             final_user.invocation = Some(resolution.to_owned());
         }
+        if finalizes_user
+            && let Some(optimistic) = self.optimistic_user.as_ref()
+            && let Some(final_user) = final_items
+                .iter()
+                .find(|item| item.kind == TranscriptKind::User)
+        {
+            for submitted in self.submitted_users.values_mut() {
+                if Arc::ptr_eq(&submitted.item, optimistic) {
+                    submitted.item = final_user.clone();
+                    submitted.accepted = true;
+                    submitted.delivered = true;
+                }
+            }
+        }
         if let Some(live) = self.live_message.take() {
             self.items
                 .splice(live.start..live.start + live.len, final_items);
@@ -380,7 +407,7 @@ impl ConversationState {
             && let Some(optimistic) = self.optimistic_user.take()
             && let Some(index) = self.items.position(|item| Arc::ptr_eq(item, &optimistic))
         {
-            self.items.remove(index);
+            self.remove_transcript_item(index);
         }
         self.content.clear();
         self.dirty_content.clear();

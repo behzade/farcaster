@@ -127,7 +127,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
         assert!(events.try_iter().any(|event| matches!(
             event,
             RuntimeEvent::PromptResult {
-                accepted: false,
+                outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 ..
             }
         )));
@@ -153,11 +153,13 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
             Some("accepted".into()),
             SessionResponsePayload::Prompt(next_mode),
         ));
-        assert!(
-            events
-                .try_iter()
-                .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
-        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::PromptResult {
+                outcome: crate::agents::PromptOutcome::Accepted,
+                ..
+            }
+        )));
         assert_eq!(*closes.borrow(), 0);
         transport_events
             .borrow_mut()
@@ -367,7 +369,7 @@ fn unselected_backend_rejects_prompt_before_enqueuing() {
     assert!(events.try_iter().any(|event| matches!(
         event,
         RuntimeEvent::PromptResult {
-            accepted: false,
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
             ..
         }
     )));

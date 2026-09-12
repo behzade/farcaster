@@ -111,6 +111,8 @@ struct RuntimeOwner {
     pending_prompt_target: Option<String>,
     pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
+    pending_prompt_delivery_unknown: bool,
+    pending_prompt_delivery_tracked: bool,
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,

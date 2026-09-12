@@ -57,12 +57,27 @@ impl crate::agents::PromptStore for StateStore {
         self.complete_prompt(id, target, session)
     }
 
+    fn complete_with_receipt(
+        &mut self,
+        id: i64,
+        target: &str,
+        session: Option<&Path>,
+        receipt_id: &str,
+        delivery_tracked: bool,
+    ) -> Result<(), String> {
+        self.complete_prompt_with_receipt(id, target, session, receipt_id, delivery_tracked)
+    }
+
     fn begin(&self, id: i64) -> Result<(), String> {
         self.begin_prompt(id)
     }
 
     fn fail(&self, id: i64, error: &str) -> Result<(), String> {
         self.fail_prompt(id, error)
+    }
+
+    fn mark_delivery_unknown(&self, id: i64, error: &str) -> Result<(), String> {
+        self.mark_prompt_delivery_unknown(id, error)
     }
 }
 

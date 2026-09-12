@@ -359,7 +359,13 @@ fn test_session() -> CodexWorkerSession {
         pending_inputs: HashMap::new(),
         prompt_requests: HashMap::new(),
         client_submissions: HashMap::new(),
+        native_inputs: HashMap::new(),
+        native_input_order: VecDeque::new(),
+        handoff: None,
+        batch_deliveries: HashMap::new(),
+        normal_start_clients: HashMap::new(),
         prompt_acks: VecDeque::new(),
+        acknowledged_prompts: HashSet::new(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
         events: VecDeque::new(),
@@ -855,10 +861,18 @@ fn prompt_ack_requires_the_matching_rpc_reply_for_every_delivery_mode() {
         }));
         session.poll();
         assert!(session.poll_prompt_ack().is_none());
-        session.queued_inbound.push_back(Ok(CodexInbound::Response {
-            id,
-            result: json!({"turn":{"id":"active","status":"inProgress","items":[]}}),
-        }));
+        let result = match mode {
+            WorkerSendMode::Queue => json!({"queuedSubmission": {
+                "id":"queued-1","clientUserMessageId":"farcaster-queue-1","input":[]
+            }}),
+            WorkerSendMode::Steer => json!({"turnId":"active"}),
+            WorkerSendMode::Prompt => {
+                json!({"turn":{"id":"active","status":"inProgress","items":[]}})
+            }
+        };
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Response { id, result }));
         for _ in 0..5 {
             session.poll();
         }
@@ -871,7 +885,7 @@ fn prompt_ack_requires_the_matching_rpc_reply_for_every_delivery_mode() {
 }
 
 #[test]
-fn rejected_or_malformed_codex_reply_never_acknowledges_success() {
+fn rejected_and_malformed_codex_replies_have_distinct_receipt_outcomes() {
     for reply in [
         json!({"error":{"code":-1,"message":"rejected"}}),
         json!({"result":{}}),
@@ -885,6 +899,7 @@ fn rejected_or_malformed_codex_reply_never_acknowledges_success() {
                 Vec::new(),
             )
             .unwrap();
+        let rejected = reply.get("error").is_some();
         let mut reply = reply;
         reply["id"] = json!(session.next_id);
         session
@@ -892,10 +907,21 @@ fn rejected_or_malformed_codex_reply_never_acknowledges_success() {
             .push_back(super::super::wire::decode_frame(
                 reply.to_string().as_bytes(),
             ));
-        for _ in 0..5 {
-            session.poll();
+        let events = (0..5).filter_map(|_| session.poll()).collect::<Vec<_>>();
+        if rejected {
+            assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "submission"));
+        } else {
+            assert!(
+                session.poll_prompt_ack().is_none(),
+                "malformed success proves no rejection"
+            );
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, WorkerEvent::Failed(_))),
+                "common transport must classify malformed success as delivery unknown"
+            );
         }
-        assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "submission"));
     }
 }
 
@@ -1000,6 +1026,94 @@ fn correlated_codex_control_rejection_reaches_the_session_caller() {
     let error = response.result.expect_err("steer must be rejected");
     assert_eq!(error.message, "turn is no longer active");
     assert_eq!(error.operation, SessionOperation::Prompt(PromptMode::Steer));
+}
+
+#[test]
+fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
+    use crate::agents::extensions::PromptMode;
+    use crate::agents::{SessionCommand, SessionEvent, SessionResponseErrorKind, SessionTransport};
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+
+    for mode in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
+        let (mut session, _sent) = writable_test_session();
+        let (incoming, receiver) = mpsc::channel();
+        session.incoming = receiver;
+        session.native_queue = true;
+        if mode != PromptMode::Normal {
+            session.current_turn = Some("turn-1".into());
+        }
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "thread-1".into(),
+            Box::new(session),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("Codex transport");
+        assert!(
+            transport.tracks_prompt_delivery(mode),
+            "Codex receipts must stay eligible for unresolved history recovery"
+        );
+        let submission_id = transport
+            .send(SessionCommand::Prompt {
+                mode,
+                message: "retain unknown".into(),
+                images: vec![crate::protocol::PromptImage::new(
+                    "AQID".into(),
+                    "image/png".into(),
+                )],
+            })
+            .expect("submit prompt");
+        incoming
+            .send(Ok(CodexInbound::Response {
+                id: CodexRequestId::Number(1),
+                result: json!({}),
+            }))
+            .expect("malformed success");
+
+        let mut conversation = ConversationState::default();
+        let mut responses = Vec::new();
+        while let Some(event) = transport.poll() {
+            match event {
+                SessionEvent::Activity(activity) => {
+                    conversation.reduce(activity.value());
+                }
+                SessionEvent::Response(response) => responses.push(response),
+                SessionEvent::Failure(_) => {}
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        let response = responses
+            .iter()
+            .find(|response| response.id.as_deref() == Some(submission_id.as_str()))
+            .expect("prompt outcome");
+        assert_eq!(
+            response
+                .result
+                .as_ref()
+                .expect_err("malformed success is unknown")
+                .kind,
+            SessionResponseErrorKind::DeliveryUnknown
+        );
+        assert!(!responses.iter().any(|response| {
+            response.result.as_ref().is_err_and(|error| {
+                error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance
+            })
+        }));
+        let users = conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .collect::<Vec<_>>();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].text, "retain unknown");
+        assert_eq!(users[0].images.len(), 1);
+        assert_eq!(users[0].label, "Delivery unknown");
+    }
 }
 
 #[test]
@@ -1109,7 +1223,9 @@ fn native_queue_stays_visible_across_turn_completion_until_delivery() {
     incoming
         .send(Ok(CodexInbound::Response {
             id: CodexRequestId::Number(1),
-            result: json!({}),
+            result: json!({"queuedSubmission": {
+                "id":"queued-1","clientUserMessageId":"farcaster-queue-1","input":[]
+            }}),
         }))
         .expect("queue admission response");
     drain(&mut transport, &mut conversation);
@@ -1136,6 +1252,790 @@ fn native_queue_stays_visible_across_turn_completion_until_delivery() {
         .expect("queue delivery");
     drain(&mut transport, &mut conversation);
     assert!(conversation.queue.follow_up.is_empty());
+}
+
+#[test]
+fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
+    fn read_request(reader: &mut impl std::io::BufRead) -> Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("read Codex request");
+        serde_json::from_str(&line).expect("decode Codex request")
+    }
+
+    let (mut session, mut sent) = writable_test_session();
+    session.native_queue = true;
+    session.current_turn = Some("turn-1".into());
+    for (id, message, mode) in [
+        ("steer-1", "steer now", WorkerSendMode::Steer),
+        ("queue-1", "then one", WorkerSendMode::Queue),
+        ("queue-2", "then two", WorkerSendMode::Queue),
+    ] {
+        session
+            .submit_prompt(id.into(), message.into(), mode, Vec::new())
+            .expect("submit pending input");
+        let _ = read_request(&mut sent);
+    }
+
+    session.apply_steering().expect("apply pending input");
+    assert_eq!(read_request(&mut sent)["method"], "turn/interrupt");
+    for (id, queue_id) in [(2, "queued-1"), (3, "queued-2")] {
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(id),
+            result: json!({"queuedSubmission": {
+                "id": queue_id,
+                "clientUserMessageId": format!("farcaster-queue-{id}"),
+                "input": []
+            }}),
+        }));
+    }
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: CodexRequestId::Number(1),
+        error: super::super::contract::CodexRpcError {
+            code: -32000,
+            message: "no active turn to steer".into(),
+            data: Value::Null,
+        },
+    }));
+    while session.poll().is_some() {}
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "queue-1"));
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "queue-2"));
+    assert_eq!(
+        session.poll_prompt_ack(),
+        None,
+        "steer rejection is retried"
+    );
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"stale-turn","status":"interrupted"
+            }}),
+        }));
+    assert!(session.poll().is_none());
+    assert_eq!(session.current_turn.as_deref(), Some("turn-1"));
+    assert_eq!(session.next_id, 4, "stale completion cannot start claims");
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    let first_delete = read_request(&mut sent);
+    let second_delete = read_request(&mut sent);
+    assert_eq!(first_delete["method"], "thread/queue/delete");
+    assert_eq!(second_delete["method"], "thread/queue/delete");
+    assert_eq!(
+        [
+            first_delete["params"]["queuedSubmissionId"]
+                .as_str()
+                .unwrap(),
+            second_delete["params"]["queuedSubmissionId"]
+                .as_str()
+                .unwrap(),
+        ],
+        ["queued-1", "queued-2"]
+    );
+
+    for id in [5, 6] {
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(id),
+            result: json!({"deleted": true}),
+        }));
+        let _ = session.poll();
+    }
+    let batch = read_request(&mut sent);
+    assert_eq!(batch["method"], "turn/start");
+    let batch_client_id = batch["params"]["clientUserMessageId"]
+        .as_str()
+        .expect("batch client id")
+        .to_owned();
+    let batch_text = batch["params"]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    assert_eq!(batch_text, "steer now\n\nthen one\n\nthen two");
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(7),
+        result: json!({"turn":{"id":"turn-2","status":"inProgress"}}),
+    }));
+    let _ = session.poll();
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::ThinkingStarted { .. }
+        ))
+    ));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","turnId":"turn-2","item":{
+                "type":"userMessage","clientId":batch_client_id,
+                "content":[{"type":"text","text":batch_text}]
+            }}),
+        }));
+    let mut delivered = Vec::new();
+    for _ in 0..3 {
+        match session.poll().expect("original delivery") {
+            WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+                submission_id,
+                ..
+            }) => delivered.push(submission_id),
+            event => panic!("unexpected event: {event:?}"),
+        }
+    }
+    assert_eq!(delivered, ["steer-1", "queue-1", "queue-2"]);
+}
+
+#[test]
+fn abort_cancels_handoff_but_acknowledges_and_deletes_late_queue_add() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.native_queue = true;
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "queue-1".into(),
+            "do not replay".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("queue input");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("queue add");
+    session.apply_steering().expect("first escape");
+    line.clear();
+    sent.read_line(&mut line).expect("handoff interrupt");
+    session.abort().expect("second escape");
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"queuedSubmission": {
+            "id":"queued-1","clientUserMessageId":"farcaster-queue-1","input":[]
+        }}),
+    }));
+    assert!(session.poll().is_none());
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "queue-1"));
+    line.clear();
+    sent.read_line(&mut line).expect("late queue delete");
+    let delete: Value = serde_json::from_str(&line).expect("decode delete");
+    assert_eq!(delete["method"], "thread/queue/delete");
+    assert_eq!(delete["params"]["queuedSubmissionId"], "queued-1");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(3),
+        result: json!({"deleted":true}),
+    }));
+    assert!(session.poll().is_none());
+    assert!(
+        session.handoff.is_none(),
+        "completed cancel must release handoff"
+    );
+}
+
+#[test]
+fn failed_queue_claim_waits_for_auto_started_turn_and_steers_only_safe_remainder() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.native_queue = true;
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "safe steer".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("steer input");
+    session
+        .submit_prompt(
+            "queue-1".into(),
+            "may auto start".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("queue input");
+    for _ in 0..2 {
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("initial request");
+    }
+    session.apply_steering().expect("first escape");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("interrupt request");
+    for (id, result) in [
+        (1, json!({"turnId":"turn-1"})),
+        (
+            2,
+            json!({"queuedSubmission": {
+                "id":"queued-1","clientUserMessageId":"farcaster-queue-2","input":[]
+            }}),
+        ),
+    ] {
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(id),
+            result,
+        }));
+    }
+    while session.poll().is_some() {}
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("queue claim");
+    assert_eq!(
+        serde_json::from_str::<Value>(&line).unwrap()["method"],
+        "thread/queue/delete"
+    );
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(4),
+        result: json!({"deleted":false}),
+    }));
+    assert!(session.poll().is_none());
+    assert_eq!(
+        session.next_id, 4,
+        "do not start while ownership is uncertain"
+    );
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/started".into(),
+            params: json!({"threadId":"thread-1","turn":{"id":"auto-turn"}}),
+        }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    line.clear();
+    sent.read_line(&mut line).expect("safe remainder steer");
+    let steer: Value = serde_json::from_str(&line).expect("decode remainder steer");
+    assert_eq!(steer["method"], "turn/steer");
+    assert_eq!(steer["params"]["expectedTurnId"], "auto-turn");
+    let text = steer["params"]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|part| part["text"].as_str())
+        .collect::<String>();
+    assert_eq!(text, "safe steer");
+}
+
+#[test]
+fn second_abort_while_turn_starts_cancels_handoff_and_interrupts_known_turn() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.native_queue = true;
+    session
+        .send("starting work".into(), WorkerSendMode::Prompt)
+        .expect("start prompt");
+    session
+        .submit_prompt(
+            "queue-1".into(),
+            "pending follow-up".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("queue while starting");
+    for _ in 0..2 {
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("initial request");
+    }
+    session.apply_steering().expect("first escape");
+    assert!(session.abort_starting_turn);
+    assert_eq!(session.next_id, 2, "wait for the starting turn id");
+    session.abort().expect("second escape");
+    assert!(
+        session
+            .handoff
+            .as_ref()
+            .is_some_and(|state| state.cancelled)
+    );
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(2),
+        result: json!({"queuedSubmission": {
+            "id":"queued-1","clientUserMessageId":"farcaster-queue-2","input":[]
+        }}),
+    }));
+    assert!(session.poll().is_none());
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "queue-1"));
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("cancel queued input");
+    let delete: Value = serde_json::from_str(&line).expect("decode queue delete");
+    assert_eq!(delete["method"], "thread/queue/delete");
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"turn":{"id":"turn-starting","status":"inProgress"}}),
+    }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    line.clear();
+    sent.read_line(&mut line).expect("interrupt starting turn");
+    let interrupt: Value = serde_json::from_str(&line).expect("decode turn interrupt");
+    assert_eq!(interrupt["method"], "turn/interrupt");
+    assert_eq!(interrupt["params"]["turnId"], "turn-starting");
+}
+
+fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: bool) {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.native_queue = true;
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "queue-1".into(),
+            "queued input".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("queue input");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("queue add");
+    session.apply_steering().expect("first escape");
+    line.clear();
+    sent.read_line(&mut line).expect("first interrupt");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"queuedSubmission": {
+            "id":"queued-1","clientUserMessageId":"farcaster-queue-1","input":[]
+        }}),
+    }));
+    let _ = session.poll();
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("queue claim");
+    if abort_before_delete_reply {
+        session.abort().expect("second escape before delete reply");
+    }
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(3),
+        result: json!({"deleted":false}),
+    }));
+    assert!(session.poll().is_none());
+    if !abort_before_delete_reply {
+        session.abort().expect("second escape after delete reply");
+    }
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/started".into(),
+            params: json!({"threadId":"thread-1","turn":{"id":"auto-turn"}}),
+        }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","turnId":"auto-turn","item":{
+                "type":"userMessage","clientId":"farcaster-queue-1",
+                "content":[{"type":"text","text":"queued input"}]
+            }}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::ThinkingStarted { .. }
+        ))
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            ..
+        })) if submission_id == "queue-1"
+    ));
+    line.clear();
+    sent.read_line(&mut line)
+        .expect("interrupt owned auto-start");
+    let interrupt: Value = serde_json::from_str(&line).expect("decode auto-start interrupt");
+    assert_eq!(interrupt["method"], "turn/interrupt");
+    assert_eq!(interrupt["params"]["turnId"], "auto-turn");
+    assert!(session.handoff.is_none(), "cancelled handoff must release");
+}
+
+#[test]
+fn second_abort_before_failed_delete_cancels_exact_auto_started_queue() {
+    assert_second_abort_cancels_auto_started_queue(true);
+}
+
+#[test]
+fn second_abort_after_failed_delete_cancels_exact_auto_started_queue() {
+    assert_second_abort_cancels_auto_started_queue(false);
+}
+
+#[test]
+fn prompt_write_failure_is_delivery_unknown_not_local_rejection() {
+    let mut session = test_session();
+    session.current_turn = Some("turn-1".into());
+    assert_eq!(
+        session.submit_prompt(
+            "steer-1".into(),
+            "possibly written".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        ),
+        Ok(false)
+    );
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error)) if error.contains("prompt delivery is unknown")
+    ));
+    assert_eq!(session.poll_prompt_ack(), None);
+    assert_eq!(
+        session
+            .prompt_requests
+            .get(&CodexRequestId::Number(1))
+            .map(String::as_str),
+        Some("steer-1")
+    );
+}
+
+#[test]
+fn normal_prompt_delivery_uses_backend_client_id_and_original_submission_id() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session
+        .submit_prompt(
+            "normal-1".into(),
+            "new work".into(),
+            WorkerSendMode::Prompt,
+            Vec::new(),
+        )
+        .expect("submit normal prompt");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("turn start");
+    let request: Value = serde_json::from_str(&line).expect("decode turn start");
+    assert_eq!(
+        request["params"]["clientUserMessageId"],
+        "farcaster-normal-1"
+    );
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"turn":{"id":"turn-1","status":"inProgress"}}),
+    }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "normal-1"));
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                "type":"userMessage","clientId":"farcaster-normal-1",
+                "content":[{"type":"text","text":"new work"}]
+            }}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::ThinkingStarted { .. }
+        ))
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            mode: WorkerSendMode::Prompt,
+            message,
+        })) if submission_id == "normal-1" && message == "new work"
+    ));
+}
+
+#[test]
+fn process_fixture_interrupts_claims_and_delivers_one_native_batch() {
+    const SCRIPT: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"turn/steer"'*)
+      printf '{"id":%s,"error":{"code":-32000,"message":"no active turn to steer","data":null}}\n' "$id"
+      ;;
+    *'"method":"thread/queue/add"'*)
+      printf '{"id":%s,"result":{"queuedSubmission":{"id":"queued-1","clientUserMessageId":"farcaster-queue-2","input":[]}}}\n' "$id"
+      ;;
+    *'"method":"turn/interrupt"'*)
+      printf '{"id":%s,"result":{}}\n' "$id"
+      printf '{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}}\n'
+      ;;
+    *'"method":"thread/queue/delete"'*)
+      printf '{"id":%s,"result":{"deleted":true}}\n' "$id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{"id":%s,"result":{"turn":{"id":"turn-2","status":"inProgress"}}}\n' "$id"
+      printf '{"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-2","item":{"type":"userMessage","clientId":"farcaster-handoff-5","content":[{"type":"text","text":"steer now\\n\\nthen queue"}]}}}\n'
+      ;;
+  esac
+done
+"#;
+    let mut session = test_session();
+    session.child.wait().expect("reap initial child");
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(SCRIPT)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn Codex protocol fixture");
+    let writer = child.stdin.take().expect("fixture stdin");
+    let stdout = child.stdout.take().expect("fixture stdout");
+    let (sender, incoming) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(stdout);
+        loop {
+            let message = read_message(&mut reader);
+            let failed = message.is_err();
+            if sender.send(message).is_err() || failed {
+                break;
+            }
+        }
+    });
+    session.child = child;
+    session.writer = Some(writer);
+    session.incoming = incoming;
+    session.native_queue = true;
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "steer now".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("send steer");
+    session
+        .submit_prompt(
+            "queue-1".into(),
+            "then queue".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("send queue");
+    session.apply_steering().expect("first escape");
+
+    let mut delivered = Vec::new();
+    for _ in 0..200 {
+        if let Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            ..
+        })) = session.poll()
+        {
+            delivered.push(submission_id);
+            if delivered.len() == 2 {
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(delivered, ["steer-1", "queue-1"]);
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "queue-1"));
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
+    assert!(session.handoff.is_none());
+}
+
+#[test]
+fn handoff_retries_only_turn_races_and_validates_batch_before_admission() {
+    use std::io::BufRead as _;
+
+    for (message, retries) in [
+        ("no active turn to steer", true),
+        ("cannot steer a review turn", false),
+    ] {
+        let (mut session, mut sent) = writable_test_session();
+        session.current_turn = Some("turn-1".into());
+        session
+            .submit_prompt(
+                "steer-1".into(),
+                "pending steer".into(),
+                WorkerSendMode::Steer,
+                Vec::new(),
+            )
+            .expect("send steer");
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("steer request");
+        session.apply_steering().expect("first escape");
+        line.clear();
+        sent.read_line(&mut line).expect("interrupt request");
+        session.queued_inbound.push_back(Ok(CodexInbound::Error {
+            id: CodexRequestId::Number(1),
+            error: super::super::contract::CodexRpcError {
+                code: -32000,
+                message: message.into(),
+                data: json!({"codexErrorInfo":{"type":"activeTurnNotSteerable",
+                    "turnKind":"review"}}),
+            },
+        }));
+        let _ = session.poll();
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: "turn/completed".into(),
+                params: json!({"threadId":"thread-1","turn":{
+                    "id":"turn-1","status":"interrupted"
+                }}),
+            }));
+        let _ = session.poll();
+        if !retries {
+            assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "steer-1"));
+            assert_eq!(session.next_id, 2, "policy rejection must not be replayed");
+            continue;
+        }
+
+        line.clear();
+        sent.read_line(&mut line).expect("handoff turn start");
+        session.queued_inbound.push_back(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(3),
+            result: json!({}),
+        }));
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Failed(error)) if error.contains("missing field")
+        ));
+        assert_eq!(
+            session.poll_prompt_ack(),
+            None,
+            "malformed batch response is not admission"
+        );
+    }
+}
+
+#[test]
+fn interrupted_completion_waits_for_original_steer_ownership() {
+    use std::io::BufRead as _;
+
+    for accepted in [true, false] {
+        let (mut session, mut sent) = writable_test_session();
+        session.current_turn = Some("turn-1".into());
+        session
+            .submit_prompt(
+                "steer-1".into(),
+                "pending steer".into(),
+                WorkerSendMode::Steer,
+                Vec::new(),
+            )
+            .expect("submit steer");
+        session.apply_steering().expect("first escape");
+        for _ in 0..2 {
+            let mut line = String::new();
+            sent.read_line(&mut line).expect("steer and interrupt");
+        }
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: "turn/completed".into(),
+                params: json!({"threadId":"thread-1","turn":{
+                    "id":"turn-1","status":"interrupted"
+                }}),
+            }));
+        let _ = session.poll();
+        assert_eq!(session.next_id, 2, "unanswered steer is not owned");
+
+        if accepted {
+            session.queued_inbound.push_back(Ok(CodexInbound::Response {
+                id: CodexRequestId::Number(1),
+                result: json!({"turnId":"turn-1"}),
+            }));
+        } else {
+            session.queued_inbound.push_back(Ok(CodexInbound::Error {
+                id: CodexRequestId::Number(1),
+                error: super::super::contract::CodexRpcError {
+                    code: -32000,
+                    message: "no active turn to steer".into(),
+                    data: Value::Null,
+                },
+            }));
+        }
+        let _ = session.poll();
+        let mut line = String::new();
+        sent.read_line(&mut line).expect("owned replacement batch");
+        let batch: Value = serde_json::from_str(&line).expect("decode batch");
+        assert_eq!(batch["method"], "turn/start");
+        if accepted {
+            assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
+        } else {
+            assert_eq!(session.poll_prompt_ack(), None);
+            session.queued_inbound.push_back(Ok(CodexInbound::Response {
+                id: CodexRequestId::Number(3),
+                result: json!({"turn":{"id":"turn-2","status":"inProgress"}}),
+            }));
+            let _ = session.poll();
+            assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
+        }
+        assert_eq!(session.poll_prompt_ack(), None, "admission is emitted once");
+    }
+}
+
+#[test]
+fn committed_original_steer_before_rpc_reply_is_never_replayed() {
+    let (mut session, _sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "already committed".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("submit steer");
+    session.apply_steering().expect("first escape");
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    let _ = session.poll();
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                "type":"userMessage","clientId":"farcaster-steer-1",
+                "content":[{"type":"text","text":"already committed"}]
+            }}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            ..
+        })) if submission_id == "steer-1"
+    ));
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({"turnId":"turn-1"}),
+    }));
+    assert!(session.poll().is_none());
+    assert_eq!(session.next_id, 2, "committed input is not batched again");
+    assert!(session.handoff.is_none());
 }
 
 #[test]

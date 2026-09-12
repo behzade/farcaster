@@ -287,6 +287,14 @@ impl StateStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         #[derive(serde::Deserialize)]
         struct AcceptedPrompt {
+            #[serde(rename = "submissionId", default)]
+            submission_id: Option<String>,
+            #[serde(rename = "deliveryStatus", default)]
+            delivery_status: Option<String>,
+            #[serde(rename = "promptMode", default)]
+            prompt_mode: Option<String>,
+            #[serde(rename = "deliveryTracked", default)]
+            delivery_tracked: bool,
             message: String,
             images: Vec<super::images::StoredImage>,
         }
@@ -297,6 +305,14 @@ impl StateStore {
             .prepare(
                 "SELECT e.body FROM session_events e JOIN sessions s ON s.id=e.session_id
                   WHERE s.locator=?1 AND json_extract(e.body,'$.type')='accepted_prompt'
+                    AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
+                    AND NOT EXISTS (
+                        SELECT 1 FROM session_events delivery
+                         WHERE delivery.session_id=e.session_id
+                           AND json_extract(delivery.body,'$.type')='prompt_delivery_receipt'
+                           AND json_extract(delivery.body,'$.submissionId')=
+                               json_extract(e.body,'$.submissionId')
+                    )
                   ORDER BY e.seq",
             )
             .map_err(|error| format!("read accepted prompts: {error}"))?;
@@ -309,11 +325,26 @@ impl StateStore {
                 .map_err(|error| format!("decode accepted prompt: {error}"))?;
             let mut content = vec![serde_json::json!({"type":"text", "text":prompt.message})];
             for image in prompt.images {
-                content.push(serde_json::json!(
-                    self.decode_prompt_image(image)?.into_inline()?
-                ));
+                let image = self.decode_prompt_image(image)?.into_inline()?;
+                content.push(serde_json::json!({
+                    "type": "image",
+                    "data": image.data,
+                    "mimeType": image.mime_type,
+                }));
             }
-            Ok(serde_json::json!({"role":"user", "content":content}))
+            let mut history = serde_json::json!({"role":"user", "content":content});
+            if let Some(submission_id) = prompt.submission_id {
+                history["submissionId"] = submission_id.into();
+                history["deliveryStatus"] = prompt
+                    .delivery_status
+                    .unwrap_or_else(|| "accepted".into())
+                    .into();
+            }
+            if let Some(prompt_mode) = prompt.prompt_mode {
+                history["promptMode"] = prompt_mode.into();
+            }
+            history["deliveryTracked"] = prompt.delivery_tracked.into();
+            Ok(history)
         })
         .collect()
     }
@@ -321,8 +352,19 @@ impl StateStore {
     pub(crate) fn complete_prompt(
         &mut self,
         id: i64,
+        target: &str,
+        session: Option<&Path>,
+    ) -> Result<(), String> {
+        self.complete_prompt_with_receipt(id, target, session, &format!("outbox:{id}"), false)
+    }
+
+    pub(crate) fn complete_prompt_with_receipt(
+        &mut self,
+        id: i64,
         _target: &str,
         session: Option<&Path>,
+        receipt_id: &str,
+        delivery_tracked: bool,
     ) -> Result<(), String> {
         let transaction = self
             .connection
@@ -367,10 +409,13 @@ impl StateStore {
              SELECT o.session_id,
                     (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
                     o.created_ms, 1,
-                    json_object('type','accepted_prompt','message',o.message,
+                    json_object('type','accepted_prompt','submissionId',?2,
+                                'deliveryStatus','accepted',
+                                'deliveryTracked',json(CASE WHEN ?3 THEN 'true' ELSE 'false' END),
+                                'promptMode',o.mode,'message',o.message,
                                 'images',json(o.images_json))
                FROM outbox o WHERE o.id=?1",
-            [id],
+            rusqlite::params![id, receipt_id, delivery_tracked],
         ).map_err(|error| format!("save accepted prompt {id}: {error}"))?;
         transaction
             .execute("DELETE FROM outbox WHERE id=?1", [id])
@@ -378,6 +423,57 @@ impl StateStore {
         transaction
             .commit()
             .map_err(|error| format!("commit queued prompt completion {id}: {error}"))
+    }
+
+    pub(crate) fn record_prompt_receipt_delivered(
+        &mut self,
+        receipt_id: &str,
+        outbox_id: Option<i64>,
+    ) -> Result<(), String> {
+        if receipt_id.is_empty() {
+            return Ok(());
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start prompt delivery receipt: {error}"))?;
+        let session_id = transaction
+            .query_row(
+                "SELECT session_id FROM outbox WHERE id=?2
+                 UNION ALL
+                 SELECT session_id FROM session_events
+                  WHERE json_extract(body,'$.type')='accepted_prompt'
+                    AND json_extract(body,'$.submissionId')=?1
+                 LIMIT 1",
+                rusqlite::params![receipt_id, outbox_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("locate prompt delivery receipt {receipt_id}: {error}"))?;
+        let Some(session_id) = session_id else {
+            return transaction
+                .commit()
+                .map_err(|error| format!("finish unmatched prompt delivery receipt: {error}"));
+        };
+        transaction
+            .execute(
+                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+                 SELECT ?1,
+                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=?1),
+                        ?2, 1,
+                        json_object('type','prompt_delivery_receipt','submissionId',?3)
+                  WHERE NOT EXISTS (
+                      SELECT 1 FROM session_events
+                       WHERE session_id=?1
+                         AND json_extract(body,'$.type')='prompt_delivery_receipt'
+                         AND json_extract(body,'$.submissionId')=?3
+                  )",
+                rusqlite::params![session_id, now_ms(), receipt_id],
+            )
+            .map_err(|error| format!("save prompt delivery receipt {receipt_id}: {error}"))?;
+        transaction
+            .commit()
+            .map_err(|error| format!("commit prompt delivery receipt {receipt_id}: {error}"))
     }
 }
 impl StateStore {
@@ -404,5 +500,20 @@ impl StateStore {
             )
             .map(|_| ())
             .map_err(|db_error| format!("fail queued prompt {id}: {db_error}"))
+    }
+
+    pub(crate) fn mark_prompt_delivery_unknown(&self, id: i64, error: &str) -> Result<(), String> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE outbox SET state='unknown', error=?2 WHERE id=?1 AND state='sending'",
+                params![id, error],
+            )
+            .map_err(|db_error| format!("mark queued prompt {id} delivery unknown: {db_error}"))?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(format!("queued prompt {id} is no longer awaiting delivery"))
+        }
     }
 }

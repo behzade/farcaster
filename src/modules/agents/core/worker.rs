@@ -244,6 +244,9 @@ pub(crate) enum WorkerEvent {
 }
 
 pub(crate) trait WorkerSession: Send {
+    fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
+        false
+    }
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String>;
     fn send_peer_message(
         &mut self,

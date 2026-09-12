@@ -131,7 +131,10 @@ impl RuntimeOwner {
                 if self.deferred_prompt.take().is_some() {
                     self.rollback_failed_prompt("The selected model could not be applied");
                     if let Some(target) = self.pending_prompt_target.take() {
-                        self.emit_prompt_result(&target, false);
+                        self.emit_prompt_result(
+                            &target,
+                            crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                        );
                     }
                 }
                 self.send(SessionCommand::LoadState);
@@ -140,19 +143,44 @@ impl RuntimeOwner {
         let is_prompt_response = matches!(operation, SessionOperation::Prompt(_))
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
         if is_prompt_response {
-            self.pending_prompt_id = None;
-            if !success && operation == SessionOperation::Prompt(PromptMode::Normal) {
+            let outcome = match &response.result {
+                Ok(_) => crate::agents::PromptOutcome::Accepted,
+                Err(error)
+                    if error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown =>
+                {
+                    crate::agents::PromptOutcome::DeliveryUnknown
+                }
+                Err(_) => crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            };
+            if outcome != crate::agents::PromptOutcome::DeliveryUnknown {
+                self.pending_prompt_id = None;
+            }
+            if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance
+                && operation == SessionOperation::Prompt(PromptMode::Normal)
+            {
                 self.normal_prompt_in_flight = false;
             }
-            if success {
+            if outcome == crate::agents::PromptOutcome::Accepted {
                 let target = self.pending_prompt_target.clone().unwrap_or_default();
                 let session = self.active_session.clone();
+                let delivery_tracked = self.pending_prompt_delivery_tracked;
                 if let Some(id) = self.pending_outbox_id
                     && let Some(state) = self.state.as_mut()
                 {
-                    if let Err(error) =
-                        agents::complete_prompt(state, id, &target, session.as_deref())
-                    {
+                    let receipt_id = response.id.as_deref().unwrap_or_default();
+                    if let Err(error) = agents::complete_prompt_with_receipt(
+                        state,
+                        id,
+                        &target,
+                        session.as_deref(),
+                        receipt_id,
+                        delivery_tracked,
+                    ) {
+                        self.pending_prompt_item = None;
+                        self.mark_outbox_delivery_unknown(&error);
+                        self.pending_prompt_delivery_unknown = true;
+                        self.pending_prompt_target.take();
+                        self.emit_prompt_result(&target, crate::agents::PromptOutcome::Accepted);
                         self.fail(format!("Backend accepted the prompt, but saving its acknowledgement failed: {error}"));
                         return;
                     }
@@ -160,18 +188,69 @@ impl RuntimeOwner {
                 }
             } else if let Err(error) = &response.result {
                 self.invalidate_auto_title_generation();
-                self.mark_outbox_failed(&error.message);
+                if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
+                    self.mark_outbox_delivery_unknown(&error.message);
+                } else {
+                    self.mark_outbox_failed(&error.message);
+                }
             }
-            if success {
-                self.pending_prompt_item = None;
+            match outcome {
+                crate::agents::PromptOutcome::Accepted => {
+                    if let Some(id) = response.id.as_deref() {
+                        conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
+                            id,
+                            &serde_json::Value::Null,
+                            "accepted",
+                        );
+                    }
+                    self.pending_prompt_delivery_unknown = false;
+                    self.pending_prompt_delivery_tracked = false;
+                    self.pending_prompt_item = None;
+                }
+                crate::agents::PromptOutcome::RejectedBeforeAcceptance => {
+                    self.pending_prompt_delivery_unknown = false;
+                    self.pending_prompt_delivery_tracked = false;
+                    self.rollback_pending_prompt();
+                }
+                crate::agents::PromptOutcome::DeliveryUnknown => {
+                    if let (Some(id), Some(item)) =
+                        (response.id.as_deref(), self.pending_prompt_item.take())
+                    {
+                        conversation_mut(self.active_snapshot_mut())
+                            .bind_submitted_prompt(id, &item);
+                        conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
+                            id,
+                            &serde_json::Value::Null,
+                            "unknown",
+                        );
+                    }
+                    self.pending_prompt_delivery_unknown = true;
+                }
+            }
+            let target = if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
+                self.pending_prompt_target.clone()
             } else {
-                self.rollback_pending_prompt();
-            }
-            if let Some(target) = self.pending_prompt_target.take() {
-                self.emit_prompt_result(&target, success);
+                self.pending_prompt_target.take()
+            };
+            if let Some(target) = target {
+                self.emit_prompt_result(&target, outcome);
             }
         }
         if let Err(error) = &response.result {
+            if is_prompt_response
+                && error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown
+            {
+                let running = self
+                    .active_snapshot()
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.is_streaming);
+                conversation_mut(self.active_snapshot_mut()).running = running;
+                if self.parked_snapshot.is_none() {
+                    self.publish();
+                }
+                return;
+            }
             let startup_query = matches!(
                 operation,
                 SessionOperation::LoadState | SessionOperation::LoadHistory
@@ -194,7 +273,10 @@ impl RuntimeOwner {
                 self.rollback_pending_prompt();
                 self.deferred_prompt = None;
                 if let Some(target) = self.pending_prompt_target.take() {
-                    self.emit_prompt_result(&target, false);
+                    self.emit_prompt_result(
+                        &target,
+                        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                    );
                 }
                 if let Some(snapshot) = self.parked_snapshot.take() {
                     self.snapshot = snapshot;

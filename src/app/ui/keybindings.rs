@@ -12,7 +12,7 @@ use crate::app::{
     WorkCreateIssue, WorkDismiss, WorkFocusSearch, WorkNextIssue, WorkPreviousIssue,
 };
 use crate::app::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
-use gpui::{KeyBinding, Unbind};
+use gpui::{Action as _, KeyBinding, Unbind};
 use gpui_base::actions::{SelectDown, SelectUp};
 
 const COMPOSER_COMPLETION_CONTEXT: &str = "(FarcasterComposer && Completions) > Input";
@@ -331,13 +331,19 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             Some(COMPOSER_COMPLETION_CONTEXT)
         ),
         application_shortcut!("Run", "Abort current run", ".", AbortRun),
-        shortcut!(
-            "Composer",
-            "Apply queued steer; double-Esc aborts",
-            "escape",
-            ComposerEscape,
-            Some("FarcasterComposer > Input")
-        ),
+        Shortcut {
+            section: "Composer",
+            label: "Send pending input; double-Esc aborts",
+            keystroke: "escape".into(),
+            show_in_help: true,
+            show_in_picker: false,
+            // Raw key handling needs `KeyDownEvent::is_held`, which action dispatch omits.
+            binding: KeyBinding::new(
+                "escape",
+                Unbind(ComposerEscape.name().into()),
+                Some("FarcasterComposer > Input"),
+            ),
+        },
         shortcut!(
             "Work",
             "Previous node",
@@ -407,7 +413,12 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             "/",
             crate::app::FocusSessionSearch
         ),
-        application_shortcut!("Application", "Keyboard shortcuts", "shift-/", ShowKeybindings),
+        application_shortcut!(
+            "Application",
+            "Keyboard shortcuts",
+            "shift-/",
+            ShowKeybindings
+        ),
         application_shortcut!(
             "Application",
             "Keyboard shortcuts",

@@ -49,11 +49,11 @@ fn result_for(harness: &Harness, expected: &str, background: bool) -> (bool, Opt
             }
             Ok(RuntimeEvent::PromptResult {
                 target,
-                accepted,
+                outcome,
                 session,
             }) => {
                 assert_eq!(target, expected);
-                return (accepted, session);
+                return (outcome == crate::agents::PromptOutcome::Accepted, session);
             }
             _ => {}
         }
