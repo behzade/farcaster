@@ -62,6 +62,8 @@ pub(crate) enum BlockNode {
         /// Only contains ListItem, others will be ignored
         children: Vec<BlockNode>,
         ordered: bool,
+        /// First ordered-list number; zero is a valid Markdown start.
+        start: u32,
         span: Option<Span>,
     },
     ListItem {
@@ -189,12 +191,15 @@ impl BlockNode {
                 }
             }
             BlockNode::List {
-                children, ordered, ..
+                children,
+                ordered,
+                start,
+                ..
             } => {
                 if matches!(kind, BlockTextKind::SelectedSource) {
                     // Reconstruct the list source, indenting nested lists and
                     // restoring list markers and task-list checkboxes.
-                    text.push_str(&list_selected_source(children, *ordered, ""));
+                    text.push_str(&list_selected_source(children, *ordered, *start, ""));
                 } else {
                     text.push_str(&Self::children_text(children, kind));
                 }
@@ -702,7 +707,7 @@ fn table_selected_source(table: &Table) -> String {
 /// and sub-list lines align under the item text. Items with no selected content
 /// are skipped but still consume an ordered number, so the remaining items keep
 /// their original numbering.
-fn list_selected_source(children: &[BlockNode], ordered: bool, indent: &str) -> String {
+fn list_selected_source(children: &[BlockNode], ordered: bool, start: u32, indent: &str) -> String {
     let mut out = String::new();
     let mut item_ix = 0usize;
 
@@ -717,7 +722,7 @@ fn list_selected_source(children: &[BlockNode], ordered: bool, indent: &str) -> 
         };
 
         let marker = if ordered {
-            format!("{}. ", item_ix + 1)
+            list_item_prefix(item_ix, true, 0, start)
         } else {
             "- ".to_string()
         };
@@ -736,12 +741,14 @@ fn list_selected_source(children: &[BlockNode], ordered: bool, indent: &str) -> 
             if let BlockNode::List {
                 children: sub_children,
                 ordered: sub_ordered,
+                start: sub_start,
                 ..
             } = sub
             {
                 nested.push_str(&list_selected_source(
                     sub_children,
                     *sub_ordered,
+                    *sub_start,
                     &child_indent,
                 ));
             } else {
@@ -1655,13 +1662,16 @@ impl BlockNode {
                     .join("\n")
             }
             BlockNode::List {
-                children, ordered, ..
+                children,
+                ordered,
+                start,
+                ..
             } => children
                 .iter()
                 .enumerate()
                 .map(|(i, child)| {
                     let prefix = if *ordered {
-                        format!("{}. ", i + 1)
+                        list_item_prefix(i, true, 0, *start)
                     } else {
                         "- ".to_string()
                     };
@@ -1778,7 +1788,12 @@ impl BlockNode {
             .items_start()
             .content_start()
             .when(!options.todo && checked.is_none(), |this| {
-                this.child(list_item_prefix(ix, options.ordered, options.depth))
+                this.child(list_item_prefix(
+                    ix,
+                    options.ordered,
+                    options.depth,
+                    options.list_start,
+                ))
             })
             .when_some(checked, |this, checked| {
                 // Todo list checkbox
@@ -2303,7 +2318,10 @@ impl BlockNode {
                 )
                 .into_any_element(),
             BlockNode::List {
-                children, ordered, ..
+                children,
+                ordered,
+                start,
+                ..
             } => v_flex()
                 .id((if *ordered { "ol" } else { "ul" }, ix))
                 .w_full()
@@ -2321,6 +2339,7 @@ impl BlockNode {
                             NodeRenderOptions {
                                 ix,
                                 ordered: *ordered,
+                                list_start: *start,
                                 ..options
                             },
                             node_cx,
@@ -2364,746 +2383,7 @@ impl BlockNode {
     }
 }
 
+
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reconstruct_markdown_wraps_marked_runs() {
-        // "bold" fully covered by a bold mark.
-        let marks = vec![(0..4, TextMark::default().bold())];
-        assert_eq!(reconstruct_markdown("bold", &marks, 0..4), "**bold**");
-        // Partial selection inside the bold run still wraps the slice.
-        assert_eq!(reconstruct_markdown("bold", &marks, 1..3), "**ol**");
-    }
-
-    #[test]
-    fn reconstruct_markdown_emits_unmarked_text_verbatim() {
-        // "a b c": plain, code, plain across three runs concatenated.
-        let text = "a b c";
-        let marks = vec![(2..3, TextMark::default().code())];
-        assert_eq!(reconstruct_markdown(text, &marks, 0..5), "a `b` c");
-        // Selecting only the plain tail.
-        assert_eq!(reconstruct_markdown(text, &marks, 3..5), " c");
-    }
-
-    #[test]
-    fn reconstruct_markdown_handles_code_italic_strike_link() {
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, TextMark::default().code())], 0..1),
-            "`x`"
-        );
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, TextMark::default().italic())], 0..1),
-            "*x*"
-        );
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, TextMark::default().strikethrough())], 0..1),
-            "~~x~~"
-        );
-        let link = TextMark::default().link(LinkMark {
-            url: "https://example.com".into(),
-            ..Default::default()
-        });
-        assert_eq!(
-            reconstruct_markdown("x", &[(0..1, link)], 0..1),
-            "[x](https://example.com)"
-        );
-    }
-
-    #[test]
-    fn reconstruct_markdown_nested_bold_italic() {
-        // A single run marked both bold and italic (as produced by `**_x_**`).
-        let mark = TextMark::default().bold().italic();
-        // Inner (italic) is applied first, then bold: `***x***`.
-        assert_eq!(reconstruct_markdown("x", &[(0..1, mark)], 0..1), "***x***");
-    }
-
-    /// Build a paragraph whose combined `state.text` is the concatenation of
-    /// its children (mirroring `Paragraph::render`), then set the paragraph
-    /// selection so `selected_source` can be exercised without a real paint.
-    fn paragraph_with_children(children: Vec<InlineNode>) -> Paragraph {
-        let combined: String = children.iter().map(|c| c.text.to_string()).collect();
-        let paragraph = Paragraph {
-            span: None,
-            children,
-            link_refs: HashMap::new(),
-            state: Arc::new(Mutex::new(InlineState::default())),
-        };
-        if let Ok(mut state) = paragraph.state.lock() {
-            state.set_text(combined.into());
-        }
-        paragraph
-    }
-
-    fn set_paragraph_selection(paragraph: &Paragraph, range: Range<usize>) {
-        if let Ok(mut state) = paragraph.state.lock() {
-            state.selection = Some(range.into());
-        }
-    }
-
-    #[test]
-    fn paragraph_selected_source_maps_partial_selection_across_runs() {
-        // "This has **bold** text." rendered as ["This has ", "bold", " text."].
-        let children = vec![
-            InlineNode::new("This has ").marks(vec![(0..9, TextMark::default())]),
-            InlineNode::new("bold").marks(vec![(0..4, TextMark::default().bold())]),
-            InlineNode::new(" text.").marks(vec![(0..6, TextMark::default())]),
-        ];
-        let paragraph = paragraph_with_children(children);
-
-        // Select the whole paragraph: "This has bold text." -> source with **.
-        set_paragraph_selection(&paragraph, 0..(9 + 4 + 6));
-        assert_eq!(paragraph.selected_source(), "This has **bold** text.");
-
-        // Select only across the boundary "has **bold** te".
-        // Rendered offsets: "has " starts at 5, "bold" at 9..13, " te" 13..16.
-        set_paragraph_selection(&paragraph, 5..16);
-        assert_eq!(paragraph.selected_source(), "has **bold** te");
-
-        // Select entirely inside the bold run -> still wrapped.
-        set_paragraph_selection(&paragraph, 10..12);
-        assert_eq!(paragraph.selected_source(), "**ol**");
-    }
-
-    #[test]
-    fn paragraph_selected_source_matches_text_when_no_marks() {
-        let children =
-            vec![InlineNode::new("plain words").marks(vec![(0..11, TextMark::default())])];
-        let paragraph = paragraph_with_children(children);
-        set_paragraph_selection(&paragraph, 0..11);
-        assert_eq!(paragraph.selected_source(), "plain words");
-        assert_eq!(paragraph.selected_text(), "plain words");
-    }
-
-    fn selected_paragraph(text: &str) -> Paragraph {
-        let len = text.len();
-        let paragraph = paragraph_with_children(vec![
-            InlineNode::new(text).marks(vec![(0..len, TextMark::default())]),
-        ]);
-        set_paragraph_selection(&paragraph, 0..len);
-        paragraph
-    }
-
-    #[test]
-    fn heading_selected_source_prefixes_hashes() {
-        let heading = BlockNode::Heading {
-            level: 2,
-            children: selected_paragraph("Title"),
-            span: None,
-        };
-        assert_eq!(heading.selected_text(SelectionFormat::Source), "## Title\n");
-        // Rendered text keeps no marker.
-        assert_eq!(heading.selected_text(SelectionFormat::Plain), "Title\n");
-    }
-
-    #[test]
-    fn unordered_list_selected_source_prefixes_dash() {
-        let list = BlockNode::List {
-            ordered: false,
-            span: None,
-            children: vec![
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("one"))],
-                    spread: false,
-                    checked: None,
-                    span: None,
-                },
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("two"))],
-                    spread: false,
-                    checked: None,
-                    span: None,
-                },
-            ],
-        };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "- one\n- two\n"
-        );
-    }
-
-    #[test]
-    fn ordered_list_selected_source_prefixes_numbers() {
-        let list = BlockNode::List {
-            ordered: true,
-            span: None,
-            children: vec![
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("first"))],
-                    spread: false,
-                    checked: None,
-                    span: None,
-                },
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("second"))],
-                    spread: false,
-                    checked: None,
-                    span: None,
-                },
-            ],
-        };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "1. first\n2. second\n"
-        );
-    }
-
-    #[test]
-    fn nested_list_selected_source_indents_sublists() {
-        // - one
-        //   - nested
-        // - two
-        let nested = BlockNode::List {
-            ordered: false,
-            span: None,
-            children: vec![BlockNode::ListItem {
-                children: vec![BlockNode::Paragraph(selected_paragraph("nested"))],
-                spread: false,
-                checked: None,
-                span: None,
-            }],
-        };
-        let list = BlockNode::List {
-            ordered: false,
-            span: None,
-            children: vec![
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("one")), nested],
-                    spread: false,
-                    checked: None,
-                    span: None,
-                },
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("two"))],
-                    spread: false,
-                    checked: None,
-                    span: None,
-                },
-            ],
-        };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "- one\n  - nested\n- two\n"
-        );
-    }
-
-    #[test]
-    fn task_list_selected_source_restores_checkboxes() {
-        let list = BlockNode::List {
-            ordered: false,
-            span: None,
-            children: vec![
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("done"))],
-                    spread: false,
-                    checked: Some(true),
-                    span: None,
-                },
-                BlockNode::ListItem {
-                    children: vec![BlockNode::Paragraph(selected_paragraph("todo"))],
-                    spread: false,
-                    checked: Some(false),
-                    span: None,
-                },
-            ],
-        };
-        assert_eq!(
-            list.selected_text(SelectionFormat::Source),
-            "- [x] done\n- [ ] todo\n"
-        );
-    }
-
-    #[test]
-    fn blockquote_selected_source_prefixes_gt() {
-        let quote = BlockNode::Blockquote {
-            span: None,
-            children: vec![BlockNode::Paragraph(selected_paragraph("quoted text"))],
-        };
-        assert_eq!(
-            quote.selected_text(SelectionFormat::Source),
-            "> quoted text\n"
-        );
-    }
-
-    #[test]
-    fn table_selected_source_pipes_cells_with_alignment_row() {
-        let cell = |text: &str| TableCell {
-            children: selected_paragraph(text),
-            width: None,
-        };
-        let table = Table {
-            children: vec![
-                TableRow {
-                    children: vec![cell("Name"), cell("Age")],
-                },
-                TableRow {
-                    children: vec![cell("Alice"), cell("30")],
-                },
-            ],
-            column_aligns: vec![ColumnumnAlign::Left, ColumnumnAlign::Right],
-            span: None,
-        };
-        let block = BlockNode::Table(table);
-        assert_eq!(
-            block.selected_text(SelectionFormat::Source),
-            "| Name | Age |\n| :-- | --: |\n| Alice | 30 |\n"
-        );
-    }
-
-    fn image_paragraph(alt: &str, url: &str) -> Paragraph {
-        let image = ImageNode {
-            url: url.into(),
-            alt: Some(alt.into()),
-            ..Default::default()
-        };
-        Paragraph {
-            span: None,
-            children: vec![InlineNode::image(image)],
-            link_refs: HashMap::new(),
-            state: Arc::new(Mutex::new(InlineState::default())),
-        }
-    }
-
-    /// Every mark round-trips, including the two Markdown has no plain syntax
-    /// for.
-    #[test]
-    fn marks_round_trip_through_reconstruction() {
-        let wrap = |mark: TextMark| reconstruct_markdown("x", &[(0..1, mark)], 0..1);
-
-        assert_eq!(wrap(TextMark::default().bold()), "**x**");
-        assert_eq!(wrap(TextMark::default().italic()), "*x*");
-        assert_eq!(wrap(TextMark::default().code()), "`x`");
-        assert_eq!(wrap(TextMark::default().strikethrough()), "~~x~~");
-        assert_eq!(
-            wrap(TextMark::default().highlight(crate::yellow(200))),
-            "==x=="
-        );
-        // No Markdown syntax for underline, so it keeps the tag it came from.
-        assert_eq!(wrap(TextMark::default().underline()), "<u>x</u>");
-
-        // A link keeps its title, which Markdown carries after the URL.
-        assert_eq!(
-            wrap(TextMark::default().link(LinkMark {
-                url: "https://example.com".into(),
-                title: Some("Tip".into()),
-                ..Default::default()
-            })),
-            "[x](https://example.com \"Tip\")"
-        );
-    }
-
-    /// A block the selection covers whole comes straight from the source, so it
-    /// keeps what the author wrote instead of a normalized reconstruction.
-    #[test]
-    fn document_selected_source_slices_covered_blocks_from_the_source() {
-        use crate::text::document::ParsedDocument;
-
-        // `_italic_`, the `3.` start and the column padding all survive only
-        // because the block is copied, not rebuilt.
-        let source = "start\n\n3. _one_\n4. two\n\n---\n\nend";
-        let list = "3. _one_\n4. two";
-        let list_start = source.find(list).unwrap();
-        let rule_start = source.find("---").unwrap();
-
-        let document = ParsedDocument {
-            source: source.into(),
-            blocks: vec![
-                BlockNode::Paragraph(selected_paragraph("start")),
-                BlockNode::List {
-                    ordered: true,
-                    children: vec![],
-                    span: Some(Span {
-                        start: list_start,
-                        end: list_start + list.len(),
-                    }),
-                },
-                BlockNode::HorizontalRule {
-                    span: Some(Span {
-                        start: rule_start,
-                        end: rule_start + 3,
-                    }),
-                },
-                BlockNode::Paragraph(selected_paragraph("end")),
-            ],
-        };
-
-        assert_eq!(
-            document.selected_text(SelectionFormat::Source, None),
-            "start\n\n3. _one_\n4. two\n\n---\n\nend"
-        );
-    }
-
-    #[test]
-    fn document_selected_source_includes_enclosed_image() {
-        use crate::text::document::ParsedDocument;
-
-        // A standalone image between two selected paragraphs is covered by the
-        // selection, so it is copied whole even though it holds no selection of
-        // its own — straight out of the source the parser located it in.
-        let source = "before\n\n![alt](https://example.com/i.png)\n\nafter";
-        let image_markdown = "![alt](https://example.com/i.png)";
-        let start = source.find(image_markdown).unwrap();
-        let mut image = image_paragraph("alt", "https://example.com/i.png");
-        image.span = Some(Span {
-            start,
-            end: start + image_markdown.len(),
-        });
-
-        let document = ParsedDocument {
-            source: source.into(),
-            blocks: vec![
-                BlockNode::Paragraph(selected_paragraph("before")),
-                BlockNode::Paragraph(image),
-                BlockNode::Paragraph(selected_paragraph("after")),
-            ],
-        };
-        assert_eq!(
-            document.selected_text(SelectionFormat::Source, None),
-            "before\n\n![alt](https://example.com/i.png)\n\nafter"
-        );
-    }
-
-    #[test]
-    fn document_selected_source_drops_unenclosed_image() {
-        use crate::text::document::ParsedDocument;
-
-        // An image after the only selected block, with nothing selected after
-        // it, is not enclosed and is dropped.
-        let document = ParsedDocument {
-            source: String::new().into(),
-            blocks: vec![
-                BlockNode::Paragraph(selected_paragraph("before")),
-                BlockNode::Paragraph(image_paragraph("alt", "u")),
-            ],
-        };
-        assert_eq!(
-            document.selected_text(SelectionFormat::Source, None),
-            "before"
-        );
-    }
-
-    fn selected_code_block(code: &str, lang: Option<&str>) -> BlockNode {
-        let block = CodeBlock::new(
-            code.to_string().into(),
-            lang.map(|l| l.to_string().into()),
-            None::<Span>,
-        );
-        if let Ok(mut state) = block.state.lock() {
-            let len = state.text.len();
-            state.selection = Some((0..len).into());
-        }
-        BlockNode::CodeBlock(block)
-    }
-
-    #[test]
-    fn code_block_selected_source_wraps_in_fence_with_lang() {
-        let block = selected_code_block("let x = 1;\n", Some("rust"));
-        let code = block.selected_text(SelectionFormat::Plain);
-        let code_trimmed = code.trim_end_matches('\n');
-        // The source wraps the (trailing-newline-trimmed) selected code in a
-        // fenced block carrying the language; the block arm adds one trailing
-        // newline.
-        assert_eq!(
-            block.selected_text(SelectionFormat::Source),
-            format!("```rust\n{}\n```\n", code_trimmed)
-        );
-        assert!(
-            block
-                .selected_text(SelectionFormat::Source)
-                .starts_with("```rust\n")
-        );
-        assert!(
-            block
-                .selected_text(SelectionFormat::Source)
-                .trim_end()
-                .ends_with("\n```")
-        );
-    }
-
-    #[test]
-    fn code_block_selected_source_without_lang() {
-        let block = selected_code_block("plain\n", None);
-        let code_trimmed = block.selected_text(SelectionFormat::Plain);
-        let code_trimmed = code_trimmed.trim_end_matches('\n');
-        assert_eq!(
-            block.selected_text(SelectionFormat::Source),
-            format!("```\n{}\n```\n", code_trimmed)
-        );
-    }
-
-    #[test]
-    fn document_selected_source_joins_blocks_with_blank_line() {
-        use crate::text::document::ParsedDocument;
-
-        // A heading, a paragraph, and a two-item ordered list, each fully
-        // selected. Top-level blocks must be separated by a blank line so the
-        // copied Markdown re-renders with the same structure.
-        let document = ParsedDocument {
-            source: String::new().into(),
-            blocks: vec![
-                BlockNode::Heading {
-                    level: 1,
-                    children: selected_paragraph("Title"),
-                    span: None,
-                },
-                BlockNode::Paragraph(selected_paragraph("A paragraph.")),
-                selected_code_block("let x = 1;\n", Some("rust")),
-                BlockNode::List {
-                    ordered: true,
-                    span: None,
-                    children: vec![
-                        BlockNode::ListItem {
-                            children: vec![BlockNode::Paragraph(selected_paragraph("one"))],
-                            spread: false,
-                            checked: None,
-                            span: None,
-                        },
-                        BlockNode::ListItem {
-                            children: vec![BlockNode::Paragraph(selected_paragraph("two"))],
-                            spread: false,
-                            checked: None,
-                            span: None,
-                        },
-                    ],
-                },
-            ],
-        };
-
-        assert_eq!(
-            document.selected_text(SelectionFormat::Source, None),
-            "# Title\n\nA paragraph.\n\n```rust\nlet x = 1;\n```\n\n1. one\n2. two"
-        );
-    }
-
-    #[cfg(feature = "tree-sitter")]
-    use crate::{
-        Theme, ThemeMode,
-        text::{TextView, TextViewState},
-    };
-    #[cfg(feature = "tree-sitter")]
-    use gpui::{AppContext as _, Context, Entity, Render, TestAppContext, VisualTestContext};
-
-    #[cfg(feature = "tree-sitter")]
-    fn cached_highlight_theme(block: &CodeBlock) -> Option<Arc<HighlightTheme>> {
-        block
-            .styles
-            .lock()
-            .ok()
-            .and_then(|styles| styles.as_ref().map(|styles| styles.highlight_theme.clone()))
-    }
-
-    #[test]
-    fn code_block_equality_includes_code_content() {
-        let first = CodeBlock::new("let value = 1;".into(), Some("rust".into()), None::<Span>);
-        let second = CodeBlock::new("let value = 2;".into(), Some("rust".into()), None::<Span>);
-
-        assert_ne!(first, second);
-    }
-
-    #[cfg(feature = "tree-sitter")]
-    #[test]
-    fn code_block_highlighter_cache_refreshes_after_language_registration() {
-        let lang = SharedString::from("json-cache-test");
-        let theme = HighlightTheme::default_light();
-
-        CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
-            cache.borrow_mut().remove(&lang);
-        });
-
-        let unknown_block =
-            CodeBlock::new("{\"value\": 1}".into(), Some(lang.clone()), None::<Span>);
-        _ = unknown_block.styles(&theme);
-
-        let cached_language = CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
-            cache
-                .borrow()
-                .get(&lang)
-                .map(|highlighter| highlighter.language().clone())
-        });
-        assert_eq!(cached_language.as_deref(), Some("text"));
-
-        LanguageRegistry::singleton().register(
-            lang.as_ref(),
-            &crate::highlighter::LanguageConfig::new(
-                lang.clone(),
-                tree_sitter_json::LANGUAGE.into(),
-                vec![],
-                r#"
-                    (string) @string
-                    (number) @number
-                    (pair key: (string) @property)
-                "#,
-                "",
-                "",
-            ),
-        );
-
-        let registered_block =
-            CodeBlock::new("{\"value\": 2}".into(), Some(lang.clone()), None::<Span>);
-        _ = registered_block.styles(&theme);
-
-        let cached_language = CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
-            cache
-                .borrow()
-                .get(&lang)
-                .map(|highlighter| highlighter.language().clone())
-        });
-        assert_eq!(cached_language.as_deref(), Some(lang.as_ref()));
-    }
-
-    #[cfg(feature = "tree-sitter")]
-    #[test]
-    fn code_block_styles_follow_the_current_highlight_theme() {
-        let lang = SharedString::from("json-theme-cache-test");
-        let light_theme = HighlightTheme::default_light();
-        let dark_theme = HighlightTheme::default_dark();
-        let code = SharedString::from(r#"{"value": 42}"#);
-        let number_range = code.find("42").unwrap()..code.find("42").unwrap() + 2;
-
-        let light_number = light_theme.style("number").and_then(|style| style.color);
-        let dark_number = dark_theme.style("number").and_then(|style| style.color);
-        assert_ne!(
-            light_number, dark_number,
-            "the test themes must use different number colors"
-        );
-
-        CODE_BLOCK_HIGHLIGHTERS.with(|cache| {
-            cache.borrow_mut().remove(&lang);
-        });
-        LanguageRegistry::singleton().register(
-            lang.as_ref(),
-            &crate::highlighter::LanguageConfig::new(
-                lang.clone(),
-                tree_sitter_json::LANGUAGE.into(),
-                vec![],
-                "(number) @number",
-                "",
-                "",
-            ),
-        );
-
-        let block = CodeBlock::new(code.clone(), Some(lang), None::<Span>);
-        let light_styles = block.styles(&light_theme);
-        let cached_light_theme = cached_highlight_theme(&block).unwrap();
-        assert!(Arc::ptr_eq(&cached_light_theme, &light_theme));
-
-        let equivalent_light_theme = Arc::new(light_theme.as_ref().clone());
-        let repeated_light_styles = block.styles(&equivalent_light_theme);
-        assert_eq!(repeated_light_styles, light_styles);
-        assert!(
-            Arc::ptr_eq(
-                &cached_highlight_theme(&block).unwrap(),
-                &equivalent_light_theme
-            ),
-            "an equivalent replacement should become the cache identity"
-        );
-        assert_eq!(block.styles(&equivalent_light_theme), light_styles);
-
-        let dark_styles = block.styles(&dark_theme);
-        assert_eq!(
-            cached_highlight_theme(&block).as_deref(),
-            Some(dark_theme.as_ref())
-        );
-
-        let color_for_number = |styles: &[(Range<usize>, HighlightStyle)]| -> Option<Hsla> {
-            styles
-                .iter()
-                .find(|(range, _)| {
-                    range.start <= number_range.start && range.end >= number_range.end
-                })
-                .and_then(|(_, style)| style.color)
-        };
-
-        assert_eq!(color_for_number(&light_styles), light_number);
-        assert_eq!(
-            color_for_number(&dark_styles),
-            dark_number,
-            "a theme change must not reuse syntax styles from the previous theme"
-        );
-    }
-
-    #[cfg(feature = "tree-sitter")]
-    #[gpui::test]
-    fn rendered_markdown_code_block_follows_theme_without_reparsing(cx: &mut TestAppContext) {
-        struct CodeBlockThemeRoot {
-            text_view: Entity<TextViewState>,
-        }
-
-        impl Render for CodeBlockThemeRoot {
-            fn render(
-                &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
-            ) -> impl IntoElement {
-                div().w(px(480.)).child(TextView::new(&self.text_view))
-            }
-        }
-
-        let lang = SharedString::from("json-theme-render-test");
-        LanguageRegistry::singleton().register(
-            lang.as_ref(),
-            &crate::highlighter::LanguageConfig::new(
-                lang.clone(),
-                tree_sitter_json::LANGUAGE.into(),
-                vec![],
-                "(number) @number",
-                "",
-                "",
-            ),
-        );
-
-        cx.update(crate::init);
-        let markdown = format!("```{lang}\n{{\"value\": 42}}\n```");
-        let (view, cx) = cx.add_window_view(|_, cx| CodeBlockThemeRoot {
-            text_view: cx.new(|cx| TextViewState::markdown(&markdown, cx)),
-        });
-        let cx: &mut VisualTestContext = cx;
-
-        cx.run_until_parked();
-        cx.update(|window, cx| {
-            let _ = window.draw(cx);
-        });
-
-        let light_theme = cx.update(|_, cx| cx.theme().highlight_theme.clone());
-        let light_block = view.read_with(cx, |root, cx| {
-            let state = root.text_view.read(cx);
-            let BlockNode::CodeBlock(block) = &state.parsed_content.document.blocks[0] else {
-                panic!("expected a code block");
-            };
-
-            block.clone()
-        });
-        let cached_light_theme = cached_highlight_theme(&light_block)
-            .expect("initial render should populate the highlight cache");
-        assert_eq!(cached_light_theme.as_ref(), light_theme.as_ref());
-
-        cx.update(|window, cx| {
-            Theme::change(ThemeMode::Dark, Some(&mut *window), cx);
-            let _ = window.draw(cx);
-        });
-
-        let dark_theme = cx.update(|_, cx| cx.theme().highlight_theme.clone());
-        let dark_block = view.read_with(cx, |root, cx| {
-            let state = root.text_view.read(cx);
-            let BlockNode::CodeBlock(block) = &state.parsed_content.document.blocks[0] else {
-                panic!("expected a code block");
-            };
-
-            block.clone()
-        });
-        let cached_dark_theme = cached_highlight_theme(&dark_block)
-            .expect("theme-change render should refresh the highlight cache");
-
-        assert_ne!(
-            light_theme.as_ref(),
-            dark_theme.as_ref(),
-            "the test themes must have distinct highlight palettes"
-        );
-        assert!(
-            Arc::ptr_eq(&dark_block.styles, &light_block.styles),
-            "changing the theme must not require reparsing the Markdown document"
-        );
-        assert_eq!(cached_dark_theme.as_ref(), dark_theme.as_ref());
-    }
-}
+#[path = "node_tests.rs"]
+mod tests;

@@ -6,29 +6,21 @@ const NUMBERED_PREFIXES_2: &str = "abcdefghijklmnopqrstuvwxyz";
 const BULLETS: [&str; 5] = ["•", "◦", "▪", "‣", "⁃"];
 
 /// Returns the prefix for a list item.
-pub(super) fn list_item_prefix(ix: usize, ordered: bool, depth: usize) -> String {
+pub(super) fn list_item_prefix(ix: usize, ordered: bool, depth: usize, start: u32) -> String {
     if ordered {
-        if depth == 0 {
-            return format!("{}. ", ix + 1);
+        let number = u64::from(start).saturating_add(ix as u64);
+        if depth == 0 || number == 0 {
+            return format!("{}. ", number);
         }
+        let alphabet_index = number - 1;
 
-        if depth == 1 {
-            return format!(
-                "{}. ",
-                NUMBERED_PREFIXES_1
-                    .chars()
-                    .nth(ix % NUMBERED_PREFIXES_1.len())
-                    .unwrap()
-            );
+        let alphabet = if depth == 1 {
+            NUMBERED_PREFIXES_1
         } else {
-            return format!(
-                "{}. ",
-                NUMBERED_PREFIXES_2
-                    .chars()
-                    .nth(ix % NUMBERED_PREFIXES_2.len())
-                    .unwrap()
-            );
-        }
+            NUMBERED_PREFIXES_2
+        };
+        let letter = alphabet.as_bytes()[(alphabet_index % alphabet.len() as u64) as usize];
+        return format!("{}. ", char::from(letter));
     } else {
         let depth = depth.min(BULLETS.len() - 1);
         let bullet = BULLETS[depth];
@@ -46,56 +38,5 @@ pub(super) fn image_source(url: &SharedUri) -> ImageSource {
 }
 
 #[cfg(test)]
-mod tests {
-    use gpui::{ImageSource, Resource};
-
-    use crate::text::utils::{image_source, list_item_prefix};
-
-    #[test]
-    fn test_image_source() {
-        fn source(url: &str) -> Resource {
-            match image_source(&url.to_string().into()) {
-                ImageSource::Resource(resource) => resource,
-                _ => panic!("expected a resource for {url:?}"),
-            }
-        }
-        fn assert_uri(url: &str) {
-            match source(url) {
-                Resource::Uri(uri) => assert_eq!(uri.as_ref(), url),
-                other => panic!("expected Uri for {url:?}, got {other:?}"),
-            }
-        }
-        assert_uri("https://example.com/logo.png");
-        assert_uri("http://example.com/logo.png");
-        assert_uri("data:image/png;base64,iVBORw0KGgo=");
-
-        assert_uri("website/public/logo.svg");
-        assert_uri("./images/a.png");
-        assert_uri("../images/a.png");
-        assert_uri("/absolute/path/logo.svg");
-        assert_uri("file:///absolute/path/logo.svg");
-        assert_uri(r"C:\images\logo.png");
-        assert_uri("docs/a:b.png");
-    }
-
-    #[test]
-    fn test_list_item_prefix() {
-        assert_eq!(list_item_prefix(0, true, 0), "1. ");
-        assert_eq!(list_item_prefix(1, true, 0), "2. ");
-        assert_eq!(list_item_prefix(2, true, 0), "3. ");
-        assert_eq!(list_item_prefix(10, true, 0), "11. ");
-        assert_eq!(list_item_prefix(0, true, 1), "A. ");
-        assert_eq!(list_item_prefix(1, true, 1), "B. ");
-        assert_eq!(list_item_prefix(2, true, 1), "C. ");
-        assert_eq!(list_item_prefix(0, true, 2), "a. ");
-        assert_eq!(list_item_prefix(1, true, 2), "b. ");
-        assert_eq!(list_item_prefix(6, true, 2), "g. ");
-        assert_eq!(list_item_prefix(0, true, 1), "A. ");
-        assert_eq!(list_item_prefix(0, true, 2), "a. ");
-        assert_eq!(list_item_prefix(0, false, 0), "• ");
-        assert_eq!(list_item_prefix(0, false, 1), "◦ ");
-        assert_eq!(list_item_prefix(0, false, 2), "▪ ");
-        assert_eq!(list_item_prefix(0, false, 3), "‣ ");
-        assert_eq!(list_item_prefix(0, false, 4), "⁃ ");
-    }
-}
+#[path = "utils_tests.rs"]
+mod tests;

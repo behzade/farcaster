@@ -6,7 +6,7 @@ use gpui::{App, Entity, FocusHandle, Focusable as _, SharedString, Window};
 ///
 /// [`InputState`], [`TextareaState`], and [`EditorState`] are separate types,
 /// so an API that refers to “whatever input is here” takes this
-/// enum instead of one of them. [`crate::WindowExt::focused_input`] returns it.
+/// enum instead of one of them. [`Root`] uses it to track the focused input.
 ///
 /// Use [`Self::as_input`] and friends to get the concrete state back, or
 /// [`Self::value`] and [`Self::focus_handle`] when the kind does not matter.

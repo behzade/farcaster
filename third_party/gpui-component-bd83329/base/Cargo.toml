@@ -7,7 +7,6 @@ publish = false
 
 [lib]
 doctest = false
-test = false
 
 [features]
 inspector = ["gpui_macros/inspector", "gpui/inspector"]

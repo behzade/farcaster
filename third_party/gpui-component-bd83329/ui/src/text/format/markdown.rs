@@ -355,6 +355,7 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
                 .collect();
             BlockNode::List {
                 ordered: list.ordered,
+                start: list.start.unwrap_or(1),
                 children,
                 span: new_span(list.position, cx),
             }
@@ -504,6 +505,10 @@ fn ast_to_node(source: &str, value: mdast::Node, cx: &mut NodeContext) -> BlockN
         }
     }
 }
+
+#[cfg(test)]
+#[path = "markdown_numbering_tests.rs"]
+mod numbering_tests;
 
 #[cfg(test)]
 mod tests {
