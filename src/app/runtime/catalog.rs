@@ -7,9 +7,14 @@ impl RuntimeOwner {
         };
         child["harness"] = json!(self.harness);
         child["project"] = json!(self.project);
-        if let Ok(metadata) = serde_json::from_value::<agents::SessionMetadata>(child)
+        if let Ok(metadata) = serde_json::from_value::<agents::SessionMetadata>(child.clone())
             && !metadata.id.is_empty()
         {
+            let _ = self
+                .event_tx
+                .send(RuntimeEvent::AgentActivityUpdated(native_child_activity(
+                    &child, &metadata,
+                )));
             let _ = self.event_tx.send(RuntimeEvent::SessionMetadata(metadata));
         }
     }
@@ -207,6 +212,10 @@ impl RuntimeOwner {
     }
 
     fn catalog_event(&self, all_sessions: Vec<SessionSummary>) -> RuntimeEvent {
+        let worker_activities = worker_activities(
+            &all_sessions,
+            crate::app::mcp_server::worker_snapshots().unwrap_or_default(),
+        );
         RuntimeEvent::Sessions {
             generation: self.session_generation,
             sessions: crate::sessions::filter_session_tree(
@@ -214,10 +223,53 @@ impl RuntimeOwner {
                 &self.session_query,
             ),
             all_sessions,
-            // Live events own activity; refreshing metadata must not replace it.
-            activities: None,
+            // Pool snapshots are current lifecycle data. The projection merges
+            // them without clearing richer history-backed activities.
+            activities: (!worker_activities.is_empty()).then_some((worker_activities, false)),
         }
     }
+}
+
+fn worker_activities(
+    sessions: &[SessionSummary],
+    snapshots: Vec<agents::WorkerSnapshot>,
+) -> HashMap<String, AgentActivity> {
+    snapshots
+        .into_iter()
+        .filter_map(|snapshot| {
+            let session = session_for_worker_snapshot(sessions, &snapshot)?;
+            Some((
+                crate::agent_activity::agent_activity_key(&session.path),
+                AgentActivity::from_worker_snapshot(session, &snapshot),
+            ))
+        })
+        .collect()
+}
+
+pub(in crate::app) fn native_child_activity(
+    child: &Value,
+    metadata: &agents::SessionMetadata,
+) -> AgentActivity {
+    AgentActivity::from_native_child(
+        metadata.id.clone(),
+        metadata.path.clone(),
+        metadata.title.as_deref().unwrap_or("Agent"),
+        metadata.is_running,
+        child.get("outcome").and_then(Value::as_str),
+    )
+}
+
+fn session_for_worker_snapshot<'a>(
+    sessions: &'a [SessionSummary],
+    snapshot: &agents::WorkerSnapshot,
+) -> Option<&'a SessionSummary> {
+    let locator = snapshot.session_locator.as_deref()?;
+    sessions.iter().find(|session| {
+        session.parent_session.is_some()
+            && session.harness == snapshot.backend
+            && session.project == snapshot.project
+            && (session.id == locator || session.path == std::path::Path::new(locator))
+    })
 }
 
 fn unknown_import_candidates(

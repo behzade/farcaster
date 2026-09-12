@@ -89,6 +89,11 @@ impl Supervisor {
                 }
                 let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
             }
+            RuntimeEvent::AgentActivityUpdated(activity) => {
+                let _ = self
+                    .event_tx
+                    .send(RuntimeEvent::AgentActivityUpdated(activity));
+            }
             event @ RuntimeEvent::SystemNotification { .. } => {
                 let _ = self.event_tx.send(event);
             }
@@ -148,7 +153,10 @@ impl Supervisor {
                         self.needs_input.remove(&key);
                     }
                 }
-                let status = if self.needs_input.contains(&key) {
+                let recovery_target = self
+                    .recovery_target_for_snapshot(&key, &snapshot)
+                    .map(str::to_owned);
+                let status = if self.needs_input.contains(&key) || recovery_target.is_some() {
                     "Needs input"
                 } else {
                     semantic_status(&snapshot)
@@ -156,7 +164,7 @@ impl Supervisor {
                 publish_session_status_if_changed(
                     &self.event_tx,
                     &mut self.published_statuses,
-                    &key,
+                    recovery_target.as_deref().unwrap_or(&key),
                     snapshot
                         .live_session
                         .clone()
@@ -172,9 +180,50 @@ impl Supervisor {
                 }
                 self.latest.insert(key.clone(), snapshot.clone());
                 if key == self.selected {
+                    self.selected_project = snapshot.project.clone();
+                    self.selected_session = snapshot
+                        .live_session
+                        .clone()
+                        .or_else(|| snapshot.selected_session.clone());
                     let _ = self.event_tx.send(RuntimeEvent::Snapshot {
                         generation: self.generation,
                         snapshot,
+                    });
+                    self.publish_selected_recovery_dialogs();
+                }
+            }
+            RuntimeEvent::ExtensionUiDismissed { id, .. } => {
+                if let Some(dialogs) = self.active_dialogs.get_mut(&key) {
+                    dialogs.retain(|request| request.dialog_id() != Some(id.as_str()));
+                    if dialogs.is_empty() {
+                        self.active_dialogs.remove(&key);
+                        self.needs_input.remove(&key);
+                    }
+                }
+                if let Some(snapshot) = self.latest.get(&key) {
+                    let recovery_target = self
+                        .recovery_target_for_snapshot(&key, snapshot)
+                        .map(str::to_owned);
+                    let status = if self.needs_input.contains(&key) || recovery_target.is_some() {
+                        "Needs input"
+                    } else {
+                        semantic_status(snapshot)
+                    };
+                    publish_session_status_if_changed(
+                        &self.event_tx,
+                        &mut self.published_statuses,
+                        recovery_target.as_deref().unwrap_or(&key),
+                        snapshot
+                            .live_session
+                            .clone()
+                            .or_else(|| snapshot.selected_session.clone()),
+                        status,
+                    );
+                }
+                if key == self.selected {
+                    let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
+                        generation: self.generation,
+                        id,
                     });
                 }
             }
@@ -238,6 +287,7 @@ impl Supervisor {
                 preserve_submission,
                 ..
             } if key == self.selected => {
+                self.published_recovery_selection = None;
                 let _ = self.event_tx.send(RuntimeEvent::SessionReset {
                     generation: self.generation,
                     preserve_submission,
@@ -315,3 +365,7 @@ impl Supervisor {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "events_tests.rs"]
+mod tests;

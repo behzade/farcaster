@@ -134,3 +134,32 @@ fn terminal_outcomes_use_only_explicit_stop_reasons() {
         assert_eq!(activity.lifecycle, AgentLifecycle::Completed(expected));
     }
 }
+
+#[test]
+fn native_child_status_requires_an_explicit_terminal_outcome() {
+    for (outcome, expected) in [
+        (
+            Some("complete"),
+            AgentLifecycle::Completed(AgentOutcome::Complete),
+        ),
+        (
+            Some("failed"),
+            AgentLifecycle::Completed(AgentOutcome::Failed),
+        ),
+        (
+            Some("incomplete"),
+            AgentLifecycle::Completed(AgentOutcome::Incomplete),
+        ),
+        (None, AgentLifecycle::Unknown),
+    ] {
+        let activity = AgentActivity::from_native_child(
+            "child".into(),
+            PathBuf::from("/sessions/child"),
+            "reviewer",
+            false,
+            outcome,
+        );
+        assert_eq!(activity.lifecycle, expected);
+        assert!(activity.limited);
+    }
+}

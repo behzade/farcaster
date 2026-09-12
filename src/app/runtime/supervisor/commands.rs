@@ -171,6 +171,9 @@ impl Supervisor {
                     return true;
                 }
                 if let RuntimeCommand::ExtensionResponse(response) = &command {
+                    if self.resolve_recovery_response(response) {
+                        return true;
+                    }
                     let id = match response {
                         ExtensionUiResponse::Value { id, .. }
                         | ExtensionUiResponse::Confirmed { id, .. }
@@ -206,6 +209,14 @@ impl Supervisor {
                     );
                 }
                 if let RuntimeCommand::SetAppProxy(proxy) = &command {
+                    if let Err(error) = crate::app::mcp_server::set_worker_app_proxy(proxy.clone())
+                    {
+                        let _ = self.event_tx.send(RuntimeEvent::SystemNotification {
+                            title: "Farcaster: Worker proxy update failed".into(),
+                            body: error,
+                            target: None,
+                        });
+                    }
                     self.process_command.app_proxy = proxy.clone();
                     for actor in self.actors.values() {
                         actor.send(command.clone());
@@ -266,7 +277,15 @@ impl Supervisor {
                             });
                         }
                     }
+                    let next_selected_session = match &command {
+                        RuntimeCommand::SelectSession { path, .. }
+                        | RuntimeCommand::RestartSession { path, .. } => Some(path.clone()),
+                        _ => None,
+                    };
+                    self.selected_project = project.clone();
+                    self.selected_session = next_selected_session;
                     let resident_snapshot = self.latest.get(&key).cloned();
+                    let recovery_can_publish = resident_snapshot.is_some();
                     if let RuntimeCommand::SelectSession { path, .. }
                     | RuntimeCommand::RestartSession { path, .. } = &command
                     {
@@ -313,6 +332,9 @@ impl Supervisor {
                                 system_notification_target: None,
                             });
                         }
+                    }
+                    if recovery_can_publish {
+                        self.publish_selected_recovery_dialogs();
                     }
                 } else {
                     let target = if command_targets_catalog(&command) {

@@ -42,7 +42,47 @@ pub(crate) enum ExtensionEffect {
     Diagnostic(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DialogDismissal {
+    NotFound,
+    Queued,
+    ActiveWithNext,
+    ActiveFinal,
+}
+
 impl ExtensionUiState {
+    pub(crate) fn take_dialogs_matching(
+        &mut self,
+        matches: impl Fn(&ExtensionUiRequest) -> bool,
+    ) -> Vec<ExtensionUiRequest> {
+        let dialogs = self
+            .dialog
+            .take()
+            .into_iter()
+            .chain(self.queued_dialogs.drain(..))
+            .collect::<Vec<_>>();
+        let (taken, retained): (Vec<_>, Vec<_>) =
+            dialogs.into_iter().partition(|request| matches(request));
+        self.replace_dialogs(retained);
+        taken
+    }
+
+    pub(crate) fn prepend_dialogs(&mut self, mut dialogs: Vec<ExtensionUiRequest>) {
+        dialogs.extend(
+            self.dialog
+                .take()
+                .into_iter()
+                .chain(self.queued_dialogs.drain(..)),
+        );
+        self.replace_dialogs(dialogs);
+    }
+
+    fn replace_dialogs(&mut self, dialogs: Vec<ExtensionUiRequest>) {
+        let mut dialogs = dialogs.into_iter();
+        self.dialog = dialogs.next();
+        self.queued_dialogs.extend(dialogs);
+    }
+
     pub(crate) fn apply(&mut self, request: ExtensionUiRequest) -> ExtensionEffect {
         match request {
             request @ (ExtensionUiRequest::Select { .. }
@@ -156,6 +196,25 @@ impl ExtensionUiState {
                 id: id.to_owned(),
                 cancelled: true,
             })
+    }
+
+    pub(crate) fn dismiss_dialog(&mut self, id: &str) -> DialogDismissal {
+        if self.dialog.as_ref().and_then(ExtensionUiRequest::dialog_id) == Some(id) {
+            self.take_dialog(id);
+            return if self.dialog.is_some() {
+                DialogDismissal::ActiveWithNext
+            } else {
+                DialogDismissal::ActiveFinal
+            };
+        }
+        let queued = self.queued_dialogs.len();
+        self.queued_dialogs
+            .retain(|request| request.dialog_id() != Some(id));
+        if self.queued_dialogs.len() != queued {
+            DialogDismissal::Queued
+        } else {
+            DialogDismissal::NotFound
+        }
     }
 
     fn take_dialog(&mut self, id: &str) -> Option<ExtensionUiRequest> {

@@ -3,6 +3,21 @@ use gpui::{Context, Focusable as _, Window};
 use super::super::FarcasterApp;
 use crate::{app::AppSurface, protocol::ExtensionUiRequest};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DialogLifecycleAction {
+    None,
+    Setup,
+    RestoreFocus,
+}
+
+fn dialog_lifecycle_action(pending: bool, has_dialog: bool) -> DialogLifecycleAction {
+    match (pending, has_dialog) {
+        (false, _) => DialogLifecycleAction::None,
+        (true, true) => DialogLifecycleAction::Setup,
+        (true, false) => DialogLifecycleAction::RestoreFocus,
+    }
+}
+
 impl FarcasterApp {
     pub(super) fn prepare_root_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resolve_pending_submission(window, cx);
@@ -27,7 +42,17 @@ impl FarcasterApp {
                 }
             });
         }
-        if self.pending_dialog_setup {
+        let dialog_lifecycle =
+            dialog_lifecycle_action(self.pending_dialog_setup, self.extension.dialog.is_some());
+        if dialog_lifecycle == DialogLifecycleAction::RestoreFocus {
+            self.pending_dialog_setup = false;
+            cx.defer_in(window, |this, window, cx| {
+                if this.extension.dialog.is_none() {
+                    this.advance_or_restore_dialog(window, cx);
+                }
+            });
+        }
+        if dialog_lifecycle == DialogLifecycleAction::Setup {
             if self.dialog_return_focus.is_none() {
                 self.dialog_return_focus = window.focused(cx);
             }
@@ -113,3 +138,7 @@ impl FarcasterApp {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod tests;

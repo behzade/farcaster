@@ -165,6 +165,7 @@ pub(crate) fn is_subagent_path(sessions: &[SessionSummary], path: &Path) -> bool
         .any(|session| session.path == path && session.parent_session.is_some())
 }
 
+#[cfg(test)]
 pub(crate) fn descendant_sessions<'a>(
     sessions: &'a [SessionSummary],
     root_id: &str,

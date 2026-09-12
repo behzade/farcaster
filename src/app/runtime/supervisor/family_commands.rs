@@ -8,16 +8,58 @@ impl Supervisor {
                     .iter()
                     .map(|session| session.path.clone())
                     .collect::<HashSet<_>>();
+                let prior_actor_failures = family_paths
+                    .iter()
+                    .filter_map(|path| self.failed_actor_shutdowns.get(path))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !prior_actor_failures.is_empty() {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.catalog_generation,
+                        message: format!(
+                            "Could not confirm the whole session family stopped: {}",
+                            prior_actor_failures.join("; ")
+                        ),
+                    });
+                    return true;
+                }
+                let project = family[0].project.clone();
+                let worker_paths = family
+                    .iter()
+                    .map(|session| (session.harness.clone(), session.path.clone()))
+                    .collect::<Vec<_>>();
+                if let Err(message) =
+                    crate::app::mcp_server::stop_session_family_workers(&project, &worker_paths)
+                {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.catalog_generation,
+                        message: format!("Could not stop the whole session family: {message}"),
+                    });
+                    return true;
+                }
                 let family_actor_keys = self
                     .actor_paths
                     .iter()
                     .filter(|(path, key)| family_paths.contains(*path) && *key != &self.catalog_key)
                     .map(|(_, key)| key.clone())
                     .collect::<HashSet<_>>();
+                let mut stopped_sessions = Vec::new();
+                let mut actor_stop_failures = Vec::new();
                 for key in &family_actor_keys {
                     if let Some(actor) = self.actors.remove(key) {
                         actor.send(RuntimeCommand::Shutdown);
-                        actor.join();
+                        if let Err(error) = actor.join() {
+                            let message = format!("{key}: {error}");
+                            for path in self
+                                .actor_paths
+                                .iter()
+                                .filter_map(|(path, actor_key)| (actor_key == key).then_some(path))
+                            {
+                                self.failed_actor_shutdowns
+                                    .insert(path.clone(), message.clone());
+                            }
+                            actor_stop_failures.push(message);
+                        }
                     }
                     let session = self.latest.get(key).and_then(|snapshot| {
                         snapshot
@@ -25,11 +67,7 @@ impl Supervisor {
                             .clone()
                             .or_else(|| snapshot.selected_session.clone())
                     });
-                    let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
-                        target: key.clone(),
-                        session,
-                        status: "Stopped".into(),
-                    });
+                    stopped_sessions.push((key.clone(), session));
                     self.latest.remove(key);
                     self.last_touch.remove(key);
                     self.pending_extensions.remove(key);
@@ -45,6 +83,27 @@ impl Supervisor {
                 if family_actor_keys.contains(&self.selected) {
                     self.selected = self.catalog_key.clone();
                 }
+                if !actor_stop_failures.is_empty() {
+                    let _ = crate::app::mcp_server::finish_session_family_worker_stop(
+                        &project,
+                        &worker_paths,
+                    );
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.catalog_generation,
+                        message: format!(
+                            "Could not confirm the whole session family stopped: {}",
+                            actor_stop_failures.join("; ")
+                        ),
+                    });
+                    return true;
+                }
+                for (target, session) in stopped_sessions {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionStatus {
+                        target,
+                        session,
+                        status: "Stopped".into(),
+                    });
+                }
                 for session in &mut self.catalog_sessions {
                     if family_paths.contains(&session.path) {
                         session.is_running = false;
@@ -54,6 +113,39 @@ impl Supervisor {
                             status: "Stopped".into(),
                         });
                     }
+                }
+                if let Err(message) = crate::app::mcp_server::finish_session_family_worker_stop(
+                    &project,
+                    &worker_paths,
+                ) {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.catalog_generation,
+                        message: format!(
+                            "Session family stopped, but its worker stop fence failed: {message}"
+                        ),
+                    });
+                    return true;
+                }
+                let archive_result = self
+                    .catalog_state
+                    .as_ref()
+                    .ok_or_else(|| "Session state is unavailable".to_owned())
+                    .and_then(|state| sessions::set_archived(state, path, true));
+                if let Err(message) = archive_result {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                        generation: self.catalog_generation,
+                        message: format!(
+                            "Session family stopped, but could not be archived: {message}"
+                        ),
+                    });
+                    return true;
+                }
+                if let Some(root) = self
+                    .catalog_sessions
+                    .iter_mut()
+                    .find(|session| session.path == *path)
+                {
+                    root.archived = true;
                 }
                 if let Some(catalog) = self.actors.get(&self.catalog_key) {
                     catalog.send(RuntimeCommand::RefreshSessions);
@@ -103,7 +195,7 @@ impl Supervisor {
                 for key in &family_actor_keys {
                     if let Some(actor) = self.actors.remove(key) {
                         actor.send(RuntimeCommand::Shutdown);
-                        actor.join();
+                        let _ = actor.join();
                     }
                     self.latest.remove(key);
                     self.last_touch.remove(key);
@@ -220,7 +312,7 @@ impl Supervisor {
                 for key in &family_actor_keys {
                     if let Some(actor) = self.actors.remove(key) {
                         actor.send(RuntimeCommand::Shutdown);
-                        actor.join();
+                        let _ = actor.join();
                     }
                     self.latest.remove(key);
                     self.last_touch.remove(key);

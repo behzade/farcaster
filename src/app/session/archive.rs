@@ -65,8 +65,7 @@ impl FarcasterApp {
         let Some((path, next_app_session_id)) = self.close_archive_confirmation(window, cx) else {
             return;
         };
-        self.send(RuntimeCommand::StopSessionFamily { path: path.clone() }, cx);
-        self.set_session_archived(path, true, cx);
+        self.send(stop_and_archive_command(path), cx);
         if let Some(id) = next_app_session_id {
             self.select_visible_app_session(id, window, cx);
         }
@@ -83,6 +82,10 @@ impl FarcasterApp {
         cx.notify();
         Some((pending.path, pending.next_app_session_id))
     }
+}
+
+fn stop_and_archive_command(path: PathBuf) -> RuntimeCommand {
+    RuntimeCommand::StopSessionFamily { path }
 }
 
 pub(in crate::app) fn session_event_affects_archived_rail(

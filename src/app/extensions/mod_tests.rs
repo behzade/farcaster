@@ -10,6 +10,82 @@ fn input(id: &str) -> ExtensionUiRequest {
 }
 
 #[test]
+fn expired_dialog_dismissal_preserves_other_questions_and_advances_fifo() {
+    let mut state = ExtensionUiState::default();
+    for id in ["active", "expired-queued", "next"] {
+        state.apply(input(id));
+    }
+    assert_eq!(
+        state.dismiss_dialog("expired-queued"),
+        DialogDismissal::Queued
+    );
+    assert_eq!(
+        state
+            .dialog
+            .as_ref()
+            .and_then(ExtensionUiRequest::dialog_id),
+        Some("active")
+    );
+    assert_eq!(state.dismiss_dialog("unrelated"), DialogDismissal::NotFound);
+    assert_eq!(
+        state.dismiss_dialog("active"),
+        DialogDismissal::ActiveWithNext
+    );
+    assert_eq!(
+        state
+            .dialog
+            .as_ref()
+            .and_then(ExtensionUiRequest::dialog_id),
+        Some("next")
+    );
+    assert_eq!(state.dismiss_dialog("next"), DialogDismissal::ActiveFinal);
+    assert!(state.dialog.is_none());
+    assert_eq!(state.dismiss_dialog("next"), DialogDismissal::NotFound);
+}
+
+#[test]
+fn selected_dialogs_can_stay_visible_while_the_rest_are_parked() {
+    let mut state = ExtensionUiState::default();
+    for id in ["approval", "farcaster-recovery-7", "follow-up"] {
+        state.apply(input(id));
+    }
+    let visible = state.take_dialogs_matching(|request| {
+        request
+            .dialog_id()
+            .is_some_and(|id| id.starts_with("farcaster-recovery-"))
+    });
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].dialog_id(), Some("farcaster-recovery-7"));
+    assert_eq!(
+        state
+            .dialog
+            .as_ref()
+            .and_then(ExtensionUiRequest::dialog_id),
+        Some("approval")
+    );
+
+    state.prepend_dialogs(visible);
+    assert_eq!(
+        state
+            .dialog
+            .as_ref()
+            .and_then(ExtensionUiRequest::dialog_id),
+        Some("farcaster-recovery-7")
+    );
+    assert_eq!(
+        state.dismiss_dialog("farcaster-recovery-7"),
+        DialogDismissal::ActiveWithNext
+    );
+    assert_eq!(
+        state
+            .dialog
+            .as_ref()
+            .and_then(ExtensionUiRequest::dialog_id),
+        Some("approval")
+    );
+}
+
+#[test]
 fn rpc_capability_notices_are_not_user_facing_errors() {
     let mut state = ExtensionUiState::default();
     let effect = state.apply(ExtensionUiRequest::Notify {

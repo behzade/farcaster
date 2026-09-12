@@ -7,10 +7,16 @@ use std::{
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::sessions::UsageSummary;
+use crate::sessions::{SessionSummary, UsageSummary};
 
 const MAX_ACTIVITY_CHARS: usize = 160;
 const MAX_TOOL_TARGET_CHARS: usize = 120;
+
+pub(crate) fn agent_activity_key(path: &std::path::Path) -> String {
+    crate::sessions::normalize_session_path(path)
+        .to_string_lossy()
+        .into_owned()
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AgentOutcome {
@@ -50,6 +56,89 @@ pub(crate) struct AgentActivity {
     pub started: SystemTime,
     pub ended: Option<SystemTime>,
     pub elapsed: Option<Duration>,
+}
+
+impl AgentActivity {
+    pub(crate) fn limited_fallback(session: &SessionSummary) -> Self {
+        Self {
+            session_id: session.id.clone(),
+            session_path: session.path.clone(),
+            role: role_label(&session.title),
+            activity: bounded(&session.first_user_message, MAX_ACTIVITY_CHARS),
+            lifecycle: if session.is_running {
+                AgentLifecycle::Working
+            } else {
+                AgentLifecycle::Unknown
+            },
+            current_tool: None,
+            recent_tool: None,
+            tool_call_count: 0,
+            limited: true,
+            usage: session.usage,
+            started: session.modified,
+            ended: None,
+            elapsed: None,
+        }
+    }
+
+    pub(crate) fn from_worker_snapshot(
+        session: &SessionSummary,
+        snapshot: &crate::agents::WorkerSnapshot,
+    ) -> Self {
+        let mut activity = Self::limited_fallback(session);
+        activity.lifecycle = match snapshot.status {
+            crate::agents::WorkerStatus::Running => AgentLifecycle::Working,
+            crate::agents::WorkerStatus::NeedsInput => AgentLifecycle::NeedsInput,
+            crate::agents::WorkerStatus::Idle if snapshot.output.is_some() => {
+                AgentLifecycle::Completed(AgentOutcome::Complete)
+            }
+            crate::agents::WorkerStatus::Idle => AgentLifecycle::Unknown,
+            crate::agents::WorkerStatus::Failed => AgentLifecycle::Completed(AgentOutcome::Failed),
+            crate::agents::WorkerStatus::Stopped => {
+                AgentLifecycle::Completed(AgentOutcome::Incomplete)
+            }
+        };
+        if matches!(activity.lifecycle, AgentLifecycle::Completed(_)) {
+            activity.ended = Some(session.modified);
+        }
+        activity
+    }
+
+    pub(crate) fn from_native_child(
+        session_id: String,
+        session_path: PathBuf,
+        title: &str,
+        is_running: bool,
+        outcome: Option<&str>,
+    ) -> Self {
+        let now = SystemTime::now();
+        let lifecycle = if is_running {
+            AgentLifecycle::Working
+        } else {
+            match outcome {
+                Some("complete") => AgentLifecycle::Completed(AgentOutcome::Complete),
+                Some("failed") => AgentLifecycle::Completed(AgentOutcome::Failed),
+                Some("incomplete") => AgentLifecycle::Completed(AgentOutcome::Incomplete),
+                _ => AgentLifecycle::Unknown,
+            }
+        };
+        let terminal = matches!(lifecycle, AgentLifecycle::Completed(_));
+        Self {
+            session_id,
+            session_path,
+            role: role_label(title),
+            activity: String::new(),
+            lifecycle,
+            current_tool: None,
+            recent_tool: None,
+            tool_call_count: 0,
+            limited: true,
+            usage: UsageSummary::default(),
+            started: now,
+            ended: terminal.then_some(now),
+            elapsed: None,
+        }
+    }
 }
 
 #[derive(Default)]

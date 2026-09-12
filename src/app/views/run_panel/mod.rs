@@ -1,4 +1,4 @@
-mod agents;
+pub(in crate::app) mod agents;
 mod background_jobs;
 pub(crate) use crate::app::ui::change_tree;
 mod performance;
@@ -30,7 +30,7 @@ use crate::{
     agent_activity::AgentActivity,
     app::ui::primitives::{ButtonTone, button, panel, section_heading},
     app::ui::theme::THEME,
-    sessions::{descendant_sessions, root_session_for_path},
+    sessions::{descendant_sessions_for_root, root_session_for_path},
 };
 
 pub(crate) struct RepositoryView<'a> {
@@ -38,6 +38,33 @@ pub(crate) struct RepositoryView<'a> {
     pub(crate) search: &'a gpui::Entity<gpui_component::input::InputState>,
     pub(crate) query: &'a str,
     pub(crate) scroll: &'a ScrollHandle,
+}
+
+fn run_panel_agent_rows<'a>(
+    sessions: &'a [crate::sessions::SessionSummary],
+    activities: &std::collections::HashMap<String, AgentActivity>,
+    selected: Option<&std::path::Path>,
+) -> Vec<(
+    AgentActivity,
+    usize,
+    &'a crate::sessions::SessionSummary,
+    AgentSection,
+)> {
+    let Some(root) = root_session_for_path(sessions, selected) else {
+        return Vec::new();
+    };
+    descendant_sessions_for_root(sessions, root)
+        .into_iter()
+        .filter_map(|(session, depth)| {
+            let activity_key = crate::agent_activity::agent_activity_key(&session.path);
+            let activity = activities
+                .get(&activity_key)
+                .cloned()
+                .unwrap_or_else(|| AgentActivity::limited_fallback(session));
+            let section = agent_section(activity.lifecycle, activity.limited, session.is_running);
+            (section != AgentSection::Hidden).then_some((activity, depth, session, section))
+        })
+        .collect()
 }
 
 impl FarcasterApp {
@@ -53,17 +80,15 @@ impl FarcasterApp {
             &self.all_sessions,
             self.snapshot.selected_session.as_deref(),
         );
-        let descendants = root
-            .map(|root| descendant_sessions(&self.all_sessions, &root.id))
-            .unwrap_or_default();
         let mut active = Vec::new();
         let mut completed = Vec::new();
         let mut limited = Vec::new();
-        for (session, depth) in descendants {
-            let Some(activity) = self.agent_activities.get(&session.id) else {
-                continue;
-            };
-            match agent_section(activity.lifecycle, activity.limited, session.is_running) {
+        for (activity, depth, session, section) in run_panel_agent_rows(
+            &self.all_sessions,
+            &self.agent_activities,
+            self.snapshot.selected_session.as_deref(),
+        ) {
+            match section {
                 AgentSection::Active => active.push((activity, depth, session)),
                 AgentSection::Completed => completed.push((activity, depth, session)),
                 AgentSection::Limited => limited.push((activity, depth, session)),
@@ -71,8 +96,8 @@ impl FarcasterApp {
             }
         }
         let by_created_at =
-            |left: &(&AgentActivity, usize, &crate::sessions::SessionSummary),
-             right: &(&AgentActivity, usize, &crate::sessions::SessionSummary)| {
+            |left: &(AgentActivity, usize, &crate::sessions::SessionSummary),
+             right: &(AgentActivity, usize, &crate::sessions::SessionSummary)| {
                 right
                     .2
                     .timestamp
@@ -117,8 +142,8 @@ impl FarcasterApp {
                             "Workers · {} active",
                             active.len()
                         )))
-                        .children(active.iter().filter_map(|(activity, depth, _)| {
-                            self.agent_card(activity, *depth, false, entity.clone())
+                        .children(active.iter().filter_map(|(activity, depth, session)| {
+                            self.agent_card(activity, session, *depth, false, entity.clone())
                         })),
                 )
             })
@@ -152,8 +177,14 @@ impl FarcasterApp {
                                     completed
                                         .iter()
                                         .take(MAX_VISIBLE_COMPLETED_AGENTS)
-                                        .filter_map(|(activity, depth, _)| {
-                                            self.agent_card(activity, *depth, false, entity.clone())
+                                        .filter_map(|(activity, depth, session)| {
+                                            self.agent_card(
+                                                activity,
+                                                session,
+                                                *depth,
+                                                false,
+                                                entity.clone(),
+                                            )
                                         }),
                                 )
                                 .when(completed.len() > MAX_VISIBLE_COMPLETED_AGENTS, |section| {
@@ -185,9 +216,11 @@ impl FarcasterApp {
                                 .child(limited_control),
                         )
                         .when(limited_agents_expanded, |section| {
-                            section.children(limited.iter().filter_map(|(activity, depth, _)| {
-                                self.agent_card(activity, *depth, true, entity.clone())
-                            }))
+                            section.children(limited.iter().filter_map(
+                                |(activity, depth, session)| {
+                                    self.agent_card(activity, session, *depth, true, entity.clone())
+                                },
+                            ))
                         }),
                 )
             });

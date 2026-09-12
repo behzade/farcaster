@@ -100,3 +100,12 @@ fn only_archived_family_events_invalidate_the_archived_rail() {
         None,
     ));
 }
+
+#[test]
+fn confirmed_archive_uses_one_runtime_owned_stop_and_archive_command() {
+    let path = PathBuf::from("/sessions/root.jsonl");
+    assert!(matches!(
+        stop_and_archive_command(path.clone()),
+        RuntimeCommand::StopSessionFamily { path: command_path } if command_path == path
+    ));
+}

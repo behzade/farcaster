@@ -1414,9 +1414,23 @@ fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
         .into(),
     ));
     assert!(owner.session_refresh_due.is_none());
-    assert!(
-        matches!(events.try_recv(), Ok(RuntimeEvent::SessionMetadata(child)) if child.id == "child" && child.is_running)
+    let published = events.try_iter().collect::<Vec<_>>();
+    assert_eq!(
+        published.len(),
+        2,
+        "publish only child activity and metadata"
     );
+    assert!(published.iter().any(|event| matches!(event,
+        RuntimeEvent::SessionMetadata(child)
+            if child.id == "child" && child.is_running
+                && child.path == PathBuf::from("/sessions/child")
+    )));
+    assert!(published.iter().any(|event| matches!(event,
+        RuntimeEvent::AgentActivityUpdated(child)
+            if child.session_id == "child"
+                && child.session_path == PathBuf::from("/sessions/child")
+                && child.lifecycle == crate::agent_activity::AgentLifecycle::Working
+    )));
     assert!(owner.snapshot.conversation.running);
 }
 

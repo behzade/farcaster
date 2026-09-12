@@ -3,6 +3,10 @@ use super::*;
 mod commands;
 mod events;
 mod family_commands;
+#[cfg(test)]
+#[path = "supervisor_proxy_tests.rs"]
+mod proxy_tests;
+mod recovery;
 
 pub(crate) struct RuntimeHandle {
     pub(crate) session_targets: HashMap<PathBuf, crate::sessions::SessionTarget>,
@@ -145,7 +149,7 @@ pub(super) struct SessionRuntimeHandle {
     commands: mpsc::Sender<RuntimeCommand>,
     pub(super) events: mpsc::Receiver<RuntimeEvent>,
     thread: thread::Thread,
-    join: thread::JoinHandle<()>,
+    join: thread::JoinHandle<Result<(), String>>,
 }
 
 impl SessionRuntimeHandle {
@@ -189,8 +193,10 @@ impl SessionRuntimeHandle {
         }
     }
 
-    fn join(self) {
-        let _ = self.join.join();
+    fn join(self) -> Result<(), String> {
+        self.join
+            .join()
+            .map_err(|_| "session runtime thread panicked during shutdown".to_owned())?
     }
 }
 
@@ -352,11 +358,14 @@ struct Supervisor {
     catalog_key: String,
     actors: HashMap<String, SessionRuntimeHandle>,
     selected: String,
+    selected_project: PathBuf,
+    selected_session: Option<PathBuf>,
     generation: u64,
     latest: HashMap<String, Arc<RuntimeSnapshot>>,
     catalog_sessions: Vec<SessionSummary>,
     catalog_generation: u64,
     actor_paths: HashMap<PathBuf, String>,
+    failed_actor_shutdowns: HashMap<PathBuf, String>,
     interacted: HashSet<String>,
     document_revisions: HashMap<PathBuf, (SystemTime, usize)>,
     pending_extensions: HashMap<String, Vec<crate::protocol::ExtensionUiRequest>>,
@@ -374,6 +383,8 @@ struct Supervisor {
     // A failed result removes its key so the next selection can retry.
     configuration_requests: HashSet<(String, PathBuf)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
+    recovery: crate::app::runtime::recovery::InterruptedPromptRecovery,
+    published_recovery_selection: Option<(u64, String, PathBuf, Option<PathBuf>)>,
 }
 
 fn run_supervisor(
@@ -453,7 +464,8 @@ impl Supervisor {
             );
         }
         let actor_paths = initial_session
-            .map(|target| HashMap::from([(target.path, initial_key.clone())]))
+            .as_ref()
+            .map(|target| HashMap::from([(target.path.clone(), initial_key.clone())]))
             .unwrap_or_default();
         let interacted = HashSet::from([initial_key.clone()]);
         let document_revisions = HashMap::new();
@@ -464,6 +476,22 @@ impl Supervisor {
         let last_touch = HashMap::from([(initial_key.clone(), clock)]);
         let mut configurations = HarnessConfigurationStore::default();
         let catalog_state = StateStore::open().ok();
+        let recovery = catalog_state
+            .as_ref()
+            .map(crate::app::runtime::recovery::InterruptedPromptRecovery::recover)
+            .transpose();
+        let recovery = match recovery {
+            Ok(Some(recovery)) => recovery,
+            Ok(None) => Default::default(),
+            Err(error) => {
+                let _ = event_tx.send(RuntimeEvent::SystemNotification {
+                    title: "Farcaster: Prompt recovery failed".into(),
+                    body: error,
+                    target: None,
+                });
+                Default::default()
+            }
+        };
         let configuration_catalogs = catalog_state
             .as_ref()
             .and_then(|state| state.load_configuration_catalogs().ok())
@@ -502,7 +530,8 @@ impl Supervisor {
                 actor.send(RuntimeCommand::DeliverQueued(prompt));
             }
         }
-        Self {
+        let selected_session = initial_session.as_ref().map(|target| target.path.clone());
+        let mut supervisor = Self {
             process_command,
             command_rx,
             event_tx,
@@ -510,11 +539,14 @@ impl Supervisor {
             catalog_key,
             actors,
             selected,
+            selected_project: initial_project,
+            selected_session,
             generation,
             latest,
             catalog_sessions,
             catalog_generation,
             actor_paths,
+            failed_actor_shutdowns: HashMap::new(),
             interacted,
             document_revisions,
             pending_extensions,
@@ -529,7 +561,11 @@ impl Supervisor {
             configuration_tx: refresh_configuration.then_some(configuration_tx),
             configuration_requests: HashSet::new(),
             published_statuses,
-        }
+            recovery,
+            published_recovery_selection: None,
+        };
+        supervisor.publish_recovery_statuses();
+        supervisor
     }
 
     fn run(mut self) {
@@ -543,7 +579,7 @@ impl Supervisor {
             actor.send(RuntimeCommand::Shutdown);
         }
         for actor in self.actors.into_values() {
-            actor.join();
+            let _ = actor.join();
         }
         let _ = self.event_tx.send(RuntimeEvent::Stopped);
     }

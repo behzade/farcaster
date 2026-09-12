@@ -4,7 +4,7 @@ pub(in crate::app) mod dialogs;
 pub(crate) mod overlay_state;
 mod regions;
 mod root;
-mod run_panel;
+pub(in crate::app) mod run_panel;
 mod session_rail;
 pub(crate) mod transcript;
 mod usage;

@@ -167,10 +167,15 @@ pub(crate) enum RuntimeEvent {
     RefreshCatalog,
     SessionMetadata(agents::SessionMetadata),
     SessionUpdated(SessionSummary),
+    AgentActivityUpdated(AgentActivity),
     ExtensionUi {
         generation: u64,
         request: crate::protocol::ExtensionUiRequest,
         system_notification_target: Option<(PathBuf, PathBuf)>,
+    },
+    ExtensionUiDismissed {
+        generation: u64,
+        id: String,
     },
     PromptResult {
         target: String,

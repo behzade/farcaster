@@ -1,5 +1,5 @@
 mod access_mode;
-mod catalog;
+pub(in crate::app) mod catalog;
 mod command_queue;
 mod commands;
 mod documents;
@@ -8,6 +8,7 @@ mod notifications;
 mod process;
 mod projection;
 mod prompts;
+pub(in crate::app) mod recovery;
 mod session_controls;
 mod session_identity;
 mod session_loop;

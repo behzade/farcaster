@@ -11,6 +11,69 @@ fn update_session_row(sessions: &mut Vec<SessionSummary>, session: SessionSummar
     sessions.insert(index, session);
 }
 
+#[derive(Clone, Copy)]
+enum ActivityUpdateSource {
+    Metadata,
+    Native,
+    Catalog,
+}
+
+fn merge_agent_activity(
+    activities: &mut HashMap<String, AgentActivity>,
+    incoming: AgentActivity,
+    source: ActivityUpdateSource,
+) -> bool {
+    let key = crate::agent_activity::agent_activity_key(&incoming.session_path);
+    let Some(existing) = activities.get_mut(&key) else {
+        activities.insert(key, incoming);
+        return true;
+    };
+    if matches!(source, ActivityUpdateSource::Metadata)
+        || (matches!(
+            incoming.lifecycle,
+            crate::agent_activity::AgentLifecycle::Unknown
+        ) && !matches!(
+            existing.lifecycle,
+            crate::agent_activity::AgentLifecycle::Unknown
+        ))
+    {
+        return false;
+    }
+    let next = if !existing.limited && incoming.limited {
+        let mut merged = existing.clone();
+        merged.lifecycle = incoming.lifecycle;
+        merged.ended = incoming.ended;
+        merged.elapsed = incoming.elapsed;
+        if matches!(
+            merged.lifecycle,
+            crate::agent_activity::AgentLifecycle::Completed(_)
+        ) {
+            merged.recent_tool = merged.current_tool.take().or(merged.recent_tool);
+        }
+        merged
+    } else {
+        incoming
+    };
+    if *existing == next {
+        false
+    } else {
+        *existing = next;
+        true
+    }
+}
+
+fn agent_focus_keys(
+    sessions: &[SessionSummary],
+    activities: &HashMap<String, AgentActivity>,
+) -> HashSet<String> {
+    sessions
+        .iter()
+        .filter(|session| session.parent_session.is_some())
+        .map(|session| crate::agent_activity::agent_activity_key(&session.path))
+        .chain(activities.keys().cloned())
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "event_projection_tests.rs"]
 mod tests;
@@ -44,12 +107,14 @@ impl DirtyRegions {
             }
             RuntimeEvent::Sessions { .. }
             | RuntimeEvent::SessionUpdated(_)
+            | RuntimeEvent::AgentActivityUpdated(_)
             | RuntimeEvent::SessionMetadata(_)
             | RuntimeEvent::SessionTarget(_)
             | RuntimeEvent::SystemNotification { .. }
             | RuntimeEvent::SessionsFailed { .. }
             | RuntimeEvent::ImportPreview { .. }
             | RuntimeEvent::ImportPreviewFailed { .. }
+            | RuntimeEvent::ExtensionUiDismissed { .. }
             | RuntimeEvent::ExtensionUi { .. } => {}
             RuntimeEvent::SessionMoved { .. } | RuntimeEvent::SessionDeleted { .. } => {
                 self.root = true;
@@ -175,15 +240,19 @@ impl FarcasterApp {
             .update(cx, |transcript, _| transcript.update_count(count));
         if snapshot.history_preview && !self.snapshot.history_preview {
             dirty.root = true;
-            park_extension_surface(&mut self.extension, &mut self.parked_extension);
-            self.pending_dialog_setup = false;
-            self.dialog_return_focus = None;
+            park_extension_for_history(&mut self.extension, &mut self.parked_extension);
+            self.pending_dialog_setup = self.extension.dialog.is_some();
+            if self.extension.dialog.is_none() {
+                self.dialog_return_focus = None;
+            }
         } else if !snapshot.history_preview && self.snapshot.history_preview {
             dirty.root = true;
             self.clear_restored_dialog();
-            restore_extension_surface(&mut self.extension, &mut self.parked_extension);
+            restore_extension_after_history(&mut self.extension, &mut self.parked_extension);
             self.pending_dialog_setup = self.extension.dialog.is_some();
-            self.dialog_return_focus = None;
+            if self.extension.dialog.is_none() {
+                self.dialog_return_focus = None;
+            }
         }
         self.snapshot = snapshot;
         dirty.transcript |= self.apply_transcript_rows(row_update, cx);
@@ -242,18 +311,20 @@ impl FarcasterApp {
         self.sessions_error = None;
         self.sessions = sessions;
         self.all_sessions = all_sessions;
-        if let Some((activities, exhaustive)) = activities {
-            if exhaustive {
-                self.agent_activities = activities;
-            } else {
-                self.agent_activities.extend(activities);
+        if let Some((activities, _exhaustive)) = activities {
+            for activity in activities.into_values() {
+                dirty.run |= merge_agent_activity(
+                    &mut self.agent_activities,
+                    activity,
+                    ActivityUpdateSource::Catalog,
+                );
             }
         }
-        self.agent_row_focus
-            .retain(|id, _| self.agent_activities.contains_key(id));
-        for id in self.agent_activities.keys() {
+        let agent_ids = agent_focus_keys(&self.all_sessions, &self.agent_activities);
+        self.agent_row_focus.retain(|id, _| agent_ids.contains(id));
+        for id in agent_ids {
             self.agent_row_focus
-                .entry(id.clone())
+                .entry(id)
                 .or_insert_with(|| cx.focus_handle());
         }
         dirty.rail |= catalog_changed;
@@ -465,7 +536,11 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
-        if let Some(extension) = self.parked_extension.as_mut() {
+        if crate::app::runtime::recovery::is_recovery_dialog(&request) {
+            self.apply_extension_request(request, generation, cx);
+            dirty.root = true;
+            dirty.composer = true;
+        } else if let Some(extension) = self.parked_extension.as_mut() {
             let _ = extension.apply(request);
         } else {
             self.apply_extension_request(request, generation, cx);
@@ -544,9 +619,14 @@ impl FarcasterApp {
                     session.is_running,
                     true,
                 );
-                self.agent_activities.insert(session.id.clone(), activity);
+                merge_agent_activity(
+                    &mut self.agent_activities,
+                    activity,
+                    ActivityUpdateSource::Metadata,
+                );
+                let activity_key = crate::agent_activity::agent_activity_key(&session.path);
                 self.agent_row_focus
-                    .entry(session.id.clone())
+                    .entry(activity_key)
                     .or_insert_with(|| cx.focus_handle());
                 projects::add_visible(
                     &mut self.projects,
@@ -575,6 +655,37 @@ impl FarcasterApp {
                     previous_workgraph_session != self.active_workgraph_session();
                 dirty.rail |= self.reconcile_submitted_drafts(cx);
             }
+            RuntimeEvent::AgentActivityUpdated(activity) => {
+                let activity_key =
+                    crate::agent_activity::agent_activity_key(&activity.session_path);
+                let activity_path = activity.session_path.clone();
+                dirty.run |= merge_agent_activity(
+                    &mut self.agent_activities,
+                    activity,
+                    ActivityUpdateSource::Native,
+                );
+                self.agent_row_focus
+                    .entry(activity_key)
+                    .or_insert_with(|| cx.focus_handle());
+                dirty.run |= self
+                    .all_sessions
+                    .iter()
+                    .find(|session| {
+                        crate::sessions::normalize_session_path(&session.path)
+                            == crate::sessions::normalize_session_path(&activity_path)
+                    })
+                    .and_then(|session| {
+                        root_session_for_path(&self.all_sessions, Some(&session.path))
+                    })
+                    .is_some_and(|root| {
+                        self.snapshot.selected_session.as_deref() == Some(root.path.as_path())
+                            || root_session_for_path(
+                                &self.all_sessions,
+                                self.snapshot.selected_session.as_deref(),
+                            )
+                            .is_some_and(|selected| selected.id == root.id)
+                    });
+            }
             RuntimeEvent::SessionDeleted { generation, paths } => {
                 self.project_session_deleted(generation, paths, cx);
             }
@@ -599,6 +710,21 @@ impl FarcasterApp {
                 ..
             } if generation == self.runtime_generation => {
                 self.project_extension_ui(generation, request, dirty, cx);
+            }
+            RuntimeEvent::ExtensionUiDismissed { generation, id } => {
+                if project_dialog_dismissal(
+                    generation,
+                    self.runtime_generation,
+                    &id,
+                    &mut self.extension,
+                    self.parked_extension.as_mut(),
+                    &mut self.restored_dialog_id,
+                    &mut self.dismissed_restored_dialog_id,
+                    &mut self.pending_dialog_setup,
+                ) {
+                    dirty.root = true;
+                    dirty.composer = true;
+                }
             }
             RuntimeEvent::SystemNotification {
                 title,
@@ -673,6 +799,62 @@ impl FarcasterApp {
             | RuntimeEvent::Sessions { .. }
             | RuntimeEvent::SessionsFailed { .. } => {}
         }
+    }
+}
+
+fn park_extension_for_history(
+    visible: &mut crate::app::extensions::ExtensionUiState,
+    parked: &mut Option<crate::app::extensions::ExtensionUiState>,
+) {
+    let recovery_dialogs =
+        visible.take_dialogs_matching(crate::app::runtime::recovery::is_recovery_dialog);
+    park_extension_surface(visible, parked);
+    visible.prepend_dialogs(recovery_dialogs);
+}
+
+fn restore_extension_after_history(
+    visible: &mut crate::app::extensions::ExtensionUiState,
+    parked: &mut Option<crate::app::extensions::ExtensionUiState>,
+) {
+    let recovery_dialogs =
+        visible.take_dialogs_matching(crate::app::runtime::recovery::is_recovery_dialog);
+    restore_extension_surface(visible, parked);
+    visible.prepend_dialogs(recovery_dialogs);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_dialog_dismissal(
+    generation: u64,
+    runtime_generation: u64,
+    id: &str,
+    extension: &mut crate::app::extensions::ExtensionUiState,
+    parked_extension: Option<&mut crate::app::extensions::ExtensionUiState>,
+    restored_dialog_id: &mut Option<String>,
+    dismissed_restored_dialog_id: &mut Option<String>,
+    pending_dialog_setup: &mut bool,
+) -> bool {
+    if generation != runtime_generation {
+        return false;
+    }
+    let recovery = crate::app::runtime::recovery::is_recovery_dialog_id(id);
+    if !recovery && let Some(parked) = parked_extension {
+        parked.dismiss_dialog(id);
+        return false;
+    }
+    match extension.dismiss_dialog(id) {
+        crate::app::extensions::DialogDismissal::ActiveWithNext
+        | crate::app::extensions::DialogDismissal::ActiveFinal => {
+            // Root lifecycle owns the Window needed to focus the next dialog or restore focus
+            // after the final one disappears.
+            *pending_dialog_setup = true;
+            if restored_dialog_id.as_deref() == Some(id) {
+                *restored_dialog_id = None;
+                *dismissed_restored_dialog_id = Some(id.to_owned());
+            }
+            true
+        }
+        crate::app::extensions::DialogDismissal::NotFound
+        | crate::app::extensions::DialogDismissal::Queued => false,
     }
 }
 

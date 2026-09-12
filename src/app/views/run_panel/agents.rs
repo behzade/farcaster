@@ -17,15 +17,13 @@ impl FarcasterApp {
     pub(super) fn agent_card(
         &self,
         activity: &AgentActivity,
+        session: &crate::sessions::SessionSummary,
         depth: usize,
         limited: bool,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
-        let focus = self.agent_row_focus.get(&activity.session_id)?.clone();
-        let session = self
-            .all_sessions
-            .iter()
-            .find(|session| session.id == activity.session_id)?;
+        let activity_key = crate::agent_activity::agent_activity_key(&session.path);
+        let focus = self.agent_row_focus.get(&activity_key)?.clone();
         let path = session.path.clone();
         let project = session.project.clone();
         let key_path = path.clone();
@@ -57,7 +55,7 @@ impl FarcasterApp {
         );
         Some(
             div()
-                .id(format!("agent-card-{}", activity.session_id))
+                .id(format!("agent-card-{activity_key}"))
                 .track_focus(&focus)
                 .role(Role::Button)
                 .aria_label(format!("Show {role} transcript: {state}"))
@@ -185,25 +183,28 @@ pub(super) fn execution_label(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum AgentSection {
+pub(in crate::app) enum AgentSection {
     Active,
     Completed,
     Limited,
     Hidden,
 }
 
-pub(super) fn agent_section(
+pub(in crate::app) fn agent_section(
     lifecycle: AgentLifecycle,
     limited: bool,
     is_running: bool,
 ) -> AgentSection {
-    if is_running
+    if (is_running || limited)
         && matches!(
             lifecycle,
             AgentLifecycle::NeedsInput | AgentLifecycle::Working
         )
     {
         return AgentSection::Active;
+    }
+    if matches!(lifecycle, AgentLifecycle::Completed(_)) {
+        return AgentSection::Completed;
     }
     if limited || matches!(lifecycle, AgentLifecycle::Unknown) {
         return AgentSection::Limited;

@@ -10,6 +10,16 @@ impl RuntimeOwner {
         };
         let (backend, locator) = agents::external_session_identity(path)
             .unwrap_or_else(|| (self.harness.as_str(), path.to_string_lossy().into_owned()));
+        for id in agents::CallerRegistry::shared().take_expired_child_inputs(
+            &self.project,
+            backend,
+            &locator,
+        ) {
+            let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
+                generation: self.process_generation,
+                id,
+            });
+        }
         for input in
             agents::CallerRegistry::shared().take_child_inputs(&self.project, backend, &locator)
         {
@@ -40,7 +50,13 @@ impl RuntimeOwner {
             cancel,
         };
         if let Err(error) = agents::CallerRegistry::shared().respond_to_child_input(response) {
-            self.fail(error);
+            // A lease can expire between projection and the user's answer. The
+            // parent transport is unrelated to that request's lifetime.
+            zlog::warn!("Child input response rejected: {error}");
+            let _ = self.event_tx.send(RuntimeEvent::ExtensionUiDismissed {
+                generation: self.process_generation,
+                id: id.clone(),
+            });
         }
         true
     }

@@ -144,7 +144,7 @@ pub(in crate::app) fn visible_sessions_changed(
             return Vec::new();
         };
         let mut result = vec![(root, 0)];
-        result.extend(descendant_sessions(sessions, &root.id));
+        result.extend(descendant_sessions_for_root(sessions, root));
         result
     }
 
@@ -171,18 +171,19 @@ pub(in crate::app) fn run_panel_activities_changed(
     let Some(root) = root_session_for_path(sessions, selected) else {
         return false;
     };
-    let visible_ids = std::iter::once(root.id.as_str())
+    let visible_keys = std::iter::once(root)
         .chain(
-            descendant_sessions(sessions, &root.id)
+            descendant_sessions_for_root(sessions, root)
                 .into_iter()
-                .map(|(session, _)| session.id.as_str()),
+                .map(|(session, _)| session),
         )
+        .map(|session| crate::agent_activity::agent_activity_key(&session.path))
         .collect::<Vec<_>>();
-    visible_ids.into_iter().any(|id| {
+    visible_keys.into_iter().any(|key| {
         activities
-            .get(id)
-            .is_some_and(|activity| current.get(id) != Some(activity))
-            || (*exhaustive && current.contains_key(id) && !activities.contains_key(id))
+            .get(&key)
+            .is_some_and(|activity| current.get(&key) != Some(activity))
+            || (*exhaustive && current.contains_key(&key) && !activities.contains_key(&key))
     })
 }
 

@@ -281,11 +281,23 @@ fn run_panel_ignores_activity_changes_outside_the_selected_tree() {
         session_summary("other", None, false),
     ];
     let current = HashMap::from([
-        ("child".into(), activity("child", "working")),
-        ("other".into(), activity("other", "working")),
+        (
+            crate::agent_activity::agent_activity_key(std::path::Path::new("/child.jsonl")),
+            activity("child", "working"),
+        ),
+        (
+            crate::agent_activity::agent_activity_key(std::path::Path::new("/other.jsonl")),
+            activity("other", "working"),
+        ),
     ]);
-    let unrelated = HashMap::from([("other".into(), activity("other", "changed"))]);
-    let visible = HashMap::from([("child".into(), activity("child", "changed"))]);
+    let unrelated = HashMap::from([(
+        crate::agent_activity::agent_activity_key(std::path::Path::new("/other.jsonl")),
+        activity("other", "changed"),
+    )]);
+    let visible = HashMap::from([(
+        crate::agent_activity::agent_activity_key(std::path::Path::new("/child.jsonl")),
+        activity("child", "changed"),
+    )]);
 
     assert!(!run_panel_activities_changed(
         &current,

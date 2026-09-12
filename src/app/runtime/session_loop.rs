@@ -7,7 +7,7 @@ pub(super) fn run(
     event_tx: SessionEventSender,
     load_catalog: bool,
     harness: String,
-) {
+) -> Result<(), String> {
     let (history_tx, history_rx) = mpsc::channel();
     let (state, state_error) = match StateStore::open() {
         Ok(state) => (Some(state), None),
@@ -117,8 +117,15 @@ pub(super) fn run(
             Err(mpsc::TryRecvError::Disconnected) => running = false,
         }
     }
-    if let Some(mut process) = owner.process.take() {
-        let _ = process.close();
-    }
+    let close_result = close_process(owner.process.take());
     let _ = owner.event_tx.send(RuntimeEvent::Stopped);
+    close_result
 }
+
+fn close_process(process: Option<Box<dyn SessionTransport>>) -> Result<(), String> {
+    process.map_or(Ok(()), |mut process| process.close())
+}
+
+#[cfg(test)]
+#[path = "session_loop_tests.rs"]
+mod tests;
