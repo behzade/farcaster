@@ -7,7 +7,7 @@ use std::os::unix::{
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 #[test]
-fn launch_replaces_inherited_environment_with_exact_snapshot() -> TestResult {
+fn launch_preserves_project_environment_with_ghostty_terminal_settings() -> TestResult {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("launch.json");
     let environment = vec![
@@ -22,6 +22,9 @@ fn launch_replaces_inherited_environment_with_exact_snapshot() -> TestResult {
             "it's $HOME\n`not a command` = value".into(),
         ),
         ("BYTES".into(), OsString::from_vec(vec![0xff, b'x'])),
+        ("TERM".into(), "dumb".into()),
+        ("COLORTERM".into(), "".into()),
+        ("TERM_PROGRAM".into(), "another-terminal".into()),
     ];
     write_launch(
         &path,
@@ -52,6 +55,7 @@ fn launch_replaces_inherited_environment_with_exact_snapshot() -> TestResult {
         .collect();
     let mut expected: Vec<Vec<u8>> = environment
         .iter()
+        .filter(|(key, _)| !matches!(key.to_str(), Some("TERM" | "COLORTERM" | "TERM_PROGRAM")))
         .map(|(key, value)| {
             let mut entry = key.as_bytes().to_vec();
             entry.push(b'=');
@@ -59,6 +63,11 @@ fn launch_replaces_inherited_environment_with_exact_snapshot() -> TestResult {
             entry
         })
         .collect();
+    expected.extend([
+        b"TERM=xterm-256color".to_vec(),
+        b"COLORTERM=truecolor".to_vec(),
+        b"TERM_PROGRAM=gpui-ghostty".to_vec(),
+    ]);
     actual.sort();
     expected.sort();
     assert_eq!(actual, expected);

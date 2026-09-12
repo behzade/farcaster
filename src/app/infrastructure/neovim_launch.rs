@@ -60,7 +60,11 @@ fn take_command(path: &Path) -> Result<Command, String> {
         .args(launch.arguments)
         .current_dir(launch.project)
         .env_clear()
-        .envs(launch.environment);
+        .envs(launch.environment)
+        // Match the Ghostty surface, even when the project snapshot has TERM=dumb.
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .env("TERM_PROGRAM", "gpui-ghostty");
     Ok(command)
 }
 
