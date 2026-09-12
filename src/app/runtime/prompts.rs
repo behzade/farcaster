@@ -290,8 +290,14 @@ impl RuntimeOwner {
                 }
             }
             Some(Err(error)) => {
-                self.mark_outbox_failed(error.as_str());
-                self.fail(error);
+                // Submission may fail locally (for example, an unreadable image or
+                // an unsupported mode). Only a transport failure event owns the
+                // session lifetime; rejecting this request must not end its turn.
+                self.rollback_failed_prompt(&error);
+                self.pending_prompt_id = None;
+                if let Some(target) = self.pending_prompt_target.take() {
+                    self.reject_prompt(&target, error);
+                }
             }
             None => {
                 let error = format!("{} is not connected", self.backend_name());

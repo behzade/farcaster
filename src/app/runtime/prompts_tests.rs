@@ -26,6 +26,159 @@ fn empty_session() -> crate::protocol::SessionState {
 }
 
 #[test]
+fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Result<(), String> {
+    use crate::agents::extensions::ExtensionUiResponse;
+    use crate::agents::{SessionEvent, SessionResponse, SessionResponsePayload, SessionTransport};
+    use std::{cell::RefCell, rc::Rc};
+
+    struct RejectOnce {
+        calls: Rc<RefCell<Vec<SessionCommand>>>,
+        closes: Rc<RefCell<usize>>,
+        events: Rc<RefCell<std::collections::VecDeque<SessionEvent>>>,
+    }
+    impl SessionTransport for RejectOnce {
+        fn send(&mut self, command: SessionCommand) -> Result<String, String> {
+            self.calls.borrow_mut().push(command);
+            if self.calls.borrow().len() == 1 {
+                Err("unsupported prompt command".into())
+            } else {
+                Ok("accepted".into())
+            }
+        }
+        fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
+            Ok(())
+        }
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.events.borrow_mut().pop_front()
+        }
+        fn close(&mut self) -> Result<(), String> {
+            *self.closes.borrow_mut() += 1;
+            Ok(())
+        }
+    }
+
+    for running in [false, true] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let (mut owner, events) = owner_without_process(temp.path().into());
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let closes = Rc::new(RefCell::new(0));
+        let transport_events = Rc::new(RefCell::new(std::collections::VecDeque::new()));
+        owner.process = Some(Box::new(RejectOnce {
+            calls: calls.clone(),
+            closes: closes.clone(),
+            events: transport_events.clone(),
+        }));
+        let database = temp.path().join("state.sqlite3");
+        owner.state = Some(crate::app::persistence::StateStore::open_at(&database)?);
+        owner.harness = "claude".into();
+        owner.active_session = Some(temp.path().join("session"));
+        let mut state = empty_session();
+        state.is_streaming = running;
+        owner.snapshot.session = Some(state);
+        conversation_mut(&mut owner.snapshot).running = running;
+        owner.startup_state_loaded = true;
+        owner.startup_history_loaded = true;
+        let mode = if running {
+            PromptMode::Steer
+        } else {
+            PromptMode::Normal
+        };
+        owner.send_prompt(
+            "draft:reject-once".into(),
+            mode,
+            "bad input".into(),
+            vec![],
+            false,
+        );
+        assert_eq!(
+            *closes.borrow(),
+            0,
+            "a submission error must not close the healthy process"
+        );
+        assert!(owner.process.is_some());
+        assert!(owner.snapshot.connected);
+        assert_eq!(owner.snapshot.conversation.running, running);
+        assert!(owner.pending_prompt_target.is_none());
+        assert!(owner.pending_prompt_id.is_none());
+        assert!(
+            !owner.snapshot.conversation.items.iter().any(|item| {
+                item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
+                    && item.text == "bad input"
+            }),
+            "rejected optimistic text must roll back"
+        );
+        let connection = rusqlite::Connection::open(&database).map_err(|e| e.to_string())?;
+        let rejected: (String, String) = connection
+            .query_row("SELECT message, state FROM outbox", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(|e| e.to_string())?;
+        assert_eq!(rejected, ("bad input".into(), "failed".into()));
+        let reopened = crate::app::persistence::StateStore::open_at(&database)?;
+        assert!(reopened.queued_prompts()?.is_empty());
+        let sending: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM outbox WHERE state='sending'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        assert_eq!(sending, 0, "no Sending blocker remains");
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::PromptResult {
+                accepted: false,
+                ..
+            }
+        )));
+
+        let next_mode = if running {
+            PromptMode::FollowUp
+        } else {
+            PromptMode::Normal
+        };
+        owner.send_prompt(
+            "draft:reject-once".into(),
+            next_mode,
+            "valid input".into(),
+            vec![],
+            false,
+        );
+        assert_eq!(
+            calls.borrow().len(),
+            2,
+            "the same process must accept another submission"
+        );
+        owner.apply_response(SessionResponse::success(
+            Some("accepted".into()),
+            SessionResponsePayload::Prompt(next_mode),
+        ));
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, RuntimeEvent::PromptResult { accepted: true, .. }))
+        );
+        assert_eq!(*closes.borrow(), 0);
+        transport_events
+            .borrow_mut()
+            .push_back(SessionEvent::Failure("connection closed".into()));
+        while let Some(event) = owner.process.as_mut().and_then(|process| process.poll()) {
+            owner.apply_process_item(event);
+        }
+        assert_eq!(
+            *closes.borrow(),
+            1,
+            "an actual transport failure still closes the session"
+        );
+        assert!(owner.process.is_none());
+        assert!(!owner.snapshot.connected);
+        assert!(owner.pending_prompt_target.is_none());
+        assert!(owner.pending_prompt_id.is_none());
+    }
+    Ok(())
+}
+
+#[test]
 fn automatic_title_does_not_treat_unloaded_resume_as_new() {
     for harness in HARNESSES {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());
