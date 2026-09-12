@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     process::Stdio,
     sync::mpsc,
     thread,
@@ -125,11 +125,14 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             context_window: 0,
             pending_inputs: HashMap::new(),
             pending_deliveries: HashMap::new(),
+            delivered_awaiting_execution: HashSet::new(),
             active_tools: HashMap::new(),
             generation: 0,
             completions: None,
             turn_active: false,
             steering_interrupts: 0,
+            ignore_execution_events: false,
+            abort_waiting_for_start: false,
             wake: None,
             pending: VecDeque::from([WorkerEvent::SessionChanged {
                 locator: session_id,
@@ -253,11 +256,14 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             context_window,
             pending_inputs: HashMap::new(),
             pending_deliveries: HashMap::new(),
+            delivered_awaiting_execution: HashSet::new(),
             active_tools: HashMap::new(),
             generation: 0,
             completions: None,
             turn_active: false,
             steering_interrupts: 0,
+            ignore_execution_events: false,
+            abort_waiting_for_start: false,
             wake: launch.wake.clone(),
             pending: VecDeque::new(),
         }),
@@ -488,6 +494,15 @@ enum PendingOpenCodeInput {
     },
 }
 
+#[derive(Clone)]
+struct PendingOpenCodeDelivery {
+    submission_id: Option<String>,
+    mode: WorkerSendMode,
+    message: String,
+    images: Vec<crate::protocol::PromptImage>,
+    clears_abort_barrier: bool,
+}
+
 struct OpenCodeWorkerSession {
     caller_identity: crate::modules::agents::core::CallerIdentity,
     server: OpenCodeServerProcess,
@@ -504,12 +519,15 @@ struct OpenCodeWorkerSession {
     usage: OpenCodeUsageTracker,
     context_window: u64,
     pending_inputs: HashMap<String, PendingOpenCodeInput>,
-    pending_deliveries: HashMap<String, (WorkerSendMode, String)>,
+    pending_deliveries: HashMap<String, PendingOpenCodeDelivery>,
+    delivered_awaiting_execution: HashSet<String>,
     active_tools: HashMap<String, ActiveOpenCodeTool>,
     generation: u64,
     completions: Option<mpsc::Receiver<(u64, Result<String, String>)>>,
     turn_active: bool,
     steering_interrupts: usize,
+    ignore_execution_events: bool,
+    abort_waiting_for_start: bool,
     wake: Option<thread::Thread>,
     pending: VecDeque<WorkerEvent>,
 }
@@ -517,38 +535,80 @@ struct OpenCodeWorkerSession {
 impl OpenCodeWorkerSession {
     fn send_prompt(
         &mut self,
+        submission_id: Option<String>,
+        native_id: Option<String>,
         message: String,
         mode: WorkerSendMode,
         files: Vec<super::contract::OpenCodeFileInput>,
-    ) -> Result<(), String> {
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, super::contract::OpenCodePromptDispatchError> {
         let delivery = match mode {
             WorkerSendMode::Prompt | WorkerSendMode::Queue => {
                 super::contract::OpenCodeDelivery::Queue
             }
             WorkerSendMode::Steer => super::contract::OpenCodeDelivery::Steer,
         };
-        let admission = self
-            .server
-            .client()
-            .prompt(&self.session_id, &message, files, delivery)?;
-        self.record_prompt_admission(admission, mode, message)
+        let clears_abort_barrier = self.ignore_execution_events;
+        let pending = PendingOpenCodeDelivery {
+            submission_id,
+            mode,
+            message,
+            images,
+            clears_abort_barrier,
+        };
+        if let Some(native_id) = &native_id {
+            self.pending_deliveries
+                .insert(native_id.clone(), pending.clone());
+        }
+        let admission = match self.server.client().prompt(
+            &self.session_id,
+            native_id.as_deref(),
+            &pending.message,
+            files,
+            delivery,
+        ) {
+            Ok(admission) => admission,
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => {
+                if let Some(native_id) = &native_id {
+                    self.pending_deliveries.remove(native_id);
+                }
+                return Err(super::contract::OpenCodePromptDispatchError::Unsent(error));
+            }
+            Err(error @ super::contract::OpenCodePromptDispatchError::Unknown(_)) => {
+                return Err(error);
+            }
+        };
+        self.record_prompt_admission(admission, native_id.as_deref(), pending)
+            .map_err(super::contract::OpenCodePromptDispatchError::Unknown)?;
+        Ok(true)
+    }
+
+    fn next_internal_prompt_id() -> String {
+        format!("msg_farcaster_{}", uuid::Uuid::new_v4())
     }
 
     fn record_prompt_admission(
         &mut self,
         admission: super::contract::OpenCodePromptAdmission,
-        mode: WorkerSendMode,
-        message: String,
+        native_id: Option<&str>,
+        delivery: PendingOpenCodeDelivery,
     ) -> Result<(), String> {
         let was_active = self.turn_active;
-        if admission.session_id != self.session_id || admission.id.is_empty() {
+        let expected_delivery = match delivery.mode {
+            WorkerSendMode::Steer => "steer",
+            WorkerSendMode::Prompt | WorkerSendMode::Queue => "queue",
+        };
+        if admission.session_id != self.session_id
+            || admission.id.is_empty()
+            || native_id.is_some_and(|native_id| admission.id != native_id)
+            || admission.delivery != expected_delivery
+        {
             return Err("OpenCode returned an invalid prompt admission receipt".into());
         }
-        self.pending_deliveries
-            .insert(admission.id, (mode, message));
+        self.pending_deliveries.insert(admission.id, delivery);
         self.caller_identity
             .set_activity(WorkerActivityState::Working);
-        if mode != WorkerSendMode::Steer {
+        if !was_active {
             self.reasoning_started = false;
             self.clear_streams();
         }
@@ -562,10 +622,54 @@ impl OpenCodeWorkerSession {
     }
 
     fn finish_turn(&mut self) {
+        self.abort_waiting_for_start = false;
+        self.delivered_awaiting_execution.clear();
         self.turn_active = false;
         self.completions = None;
         self.clear_streams();
         self.caller_identity.set_activity(WorkerActivityState::Idle);
+    }
+
+    fn finish_abort(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+        self.steering_interrupts = 0;
+        self.ignore_execution_events = true;
+        self.finish_turn();
+        self.pending.push_front(WorkerEvent::Settled {
+            output: String::new(),
+        });
+    }
+
+    fn delivered_input(&mut self, native_id: &str) -> Option<WorkerEvent> {
+        let delivery = self.pending_deliveries.remove(native_id)?;
+        self.delivered_awaiting_execution
+            .insert(native_id.to_owned());
+        if delivery.clears_abort_barrier {
+            self.ignore_execution_events = false;
+        }
+        let activity = match (delivery.submission_id, delivery.images.is_empty()) {
+            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
+                submission_id,
+                mode: delivery.mode,
+                message: delivery.message,
+            },
+            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id,
+                mode: delivery.mode,
+                message: delivery.message,
+                images: delivery.images,
+            },
+            (None, true) => WorkerActivity::InputDelivered {
+                mode: delivery.mode,
+                message: delivery.message,
+            },
+            (None, false) => WorkerActivity::InputDeliveredWithImages {
+                mode: delivery.mode,
+                message: delivery.message,
+                images: delivery.images,
+            },
+        };
+        Some(WorkerEvent::Activity(activity))
     }
 
     fn clear_streams(&mut self) {
@@ -645,8 +749,22 @@ impl OpenCodeWorkerSession {
                 continue;
             }
             let event_type = unversioned_opencode_event_type(reported_event_type);
+            if self.ignore_execution_events && opencode_event_belongs_to_execution(event_type) {
+                continue;
+            }
             match event_type {
                 "session.execution.started" => {
+                    if self.abort_waiting_for_start {
+                        match self.server.client().interrupt(&self.session_id, false) {
+                            Ok(true) => {
+                                self.finish_abort();
+                                return self.pending.pop_front();
+                            }
+                            Ok(false) => continue,
+                            Err(error) => return Some(WorkerEvent::Failed(error)),
+                        }
+                    }
+                    self.delivered_awaiting_execution.clear();
                     if !self.turn_active {
                         self.turn_active = true;
                         self.caller_identity
@@ -667,8 +785,6 @@ impl OpenCodeWorkerSession {
                         self.steering_interrupts -= 1;
                         self.generation = self.generation.saturating_add(1);
                         self.completions = None;
-                        self.clear_streams();
-                        self.reasoning_started = false;
                         continue;
                     }
                     if self.turn_active {
@@ -702,13 +818,8 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "inbox delivery is missing inboxID");
                         continue;
                     };
-                    if let Some((mode, message)) = self.pending_deliveries.remove(&id)
-                        && mode != WorkerSendMode::Prompt
-                    {
-                        return Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
-                            mode,
-                            message,
-                        }));
+                    if let Some(delivered) = self.delivered_input(&id) {
+                        return Some(delivered);
                     }
                 }
                 "session.inbox.cancelled" => {
@@ -717,10 +828,16 @@ impl OpenCodeWorkerSession {
                     }
                 }
                 "session.next.prompted" => {
-                    if let Some(activity) = opencode_input_delivery(&event.data) {
-                        return Some(WorkerEvent::Activity(activity));
+                    let id = event
+                        .data
+                        .get("messageID")
+                        .and_then(Value::as_str)
+                        .or_else(|| event.data.get("inboxID").and_then(Value::as_str));
+                    if let Some(id) = id
+                        && let Some(delivered) = self.delivered_input(id)
+                    {
+                        return Some(delivered);
                     }
-                    log_bad_opencode_event(&event, "prompted event has invalid delivery or prompt");
                 }
                 "session.text.started" | "session.next.text.started" => {
                     if let Some(key) = opencode_part_key(&event.data) {
@@ -934,6 +1051,7 @@ impl OpenCodeWorkerSession {
                     }));
                 }
                 "session.step.started" | "session.next.step.started" => {
+                    self.delivered_awaiting_execution.clear();
                     return Some(WorkerEvent::Activity(WorkerActivity::TurnStarted));
                 }
                 "session.step.ended" | "session.next.step.ended" => {
@@ -1107,8 +1225,30 @@ impl OpenCodeWorkerSession {
 }
 
 impl WorkerSession for OpenCodeWorkerSession {
+    fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
+        true
+    }
+
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
-        self.send_prompt(message, mode, Vec::new())
+        let native_id = Self::next_internal_prompt_id();
+        match self.send_prompt(
+            Some(native_id.clone()),
+            Some(native_id.clone()),
+            message,
+            mode,
+            Vec::new(),
+            Vec::new(),
+        ) {
+            Ok(_) => Ok(()),
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error),
+            Err(super::contract::OpenCodePromptDispatchError::Unknown(error)) => {
+                self.pending.push_back(WorkerEvent::PromptDeliveryUnknown {
+                    submission_id: native_id,
+                    error,
+                });
+                Ok(())
+            }
+        }
     }
 
     fn send_with_images(
@@ -1122,7 +1262,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             .map(crate::protocol::PromptImage::into_inline)
             .collect::<Result<Vec<_>, _>>()?;
         let files = images
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(index, image)| super::contract::OpenCodeFileInput {
                 uri: format!("data:{};base64,{}", image.mime_type, image.data),
@@ -1130,19 +1270,65 @@ impl WorkerSession for OpenCodeWorkerSession {
                 description: None,
             })
             .collect();
-        self.send_prompt(message, mode, files)
+        let native_id = Self::next_internal_prompt_id();
+        match self.send_prompt(
+            Some(native_id.clone()),
+            Some(native_id.clone()),
+            message,
+            mode,
+            files,
+            images,
+        ) {
+            Ok(_) => Ok(()),
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error),
+            Err(super::contract::OpenCodePromptDispatchError::Unknown(error)) => {
+                self.pending.push_back(WorkerEvent::PromptDeliveryUnknown {
+                    submission_id: native_id,
+                    error,
+                });
+                Ok(())
+            }
+        }
     }
 
     fn submit_prompt(
         &mut self,
-        _id: String,
+        id: String,
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, String> {
-        // send_prompt waits for the server's HTTP admission receipt.
-        self.send_with_images(message, mode, images)?;
-        Ok(true)
+        let images = images
+            .into_iter()
+            .map(crate::protocol::PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?;
+        let files = images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| super::contract::OpenCodeFileInput {
+                uri: format!("data:{};base64,{}", image.mime_type, image.data),
+                name: Some(format!("image-{}", index + 1)),
+                description: None,
+            })
+            .collect();
+        match self.send_prompt(
+            Some(id.clone()),
+            Some(format!("msg_{id}")),
+            message,
+            mode,
+            files,
+            images,
+        ) {
+            Ok(accepted) => Ok(accepted),
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => Err(error),
+            Err(super::contract::OpenCodePromptDispatchError::Unknown(error)) => {
+                self.pending.push_back(WorkerEvent::PromptDeliveryUnknown {
+                    submission_id: id,
+                    error,
+                });
+                Ok(false)
+            }
+        }
     }
 
     fn respond(&mut self, response: WorkerInputResponse) -> Result<(), String> {
@@ -1168,24 +1354,53 @@ impl WorkerSession for OpenCodeWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
-        self.server.client().interrupt(&self.session_id, false)?;
-        self.generation = self.generation.saturating_add(1);
-        self.finish_turn();
-        self.pending.push_back(WorkerEvent::Settled {
-            output: String::new(),
-        });
+        let mut client = self.server.client();
+        let interrupted = client.interrupt(&self.session_id, false)?;
+        let mut delivery_may_start = !self.delivered_awaiting_execution.is_empty();
+        for native_id in self.pending_deliveries.keys().cloned().collect::<Vec<_>>() {
+            match client.cancel_inbox(&self.session_id, &native_id) {
+                Ok(true) => {
+                    self.pending_deliveries.remove(&native_id);
+                }
+                Ok(false) => delivery_may_start = true,
+                Err(error) => return Err(error),
+            }
+        }
+        if interrupted || !delivery_may_start {
+            self.finish_abort();
+        } else {
+            self.abort_waiting_for_start = true;
+            self.ignore_execution_events = false;
+        }
         Ok(())
     }
 
     fn apply_steering(&mut self) -> Result<(), String> {
-        if self.server.client().interrupt(&self.session_id, true)? {
+        let mut client = self.server.client();
+        let native_ids = self
+            .pending_deliveries
+            .iter()
+            .filter_map(|(id, delivery)| {
+                (delivery.mode == WorkerSendMode::Queue).then(|| id.clone())
+            })
+            .collect::<Vec<_>>();
+        let (interrupted, errors) = promote_followups_and_interrupt(
+            &mut client,
+            &self.session_id,
+            native_ids.iter().map(String::as_str),
+        );
+        if interrupted == Some(true) {
             // The interrupted execution resumes on the server. Settling here
             // would clear the composer's pending steering and follow-ups.
             self.steering_interrupts += 1;
             self.generation = self.generation.saturating_add(1);
             self.completions = None;
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("apply OpenCode steering: {}", errors.join("; ")))
+        }
     }
 
     fn compact(&mut self) -> Result<(), String> {
@@ -1435,14 +1650,37 @@ fn log_bad_opencode_event(event: &super::contract::OpenCodeEvent, reason: &str) 
     zlog::warn!("OpenCode event was not mapped correctly ({reason}): {event:?}");
 }
 
-fn opencode_input_delivery(data: &Value) -> Option<WorkerActivity> {
-    let mode = match data.get("delivery").and_then(Value::as_str)? {
-        "steer" => WorkerSendMode::Steer,
-        "queue" => WorkerSendMode::Queue,
-        _ => return None,
+fn opencode_event_belongs_to_execution(event_type: &str) -> bool {
+    event_type.starts_with("session.execution.")
+        || event_type.starts_with("session.text.")
+        || event_type.starts_with("session.reasoning.")
+        || event_type.starts_with("session.tool.")
+        || event_type.starts_with("session.step.")
+        || event_type.starts_with("session.next.text.")
+        || event_type.starts_with("session.next.reasoning.")
+        || event_type.starts_with("session.next.tool.")
+        || event_type.starts_with("session.next.step.")
+}
+
+fn promote_followups_and_interrupt<'a, T: super::contract::OpenCodeHttpTransport>(
+    client: &mut super::client::OpenCodeClient<T>,
+    session_id: &str,
+    native_ids: impl IntoIterator<Item = &'a str>,
+) -> (Option<bool>, Vec<String>) {
+    let mut errors = Vec::new();
+    for native_id in native_ids {
+        if let Err(error) = client.steer_inbox(session_id, native_id) {
+            errors.push(format!("{native_id}: {error}"));
+        }
+    }
+    let interrupted = match client.interrupt(session_id, true) {
+        Ok(interrupted) => Some(interrupted),
+        Err(error) => {
+            errors.push(format!("interrupt OpenCode execution: {error}"));
+            None
+        }
     };
-    let message = data.pointer("/prompt/text")?.as_str()?.to_owned();
-    Some(WorkerActivity::InputDelivered { mode, message })
+    (interrupted, errors)
 }
 
 fn opencode_permission_request(event: &super::contract::OpenCodeEvent) -> Option<(&str, &str)> {

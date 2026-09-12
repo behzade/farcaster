@@ -10,6 +10,7 @@ use url::{Host, Url};
 
 use super::contract::{
     OpenCodeHttpMethod, OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport,
+    OpenCodePromptDispatchError,
 };
 
 #[derive(Clone)]
@@ -99,12 +100,60 @@ impl OpenCodeTcpTransport {
             .map_err(|error| format!("write OpenCode request: {error}"))?;
         Ok(BufReader::new(stream))
     }
+
+    fn open_prompt(
+        &self,
+        request: &OpenCodeHttpRequest,
+    ) -> Result<BufReader<TcpStream>, OpenCodePromptDispatchError> {
+        let host = self.endpoint.host_str().ok_or_else(|| {
+            OpenCodePromptDispatchError::Unsent("OpenCode endpoint has no host".into())
+        })?;
+        let port = self.endpoint.port_or_known_default().ok_or_else(|| {
+            OpenCodePromptDispatchError::Unsent("OpenCode endpoint has no port".into())
+        })?;
+        let mut stream = TcpStream::connect((host, port)).map_err(|error| {
+            OpenCodePromptDispatchError::Unsent(format!("connect to OpenCode server: {error}"))
+        })?;
+        let timeout = Some(Duration::from_secs(15));
+        stream
+            .set_read_timeout(timeout)
+            .and_then(|()| stream.set_write_timeout(timeout))
+            .map_err(|error| {
+                OpenCodePromptDispatchError::Unsent(format!(
+                    "configure OpenCode connection timeout: {error}"
+                ))
+            })?;
+        stream
+            .write_all(&encode_request(
+                host,
+                port,
+                &self.authorization,
+                request,
+                "application/json",
+                "close",
+            ))
+            .and_then(|()| stream.flush())
+            .map_err(|error| {
+                OpenCodePromptDispatchError::Unknown(format!(
+                    "write OpenCode prompt request: {error}"
+                ))
+            })?;
+        Ok(BufReader::new(stream))
+    }
 }
 
 impl OpenCodeHttpTransport for OpenCodeTcpTransport {
     fn execute(&mut self, request: OpenCodeHttpRequest) -> Result<OpenCodeHttpResponse, String> {
         let reader = self.open(&request, "application/json", "close")?;
         decode_response(reader)
+    }
+
+    fn execute_prompt(
+        &mut self,
+        request: OpenCodeHttpRequest,
+    ) -> Result<OpenCodeHttpResponse, OpenCodePromptDispatchError> {
+        let reader = self.open_prompt(&request)?;
+        decode_response(reader).map_err(OpenCodePromptDispatchError::Unknown)
     }
 }
 

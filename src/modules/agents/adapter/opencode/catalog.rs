@@ -172,7 +172,7 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
     }))
 }
 
-fn history_messages(value: &Value) -> Vec<Value> {
+pub(super) fn history_messages(value: &Value) -> Vec<Value> {
     let role = value.get("role").and_then(Value::as_str).or_else(|| {
         match value.get("type").and_then(Value::as_str)? {
             "user" => Some("user"),
@@ -181,10 +181,22 @@ fn history_messages(value: &Value) -> Vec<Value> {
         }
     });
     match role {
-        Some("user") => vec![json!({
-            "role": "user",
-            "content": opencode_user_content(value),
-        })],
+        Some("user") => {
+            let mut message = json!({
+                "role": "user",
+                "content": opencode_user_content(value),
+            });
+            if let Some(submission_id) = value
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| id.strip_prefix("msg_"))
+                .filter(|id| id.starts_with("opencode2-"))
+            {
+                message["submissionId"] = Value::String(submission_id.to_owned());
+                message["deliveryStatus"] = Value::String("delivered".into());
+            }
+            vec![message]
+        }
         Some("assistant") => assistant_history_messages(value),
         Some(_) if value.get("role").is_some() => vec![value.clone()],
         _ => Vec::new(),

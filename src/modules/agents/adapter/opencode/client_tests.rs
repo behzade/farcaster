@@ -46,6 +46,13 @@ fn body(request: &OpenCodeHttpRequest) -> Value {
         .expect("request body is JSON")
 }
 
+fn prompt_error(error: super::contract::OpenCodePromptDispatchError) -> String {
+    match error {
+        super::contract::OpenCodePromptDispatchError::Unsent(error)
+        | super::contract::OpenCodePromptDispatchError::Unknown(error) => error,
+    }
+}
+
 #[test]
 fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), String> {
     let session = json!({
@@ -71,16 +78,19 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     let created = client.create_session("/project", Some("parent-1"), None)?;
     assert_eq!(created.parent_id.as_deref(), Some("parent-1"));
     assert_eq!(client.get_session("session/1")?.id, "session/1");
-    let admission = client.prompt(
-        "session/1",
-        "inspect this",
-        vec![OpenCodeFileInput {
-            uri: "file:///tmp/image.png".into(),
-            name: Some("image.png".into()),
-            description: None,
-        }],
-        OpenCodeDelivery::Queue,
-    )?;
+    let admission = client
+        .prompt(
+            "session/1",
+            Some("msg_prompt-1"),
+            "inspect this",
+            vec![OpenCodeFileInput {
+                uri: "file:///tmp/image.png".into(),
+                name: Some("image.png".into()),
+                description: None,
+            }],
+            OpenCodeDelivery::Queue,
+        )
+        .map_err(prompt_error)?;
     assert_eq!(admission.session_id, "session/1");
     assert!(client.interrupt("session/1", false)?);
     client.delete_session("session/1")?;
@@ -95,6 +105,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     assert_eq!(
         body(&transport.requests[2]),
         json!({
+            "id": "msg_prompt-1",
             "text": "inspect this",
             "files": [{"uri": "file:///tmp/image.png", "name": "image.png"}],
             "agents": [],
@@ -119,13 +130,57 @@ fn steer_is_encoded_independently_from_queue() -> Result<(), String> {
     )]);
     let mut client = OpenCodeClient::new(transport);
 
-    client.prompt("session-1", "more", Vec::new(), OpenCodeDelivery::Steer)?;
+    client
+        .prompt(
+            "session-1",
+            Some("msg_prompt-1"),
+            "more",
+            Vec::new(),
+            OpenCodeDelivery::Steer,
+        )
+        .map_err(prompt_error)?;
 
     assert_eq!(
         body(&client.into_transport().requests[0])["delivery"],
         "steer"
     );
     Ok(())
+}
+
+#[test]
+fn prompt_only_rejects_receipts_that_prove_no_admission() {
+    for (response, unknown) in [
+        (
+            response(409, json!({"_tag":"Conflict","message":"busy"})),
+            false,
+        ),
+        (
+            response(500, json!({"_tag":"Internal","message":"failed"})),
+            true,
+        ),
+        (
+            response(200, json!({"data": {"id": "missing-fields"}})),
+            true,
+        ),
+    ] {
+        let mut client = OpenCodeClient::new(FakeTransport::with_responses([response]));
+        let error = client
+            .prompt(
+                "session-1",
+                Some("msg_prompt-1"),
+                "work",
+                Vec::new(),
+                OpenCodeDelivery::Queue,
+            )
+            .expect_err("prompt should fail");
+        assert_eq!(
+            matches!(
+                error,
+                super::contract::OpenCodePromptDispatchError::Unknown(_)
+            ),
+            unknown
+        );
+    }
 }
 
 #[test]

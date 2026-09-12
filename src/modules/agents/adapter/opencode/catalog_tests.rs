@@ -49,6 +49,7 @@ fn translates_session_metadata() -> Result<(), String> {
 #[test]
 fn preserves_base64_and_data_uri_images_in_user_history() {
     let messages = history_messages(&json!({
+        "id": "msg_opencode2-request-1",
         "type": "user",
         "text": "compare",
         "files": [
@@ -68,6 +69,8 @@ fn preserves_base64_and_data_uri_images_in_user_history() {
             {"type": "image", "mimeType": "image/jpeg", "data": "BAUG"},
         ])
     );
+    assert_eq!(messages[0]["submissionId"], "opencode2-request-1");
+    assert_eq!(messages[0]["deliveryStatus"], "delivered");
 }
 
 #[test]

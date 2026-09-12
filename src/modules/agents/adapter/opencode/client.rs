@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use super::contract::{
     DataEnvelope, ErrorEnvelope, OpenCodeDelivery, OpenCodeFileInput, OpenCodeHttpMethod,
     OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport, OpenCodeLocation,
-    OpenCodePromptAdmission, OpenCodeSession,
+    OpenCodePromptAdmission, OpenCodePromptDispatchError, OpenCodeSession,
 };
 
 pub(crate) struct OpenCodeClient<T> {
@@ -62,21 +62,35 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
     pub(crate) fn prompt(
         &mut self,
         session_id: &str,
+        id: Option<&str>,
         text: &str,
         files: Vec<OpenCodeFileInput>,
         delivery: OpenCodeDelivery,
-    ) -> Result<OpenCodePromptAdmission, String> {
-        self.json(
-            OpenCodeHttpMethod::Post,
-            format!("/api/session/{}/prompt", path_segment(session_id)),
-            Some(json!({
-                "text": text,
-                "files": files,
-                "agents": [],
-                "delivery": delivery,
-                "resume": true,
-            })),
-        )
+    ) -> Result<OpenCodePromptAdmission, OpenCodePromptDispatchError> {
+        let path = format!("/api/session/{}/prompt", path_segment(session_id));
+        let body = serde_json::to_vec(&json!({
+            "id": id,
+            "text": text,
+            "files": files,
+            "agents": [],
+            "delivery": delivery,
+            "resume": true,
+        }))
+        .map_err(|error| OpenCodePromptDispatchError::Unsent(error.to_string()))?;
+        let response = self.transport.execute_prompt(OpenCodeHttpRequest {
+            method: OpenCodeHttpMethod::Post,
+            path,
+            body: Some(body),
+        })?;
+        if !(200..300).contains(&response.status) {
+            let error = ensure_success(&response).expect_err("non-success response");
+            return Err(if (400..500).contains(&response.status) {
+                OpenCodePromptDispatchError::Unsent(error)
+            } else {
+                OpenCodePromptDispatchError::Unknown(error)
+            });
+        }
+        decode_data(response).map_err(OpenCodePromptDispatchError::Unknown)
     }
 
     pub(crate) fn context(&mut self, session_id: &str) -> Result<Vec<Value>, String> {
@@ -279,6 +293,44 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
             format!("/api/session/{}/inbox", path_segment(session_id)),
             None,
         )
+    }
+
+    pub(crate) fn cancel_inbox(
+        &mut self,
+        session_id: &str,
+        inbox_id: &str,
+    ) -> Result<bool, String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Delete,
+            format!(
+                "/api/session/{}/inbox/{}",
+                path_segment(session_id),
+                path_segment(inbox_id)
+            ),
+            None,
+        )?;
+        if response.status == 409 {
+            return Ok(false);
+        }
+        ensure_success(&response)?;
+        Ok(true)
+    }
+
+    pub(crate) fn steer_inbox(&mut self, session_id: &str, inbox_id: &str) -> Result<bool, String> {
+        let response = self.execute(
+            OpenCodeHttpMethod::Post,
+            format!(
+                "/api/session/{}/inbox/{}/steer",
+                path_segment(session_id),
+                path_segment(inbox_id)
+            ),
+            None,
+        )?;
+        if response.status == 409 {
+            return Ok(false);
+        }
+        ensure_success(&response)?;
+        Ok(true)
     }
 
     pub(crate) fn into_transport(self) -> T {

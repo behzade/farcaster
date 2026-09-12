@@ -14,6 +14,8 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
     let address = listener.local_addr().map_err(|error| error.to_string())?;
     let requests = Arc::new(Mutex::new(Vec::new()));
     let recorded = Arc::clone(&requests);
+    let (event_sender, event_receiver) = mpsc::channel::<String>();
+    let event_receiver = Arc::new(Mutex::new(event_receiver));
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let directory = project.path().to_string_lossy().into_owned();
     let session_body = serde_json::to_string(&json!({"data": {
@@ -21,10 +23,12 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
     }}))
     .map_err(|error| error.to_string())?;
     let server = thread::spawn(move || -> Result<(), String> {
-        for _ in 0..3 {
+        for _ in 0..4 {
             let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
             let recorded = Arc::clone(&recorded);
             let session_body = session_body.clone();
+            let event_sender = event_sender.clone();
+            let event_receiver = Arc::clone(&event_receiver);
             thread::spawn(move || -> Result<(), String> {
                 let mut request = Vec::new();
                 let mut byte = [0_u8; 1];
@@ -59,13 +63,56 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
                     stream
                         .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
                         .map_err(|error| error.to_string())?;
+                    loop {
+                        let event = event_receiver
+                            .lock()
+                            .map_err(|error| error.to_string())?
+                            .recv()
+                            .map_err(|error| error.to_string())?;
+                        if event == "close" {
+                            return Ok(());
+                        }
+                        write!(stream, "data: {event}\n\n").map_err(|error| error.to_string())?;
+                        stream.flush().map_err(|error| error.to_string())?;
+                    }
+                }
+                if request.starts_with("POST /api/session/saved-session/prompt ") {
+                    let body = request
+                        .split_once("\r\n\r\n")
+                        .map(|(_, body)| body)
+                        .ok_or("fixture prompt has no body")?;
+                    let body: Value =
+                        serde_json::from_str(body).map_err(|error| error.to_string())?;
+                    let id = body["id"].as_str().ok_or("fixture prompt has no id")?;
+                    if body["text"].as_str() == Some("after restart") {
+                        event_sender
+                            .send(
+                                json!({
+                                    "id":"direct-delivery", "type":"session.inbox.delivered",
+                                    "data":{"sessionID":"saved-session", "inboxID":id}
+                                })
+                                .to_string(),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        return Ok(());
+                    }
+                    let response = json!({"data": {
+                        "id": id, "sessionID": "saved-session", "delivery": body["delivery"]
+                    }})
+                    .to_string();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                        response.len()
+                    )
+                    .map_err(|error| error.to_string())?;
+                    event_sender
+                        .send("close".into())
+                        .map_err(|error| error.to_string())?;
                     return Ok(());
                 }
                 let response = if request.starts_with("GET /api/session/saved-session ") {
                     session_body
-                } else if request.starts_with("POST /api/session/saved-session/prompt ") {
-                    r#"{"data":{"id":"prompt-1","sessionID":"saved-session","delivery":"queue"}}"#
-                        .into()
                 } else {
                     return Err(format!("unexpected request: {request}"));
                 };
@@ -111,6 +158,35 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
         })
     );
     worker.send("after restart".into(), WorkerSendMode::Prompt)?;
+    let unknown_id = match worker.poll() {
+        Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. }) => submission_id,
+        event => {
+            return Err(format!(
+                "expected direct prompt delivery uncertainty, got {event:?}"
+            ));
+        }
+    };
+    let uuid = unknown_id
+        .strip_prefix("msg_farcaster_")
+        .ok_or("direct prompt ID is missing its namespace")?;
+    uuid::Uuid::parse_str(uuid).map_err(|error| error.to_string())?;
+    let mut delivered = None;
+    for _ in 0..500 {
+        delivered = worker.poll();
+        if delivered.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(matches!(
+        delivered,
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            mode: WorkerSendMode::Prompt,
+            message,
+        })) if submission_id == unknown_id && message == "after restart"
+    ));
+    worker.send("still alive".into(), WorkerSendMode::Prompt)?;
     worker.close()?;
     server
         .join()
@@ -127,6 +203,11 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
         requests
             .iter()
             .any(|request| request.contains("after restart"))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.contains("still alive"))
     );
     Ok(())
 }
@@ -468,6 +549,51 @@ fn native_startup_merges_direct_farcaster_mcp() {
 }
 
 #[test]
+fn promotion_failures_do_not_skip_later_followups_or_interrupt() {
+    use super::super::{
+        client::OpenCodeClient,
+        contract::{OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport},
+    };
+
+    struct Transport {
+        responses: VecDeque<OpenCodeHttpResponse>,
+        requests: Vec<OpenCodeHttpRequest>,
+    }
+    impl OpenCodeHttpTransport for Transport {
+        fn execute(
+            &mut self,
+            request: OpenCodeHttpRequest,
+        ) -> Result<OpenCodeHttpResponse, String> {
+            self.requests.push(request);
+            self.responses
+                .pop_front()
+                .ok_or_else(|| "missing response".into())
+        }
+    }
+    let response = |status, body: Value| OpenCodeHttpResponse {
+        status,
+        body: serde_json::to_vec(&body).expect("test response serializes"),
+    };
+    let transport = Transport {
+        responses: VecDeque::from([
+            response(500, json!({"_tag":"Failure", "message":"first failed"})),
+            response(204, Value::Null),
+            response(200, json!({"interrupted":true})),
+        ]),
+        requests: Vec::new(),
+    };
+    let mut client = OpenCodeClient::new(transport);
+    let (interrupted, errors) =
+        promote_followups_and_interrupt(&mut client, "session-1", ["first", "second"]);
+    assert_eq!(interrupted, Some(true));
+    assert_eq!(errors.len(), 1);
+    let requests = client.into_transport().requests;
+    assert!(requests[0].path.ends_with("/inbox/first/steer"));
+    assert!(requests[1].path.ends_with("/inbox/second/steer"));
+    assert!(requests[2].path.ends_with("/interrupt?continue=true"));
+}
+
+#[test]
 fn extracts_the_last_assistant_text() {
     let context = [
         json!({"type":"assistant","content":[{"type":"text","text":"old"}]}),
@@ -515,14 +641,41 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
         context_window: 0,
         pending_inputs: HashMap::new(),
         pending_deliveries: HashMap::from([
-            ("steer-1".into(), (WorkerSendMode::Steer, "redirect".into())),
-            ("queue-1".into(), (WorkerSendMode::Queue, "later".into())),
+            (
+                "steer-1".into(),
+                PendingOpenCodeDelivery {
+                    submission_id: Some("submission-steer".into()),
+                    mode: WorkerSendMode::Steer,
+                    message: "same text".into(),
+                    images: vec![crate::protocol::PromptImage::new(
+                        "AQID".into(),
+                        "image/png".into(),
+                    )],
+                    clears_abort_barrier: false,
+                },
+            ),
+            (
+                "queue-1".into(),
+                PendingOpenCodeDelivery {
+                    submission_id: Some("submission-queue".into()),
+                    mode: WorkerSendMode::Queue,
+                    message: "same text".into(),
+                    images: vec![crate::protocol::PromptImage::new(
+                        "BAUG".into(),
+                        "image/jpeg".into(),
+                    )],
+                    clears_abort_barrier: false,
+                },
+            ),
         ]),
+        delivered_awaiting_execution: HashSet::new(),
         active_tools: HashMap::new(),
         generation: 0,
         completions: None,
         turn_active: true,
         steering_interrupts: 1,
+        ignore_execution_events: false,
+        abort_waiting_for_start: false,
         wake: None,
         pending: VecDeque::new(),
     };
@@ -552,12 +705,24 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     send("session.inbox.delivered", json!({"inboxID": "steer-1"}));
     assert!(matches!(
         worker.poll_native_event(),
-        Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
+            submission_id,
             mode: WorkerSendMode::Steer,
+            images,
             ..
-        }))
+        })) if submission_id == "submission-steer" && images[0].mime_type == "image/png"
     ));
     assert!(worker.pending_deliveries.contains_key("queue-1"));
+    send("session.inbox.delivered", json!({"inboxID": "queue-1"}));
+    assert!(matches!(
+        worker.poll_native_event(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
+            submission_id,
+            mode: WorkerSendMode::Queue,
+            images,
+            ..
+        })) if submission_id == "submission-queue" && images[0].mime_type == "image/jpeg"
+    ));
     send("session.execution.interrupted", json!({}));
     assert!(matches!(
         worker.poll_native_event(),
@@ -565,6 +730,157 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     ));
     assert!(!worker.turn_active);
     worker.close()?;
+    Ok(())
+}
+
+#[test]
+fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), String> {
+    use std::{
+        io::{Read as _, Write as _},
+        net::TcpListener,
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&requests);
+    let fixture = thread::spawn(move || -> Result<(), String> {
+        for index in 0..2 {
+            let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                stream
+                    .read_exact(&mut byte)
+                    .map_err(|error| error.to_string())?;
+                request.push(byte[0]);
+            }
+            recorded
+                .lock()
+                .map_err(|error| error.to_string())?
+                .push(String::from_utf8_lossy(&request).into_owned());
+            match index {
+                0 => {
+                    let response = r#"{"interrupted":false}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{response}",
+                        response.len()
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                _ => {
+                    let response = r#"{"interrupted":true}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{response}",
+                        response.len()
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    });
+    let child = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!("printf '{{\"url\":\"http://{address}\"}}\\n'; cat"),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+    let (sender, incoming) = mpsc::channel();
+    let caller_identity = crate::agents::CallerRegistry::shared().issue(
+        std::path::Path::new("/project"),
+        crate::modules::agents::core::CallerProfile {
+            backend: "opencode2".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let mut worker = OpenCodeWorkerSession {
+        caller_identity,
+        server,
+        session_id: "session-1".into(),
+        provider: None,
+        model: None,
+        effort: None,
+        effort_catalog: HashMap::new(),
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        incoming,
+        reasoning_started: false,
+        text_streams: HashMap::new(),
+        reasoning_streams: HashMap::new(),
+        usage: OpenCodeUsageTracker::default(),
+        context_window: 0,
+        pending_inputs: HashMap::new(),
+        pending_deliveries: HashMap::from([(
+            "msg_delivered".into(),
+            PendingOpenCodeDelivery {
+                submission_id: Some("delivered".into()),
+                mode: WorkerSendMode::Queue,
+                message: "delivered".into(),
+                images: Vec::new(),
+                clears_abort_barrier: false,
+            },
+        )]),
+        delivered_awaiting_execution: HashSet::new(),
+        active_tools: HashMap::new(),
+        generation: 0,
+        completions: None,
+        turn_active: true,
+        steering_interrupts: 0,
+        ignore_execution_events: false,
+        abort_waiting_for_start: false,
+        wake: None,
+        pending: VecDeque::new(),
+    };
+
+    sender
+        .send(Ok(super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some("session.inbox.delivered".into()),
+            data: json!({"sessionID":"session-1", "inboxID":"msg_delivered"}),
+        }))
+        .map_err(|error| error.to_string())?;
+    assert!(matches!(
+        worker.poll_native_event(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            ..
+        })) if submission_id == "delivered"
+    ));
+    worker.abort()?;
+    assert!(worker.abort_waiting_for_start);
+    assert!(worker.pending.is_empty());
+    assert!(worker.pending_deliveries.is_empty());
+    sender
+        .send(Ok(super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some("session.execution.started".into()),
+            data: json!({"sessionID":"session-1"}),
+        }))
+        .map_err(|error| error.to_string())?;
+    assert!(matches!(
+        worker.poll_native_event(),
+        Some(WorkerEvent::Settled { .. })
+    ));
+    assert!(!worker.abort_waiting_for_start);
+    worker.close()?;
+    fixture
+        .join()
+        .map_err(|_| "abort fixture panicked".to_owned())??;
+    let requests = requests.lock().map_err(|error| error.to_string())?;
+    assert!(requests[0].contains("interrupt?continue=false"));
+    assert!(requests[1].contains("interrupt?continue=false"));
     Ok(())
 }
 
@@ -611,11 +927,14 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         context_window: 0,
         pending_inputs: HashMap::new(),
         pending_deliveries: HashMap::new(),
+        delivered_awaiting_execution: HashSet::new(),
         active_tools: HashMap::new(),
         generation: 0,
         completions: None,
         turn_active: true,
         steering_interrupts: 0,
+        ignore_execution_events: false,
+        abort_waiting_for_start: false,
         wake: None,
         pending: VecDeque::from([
             WorkerEvent::Started,
@@ -631,8 +950,14 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
             session_id: "session-1".into(),
             delivery: "queue".into(),
         },
-        WorkerSendMode::Queue,
-        "next task".into(),
+        Some("queue-1"),
+        PendingOpenCodeDelivery {
+            submission_id: Some("submission-queue".into()),
+            mode: WorkerSendMode::Queue,
+            message: "next task".into(),
+            images: Vec::new(),
+            clears_abort_barrier: false,
+        },
     )?;
     assert_eq!(
         worker
@@ -674,5 +999,500 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         ["hello world"]
     );
     transport.close()?;
+    Ok(())
+}
+
+#[test]
+fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Result<(), String> {
+    use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+    use crate::protocol::PromptMode;
+    use std::{
+        io::{Read as _, Write as _},
+        net::TcpListener,
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+    enum FixtureEvent {
+        Data(String),
+        Shutdown,
+    }
+    let (event_sender, event_receiver) = mpsc::channel::<FixtureEvent>();
+    let (fixture_shutdown_sender, fixture_shutdown_receiver) = mpsc::channel::<()>();
+    let fixture_event_sender = event_sender.clone();
+    let event_receiver = Arc::new(Mutex::new(event_receiver));
+    let recorded = Arc::clone(&requests);
+    let fixture = thread::spawn(move || -> Result<(), String> {
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| error.to_string())?;
+        let mut handlers = Vec::new();
+        loop {
+            match fixture_shutdown_receiver.try_recv() {
+                Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            let (mut stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            let timeout = Some(Duration::from_secs(5));
+            stream
+                .set_read_timeout(timeout)
+                .and_then(|()| stream.set_write_timeout(timeout))
+                .map_err(|error| error.to_string())?;
+            let recorded = Arc::clone(&recorded);
+            let event_receiver = Arc::clone(&event_receiver);
+            let fixture_event_sender = fixture_event_sender.clone();
+            handlers.push(thread::spawn(move || -> Result<(), String> {
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream
+                        .read_exact(&mut byte)
+                        .map_err(|error| error.to_string())?;
+                    request.push(byte[0]);
+                }
+                let headers = String::from_utf8_lossy(&request);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':').and_then(|(name, value)| {
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                    })
+                    .unwrap_or(0);
+                let mut body = vec![0; length];
+                stream
+                    .read_exact(&mut body)
+                    .map_err(|error| error.to_string())?;
+                request.extend(body);
+                let request = String::from_utf8_lossy(&request).into_owned();
+                recorded
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .push(request.clone());
+                if request.starts_with("GET /api/event ") {
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                        .map_err(|error| error.to_string())?;
+                    drop(fixture_event_sender);
+                    loop {
+                        match event_receiver
+                            .lock()
+                            .map_err(|error| error.to_string())?
+                            .recv_timeout(Duration::from_secs(5))
+                        {
+                            Ok(FixtureEvent::Data(event)) => {
+                                write!(stream, "data: {event}\n\n")
+                                    .map_err(|error| error.to_string())?;
+                                stream.flush().map_err(|error| error.to_string())?;
+                            }
+                            Ok(FixtureEvent::Shutdown) => return Ok(()),
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                return Err("timed out waiting for OpenCode fixture event".into());
+                            }
+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                return Err("OpenCode fixture event sender disconnected".into());
+                            }
+                        }
+                    }
+                }
+                if request.starts_with("POST /api/session/session-1/prompt ") {
+                    let body = request
+                        .split_once("\r\n\r\n")
+                        .map(|(_, body)| body)
+                        .ok_or("fixture request has no body")?;
+                    let body: Value = serde_json::from_str(body).map_err(|error| error.to_string())?;
+                    let id = body["id"].as_str().ok_or("fixture prompt has no id")?;
+                    let delivery = body["delivery"]
+                        .as_str()
+                        .ok_or("fixture prompt has no delivery")?;
+                    if body["text"].as_str() == Some("lost reply") {
+                        fixture_event_sender
+                            .send(FixtureEvent::Data(
+                                json!({
+                                    "id":"lost-delivery", "type":"session.inbox.delivered",
+                                    "data":{"sessionID":"session-1", "inboxID":id}
+                                })
+                                .to_string(),
+                            ))
+                            .map_err(|error| error.to_string())?;
+                        return Ok(());
+                    }
+                    let response = json!({"data": {
+                        "id": id, "sessionID": "session-1", "delivery": delivery
+                    }})
+                    .to_string();
+                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len())
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+                if request.starts_with("POST /api/session/session-1/interrupt?") {
+                    let response = r#"{"interrupted":true}"#;
+                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len())
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+                if request.starts_with("POST /api/session/session-1/inbox/")
+                    && request.contains("/steer ")
+                {
+                    let inbox_id = request
+                        .lines()
+                        .next()
+                        .and_then(|line| line.split_ascii_whitespace().nth(1))
+                        .and_then(|path| path.split('/').nth(5))
+                        .ok_or("fixture steer request has no inbox id")?;
+                    stream
+                        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .map_err(|error| error.to_string())?;
+                    fixture_event_sender
+                        .send(FixtureEvent::Data(
+                            json!({
+                                "id":"promoted-delivery", "type":"session.inbox.delivered",
+                                "data":{"sessionID":"session-1", "inboxID":inbox_id}
+                            })
+                            .to_string(),
+                        ))
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+                if request.starts_with("DELETE /api/session/session-1/inbox/") {
+                    stream
+                        .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+                Err(format!("unexpected fixture request: {request}"))
+            }));
+        }
+        for handler in handlers {
+            handler
+                .join()
+                .map_err(|_| "OpenCode fixture handler panicked".to_owned())??;
+        }
+        Ok(())
+    });
+
+    let child = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!("printf '{{\"url\":\"http://{address}\"}}\\n'; cat"),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+    let incoming = start_event_reader(&server, "session-1", None)?;
+    let caller_identity = crate::agents::CallerRegistry::shared().issue(
+        std::path::Path::new("/project"),
+        crate::modules::agents::core::CallerProfile {
+            backend: "opencode2".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let worker = OpenCodeWorkerSession {
+        caller_identity,
+        server,
+        session_id: "session-1".into(),
+        provider: None,
+        model: None,
+        effort: None,
+        effort_catalog: HashMap::new(),
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        incoming,
+        reasoning_started: false,
+        text_streams: HashMap::new(),
+        reasoning_streams: HashMap::new(),
+        usage: OpenCodeUsageTracker::default(),
+        context_window: 0,
+        pending_inputs: HashMap::new(),
+        pending_deliveries: HashMap::new(),
+        delivered_awaiting_execution: HashSet::new(),
+        active_tools: HashMap::new(),
+        generation: 0,
+        completions: None,
+        turn_active: false,
+        steering_interrupts: 0,
+        ignore_execution_events: false,
+        abort_waiting_for_start: false,
+        wake: None,
+        pending: VecDeque::new(),
+    };
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "opencode2",
+        "session-1".into(),
+        Box::new(worker),
+        MainSessionMetadata::default(),
+        None,
+    )?;
+    let image =
+        |data: &str, mime: &str| crate::protocol::PromptImage::new(data.into(), mime.into());
+    let send_prompt = |transport: &mut WorkerSessionTransport,
+                       mode,
+                       data: &str,
+                       mime: &str|
+     -> Result<String, String> {
+        transport.send(SessionCommand::Prompt {
+            mode,
+            message: "same text".into(),
+            images: vec![image(data, mime)],
+        })
+    };
+    let normal = send_prompt(&mut transport, PromptMode::Normal, "AQID", "image/png")?;
+    let steer = send_prompt(&mut transport, PromptMode::Steer, "BAUG", "image/jpeg")?;
+    let queue = send_prompt(&mut transport, PromptMode::FollowUp, "BwgJ", "image/webp")?;
+    transport.send(SessionCommand::ApplySteering)?;
+    let cancelled = send_prompt(&mut transport, PromptMode::FollowUp, "CgsM", "image/gif")?;
+
+    let native = |id: &str| format!("msg_{id}");
+    let event = |kind: &str, data: Value| {
+        json!({"id":"fixture-event", "type":kind, "data":data}).to_string()
+    };
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.text.delta",
+            json!({"sessionID":"session-1", "delta":"before "}),
+        )))
+        .map_err(|error| error.to_string())?;
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.execution.interrupted",
+            json!({"sessionID":"session-1"}),
+        )))
+        .map_err(|error| error.to_string())?;
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.execution.started",
+            json!({"sessionID":"session-1"}),
+        )))
+        .map_err(|error| error.to_string())?;
+    for id in [&normal, &steer] {
+        event_sender
+            .send(FixtureEvent::Data(event(
+                "session.inbox.delivered",
+                json!({"sessionID":"session-1", "inboxID":native(id)}),
+            )))
+            .map_err(|error| error.to_string())?;
+    }
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.text.delta",
+            json!({"sessionID":"session-1", "delta":"after"}),
+        )))
+        .map_err(|error| error.to_string())?;
+
+    let mut conversation = ConversationState::default();
+    let mut receipt_statuses = HashMap::<String, Vec<String>>::new();
+    for _ in 0..500 {
+        let Some(event) = transport.poll() else {
+            thread::sleep(Duration::from_millis(1));
+            continue;
+        };
+        if let SessionEvent::Activity(activity) = event {
+            let value = activity.value();
+            if value["type"].as_str() == Some("prompt_delivery")
+                && let (Some(id), Some(status)) =
+                    (value["submissionId"].as_str(), value["status"].as_str())
+            {
+                receipt_statuses
+                    .entry(id.to_owned())
+                    .or_default()
+                    .push(status.to_owned());
+            }
+            conversation.reduce(value);
+        }
+        let assistant = conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<String>();
+        if assistant == "before after" {
+            break;
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<String>(),
+        "before after"
+    );
+    let retained = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User && !item.images.is_empty())
+        .count();
+    assert_eq!(retained, 4);
+    let ids_with_status = |status: &str| {
+        receipt_statuses
+            .iter()
+            .filter(|(_, statuses)| statuses.iter().any(|candidate| candidate == status))
+            .map(|(id, _)| id.clone())
+            .collect::<HashSet<_>>()
+    };
+    assert_eq!(
+        ids_with_status("accepted"),
+        HashSet::from([
+            normal.clone(),
+            steer.clone(),
+            queue.clone(),
+            cancelled.clone(),
+        ])
+    );
+    assert_eq!(
+        ids_with_status("delivered"),
+        HashSet::from([normal.clone(), steer.clone(), queue.clone()]),
+        "cancelled follow-up must remain accepted but not delivered"
+    );
+
+    transport.send(SessionCommand::Abort)?;
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.text.delta",
+            json!({"sessionID":"session-1", "delta":" stale"}),
+        )))
+        .map_err(|error| error.to_string())?;
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.execution.started",
+            json!({"sessionID":"session-1"}),
+        )))
+        .map_err(|error| error.to_string())?;
+    let live = send_prompt(&mut transport, PromptMode::Normal, "DQ4P", "image/avif")?;
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.inbox.delivered",
+            json!({"sessionID":"session-1", "inboxID":native(&live)}),
+        )))
+        .map_err(|error| error.to_string())?;
+    event_sender
+        .send(FixtureEvent::Data(event(
+            "session.text.delta",
+            json!({"sessionID":"session-1", "delta":"alive"}),
+        )))
+        .map_err(|error| error.to_string())?;
+    for _ in 0..500 {
+        let Some(event) = transport.poll() else {
+            thread::sleep(Duration::from_millis(1));
+            continue;
+        };
+        if let SessionEvent::Activity(activity) = event {
+            conversation.reduce(activity.value());
+        }
+    }
+    let assistant = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::Assistant)
+        .map(|item| item.complete_text())
+        .collect::<String>();
+    assert!(!assistant.contains("stale"));
+    assert!(assistant.contains("alive"));
+
+    let lost = transport.send(SessionCommand::Prompt {
+        mode: PromptMode::FollowUp,
+        message: "lost reply".into(),
+        images: vec![image("EBES", "image/png")],
+    })?;
+    for _ in 0..500 {
+        let Some(event) = transport.poll() else {
+            thread::sleep(Duration::from_millis(1));
+            continue;
+        };
+        if let SessionEvent::Activity(activity) = event {
+            conversation.reduce(activity.value());
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User && item.text == "lost reply")
+            .count(),
+        1
+    );
+    let history = super::super::catalog::history_messages(&json!({
+        "id": native(&lost),
+        "type": "user",
+        "text": "lost reply",
+        "files": [{"mime":"image/png", "data":"EBES"}],
+    }));
+    conversation.replace_history(&history);
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User && item.text == "lost reply")
+            .count(),
+        1
+    );
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .find(|item| item.kind == TranscriptKind::User && item.text == "lost reply")
+            .map(|item| item.images.len()),
+        Some(1)
+    );
+
+    event_sender
+        .send(FixtureEvent::Shutdown)
+        .map_err(|error| error.to_string())?;
+    fixture_shutdown_sender
+        .send(())
+        .map_err(|error| error.to_string())?;
+    transport.close()?;
+    fixture
+        .join()
+        .map_err(|_| "OpenCode fixture panicked".to_owned())??;
+    let requests = requests.lock().map_err(|error| error.to_string())?;
+    let relevant = requests
+        .iter()
+        .filter_map(|request| request.lines().next())
+        .filter(|request| !request.starts_with("GET /api/event "))
+        .collect::<Vec<_>>();
+    assert!(relevant[3].starts_with(&format!(
+        "POST /api/session/session-1/inbox/{}/steer ",
+        native(&queue)
+    )));
+    assert!(relevant[4].contains("continue=true"));
+    assert!(relevant[6].contains("continue=false"));
+    assert!(relevant[7].starts_with(&format!(
+        "DELETE /api/session/session-1/inbox/{} ",
+        native(&cancelled)
+    )));
+    assert!(relevant[8].starts_with("POST /api/session/session-1/prompt "));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("\"text\":\"lost reply\""))
+            .count(),
+        1,
+        "an unknown admission must never be replayed"
+    );
+    assert!(lost.starts_with("opencode2-"));
     Ok(())
 }

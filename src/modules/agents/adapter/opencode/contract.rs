@@ -24,6 +24,20 @@ pub(crate) struct OpenCodeHttpResponse {
 
 pub(crate) trait OpenCodeHttpTransport {
     fn execute(&mut self, request: OpenCodeHttpRequest) -> Result<OpenCodeHttpResponse, String>;
+
+    fn execute_prompt(
+        &mut self,
+        request: OpenCodeHttpRequest,
+    ) -> Result<OpenCodeHttpResponse, OpenCodePromptDispatchError> {
+        self.execute(request)
+            .map_err(OpenCodePromptDispatchError::Unsent)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum OpenCodePromptDispatchError {
+    Unsent(String),
+    Unknown(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
