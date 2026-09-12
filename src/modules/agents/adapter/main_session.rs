@@ -41,6 +41,7 @@ fn finished_tool_result(result: Value) -> Value {
 
 struct PendingPrompt {
     requested_mode: PromptMode,
+    unknown: bool,
 }
 
 struct PromptDelivery {
@@ -154,7 +155,17 @@ impl WorkerSessionTransport {
     }
 
     fn finish_prompt_ack(&mut self, id: String, result: Result<(), String>) {
-        let Some(PendingPrompt { requested_mode }) = self.pending_prompts.remove(&id) else {
+        // A terminal unknown already handed the payload to recovery. A later
+        // error cannot remove it or restore it over a newer composer submission.
+        if result.is_err()
+            && self
+                .pending_prompts
+                .get(&id)
+                .is_some_and(|prompt| prompt.unknown)
+        {
+            return;
+        }
+        let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(&id) else {
             return;
         };
         // A committed input is stronger evidence than a delayed request error.
@@ -205,6 +216,35 @@ impl WorkerSessionTransport {
             }
         };
         self.pending.push_back(SessionEvent::Response(response));
+    }
+
+    fn finish_prompt_unknown(&mut self, id: String, error: String) {
+        if self
+            .prompt_deliveries
+            .iter()
+            .any(|delivery| delivery.request_id == id && delivery.delivered)
+        {
+            self.finish_prompt_ack(id, Ok(()));
+            return;
+        }
+        let Some(prompt) = self.pending_prompts.get_mut(&id) else {
+            return;
+        };
+        if std::mem::replace(&mut prompt.unknown, true) {
+            return;
+        }
+        let mode = prompt.requested_mode;
+        if let Some(delivery) = self
+            .prompt_deliveries
+            .iter_mut()
+            .find(|delivery| delivery.request_id == id)
+        {
+            delivery.aborted = true;
+            self.pending.push_back(delivery.event("unknown"));
+        }
+        self.pending.push_back(SessionEvent::Response(
+            SessionResponse::prompt_delivery_unknown(id, mode, error),
+        ));
     }
 
     fn drain_prompt_acks(&mut self) {
@@ -339,23 +379,15 @@ impl WorkerSessionTransport {
                     "error": format!("{operation}: {error}"),
                 })));
             }
+            WorkerEvent::PromptDeliveryUnknown {
+                submission_id,
+                error,
+            } => {
+                self.finish_prompt_unknown(submission_id, error);
+            }
             WorkerEvent::Failed(error) => {
                 for id in self.pending_prompts.keys().cloned().collect::<Vec<_>>() {
-                    if self
-                        .prompt_deliveries
-                        .iter()
-                        .any(|delivery| delivery.request_id == id && delivery.delivered)
-                    {
-                        self.finish_prompt_ack(id, Ok(()));
-                    } else if let Some(prompt) = self.pending_prompts.remove(&id) {
-                        self.pending.push_back(SessionEvent::Response(
-                            SessionResponse::prompt_delivery_unknown(
-                                id,
-                                prompt.requested_mode,
-                                error.clone(),
-                            ),
-                        ));
-                    }
+                    self.finish_prompt_unknown(id, error.clone());
                 }
                 self.stop_queue();
                 self.pending.push_back(SessionEvent::Failure(error));
@@ -783,8 +815,13 @@ impl SessionTransport for WorkerSessionTransport {
                 let accepted =
                     self.worker
                         .submit_prompt(id.clone(), message, worker_mode, images)?;
-                self.pending_prompts
-                    .insert(id.clone(), PendingPrompt { requested_mode });
+                self.pending_prompts.insert(
+                    id.clone(),
+                    PendingPrompt {
+                        requested_mode,
+                        unknown: false,
+                    },
+                );
                 self.prompt_deliveries.push_back(PromptDelivery {
                     request_id: id.clone(),
                     mode,

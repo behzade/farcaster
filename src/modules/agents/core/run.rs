@@ -171,6 +171,11 @@ fn run(
                         parent.report(format!("{operation} failed: {error}"));
                     }
                 }
+                WorkerEvent::PromptDeliveryUnknown { error, .. } => {
+                    if let Some(parent) = &parent {
+                        parent.report(format!("Input delivery is unknown: {error}"));
+                    }
+                }
                 WorkerEvent::Failed(error) => break 'run error,
             }
         }

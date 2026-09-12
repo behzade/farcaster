@@ -39,7 +39,7 @@ pub(super) fn descriptor() -> crate::agents::contract::AgentBackendDescriptor {
                 prompt: Available,
                 images: Available,
                 interrupt: Available,
-                steer: Unsupported,
+                steer: Available,
                 follow_up: Available,
                 compact: Unsupported,
                 queue: Available,

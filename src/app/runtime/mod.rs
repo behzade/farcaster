@@ -7,6 +7,7 @@ mod history;
 mod notifications;
 mod process;
 mod projection;
+mod prompt_receipts;
 mod prompts;
 pub(in crate::app) mod recovery;
 mod session_controls;
@@ -113,6 +114,7 @@ struct RuntimeOwner {
     pending_outbox_id: Option<i64>,
     pending_prompt_delivery_unknown: bool,
     pending_prompt_delivery_tracked: bool,
+    retired_prompts: HashMap<String, prompt_receipts::RetiredPrompt>,
     title_generation: SessionTitleGeneration,
     transcript_changed_from: Option<usize>,
     event_tx: SessionEventSender,

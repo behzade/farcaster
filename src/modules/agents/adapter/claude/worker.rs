@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     path::Path,
 };
 
@@ -218,12 +218,15 @@ fn attach(
         events: Events::default(),
         active: false,
         active_uuid: None,
-        prompt_requests: HashMap::new(),
+        dispatched: HashMap::new(),
         prompt_acks: VecDeque::new(),
         closed: false,
         queued: VecDeque::new(),
+        handoff_pending: false,
+        handoff_uuid: None,
+        abort_waiting_on_handoff_interrupt: None,
         permissions: HashMap::new(),
-        interrupts: HashSet::new(),
+        interrupts: HashMap::new(),
         models: metadata.models.clone(),
         modes: metadata.modes.clone(),
         model: None,
@@ -234,7 +237,28 @@ fn attach(
 
 struct Prompt {
     message: SDKUserMessage,
-    delivery: WorkerActivity,
+    deliveries: Vec<PromptDelivery>,
+}
+
+struct PromptDelivery {
+    submission_id: Option<String>,
+    activity: WorkerActivity,
+}
+
+struct DispatchedPrompt {
+    deliveries: Vec<PromptDelivery>,
+    unknown: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InterruptPurpose {
+    Abort,
+    Handoff,
+}
+
+struct Interrupt {
+    prompt_uuid: String,
+    purpose: InterruptPurpose,
 }
 
 struct ClaudeSession {
@@ -244,12 +268,15 @@ struct ClaudeSession {
     events: Events,
     active: bool,
     active_uuid: Option<String>,
-    prompt_requests: HashMap<String, String>,
+    dispatched: HashMap<String, DispatchedPrompt>,
     prompt_acks: VecDeque<(String, Result<(), String>)>,
     closed: bool,
     queued: VecDeque<Prompt>,
+    handoff_pending: bool,
+    handoff_uuid: Option<String>,
+    abort_waiting_on_handoff_interrupt: Option<String>,
     permissions: HashMap<String, Value>,
-    interrupts: HashSet<String>,
+    interrupts: HashMap<String, Interrupt>,
     models: Vec<Value>,
     modes: Vec<Value>,
     model: Option<String>,
@@ -307,7 +334,10 @@ impl ClaudeSession {
         };
         Ok(Prompt {
             message: message_frame,
-            delivery,
+            deliveries: vec![PromptDelivery {
+                submission_id: submission_id.map(str::to_owned),
+                activity: delivery,
+            }],
         })
     }
 
@@ -322,29 +352,164 @@ impl ClaudeSession {
         if self.closed {
             return Err("Claude session is closed".into());
         }
-        if mode == WorkerSendMode::Steer {
-            return Err("Claude does not support steering".into());
-        }
-        if self.active {
+        if self.active || self.handoff_pending || mode == WorkerSendMode::Steer {
             self.queued.push_back(prompt);
             Ok(())
         } else {
-            self.deliver(prompt)
+            self.deliver(prompt);
+            Ok(())
         }
     }
 
-    fn deliver(&mut self, prompt: Prompt) -> Result<(), String> {
+    fn deliver(&mut self, prompt: Prompt) {
         let active_uuid = match &prompt.message.uuid {
-            Presence::Present(uuid) => Some(uuid.clone()),
-            Presence::Missing => None,
+            Presence::Present(uuid) => uuid.clone(),
+            Presence::Missing => {
+                self.events.pending.push_back(WorkerEvent::Failed(
+                    "Claude prompt has no acknowledgement id".into(),
+                ));
+                return;
+            }
         };
-        self.process.prompt(prompt.message)?;
-        self.active_uuid = active_uuid;
+        self.active_uuid = Some(active_uuid.clone());
         self.active = true;
         self.caller.set_activity(WorkerActivityState::Working);
-        self.events.start();
-        self.events.activity(prompt.delivery);
+        self.dispatched.insert(
+            active_uuid.clone(),
+            DispatchedPrompt {
+                deliveries: prompt.deliveries,
+                unknown: false,
+            },
+        );
+        match self.process.prompt(prompt.message) {
+            Ok(()) => self.events.start(),
+            Err(error) => {
+                self.delivery_unknown(
+                    &active_uuid,
+                    format!("Claude prompt delivery is unknown: {error}"),
+                );
+                self.events.pending.push_back(WorkerEvent::Failed(error));
+            }
+        }
+    }
+
+    fn delivery_unknown(&mut self, uuid: &str, error: String) {
+        let Some(prompt) = self.dispatched.get_mut(uuid) else {
+            return;
+        };
+        if prompt.unknown {
+            return;
+        }
+        prompt.unknown = true;
+        let submission_ids = prompt
+            .deliveries
+            .iter()
+            .filter_map(|delivery| delivery.submission_id.clone())
+            .collect::<Vec<_>>();
+        for submission_id in submission_ids {
+            self.events
+                .pending
+                .push_back(WorkerEvent::PromptDeliveryUnknown {
+                    submission_id,
+                    error: error.clone(),
+                });
+        }
+    }
+
+    fn receive_prompt(&mut self, uuid: &str) {
+        let Some(prompt) = self.dispatched.remove(uuid) else {
+            return;
+        };
+        for delivery in prompt.deliveries {
+            if let Some(submission_id) = delivery.submission_id {
+                self.prompt_acks.push_back((submission_id, Ok(())));
+            }
+            self.events.activity(delivery.activity);
+        }
+    }
+
+    fn reject_queued(&mut self, error: &str) {
+        for prompt in self.queued.drain(..) {
+            for delivery in prompt.deliveries {
+                if let Some(submission_id) = delivery.submission_id {
+                    self.prompt_acks
+                        .push_back((submission_id, Err(error.into())));
+                }
+            }
+        }
+    }
+
+    fn interrupt(&mut self, purpose: InterruptPurpose) -> Result<(), String> {
+        let Some(prompt_uuid) = self.active_uuid.clone() else {
+            return Ok(());
+        };
+        let id = self
+            .process
+            .request(json!({"subtype":"interrupt", "cancel_queued":true}))?;
+        self.interrupts.insert(
+            id,
+            Interrupt {
+                prompt_uuid,
+                purpose,
+            },
+        );
         Ok(())
+    }
+
+    fn handoff_interrupt_pending(&self) -> bool {
+        let active_uuid = self.active_uuid.as_deref();
+        self.interrupts.values().any(|interrupt| {
+            interrupt.purpose == InterruptPurpose::Handoff
+                && Some(interrupt.prompt_uuid.as_str()) == active_uuid
+        })
+    }
+
+    fn dispatch_handoff(&mut self) {
+        if !self.handoff_pending || self.active {
+            return;
+        }
+        if self.queued.is_empty() {
+            self.handoff_pending = false;
+            return;
+        }
+        self.handoff_pending = false;
+        let prompts = self.queued.drain(..).collect::<Vec<_>>();
+        let mut content = Vec::new();
+        let mut deliveries = Vec::new();
+        for (index, prompt) in prompts.into_iter().enumerate() {
+            if index > 0 {
+                content.push(json!({"type":"text", "text":"\n\n"}));
+            }
+            let value =
+                serde_json::to_value(prompt.message).expect("Claude SDK user message serializes");
+            content.extend(
+                value["message"]["content"]
+                    .as_array()
+                    .expect("Claude prompt content is an array")
+                    .iter()
+                    .cloned(),
+            );
+            deliveries.extend(prompt.deliveries);
+        }
+        let message: Result<SDKUserMessage, String> = decode(json!({
+            "type":"user", "session_id":self.id,
+            "uuid":uuid::Uuid::new_v4().to_string(), "parent_tool_use_id":null,
+            "message":{"role":"user", "content":content}
+        }));
+        match message {
+            Ok(message) => {
+                let uuid = match &message.uuid {
+                    Presence::Present(uuid) => Some(uuid.clone()),
+                    Presence::Missing => None,
+                };
+                self.deliver(Prompt {
+                    message,
+                    deliveries,
+                });
+                self.handoff_uuid = uuid;
+            }
+            Err(error) => self.events.pending.push_back(WorkerEvent::Failed(error)),
+        }
     }
 
     fn reply(&mut self, id: &str, response: impl serde::Serialize) -> Result<(), String> {
@@ -408,31 +573,7 @@ impl ClaudeSession {
             return Err("Claude initialized a different session than requested".into());
         }
         if frame["type"] == "user" && frame["session_id"].as_str() == Some(self.id.as_str()) {
-            if let Some(ack) = self.prompt_requests.remove(string(&frame, "uuid")) {
-                self.prompt_acks.push_back((ack, Ok(())));
-            }
-        }
-        if frame["type"] == "result"
-            && self.active
-            && frame["session_id"].as_str() == Some(self.id.as_str())
-        {
-            if let Some(ack) = self
-                .active_uuid
-                .as_ref()
-                .and_then(|uuid| self.prompt_requests.remove(uuid))
-            {
-                let result = if frame["subtype"] == "success"
-                    && frame["is_error"] != true
-                    && !matches!(
-                        string(&frame, "terminal_reason"),
-                        "aborted_streaming" | "aborted_tools"
-                    ) {
-                    Ok(())
-                } else {
-                    Err("Claude stopped before acknowledging the prompt".into())
-                };
-                self.prompt_acks.push_back((ack, result));
-            }
+            self.receive_prompt(string(&frame, "uuid"));
         }
         match string(&frame, "type") {
             "control_request" => self.control(&frame)?,
@@ -441,9 +582,28 @@ impl ClaudeSession {
             }
             "control_response" => {
                 let response = &frame["response"];
-                if self.interrupts.remove(string(response, "request_id")) {
+                if let Some(interrupt) = self.interrupts.remove(string(response, "request_id")) {
                     if response["subtype"] == "error" {
-                        return Err(format!("Claude interrupt: {}", string(response, "error")));
+                        if self.abort_waiting_on_handoff_interrupt.as_deref()
+                            == Some(&interrupt.prompt_uuid)
+                            && self.active_uuid.as_deref() == Some(&interrupt.prompt_uuid)
+                        {
+                            self.abort_waiting_on_handoff_interrupt = None;
+                            self.interrupt(InterruptPurpose::Abort)?;
+                            return Ok(());
+                        }
+                        if self.active_uuid.as_deref() == Some(&interrupt.prompt_uuid) {
+                            self.events.pending.push_back(WorkerEvent::RequestFailed {
+                                operation: "interrupt".into(),
+                                error: format!("Claude interrupt: {}", string(response, "error")),
+                            });
+                        }
+                        return Ok(());
+                    }
+                    if self.abort_waiting_on_handoff_interrupt.as_deref()
+                        == Some(&interrupt.prompt_uuid)
+                    {
+                        self.abort_waiting_on_handoff_interrupt = None;
                     }
                     // A prompt cancelled before execution has no result frame.
                     // Only settle when the typed receipt names our active prompt.
@@ -451,20 +611,17 @@ impl ClaudeSession {
                         let receipt: SDKControlInterruptResponse =
                             decode(response["response"].clone())?;
                         if let Presence::Present(cancelled) = receipt.cancelled
-                            && self
-                                .active_uuid
-                                .as_ref()
-                                .is_some_and(|id| cancelled.contains(id))
+                            && cancelled.contains(&interrupt.prompt_uuid)
+                            && self.active_uuid.as_deref() == Some(&interrupt.prompt_uuid)
                         {
-                            if let Some(ack) = self
-                                .active_uuid
-                                .as_ref()
-                                .and_then(|uuid| self.prompt_requests.remove(uuid))
+                            self.delivery_unknown(
+                                &interrupt.prompt_uuid,
+                                "Claude cancelled a dispatched prompt before receipt".into(),
+                            );
+                            if interrupt.purpose == InterruptPurpose::Abort
+                                && self.handoff_uuid.as_deref() == Some(&interrupt.prompt_uuid)
                             {
-                                self.prompt_acks.push_back((
-                                    ack,
-                                    Err("Claude cancelled the prompt before execution".into()),
-                                ));
+                                self.handoff_uuid = None;
                             }
                             self.idle();
                             self.events.pending.push_back(WorkerEvent::Settled {
@@ -476,13 +633,26 @@ impl ClaudeSession {
             }
             "result" if self.active => {
                 self.events.message(&frame);
+                if let Some(uuid) = self.active_uuid.clone() {
+                    if self.abort_waiting_on_handoff_interrupt.as_deref() == Some(&uuid) {
+                        self.abort_waiting_on_handoff_interrupt = None;
+                    }
+                    self.delivery_unknown(
+                        &uuid,
+                        "Claude finished before confirming prompt receipt".into(),
+                    );
+                    if self.handoff_uuid.as_deref() == Some(&uuid) {
+                        self.handoff_uuid = None;
+                    }
+                }
                 self.idle();
                 let interrupted = matches!(
                     string(&frame, "terminal_reason"),
                     "aborted_streaming" | "aborted_tools"
                 );
                 if !interrupted && (frame["is_error"] == true || frame["subtype"] != "success") {
-                    self.queued.clear();
+                    self.handoff_pending = false;
+                    self.reject_queued("Claude cancelled a queued prompt after execution failed");
                     self.events.pending.push_back(WorkerEvent::Failed(
                         frame["errors"]
                             .as_array()
@@ -562,6 +732,10 @@ impl ClaudeSession {
 }
 
 impl WorkerSession for ClaudeSession {
+    fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
+        true
+    }
+
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
         self.send_with_images(message, mode, Vec::new())
     }
@@ -582,12 +756,7 @@ impl WorkerSession for ClaudeSession {
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, String> {
         let prompt = self.prompt(Some(&id), message, mode, images)?;
-        let uuid = match &prompt.message.uuid {
-            Presence::Present(uuid) => uuid.clone(),
-            Presence::Missing => return Err("Claude prompt has no acknowledgement id".into()),
-        };
         self.admit(prompt, mode)?;
-        self.prompt_requests.insert(uuid, id);
         Ok(false)
     }
 
@@ -603,9 +772,12 @@ impl WorkerSession for ClaudeSession {
         self.admit(
             Prompt {
                 message: prompt(&self.id, &message.prompt(), Vec::new())?,
-                delivery: WorkerActivity::PeerInputDelivered {
-                    message: message.clone(),
-                },
+                deliveries: vec![PromptDelivery {
+                    submission_id: None,
+                    activity: WorkerActivity::PeerInputDelivered {
+                        message: message.clone(),
+                    },
+                }],
             },
             mode,
         )
@@ -625,24 +797,32 @@ impl WorkerSession for ClaudeSession {
         Ok(())
     }
     fn abort(&mut self) -> Result<(), String> {
-        for prompt in self.queued.drain(..) {
-            if let Presence::Present(uuid) = prompt.message.uuid {
-                if let Some(ack) = self.prompt_requests.remove(&uuid) {
-                    self.prompt_acks.push_back((
-                        ack,
-                        Err("Claude cancelled a queued prompt before delivery".into()),
-                    ));
-                }
-            }
-        }
+        let pending_handoff = self.handoff_pending;
+        self.handoff_pending = false;
+        self.reject_queued("Claude cancelled a queued prompt before dispatch");
         if !self.active {
             return Ok(());
         }
-        let id = self
-            .process
-            .request(json!({"subtype":"interrupt", "cancel_queued":true}))?;
-        self.interrupts.insert(id);
-        Ok(())
+        if pending_handoff && self.handoff_uuid.is_none() && self.handoff_interrupt_pending() {
+            self.abort_waiting_on_handoff_interrupt = self.active_uuid.clone();
+            return Ok(());
+        }
+        self.interrupt(InterruptPurpose::Abort)
+    }
+    fn apply_steering(&mut self) -> Result<(), String> {
+        if self.closed {
+            return Err("Claude session is closed".into());
+        }
+        if self.queued.is_empty() || self.handoff_pending {
+            return Ok(());
+        }
+        self.handoff_pending = true;
+        if self.active {
+            self.interrupt(InterruptPurpose::Handoff)
+        } else {
+            self.dispatch_handoff();
+            Ok(())
+        }
     }
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.events.pending.pop_front() {
@@ -664,10 +844,10 @@ impl WorkerSession for ClaudeSession {
             }
         }
         if !self.active {
-            if let Some(prompt) = self.queued.pop_front() {
-                if let Err(error) = self.deliver(prompt) {
-                    return Some(self.fail(error));
-                }
+            if self.handoff_pending {
+                self.dispatch_handoff();
+            } else if let Some(prompt) = self.queued.pop_front() {
+                self.deliver(prompt);
             } else if let Some(message) = self.caller.try_recv()
                 && let Err(error) = self.send_peer_message(&message, WorkerSendMode::Prompt)
             {
@@ -680,6 +860,10 @@ impl WorkerSession for ClaudeSession {
         self.closed = true;
         self.idle();
         self.queued.clear();
+        self.dispatched.clear();
+        self.handoff_pending = false;
+        self.handoff_uuid = None;
+        self.abort_waiting_on_handoff_interrupt = None;
         self.events.pending.clear();
         self.process.close()
     }

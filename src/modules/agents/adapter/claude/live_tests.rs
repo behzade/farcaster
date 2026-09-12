@@ -190,19 +190,16 @@ fn real_claude_text_followup_tool_and_resume() -> Result<(), String> {
         "queued prompt delivered after first turn settled; nonzero usage verified on each turn"
     )
     .expect("write test diagnostics");
-    if session
-        .send(SessionCommand::Prompt {
-            mode: PromptMode::Steer,
-            message: "This must not be sent".into(),
-            images: Vec::new(),
-        })
-        .is_ok()
-    {
-        return Err("Claude advertised no steering but accepted a steer".into());
-    }
+    session.send(SessionCommand::Prompt {
+        mode: PromptMode::Steer,
+        message: "Reply exactly LIVE_STEER_OK. Do not use tools.".into(),
+        images: Vec::new(),
+    })?;
+    session.send(SessionCommand::ApplySteering)?;
+    settled(&mut session, "LIVE_STEER_OK", false)?;
     writeln!(
         std::io::stderr().lock(),
-        "unsupported steering rejected without sending input"
+        "applied steering was admitted and delivered"
     )
     .expect("write test diagnostics");
     let child_turn = turn(&mut session,"Use the Agent tool to ask a subagent to read proof.txt and return its contents. After that subagent returns LIVE_READ_OK, reply LIVE_SUBAGENT_OK. Do not read the file yourself.".into(),"LIVE_SUBAGENT_OK",true)?;

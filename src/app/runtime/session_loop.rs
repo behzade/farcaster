@@ -30,6 +30,7 @@ pub(super) fn run(
         session_generation: 0,
         session_refresh_due: None,
         process_generation: 0,
+        retired_prompts: HashMap::new(),
         pending_prompt_id: None,
         pending_prompt_target: None,
         pending_prompt_item: None,

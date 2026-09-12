@@ -123,6 +123,15 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
 
 impl RuntimeOwner {
     pub(super) fn apply_response(&mut self, response: crate::agents::SessionResponse) {
+        if matches!(response.operation(), SessionOperation::Prompt(_))
+            && let Some(id) = response.id.as_deref()
+            && self.retired_prompts.contains_key(id)
+        {
+            if response.result.is_ok() {
+                self.reconcile_retired_prompt(id, false);
+            }
+            return;
+        }
         let operation = response.operation();
         let success = response.result.is_ok();
         if operation == SessionOperation::SelectModel {
@@ -224,14 +233,12 @@ impl RuntimeOwner {
                             "unknown",
                         );
                     }
-                    self.pending_prompt_delivery_unknown = true;
+                    if let Some(id) = response.id.as_deref() {
+                        self.retire_unknown_prompt(id);
+                    }
                 }
             }
-            let target = if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
-                self.pending_prompt_target.clone()
-            } else {
-                self.pending_prompt_target.take()
-            };
+            let target = self.pending_prompt_target.take();
             if let Some(target) = target {
                 self.emit_prompt_result(&target, outcome);
             }

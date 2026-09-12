@@ -301,6 +301,32 @@ impl RuntimeOwner {
             SessionEvent::Interaction(request) => self.apply_interaction(request),
             SessionEvent::Activity(event) => {
                 if event.value().get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                    && let Some(receipt_id) =
+                        event.value().get("submissionId").and_then(Value::as_str)
+                    && let Some(retired) = self.retired_prompts.get(receipt_id).cloned()
+                {
+                    let status = event
+                        .value()
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if matches!(status, "accepted" | "delivered") {
+                        self.reconcile_retired_prompt(receipt_id, status == "delivered");
+                        if retired.session == self.active_session && !retired.delivered {
+                            let mut message =
+                                event.value().get("message").cloned().unwrap_or_default();
+                            if !message.is_object() {
+                                message = json!({});
+                            }
+                            message["queued"] = true.into();
+                            conversation_mut(self.active_snapshot_mut())
+                                .record_prompt_delivery(receipt_id, &message, status);
+                            return SnapshotChange::Immediate;
+                        }
+                    }
+                    return SnapshotChange::None;
+                }
+                if event.value().get("type").and_then(Value::as_str) == Some("prompt_delivery")
                     && event.value().get("status").and_then(Value::as_str) == Some("delivered")
                     && let Some(receipt_id) =
                         event.value().get("submissionId").and_then(Value::as_str)
@@ -527,12 +553,16 @@ impl RuntimeOwner {
         }
     }
 
-    pub(super) fn mark_outbox_delivery_unknown(&self, error: &str) {
+    pub(super) fn mark_outbox_delivery_unknown(&mut self, error: &str) {
         if let Some(id) = self.pending_outbox_id
             && let Some(state) = &self.state
             && let Err(database_error) = agents::mark_prompt_delivery_unknown(state, id, error)
         {
             zlog::error!("Failed to mark queued prompt {id} delivery unknown: {database_error}");
+            conversation_mut(self.active_snapshot_mut()).push_local_error(
+                "Delivery state not saved",
+                format!("{database_error}. The saved sending record remains recoverable; do not resend it automatically."),
+            );
         }
     }
 

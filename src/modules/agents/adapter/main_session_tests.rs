@@ -13,10 +13,16 @@ struct IdleWorker;
 
 #[derive(Default)]
 struct ControlledPromptState {
-    requests: Vec<(String, WorkerSendMode, String)>,
+    requests: Vec<(
+        String,
+        WorkerSendMode,
+        String,
+        Vec<crate::protocol::PromptImage>,
+    )>,
     acks: VecDeque<(String, Result<(), String>)>,
     events: VecDeque<WorkerEvent>,
     aborts: usize,
+    closes: usize,
 }
 
 struct ControlledPromptWorker(Arc<std::sync::Mutex<ControlledPromptState>>);
@@ -34,9 +40,13 @@ impl WorkerSession for ControlledPromptWorker {
         id: String,
         text: String,
         mode: WorkerSendMode,
-        _: Vec<crate::protocol::PromptImage>,
+        images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, String> {
-        self.0.lock().unwrap().requests.push((id, mode, text));
+        self.0
+            .lock()
+            .unwrap()
+            .requests
+            .push((id, mode, text, images));
         Ok(false)
     }
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
@@ -53,6 +63,7 @@ impl WorkerSession for ControlledPromptWorker {
         Ok(())
     }
     fn close(&mut self) -> Result<(), String> {
+        self.0.lock().unwrap().closes += 1;
         Ok(())
     }
 }
@@ -73,6 +84,278 @@ fn project_transport(
         }
     }
     responses
+}
+
+#[derive(Default)]
+struct StrictProjection {
+    responses: Vec<SessionResponse>,
+    deliveries: Vec<(String, String)>,
+    delivery_events: Vec<serde_json::Value>,
+}
+
+fn project_transport_without_failures(
+    transport: &mut WorkerSessionTransport,
+    conversation: &mut crate::app::views::transcript::conversation::ConversationState,
+) -> StrictProjection {
+    let mut projection = StrictProjection::default();
+    while let Some(event) = transport.poll() {
+        match event {
+            SessionEvent::Activity(event) => {
+                let event = event.value();
+                if event["type"] == "prompt_delivery" {
+                    projection.deliveries.push((
+                        event["submissionId"]
+                            .as_str()
+                            .expect("prompt delivery submission id")
+                            .to_owned(),
+                        event["status"]
+                            .as_str()
+                            .expect("prompt delivery status")
+                            .to_owned(),
+                    ));
+                    projection.delivery_events.push(event.clone());
+                }
+                conversation.reduce(event);
+            }
+            SessionEvent::Response(response) => projection.responses.push(response),
+            SessionEvent::Failure(error) => panic!("unexpected session failure: {error}"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    projection
+}
+
+#[test]
+fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
+    for (prompt_mode, worker_mode) in [
+        (PromptMode::Normal, WorkerSendMode::Prompt),
+        (PromptMode::Steer, WorkerSendMode::Steer),
+        (PromptMode::FollowUp, WorkerSendMode::Queue),
+    ] {
+        let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            "codex-cli",
+            "request-local-unknown".into(),
+            Box::new(ControlledPromptWorker(backend.clone())),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        let mut conversation = ConversationState::default();
+        let old_image = crate::protocol::PromptImage::new(PNG.into(), "image/png".into());
+        let new_image = crate::protocol::PromptImage::new(GIF.into(), "image/gif".into());
+
+        let old_id = transport
+            .send(SessionCommand::Prompt {
+                mode: prompt_mode,
+                message: "same text".into(),
+                images: vec![old_image.clone()],
+            })
+            .expect("old prompt submission");
+        {
+            let state = backend.lock().unwrap();
+            assert_eq!(
+                state.requests[0],
+                (
+                    old_id.clone(),
+                    worker_mode,
+                    "same text".into(),
+                    vec![old_image.clone()],
+                )
+            );
+        }
+
+        for _ in 0..2 {
+            backend
+                .lock()
+                .unwrap()
+                .events
+                .push_back(WorkerEvent::PromptDeliveryUnknown {
+                    submission_id: old_id.clone(),
+                    error: "request channel closed before receipt".into(),
+                });
+        }
+        let unknown = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(unknown.deliveries, [(old_id.clone(), "unknown".into())]);
+        assert_eq!(
+            unknown.delivery_events[0]["message"]["content"],
+            json!([
+                {"type":"text", "text":"same text"},
+                {"type":"image", "data":PNG, "mimeType":"image/png"},
+            ])
+        );
+        assert_eq!(unknown.responses.len(), 1, "repeated unknown is idempotent");
+        let error = unknown.responses[0]
+            .result
+            .as_ref()
+            .expect_err("unknown response");
+        assert_eq!(unknown.responses[0].id.as_deref(), Some(old_id.as_str()));
+        assert_eq!(
+            error.kind,
+            crate::agents::SessionResponseErrorKind::DeliveryUnknown
+        );
+        assert_eq!(error.operation, SessionOperation::Prompt(prompt_mode));
+        assert_eq!(error.message, "request channel closed before receipt");
+        assert_eq!(conversation.items.len(), 1);
+        assert_eq!(conversation.items[0].label, "Delivery unknown");
+        assert_eq!(conversation.items[0].images.len(), 1);
+        assert_eq!(backend.lock().unwrap().closes, 0);
+
+        let new_id = transport
+            .send(SessionCommand::Prompt {
+                mode: prompt_mode,
+                message: "same text".into(),
+                images: vec![new_image.clone()],
+            })
+            .expect("new prompt submission");
+        assert_ne!(old_id, new_id);
+        {
+            let state = backend.lock().unwrap();
+            assert_eq!(
+                state.requests[1],
+                (
+                    new_id.clone(),
+                    worker_mode,
+                    "same text".into(),
+                    vec![new_image.clone()],
+                )
+            );
+        }
+
+        backend
+            .lock()
+            .unwrap()
+            .acks
+            .push_back((old_id.clone(), Ok(())));
+        let old_acceptance = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(
+            old_acceptance.deliveries,
+            [(old_id.clone(), "accepted".into())]
+        );
+        assert!(old_acceptance.responses.iter().any(|response| {
+            response.id.as_deref() == Some(old_id.as_str()) && response.result.is_ok()
+        }));
+        assert!(
+            !old_acceptance
+                .responses
+                .iter()
+                .any(|response| response.id.as_deref() == Some(new_id.as_str()))
+        );
+
+        backend
+            .lock()
+            .unwrap()
+            .events
+            .push_back(WorkerEvent::Activity(
+                WorkerActivity::SubmittedInputDeliveredWithImages {
+                    submission_id: old_id.clone(),
+                    mode: worker_mode,
+                    message: "same text".into(),
+                    images: vec![old_image],
+                },
+            ));
+        let old_delivery = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(
+            old_delivery.deliveries,
+            [(old_id.clone(), "delivered".into())]
+        );
+        assert_eq!(
+            old_delivery.delivery_events[0]["message"]["content"],
+            json!([
+                {"type":"text", "text":"same text"},
+                {"type":"image", "data":PNG, "mimeType":"image/png"},
+            ])
+        );
+        assert!(old_delivery.responses.is_empty());
+
+        backend
+            .lock()
+            .unwrap()
+            .events
+            .push_back(WorkerEvent::PromptDeliveryUnknown {
+                submission_id: old_id,
+                error: "stale timeout".into(),
+            });
+        let stale_unknown = project_transport_without_failures(&mut transport, &mut conversation);
+        assert!(stale_unknown.deliveries.is_empty());
+        assert!(stale_unknown.responses.is_empty());
+        assert_eq!(conversation.items.len(), 1);
+        assert!(conversation.items[0].label.is_empty());
+
+        backend
+            .lock()
+            .unwrap()
+            .acks
+            .push_back((new_id.clone(), Ok(())));
+        let new_acceptance = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(
+            new_acceptance.deliveries,
+            [(new_id.clone(), "accepted".into())]
+        );
+        assert!(new_acceptance.responses.iter().any(|response| {
+            response.id.as_deref() == Some(new_id.as_str()) && response.result.is_ok()
+        }));
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .count(),
+            2
+        );
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .map(|item| item.images.len())
+                .sum::<usize>(),
+            2
+        );
+
+        backend
+            .lock()
+            .unwrap()
+            .events
+            .push_back(WorkerEvent::PromptDeliveryUnknown {
+                submission_id: new_id.clone(),
+                error: "late timeout after acceptance".into(),
+            });
+        let accepted_unknown =
+            project_transport_without_failures(&mut transport, &mut conversation);
+        assert!(accepted_unknown.deliveries.is_empty());
+        assert!(accepted_unknown.responses.is_empty());
+        assert!(conversation.items.iter().all(|item| item.label.is_empty()));
+
+        backend
+            .lock()
+            .unwrap()
+            .events
+            .push_back(WorkerEvent::Activity(
+                WorkerActivity::SubmittedInputDeliveredWithImages {
+                    submission_id: new_id.clone(),
+                    mode: worker_mode,
+                    message: "same text".into(),
+                    images: vec![new_image],
+                },
+            ));
+        let new_delivery = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(new_delivery.deliveries, [(new_id, "delivered".into())]);
+        assert_eq!(
+            new_delivery.delivery_events[0]["message"]["content"],
+            json!([
+                {"type":"text", "text":"same text"},
+                {"type":"image", "data":GIF, "mimeType":"image/gif"},
+            ])
+        );
+        assert!(new_delivery.responses.is_empty());
+        assert_eq!(backend.lock().unwrap().closes, 0);
+    }
 }
 
 #[test]
@@ -486,15 +769,14 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
     assert_eq!(users[0].images.len(), 1);
 }
 
-struct RejectAfterWriteWorker {
+struct FatalAfterWriteWorker {
     events: VecDeque<WorkerEvent>,
 }
 
-impl WorkerSession for RejectAfterWriteWorker {
+impl WorkerSession for FatalAfterWriteWorker {
     fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
-        self.events.push_back(WorkerEvent::Failed(
-            "native backend rejected the prompt".into(),
-        ));
+        self.events
+            .push_back(WorkerEvent::Failed("worker connection lost".into()));
         Ok(())
     }
 
@@ -528,30 +810,109 @@ impl WorkerSession for RejectAfterWriteWorker {
 
 #[test]
 fn prompt_response_does_not_precede_worker_rejection() {
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
         "codex-cli",
         "thread-1".into(),
-        Box::new(RejectAfterWriteWorker {
-            events: VecDeque::new(),
-        }),
+        Box::new(ControlledPromptWorker(backend.clone())),
         MainSessionMetadata::default(),
         None,
     )
     .expect("transport");
 
-    transport
+    let id = transport
         .send(SessionCommand::Prompt {
             mode: PromptMode::Normal,
             message: "do not delete the durable row yet".into(),
             images: Vec::new(),
         })
         .expect("worker write");
-
     assert!(
-        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.result.is_err()),
-        "a successful bridge response currently arrives before the worker reports rejection"
+        transport.poll().is_none(),
+        "a worker write is not prompt admission"
     );
+
+    backend
+        .lock()
+        .unwrap()
+        .acks
+        .push_back((id.clone(), Err("native backend rejected the prompt".into())));
+    let rejection = transport.poll().expect("rejection activity");
+    assert!(
+        matches!(rejection, SessionEvent::Activity(activity)
+            if activity.value()["type"] == "prompt_delivery"
+                && activity.value()["status"] == "rejected"
+                && activity.value()["submissionId"] == id),
+        "the rejected delivery must precede its response"
+    );
+    let response = match transport.poll().expect("correlated rejection response") {
+        SessionEvent::Response(response) => response,
+        event => panic!("unexpected event after rejection: {event:?}"),
+    };
+    assert_eq!(response.id.as_deref(), Some(id.as_str()));
+    let error = response.result.expect_err("explicit rejection response");
+    assert_eq!(
+        error.kind,
+        crate::agents::SessionResponseErrorKind::RejectedBeforeAcceptance
+    );
+    assert_eq!(error.message, "native backend rejected the prompt");
+    assert!(transport.poll().is_none());
+}
+
+#[test]
+fn fatal_worker_failure_marks_the_prompt_unknown_and_fails_the_transport() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(FatalAfterWriteWorker {
+            events: VecDeque::new(),
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "preserve uncertain input".into(),
+            images: Vec::new(),
+        })
+        .expect("worker write");
+
+    let mut saw_unknown_activity = false;
+    let mut saw_unknown_response = false;
+    let mut saw_failure = false;
+    while let Some(event) = transport.poll() {
+        match event {
+            SessionEvent::Activity(activity) => {
+                let activity = activity.value();
+                if activity["type"] == "prompt_delivery" {
+                    assert_eq!(activity["submissionId"], id);
+                    assert_eq!(activity["status"], "unknown");
+                    saw_unknown_activity = true;
+                }
+            }
+            SessionEvent::Response(response) => {
+                assert_eq!(response.id.as_deref(), Some(id.as_str()));
+                let error = response.result.expect_err("fatal delivery outcome");
+                assert_eq!(
+                    error.kind,
+                    crate::agents::SessionResponseErrorKind::DeliveryUnknown
+                );
+                saw_unknown_response = true;
+            }
+            SessionEvent::Failure(error) => {
+                assert_eq!(error, "worker connection lost");
+                saw_failure = true;
+            }
+            event => panic!("unexpected event after fatal worker loss: {event:?}"),
+        }
+    }
+    assert!(saw_unknown_activity);
+    assert!(saw_unknown_response);
+    assert!(saw_failure);
 }
 
 #[test]
@@ -719,7 +1080,8 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         ("codex-cli", WorkerSendMode::Steer),
         ("opencode2", WorkerSendMode::Steer),
         ("cursor-cli", WorkerSendMode::Queue),
-        ("claude", WorkerSendMode::Queue),
+        ("claude", WorkerSendMode::Steer),
+        ("antigravity-acp", WorkerSendMode::Queue),
     ] {
         let applied = Arc::new(AtomicBool::new(false));
         let mut transport = WorkerSessionTransport::new(

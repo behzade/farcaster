@@ -74,7 +74,7 @@ pub(crate) enum SessionResponseErrorKind {
 pub(crate) enum PromptOutcome {
     Accepted,
     RejectedBeforeAcceptance,
-    /// The session ended without a native receipt. Durable outbox recovery owns
+    /// The request ended without a definitive receipt. Durable outbox recovery owns
     /// later disposition; the composer must release its in-memory submission.
     DeliveryUnknown,
 }

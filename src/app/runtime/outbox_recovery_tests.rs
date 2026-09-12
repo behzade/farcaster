@@ -570,7 +570,8 @@ fn unrelated_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), St
 }
 
 #[test]
-fn delivery_unknown_keeps_the_exact_prompt_until_a_late_acceptance() -> Result<(), String> {
+fn delivery_unknown_releases_the_request_and_late_acceptance_preserves_its_payload()
+-> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
@@ -609,10 +610,9 @@ fn delivery_unknown_keeps_the_exact_prompt_until_a_late_acceptance() -> Result<(
     assert_eq!(user.text, "$review");
     assert_eq!(user.label, "Delivery unknown");
     assert_eq!(user.images.len(), 1);
-    assert_eq!(
-        owner.pending_prompt_id.as_deref(),
-        Some(request_id.as_str())
-    );
+    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.pending_prompt_target.is_none());
+    assert!(!owner.normal_prompt_in_flight);
 
     let reopened = StateStore::open_at(&database)?;
     let unknown = reopened.unknown_prompts()?;
@@ -646,10 +646,8 @@ fn delivery_unknown_keeps_the_exact_prompt_until_a_late_acceptance() -> Result<(
         .collect::<Vec<_>>();
     assert_eq!(
         outcomes,
-        [
-            crate::agents::PromptOutcome::DeliveryUnknown,
-            crate::agents::PromptOutcome::Accepted,
-        ]
+        [crate::agents::PromptOutcome::DeliveryUnknown],
+        "a late old receipt must not resolve a newer composer submission"
     );
     let accepted = owner
         .state
@@ -730,6 +728,258 @@ fn fatal_transport_failure_after_dispatch_is_delivery_unknown_not_rejected() -> 
     assert_eq!(unknown.len(), 1);
     assert_eq!(unknown[0].message, "retain after uncertain write");
     assert!(reopened.queued_prompts()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), String> {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+    for mode in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
+        for navigate in [false, true] {
+            let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+            let database = temp.path().join("state.sqlite3");
+            let first_session = temp.path().join("first.jsonl");
+            let second_session = if navigate {
+                temp.path().join("second.jsonl")
+            } else {
+                first_session.clone()
+            };
+            let (mut owner, events) = owner_without_process(temp.path().into());
+            let sent = Rc::new(RefCell::new(Vec::new()));
+            owner.process = Some(Box::new(Recorder(sent.clone())));
+            owner.state = Some(StateStore::open_at(&database)?);
+            owner.active_session = Some(first_session.clone());
+            owner.snapshot.selected_session = Some(first_session.clone());
+            owner.snapshot.session = Some(empty_session());
+            owner.startup_state_loaded = true;
+            owner.startup_history_loaded = true;
+            if mode != PromptMode::Normal {
+                conversation_mut(&mut owner.snapshot).running = true;
+            }
+            let target = format!("session:{}", first_session.display());
+            owner.send_prompt(
+                target,
+                mode,
+                "same text".into(),
+                vec![crate::protocol::PromptImage::new(
+                    PNG.into(),
+                    "image/png".into(),
+                )],
+                true,
+            );
+            let old_id = owner.pending_prompt_id.clone().expect("first request");
+            owner.apply_process_item(SessionEvent::Activity(json!({
+                "type":"prompt_delivery", "submissionId":old_id, "status":"unknown",
+                "message":{"role":"user", "queued":mode != PromptMode::Normal,
+                    "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
+            }).into()));
+            owner.apply_process_item(SessionEvent::Response(
+                crate::agents::SessionResponse::prompt_delivery_unknown(
+                    old_id.clone(),
+                    mode,
+                    "cancelled without a receipt".into(),
+                ),
+            ));
+            assert!(owner.pending_prompt_id.is_none());
+            assert!(owner.pending_prompt_target.is_none());
+            assert!(!owner.normal_prompt_in_flight);
+            assert!(owner.process.is_some() && owner.snapshot.connected);
+            assert_eq!(StateStore::open_at(&database)?.unknown_prompts()?.len(), 1);
+            owner.apply_process_item(SessionEvent::Activity(
+                json!({"type":"agent_settled"}).into(),
+            ));
+            if navigate {
+                owner.active_session = Some(second_session.clone());
+                owner.snapshot.selected_session = Some(second_session.clone());
+                owner.snapshot.conversation = Arc::default();
+            }
+            let target = format!("session:{}", second_session.display());
+            owner.send_prompt(
+                target,
+                PromptMode::Normal,
+                "same text".into(),
+                vec![crate::protocol::PromptImage::new(
+                    GIF.into(),
+                    "image/gif".into(),
+                )],
+                false,
+            );
+            let new_id = owner
+                .pending_prompt_id
+                .clone()
+                .expect("new request must not be blocked");
+            assert_ne!(old_id, new_id);
+            let new_outbox = owner.pending_outbox_id.expect("new durable row");
+            let rows_before = owner.snapshot.conversation.items.len();
+            let new_image = owner
+                .snapshot
+                .conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .last()
+                .unwrap()
+                .images[0]
+                .clone();
+            for _ in 0..2 {
+                owner.apply_process_item(SessionEvent::Activity(json!({
+                    "type":"prompt_delivery", "submissionId":old_id, "status":"accepted",
+                    "message":{"role":"user", "queued":mode != PromptMode::Normal,
+                        "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
+                }).into()));
+                owner.apply_process_item(SessionEvent::Response(prompt_response(
+                    &old_id, mode, true,
+                )));
+                owner.apply_process_item(SessionEvent::Activity(json!({
+                    "type":"prompt_delivery", "submissionId":old_id, "status":"delivered",
+                    "message":{"role":"user", "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
+                }).into()));
+                owner.apply_process_item(SessionEvent::Response(prompt_response(
+                    &old_id, mode, false,
+                )));
+            }
+            assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
+            assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+            assert_eq!(owner.snapshot.conversation.items.len(), rows_before);
+            assert!(Arc::ptr_eq(
+                &owner
+                    .snapshot
+                    .conversation
+                    .items
+                    .iter()
+                    .filter(|item| item.kind == TranscriptKind::User)
+                    .last()
+                    .unwrap()
+                    .images[0],
+                &new_image
+            ));
+            let outcomes = events
+                .try_iter()
+                .filter_map(|event| match event {
+                    RuntimeEvent::PromptResult { outcome, .. } => Some(outcome),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(outcomes, [crate::agents::PromptOutcome::DeliveryUnknown]);
+            assert_eq!(sent_messages(&sent), ["same text", "same text"]);
+            // Backend history need not carry app receipt IDs. Replacing it
+            // clears the delivered row's ledger; an old event must still not
+            // append its payload again or bind the new optimistic row.
+            Arc::make_mut(&mut owner.snapshot.conversation).replace_history(&[
+                json!({"role":"user", "content":[{"type":"text", "text":"saved historical turn"}]}),
+            ]);
+            let history_rows = owner.snapshot.conversation.items.len();
+            for status in ["accepted", "delivered", "unknown", "rejected"] {
+                owner.apply_process_item(SessionEvent::Activity(json!({
+                    "type":"prompt_delivery", "submissionId":old_id, "status":status,
+                    "message":{"role":"user", "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
+                }).into()));
+            }
+            assert_eq!(owner.snapshot.conversation.items.len(), history_rows);
+            assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
+            assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+            owner.apply_process_item(SessionEvent::Response(prompt_response(
+                &new_id,
+                PromptMode::Normal,
+                true,
+            )));
+            drop(owner);
+            let reopened = StateStore::open_at(&database)?;
+            assert!(reopened.unknown_prompts()?.is_empty());
+            assert!(reopened.queued_prompts()?.is_empty());
+            let saved = reopened.accepted_prompt_history(&second_session)?;
+            assert_eq!(saved.len(), 1);
+            assert_eq!(saved[0]["submissionId"], new_id);
+            assert_eq!(saved[0]["content"][1]["data"], GIF);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_unknown_write_keeps_the_original_sending_row_recoverable() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, _) = owner_without_process(temp.path().into());
+    let sent = Rc::new(RefCell::new(Vec::new()));
+    owner.process = Some(Box::new(Recorder(sent.clone())));
+    owner.state = Some(StateStore::open_at(&database)?);
+    owner.active_session = Some(temp.path().join("session.jsonl"));
+    owner.snapshot.session = Some(empty_session());
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.send_prompt(
+        "draft:old".into(),
+        PromptMode::Normal,
+        "recover old payload".into(),
+        Vec::new(),
+        false,
+    );
+    let old_id = owner.pending_prompt_id.clone().expect("request");
+    let old_outbox = owner.pending_outbox_id.expect("saved before dispatch");
+    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+    connection.execute_batch("CREATE TRIGGER reject_unknown BEFORE UPDATE OF state ON outbox WHEN NEW.state='unknown' BEGIN SELECT RAISE(FAIL, 'unknown storage fixture'); END;")
+        .map_err(|error| error.to_string())?;
+    owner.apply_process_item(SessionEvent::Response(
+        crate::agents::SessionResponse::prompt_delivery_unknown(
+            old_id.clone(),
+            PromptMode::Normal,
+            "receipt lost".into(),
+        ),
+    ));
+    assert!(owner.pending_prompt_id.is_none());
+    assert_eq!(owner.retired_prompts[&old_id].outbox_id, Some(old_outbox));
+    assert!(
+        owner
+            .snapshot
+            .conversation
+            .items
+            .iter()
+            .any(|item| item.label == "Delivery state not saved"
+                && item.text.contains("unknown storage fixture"))
+    );
+    let state: String = connection
+        .query_row(
+            "SELECT state FROM outbox WHERE id=?1",
+            [old_outbox],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        state, "sending",
+        "failed update must retain the durable pre-dispatch record"
+    );
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
+    owner.send_prompt(
+        "draft:new".into(),
+        PromptMode::Normal,
+        "new payload".into(),
+        Vec::new(),
+        false,
+    );
+    let new_id = owner.pending_prompt_id.clone().expect("new request");
+    owner.apply_process_item(SessionEvent::Response(prompt_response(
+        &new_id,
+        PromptMode::Normal,
+        true,
+    )));
+    assert_eq!(sent_messages(&sent), ["recover old payload", "new payload"]);
+    drop(owner);
+    connection
+        .execute_batch("DROP TRIGGER reject_unknown;")
+        .map_err(|error| error.to_string())?;
+    let reopened = StateStore::open_at(&database)?;
+    let recovered = reopened.recover_interrupted_prompts()?;
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].id, old_outbox);
+    assert_eq!(recovered[0].message, "recover old payload");
+    assert!(
+        reopened.queued_prompts()?.is_empty(),
+        "unknown work must never replay"
+    );
     Ok(())
 }
 

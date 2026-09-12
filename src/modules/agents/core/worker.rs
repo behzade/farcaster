@@ -235,11 +235,23 @@ pub(crate) enum WorkerActivity {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WorkerEvent {
     Started,
-    Settled { output: String },
-    SessionChanged { locator: String },
+    Settled {
+        output: String,
+    },
+    SessionChanged {
+        locator: String,
+    },
     NeedsInput(WorkerInput),
     Activity(WorkerActivity),
-    RequestFailed { operation: String, error: String },
+    RequestFailed {
+        operation: String,
+        error: String,
+    },
+    /// This submission has no definitive receipt. The connection may still be usable.
+    PromptDeliveryUnknown {
+        submission_id: String,
+        error: String,
+    },
     Failed(String),
 }
 

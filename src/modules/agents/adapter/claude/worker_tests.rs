@@ -21,7 +21,13 @@ fn cancellation_receipt_settles_only_the_named_active_prompt() {
         ("wrong", "another-prompt", false),
         ("right", active.as_str(), true),
     ] {
-        session.interrupts.insert(request.into());
+        session.interrupts.insert(
+            request.into(),
+            Interrupt {
+                prompt_uuid: active.clone(),
+                purpose: InterruptPurpose::Abort,
+            },
+        );
         session
             .receive(
                 decode(json!({"type":"control_response","response":{
@@ -98,6 +104,7 @@ fn fixture(name: &str) -> Value {
 const SCRIPT: &str = r#"#!/bin/sh
 printf '%s\n' "$@" > "$0.args"
 reply() { printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":%s}}\n' "$id" "$1"; }
+turn() { sed "s/\"uuid\":\"[^\"]*\"/\"uuid\":\"$uuid\"/g" "$0.turn"; }
 printf '%s\n' '{"type":"command_lifecycle"}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$0.requests"
@@ -106,8 +113,9 @@ while IFS= read -r line; do
     *'"subtype":"initialize"'*) reply '{"commands":[],"agents":[],"output_style":"default","available_output_styles":["default"],"models":[{"value":"fixture","displayName":"Fixture","description":"test","supportsEffort":true,"supportedEffortLevels":["low","high"]}],"account":{}}' ;;
     *'"subtype":"interrupt"'*) reply '{}'; cat "$0.result" ;;
     *'"type":"control_request"'*) reply '{}' ;;
-    *'"type":"control_response"'*) printf '%s\n' '{"type":"command_lifecycle"}'; cat "$0.turn"; cat "$0.result" ;;
+    *'"type":"control_response"'*) printf '%s\n' '{"type":"command_lifecycle"}'; turn; cat "$0.result" ;;
     *'"type":"user"'*)
+      uuid=$(printf '%s' "$line" | sed -n 's/.*"uuid":"\([^"]*\)".*/\1/p')
       case "$line" in
         *'hold'*) ;;
         *'crash'*) exit 7 ;;
@@ -246,6 +254,21 @@ fn until(
         }
     }
     panic!("Claude fixture did not reach expected state: {events:?}");
+}
+
+fn requests_until(path: &Path, needle: &str) -> String {
+    requests_until_count(path, needle, 1)
+}
+
+fn requests_until_count(path: &Path, needle: &str, count: usize) -> String {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let requests = std::fs::read_to_string(path).unwrap_or_default();
+        if requests.matches(needle).count() >= count || Instant::now() >= deadline {
+            return requests;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 #[test]
@@ -554,6 +577,7 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
             Vec::new(),
         )
         .unwrap();
+    session.events.pending.clear();
     assert!(session.poll_prompt_ack().is_none());
     let mut echo = fixture("SDKUserMessageReplay");
     echo["session_id"] = json!(session.id);
@@ -563,13 +587,353 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
     echo["uuid"] = json!(first);
     session.receive(decode(echo).unwrap()).unwrap();
     assert_eq!(session.poll_prompt_ack(), Some(("first".into(), Ok(()))));
+    assert!(matches!(
+        session.events.pending.pop_front(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+        )) if submission_id == "first"
+    ));
     assert!(session.poll_prompt_ack().is_none());
     session.abort().unwrap();
     assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "queued"));
 }
 
 #[test]
-fn main_session_falls_back_from_steer_to_claude_follow_up() {
+fn process_handoff_batches_equal_text_and_images_with_original_receipts() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .send("hold".into(), WorkerSendMode::Prompt)
+        .expect("start original turn");
+    let png = crate::protocol::PromptImage::new("YWJj".into(), "image/png".into());
+    let jpeg = crate::protocol::PromptImage::new("ZGVm".into(), "image/jpeg".into());
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "same".into(),
+            WorkerSendMode::Steer,
+            vec![png.clone()],
+        )
+        .expect("queue steer");
+    session
+        .submit_prompt(
+            "queue-1".into(),
+            "same".into(),
+            WorkerSendMode::Queue,
+            vec![jpeg.clone()],
+        )
+        .expect("queue follow-up");
+    session.apply_steering().expect("apply handoff");
+    until(&mut session, |event| {
+        matches!(event, WorkerEvent::Settled { .. })
+    });
+    let events = until(&mut session, |event| {
+        matches!(event, WorkerEvent::NeedsInput(_))
+    });
+    let WorkerEvent::NeedsInput(input) = events.last().expect("fixture permission") else {
+        unreachable!()
+    };
+    session
+        .respond(WorkerInputResponse {
+            id: input.id.clone(),
+            value: Some("Allow".into()),
+            cancel: false,
+        })
+        .expect("finish handoff fixture");
+
+    let events = until(&mut session, |event| {
+        matches!(event, WorkerEvent::Settled { .. })
+    });
+    let deliveries = events
+        .iter()
+        .filter_map(|event| match event {
+            WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id,
+                mode,
+                message,
+                images,
+            }) => Some((
+                submission_id.clone(),
+                *mode,
+                message.clone(),
+                images.clone(),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deliveries,
+        [
+            (
+                "steer-1".into(),
+                WorkerSendMode::Steer,
+                "same".into(),
+                vec![png]
+            ),
+            (
+                "queue-1".into(),
+                WorkerSendMode::Queue,
+                "same".into(),
+                vec![jpeg]
+            ),
+        ]
+    );
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "queue-1"));
+    assert_eq!(session.poll_prompt_ack(), None);
+
+    session.close().expect("close fixture");
+    let requests = std::fs::read_to_string(directory.path().join("claude-fixture.requests"))
+        .expect("read fixture requests");
+    assert_eq!(requests.matches("\"type\":\"user\"").count(), 2);
+    assert!(requests.contains("\"media_type\":\"image/png\""));
+    assert!(requests.contains("\"media_type\":\"image/jpeg\""));
+}
+
+#[test]
+fn second_escape_rejects_only_undispatched_handoff_inputs() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .send("hold".into(), WorkerSendMode::Prompt)
+        .expect("start original turn");
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "never dispatched".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("queue steer");
+    session.apply_steering().expect("first escape");
+    let request_path = directory.path().join("claude-fixture.requests");
+    let requests = requests_until(&request_path, "\"subtype\":\"interrupt\"");
+    assert!(requests.contains("\"subtype\":\"interrupt\""));
+    assert!(!requests.contains("never dispatched"));
+    session.abort().expect("second escape");
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "steer-1"));
+    assert!(!session.handoff_pending);
+    assert!(session.queued.is_empty());
+    until(&mut session, |event| {
+        matches!(event, WorkerEvent::Settled { .. })
+    });
+    for _ in 0..10 {
+        let _ = session.poll();
+    }
+    session.close().expect("close fixture");
+    let requests = std::fs::read_to_string(request_path).expect("read fixture requests");
+    assert!(!requests.contains("never dispatched"));
+    assert_eq!(requests.matches("\"subtype\":\"interrupt\"").count(), 1);
+}
+
+#[test]
+fn aborting_dispatched_handoff_is_unknown_and_session_accepts_later_input() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .send("hold".into(), WorkerSendMode::Prompt)
+        .expect("start original turn");
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "started handoff".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("queue steer");
+
+    let mut old_result = fixture("SDKResultSuccess");
+    old_result["session_id"] = json!(session.id);
+    session
+        .receive(decode(old_result).expect("old result frame"))
+        .expect("finish old turn");
+    session.events.pending.clear();
+    session.handoff_pending = true;
+    session.dispatch_handoff();
+    let handoff_uuid = session.handoff_uuid.clone().expect("started handoff UUID");
+    session.abort().expect("interrupt started handoff");
+
+    let events = until(&mut session, |event| {
+        matches!(
+            event,
+            WorkerEvent::PromptDeliveryUnknown { submission_id, .. }
+                if submission_id == "steer-1"
+        )
+    });
+    assert!(events.iter().any(|event| matches!(
+        event,
+        WorkerEvent::PromptDeliveryUnknown { submission_id, .. }
+            if submission_id == "steer-1"
+    )));
+    assert_eq!(
+        session.poll_prompt_ack(),
+        None,
+        "dispatch uncertainty is not rejection"
+    );
+    assert!(
+        session
+            .dispatched
+            .get(&handoff_uuid)
+            .is_some_and(|prompt| prompt.unknown),
+        "unknown delivery keeps its UUID correlation tombstone"
+    );
+
+    until(&mut session, |event| {
+        matches!(event, WorkerEvent::Settled { .. })
+    });
+    session
+        .submit_prompt(
+            "later".into(),
+            "later prompt".into(),
+            WorkerSendMode::Prompt,
+            Vec::new(),
+        )
+        .expect("submit after uncertain cancellation");
+    let later_uuid = session.active_uuid.clone().expect("later prompt UUID");
+    let mut late_old_echo = fixture("SDKUserMessageReplay");
+    late_old_echo["session_id"] = json!(session.id);
+    late_old_echo["uuid"] = json!(handoff_uuid);
+    session
+        .receive(decode(late_old_echo).expect("late old receipt"))
+        .expect("reconcile late old receipt");
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "steer-1"));
+    assert!(
+        session.dispatched.contains_key(&later_uuid),
+        "late old receipt must not consume the new prompt"
+    );
+    let events = until(&mut session, |event| {
+        matches!(event, WorkerEvent::NeedsInput(_))
+    });
+    let WorkerEvent::NeedsInput(input) = events.last().expect("later permission") else {
+        unreachable!()
+    };
+    session
+        .respond(WorkerInputResponse {
+            id: input.id.clone(),
+            value: Some("Allow".into()),
+            cancel: false,
+        })
+        .expect("finish later prompt");
+    until(&mut session, |event| {
+        matches!(event, WorkerEvent::Settled { .. })
+    });
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Ok(()))) if id == "later"));
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn failed_handoff_interrupt_does_not_suppress_second_escape_interrupt() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .send("hold".into(), WorkerSendMode::Prompt)
+        .expect("start original turn");
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "cancel after failed interrupt".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("queue steer");
+    session.apply_steering().expect("first escape");
+    let first_request = session
+        .interrupts
+        .keys()
+        .next()
+        .expect("first interrupt request")
+        .clone();
+    session
+        .receive(
+            decode(json!({"type":"control_response","response":{
+                "subtype":"error", "request_id":first_request,
+                "error":"interrupt rejected"
+            }}))
+            .expect("interrupt error frame"),
+        )
+        .expect("handle interrupt error");
+    assert!(!session.handoff_interrupt_pending());
+
+    session.abort().expect("second escape");
+    assert!(session.interrupts.values().any(|interrupt| {
+        interrupt.purpose == InterruptPurpose::Abort
+            && session.active_uuid.as_deref() == Some(&interrupt.prompt_uuid)
+    }));
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "steer-1"));
+
+    let request_path = directory.path().join("claude-fixture.requests");
+    let requests = requests_until_count(&request_path, "\"subtype\":\"interrupt\"", 2);
+    assert_eq!(requests.matches("\"subtype\":\"interrupt\"").count(), 2);
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn second_escape_retries_after_pending_handoff_interrupt_fails() {
+    let (directory, command) = setup();
+    let mut session = session(&command, directory.path());
+    session
+        .send("hold".into(), WorkerSendMode::Prompt)
+        .expect("start original turn");
+    session
+        .submit_prompt(
+            "steer-1".into(),
+            "cancel while interrupt is pending".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("queue steer");
+    session.apply_steering().expect("first escape");
+    let first_request = session
+        .interrupts
+        .keys()
+        .next()
+        .expect("pending handoff interrupt")
+        .clone();
+
+    session.abort().expect("second escape before reply");
+    assert_eq!(
+        session.abort_waiting_on_handoff_interrupt.as_deref(),
+        session.active_uuid.as_deref(),
+        "abort intent must remain tied to the interrupted prompt"
+    );
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "steer-1"));
+    assert_eq!(
+        session.interrupts.len(),
+        1,
+        "first interrupt is still pending"
+    );
+
+    session
+        .receive(
+            decode(json!({"type":"control_response","response":{
+                "subtype":"error", "request_id":first_request,
+                "error":"interrupt rejected"
+            }}))
+            .expect("late interrupt error frame"),
+        )
+        .expect("retry deferred abort");
+    assert!(session.abort_waiting_on_handoff_interrupt.is_none());
+    assert!(session.interrupts.values().any(|interrupt| {
+        interrupt.purpose == InterruptPurpose::Abort
+            && session.active_uuid.as_deref() == Some(&interrupt.prompt_uuid)
+    }));
+    assert!(
+        !session
+            .events
+            .pending
+            .iter()
+            .any(|event| matches!(event, WorkerEvent::RequestFailed { .. })),
+        "a successful deferred abort supersedes the first interrupt error"
+    );
+
+    let request_path = directory.path().join("claude-fixture.requests");
+    let requests = requests_until_count(&request_path, "\"subtype\":\"interrupt\"", 2);
+    assert_eq!(requests.matches("\"subtype\":\"interrupt\"").count(), 2);
+    session.close().expect("close fixture");
+}
+
+#[test]
+fn main_session_applies_claude_steering_as_an_interrupting_handoff() {
     use crate::agents::extensions::{ExtensionUiResponse, PromptMode};
     use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
     use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
@@ -580,7 +944,7 @@ fn main_session_falls_back_from_steer_to_claude_follow_up() {
     let (directory, command) = setup();
     let mut claude = session(&command, directory.path());
     claude
-        .send("first turn".into(), WorkerSendMode::Prompt)
+        .send("hold".into(), WorkerSendMode::Prompt)
         .expect("start Claude turn");
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -598,7 +962,10 @@ fn main_session_falls_back_from_steer_to_claude_follow_up() {
             message: "next task".into(),
             images: Vec::new(),
         })
-        .expect("unsupported live steering should queue a Claude follow-up");
+        .expect("queue Claude steering");
+    transport
+        .send(SessionCommand::ApplySteering)
+        .expect("apply Claude steering");
 
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut settled = 0;
@@ -636,9 +1003,9 @@ fn main_session_falls_back_from_steer_to_claude_follow_up() {
     assert_eq!(settled, 2, "Claude should finish both queued turns");
     assert!(
         queue_accepted,
-        "Claude should acknowledge the queued prompt"
+        "Claude should acknowledge the native handoff receipt"
     );
-    assert!(conversation.queue.follow_up.is_empty());
+    assert!(conversation.queue.steering.is_empty());
     assert_eq!(
         conversation
             .items
@@ -653,5 +1020,5 @@ fn main_session_falls_back_from_steer_to_claude_follow_up() {
     let requests = std::fs::read_to_string(directory.path().join("claude-fixture.requests"))
         .expect("read Claude fixture requests");
     assert!(requests.contains("next task"));
-    assert!(!requests.contains("\"subtype\":\"interrupt\""));
+    assert!(requests.contains("\"subtype\":\"interrupt\""));
 }
