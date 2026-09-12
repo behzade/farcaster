@@ -631,7 +631,7 @@ fn child_search_keeps_its_root_and_hierarchy_is_stable() -> TestResult {
             .iter()
             .map(|session| session.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["root"]
+        vec!["orphan", "root"]
     );
     let descendants = descendant_sessions(&all, "root");
     assert_eq!(

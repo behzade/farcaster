@@ -358,7 +358,7 @@ fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 14);
+    assert_eq!(database_schema_version(&database)?, 15);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -1281,7 +1281,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 14);
+    assert_eq!(database_schema_version(&database)?, 15);
     Ok(())
 }
 
@@ -1319,7 +1319,7 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 14);
+    assert_eq!(database_schema_version(&database)?, 15);
     Ok(())
 }
 
@@ -1337,7 +1337,7 @@ fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::e
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 14);
+    assert_eq!(database_schema_version(&database)?, 15);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
@@ -1358,7 +1358,7 @@ fn schema_v4_migrates_to_v11_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 14);
+    assert_eq!(database_schema_version(&database)?, 15);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -1401,7 +1401,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 14);
+    assert_eq!(database_schema_version(&database)?, 15);
     Ok(())
 }
 
