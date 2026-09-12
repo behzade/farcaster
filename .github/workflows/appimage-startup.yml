@@ -1,0 +1,84 @@
+name: AppImage startup probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag to test
+        default: v0.2.0
+        required: true
+        type: string
+  push:
+    branches: ["codex/repro-appimage-*"]
+    paths:
+      - .github/workflows/appimage-startup.yml
+      - scripts/probe-appimage-startup.sh
+
+permissions:
+  contents: read
+
+jobs:
+  startup:
+    name: Wayland / ${{ matrix.distro }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu
+            image: ubuntu:24.04
+          - distro: arch
+            image: archlinux:base
+    container: ${{ matrix.image }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install desktop runtime and diagnostic tools
+        run: |
+          if command -v pacman >/dev/null; then
+            pacman -Syu --noconfirm --needed \
+              ca-certificates curl git weston wayland-utils mesa libglvnd \
+              vulkan-swrast libxkbcommon-x11 fontconfig ttf-dejavu dbus binutils file
+          else
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              ca-certificates curl git weston wayland-utils libegl1 libegl-mesa0 \
+              libgl1-mesa-dri mesa-vulkan-drivers libxkbcommon-x11-0 \
+              fontconfig fonts-dejavu-core dbus binutils file
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download the released AppImage
+        env:
+          RELEASE_TAG: ${{ inputs.release || 'v0.2.0' }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir -p artifacts
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/Farcaster-${RELEASE_TAG}-linux-x86_64.AppImage"
+          printf '%s\n' "$url" > artifacts/release-url.txt
+          curl --fail --location --retry 3 "$url" -o /tmp/Farcaster.AppImage
+          chmod 755 /tmp/Farcaster.AppImage
+          sha256sum /tmp/Farcaster.AppImage > artifacts/appimage.sha256
+
+      - name: Compare startup with the host Wayland preload
+        run: dbus-run-session -- bash scripts/probe-appimage-startup.sh /tmp/Farcaster.AppImage "$PWD/artifacts"
+
+      - name: Publish probe summary
+        if: always()
+        run: |
+          if [ -f artifacts/summary.md ]; then
+            cat artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appimage-startup-${{ matrix.distro }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
