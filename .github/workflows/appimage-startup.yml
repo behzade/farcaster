@@ -40,13 +40,14 @@ jobs:
           if command -v pacman >/dev/null; then
             pacman -Syu --noconfirm --needed \
               ca-certificates curl git weston wayland-utils mesa libglvnd \
-              vulkan-swrast libxkbcommon-x11 fontconfig ttf-dejavu dbus binutils file
+              vulkan-swrast libxkbcommon-x11 fontconfig ttf-dejavu dbus binutils file \
+              xorg-server-xvfb
           else
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
               ca-certificates curl git weston wayland-utils libegl1 libegl-mesa0 \
               libgl1-mesa-dri mesa-vulkan-drivers libxkbcommon-x11-0 \
-              fontconfig fonts-dejavu-core dbus binutils file
+              fontconfig fonts-dejavu-core dbus binutils file xvfb
           fi
 
       - uses: actions/checkout@v4
