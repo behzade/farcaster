@@ -212,14 +212,29 @@ fn native_child_activity_carries_a_backend_locator_without_discovery() {
             id: "child".into(),
             title: Some("Reviewer".into()),
             is_running: true,
+            outcome: None,
         },
     ));
     let Some(SessionEvent::Activity(event)) = transport.poll() else {
         panic!("child activity")
     };
     assert_eq!(event.value()["child"]["path"], "/locators/codex-cli/child");
+    assert_eq!(event.value()["child"]["outcome"], Value::Null);
     assert_eq!(event.value()["child"]["parent_session"], "parent");
     assert_eq!(event.value()["child"]["is_running"], true);
+
+    transport.enqueue_worker_event(WorkerEvent::Activity(
+        WorkerActivity::ChildSessionsChanged {
+            id: "child".into(),
+            title: Some("Reviewer".into()),
+            is_running: false,
+            outcome: Some(crate::agents::ChildSessionOutcome::Failed),
+        },
+    ));
+    let Some(SessionEvent::Activity(event)) = transport.poll() else {
+        panic!("failed child activity")
+    };
+    assert_eq!(event.value()["child"]["outcome"], "failed");
 }
 
 struct SteeringWorker(WorkerSendMode, Arc<AtomicBool>);
@@ -269,6 +284,7 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         ("codex-cli", WorkerSendMode::Steer),
         ("opencode2", WorkerSendMode::Steer),
         ("cursor-cli", WorkerSendMode::Queue),
+        ("claude", WorkerSendMode::Queue),
     ] {
         let applied = Arc::new(AtomicBool::new(false));
         let mut transport = WorkerSessionTransport::new(
@@ -307,6 +323,285 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         assert!(transport.steering.is_empty());
         assert!(transport.follow_up.is_empty());
     }
+}
+
+struct DeliveryBeforeAckWorker {
+    polls: usize,
+    acknowledged: bool,
+}
+
+impl WorkerSession for DeliveryBeforeAckWorker {
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        _: String,
+        _: String,
+        _: WorkerSendMode,
+        _: Vec<crate::protocol::PromptImage>,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.acknowledged
+            .then(|| ("claude-1".into(), Ok(())))
+            .inspect(|_| self.acknowledged = false)
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        self.polls += 1;
+        match self.polls {
+            1 => Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                mode: WorkerSendMode::Queue,
+                message: "next task".into(),
+            })),
+            2 => {
+                self.acknowledged = true;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn delivery_before_ack_does_not_restore_a_completed_follow_up() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "claude",
+        "session-1".into(),
+        Box::new(DeliveryBeforeAckWorker {
+            polls: 0,
+            acknowledged: false,
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "next task".into(),
+            images: Vec::new(),
+        })
+        .expect("submit follow-up");
+
+    while transport.poll().is_some() {}
+
+    assert!(transport.follow_up.is_empty());
+}
+
+#[test]
+fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "claude",
+        "session-1".into(),
+        Box::new(DeliveryBeforeAckWorker {
+            polls: usize::MAX,
+            acknowledged: false,
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let submit = |transport: &mut WorkerSessionTransport, message: &str| {
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::FollowUp,
+                message: message.into(),
+                images: Vec::new(),
+            })
+            .expect("submit follow-up")
+    };
+
+    let ack_first = submit(&mut transport, "same text");
+    transport.finish_prompt_ack(ack_first, Ok(()));
+    transport.enqueue_activity(WorkerActivity::InputDelivered {
+        mode: WorkerSendMode::Queue,
+        message: "same text".into(),
+    });
+    assert!(transport.follow_up.is_empty());
+
+    let first = submit(&mut transport, "same text");
+    let second = submit(&mut transport, "same text");
+    transport.finish_prompt_ack(second.clone(), Ok(()));
+    transport.enqueue_activity(WorkerActivity::SubmittedInputDelivered {
+        submission_id: "unknown-submission".into(),
+        mode: WorkerSendMode::Queue,
+        message: "same text".into(),
+    });
+    assert_eq!(transport.follow_up, ["same text"]);
+    transport.enqueue_activity(WorkerActivity::SubmittedInputDelivered {
+        submission_id: second,
+        mode: WorkerSendMode::Queue,
+        message: "same text".into(),
+    });
+    assert!(transport.follow_up.is_empty());
+    assert_eq!(transport.prompt_deliveries[0].request_id, first);
+    transport.finish_prompt_ack(first, Err("first request rejected".into()));
+    assert!(transport.follow_up.is_empty());
+
+    let rejected = submit(&mut transport, "rejected text");
+    transport.finish_prompt_ack(rejected, Err("backend rejected it".into()));
+    assert!(
+        !transport
+            .follow_up
+            .iter()
+            .any(|item| item == "rejected text")
+    );
+}
+
+#[test]
+fn request_local_failure_is_visible_without_failing_the_transport() {
+    use crate::app::views::transcript::conversation::ConversationState;
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_worker_event(WorkerEvent::RequestFailed {
+        operation: "Codex interrupt".into(),
+        error: "turn is no longer active".into(),
+    });
+    let mut conversation = ConversationState::default();
+    while let Some(event) = transport.pending.pop_front() {
+        assert!(!matches!(event, SessionEvent::Failure(_)));
+        if let SessionEvent::Activity(activity) = event {
+            conversation.reduce(activity.value());
+        }
+    }
+    assert!(conversation.items.iter().any(|item| {
+        item.complete_text()
+            .contains("Codex interrupt: turn is no longer active")
+    }));
+}
+
+#[test]
+fn settlement_preserves_an_undelivered_follow_up() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "next task".into(),
+            images: Vec::new(),
+        })
+        .expect("queue follow-up");
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: "first turn done".into(),
+    });
+
+    assert_eq!(transport.follow_up, ["next task"]);
+}
+
+#[test]
+fn repeated_started_during_a_stream_does_not_duplicate_visible_text() {
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "opencode2",
+        "session-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "hello ".into(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "world".into(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: "hello world".into(),
+    });
+
+    let mut conversation = ConversationState::default();
+    for event in transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    let assistant = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::Assistant)
+        .map(|item| item.complete_text())
+        .collect::<Vec<_>>();
+    assert_eq!(assistant, ["hello world"]);
+}
+
+#[test]
+fn started_after_settlement_begins_a_real_new_assistant_turn() {
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    for output in ["first", "second"] {
+        transport.enqueue_worker_event(WorkerEvent::Started);
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: output.into(),
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Settled {
+            output: output.into(),
+        });
+    }
+    let mut conversation = ConversationState::default();
+    for event in transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
 }
 
 impl WorkerSession for IdleWorker {

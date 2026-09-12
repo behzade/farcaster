@@ -40,9 +40,12 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("OpenCode worker provider and model must be supplied together".into());
         }
-        let mut prepared = self.command.command(&launch.project)?;
+        let mut command = self.command.clone();
+        command.access_mode = launch.access_mode;
+        command.app_proxy = launch.app_proxy.clone();
+        let mut prepared = command.command(&launch.project)?;
         let caller_identity = crate::modules::agents::core::CallerRegistry::shared()
-            .issue_as(
+            .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
                     backend: "opencode2".into(),
@@ -54,10 +57,11 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
                 launch.worker_id.clone(),
                 launch.worker_name.clone(),
                 launch.parent_worker_id.clone(),
+                launch.access_mode,
             )?
             .with_slot(launch.slot.clone());
         let password = worker_password()?;
-        configure_opencode_server(&mut prepared, self.command.access_mode)?;
+        configure_opencode_server(&mut prepared, launch.access_mode)?;
         let mut child = prepared
             .env("OPENCODE_SERVER_PASSWORD", &password)
             .stdin(Stdio::piped())
@@ -93,6 +97,13 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
                 }
                 client.fork_session(&session_locator, selected_model)?
             }
+            WorkerContext::Resume { session_locator } => {
+                let session = client.get_session(&session_locator)?;
+                if session.id != session_locator {
+                    return Err("OpenCode returned a different child session on resume".into());
+                }
+                session
+            }
         };
         let session_id = session.id;
         let incoming = start_event_reader(&server, &session_id, None)?;
@@ -105,7 +116,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             model: launch.model,
             effort: launch.effort,
             effort_catalog: HashMap::new(),
-            access_mode: self.command.access_mode,
+            access_mode: launch.access_mode,
             incoming,
             reasoning_started: false,
             text_streams: HashMap::new(),
@@ -165,7 +176,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     String,
 > {
     let mut prepared = command.command(&launch.project)?;
-    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
             backend: "opencode2".into(),
@@ -174,6 +185,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             effort: None,
         },
         launch.wake.clone(),
+        command.access_mode,
     );
     if farcaster_mcp::enabled() {
         configure_farcaster_mcp(&mut prepared, caller_identity.token())?;
@@ -519,6 +531,16 @@ impl OpenCodeWorkerSession {
             .server
             .client()
             .prompt(&self.session_id, &message, files, delivery)?;
+        self.record_prompt_admission(admission, mode, message)
+    }
+
+    fn record_prompt_admission(
+        &mut self,
+        admission: super::contract::OpenCodePromptAdmission,
+        mode: WorkerSendMode,
+        message: String,
+    ) -> Result<(), String> {
+        let was_active = self.turn_active;
         if admission.session_id != self.session_id || admission.id.is_empty() {
             return Err("OpenCode returned an invalid prompt admission receipt".into());
         }
@@ -533,7 +555,9 @@ impl OpenCodeWorkerSession {
         self.generation = self.generation.saturating_add(1);
         self.completions = None;
         self.turn_active = true;
-        self.pending.push_back(WorkerEvent::Started);
+        if !was_active {
+            self.pending.push_back(WorkerEvent::Started);
+        }
         Ok(())
     }
 
@@ -1271,6 +1295,7 @@ fn opencode_child_activity(
             id: child.id,
             title: child.title,
             is_running,
+            outcome: None,
         },
     ))
 }

@@ -2,6 +2,136 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result<(), String> {
+    use std::{
+        io::{Read as _, Write as _},
+        net::TcpListener,
+        sync::{Arc, Mutex},
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&requests);
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let directory = project.path().to_string_lossy().into_owned();
+    let session_body = serde_json::to_string(&json!({"data": {
+        "id": "saved-session", "location": {"directory": directory}
+    }}))
+    .map_err(|error| error.to_string())?;
+    let server = thread::spawn(move || -> Result<(), String> {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+            let recorded = Arc::clone(&recorded);
+            let session_body = session_body.clone();
+            thread::spawn(move || -> Result<(), String> {
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream
+                        .read_exact(&mut byte)
+                        .map_err(|error| error.to_string())?;
+                    request.push(byte[0]);
+                }
+                let headers = String::from_utf8_lossy(&request);
+                let length = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':').and_then(|(name, value)| {
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                    })
+                    .unwrap_or(0);
+                let mut body = vec![0; length];
+                stream
+                    .read_exact(&mut body)
+                    .map_err(|error| error.to_string())?;
+                request.extend(body);
+                let request = String::from_utf8_lossy(&request).into_owned();
+                recorded
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .push(request.clone());
+                if request.starts_with("GET /api/event ") {
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
+                }
+                let response = if request.starts_with("GET /api/session/saved-session ") {
+                    session_body
+                } else if request.starts_with("POST /api/session/saved-session/prompt ") {
+                    r#"{"data":{"id":"prompt-1","sessionID":"saved-session","delivery":"queue"}}"#
+                        .into()
+                } else {
+                    return Err(format!("unexpected request: {request}"));
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                    response.len()
+                )
+                .map_err(|error| error.to_string())
+            });
+        }
+        Ok(())
+    });
+    let script = project.path().join("opencode-resume-fixture.sh");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\nprintf '{{\"url\":\"http://{address}\"}}\\n'\ncat\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    let factory = OpenCodeWorkerFactory::new(AgentLaunchConfig::test_script(&script, Vec::new()));
+    let mut worker = factory.create(WorkerLaunch {
+        slot: None,
+        worker_id: "resumed-worker".into(),
+        worker_name: "resumed".into(),
+        project: project.path().to_owned(),
+        parent_session: "parent-session".into(),
+        parent_worker_id: None,
+        context: WorkerContext::Resume {
+            session_locator: "saved-session".into(),
+        },
+        provider: None,
+        model: None,
+        effort: None,
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        ephemeral: false,
+    })?;
+
+    assert_eq!(
+        worker.poll(),
+        Some(WorkerEvent::SessionChanged {
+            locator: "saved-session".into(),
+        })
+    );
+    worker.send("after restart".into(), WorkerSendMode::Prompt)?;
+    worker.close()?;
+    server
+        .join()
+        .map_err(|_| "fixture server panicked".to_owned())??;
+
+    let requests = requests.lock().map_err(|error| error.to_string())?;
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.starts_with("GET /api/session/saved-session "))
+    );
+    assert!(!requests.iter().any(|request| request.contains("/fork")));
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.contains("after restart"))
+    );
+    Ok(())
+}
+
+#[test]
 fn child_execution_events_publish_sidebar_metadata() {
     for (kind, parent, running) in [
         ("session.execution.started", "parent-1", Some(true)),
@@ -31,6 +161,7 @@ fn child_execution_events_publish_sidebar_metadata() {
                 id,
                 title,
                 is_running,
+                outcome: _,
             } = activity
             else {
                 panic!("expected child metadata");
@@ -434,5 +565,114 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     ));
     assert!(!worker.turn_active);
     worker.close()?;
+    Ok(())
+}
+
+#[test]
+fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Result<(), String> {
+    use crate::agents::{SessionEvent, SessionTransport};
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+    let child = std::process::Command::new("sh")
+        .args(["-c", "printf '{\"url\":\"http://127.0.0.1:4096\"}\\n'; cat"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+    let (sender, incoming) = mpsc::channel();
+    let caller_identity = crate::agents::CallerRegistry::shared().issue(
+        std::path::Path::new("/project"),
+        crate::modules::agents::core::CallerProfile {
+            backend: "opencode2".into(),
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let mut worker = OpenCodeWorkerSession {
+        caller_identity,
+        server,
+        session_id: "session-1".into(),
+        provider: None,
+        model: None,
+        effort: None,
+        effort_catalog: HashMap::new(),
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        incoming,
+        reasoning_started: false,
+        text_streams: HashMap::new(),
+        reasoning_streams: HashMap::new(),
+        usage: OpenCodeUsageTracker::default(),
+        context_window: 0,
+        pending_inputs: HashMap::new(),
+        pending_deliveries: HashMap::new(),
+        active_tools: HashMap::new(),
+        generation: 0,
+        completions: None,
+        turn_active: true,
+        steering_interrupts: 0,
+        wake: None,
+        pending: VecDeque::from([
+            WorkerEvent::Started,
+            WorkerEvent::Activity(WorkerActivity::TextDelta {
+                content_index: 0,
+                delta: "hello ".into(),
+            }),
+        ]),
+    };
+    worker.record_prompt_admission(
+        super::super::contract::OpenCodePromptAdmission {
+            id: "queue-1".into(),
+            session_id: "session-1".into(),
+            delivery: "queue".into(),
+        },
+        WorkerSendMode::Queue,
+        "next task".into(),
+    )?;
+    assert_eq!(
+        worker
+            .pending
+            .iter()
+            .filter(|event| matches!(event, WorkerEvent::Started))
+            .count(),
+        1,
+        "queue admission must not emit another turn start"
+    );
+    sender
+        .send(Ok(super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some("session.text.delta".into()),
+            data: json!({"sessionID":"session-1","delta":"world"}),
+        }))
+        .map_err(|error| error.to_string())?;
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "opencode2",
+        "session-1".into(),
+        Box::new(worker),
+        MainSessionMetadata::default(),
+        None,
+    )?;
+    let mut conversation = ConversationState::default();
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(activity) = event {
+            conversation.reduce(activity.value());
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<Vec<_>>(),
+        ["hello world"]
+    );
+    transport.close()?;
     Ok(())
 }

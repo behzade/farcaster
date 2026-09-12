@@ -162,6 +162,43 @@ fn children_only_report_to_their_parent() -> Result<(), String> {
 }
 
 #[test]
+fn children_route_to_the_same_parent_session_after_process_replacement() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let parent = identity(&registry, Path::new("/project"), "codex-cli");
+    parent.bind("same-native-parent");
+    let child = child(&registry, &context(&registry, &parent), "review")?;
+    child.bind("child-session");
+    drop(parent);
+
+    let wrong_backend = identity(&registry, Path::new("/project"), "pi");
+    wrong_backend.bind("same-native-parent");
+    let wrong_project = identity(&registry, Path::new("/other"), "codex-cli");
+    wrong_project.bind("same-native-parent");
+
+    let replacement = identity(&registry, Path::new("/project"), "codex-cli");
+    replacement.bind("same-native-parent");
+    assert_eq!(
+        registry.send(child.token(), "", "finished".into())?,
+        Some(context(&registry, &replacement).worker_name.clone())
+    );
+    assert_eq!(
+        replacement.try_recv(),
+        Some(PeerMessage {
+            from: "review".into(),
+            message: "finished".into(),
+        })
+    );
+    registry.send(replacement.token(), "review", "check again".into())?;
+    assert_eq!(
+        child.try_recv().expect("replacement reaches child").message,
+        "check again"
+    );
+    assert!(wrong_backend.try_recv().is_none());
+    assert!(wrong_project.try_recv().is_none());
+    Ok(())
+}
+
+#[test]
 fn child_names_are_valid_and_unique_within_the_parent() -> Result<(), String> {
     let registry = CallerRegistry::default();
     let first_parent = identity(&registry, Path::new("/project"), "pi");

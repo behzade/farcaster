@@ -33,6 +33,7 @@ pub(crate) struct CallerRegistry {
     callers: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
     family_sink: Arc<Mutex<Option<WorkerFamilySink>>>,
     inputs: Arc<Mutex<Vec<inputs::PendingInput>>>,
+    expired_inputs: Arc<Mutex<Vec<inputs::ExpiredInput>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +54,7 @@ pub(crate) struct CallerContext {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
+    pub(crate) access_mode: crate::agents::HarnessAccessMode,
     pub(crate) parent_worker_id: Option<String>,
 }
 
@@ -65,11 +67,20 @@ struct RegisteredCaller {
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    access_mode: crate::agents::HarnessAccessMode,
     parent_worker_id: Option<String>,
+    parent_session: Option<CallerSession>,
     assignment: Option<super::WorkerAssignment>,
     activity: WorkerActivityState,
     inbox: mpsc::Sender<PeerMessage>,
     wake: Option<thread::Thread>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CallerSession {
+    project: PathBuf,
+    backend: String,
+    session: String,
 }
 
 pub(crate) struct CallerIdentity {
@@ -96,16 +107,13 @@ impl CallerRegistry {
         let link = (|| {
             let callers = self.callers.lock().ok()?;
             let child = callers.get(token)?;
-            let parent_id = child.parent_worker_id.as_deref()?;
-            let parent = callers
-                .values()
-                .find(|parent| parent.worker_id == parent_id && parent.project == child.project)?;
+            let parent = child.parent_session.as_ref()?;
             Some(WorkerFamilyLink {
                 project: child.project.clone(),
                 child_backend: child.backend.clone(),
                 child_session: child.session.clone()?,
                 parent_backend: parent.backend.clone(),
-                parent_session: parent.session.clone()?,
+                parent_session: parent.session.clone(),
                 execution: child.provider.as_ref().zip(child.model.as_ref()).map(
                     |(provider, model)| super::WorkerExecution {
                         harness: child.backend.clone(),
@@ -124,11 +132,27 @@ impl CallerRegistry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn issue(
         &self,
         project: &Path,
         profile: CallerProfile,
         wake: Option<thread::Thread>,
+    ) -> CallerIdentity {
+        self.issue_with_access(
+            project,
+            profile,
+            wake,
+            crate::agents::HarnessAccessMode::Auto,
+        )
+    }
+
+    pub(crate) fn issue_with_access(
+        &self,
+        project: &Path,
+        profile: CallerProfile,
+        wake: Option<thread::Thread>,
+        access_mode: crate::agents::HarnessAccessMode,
     ) -> CallerIdentity {
         let token = new_identity("caller");
         let worker_id = new_worker_id();
@@ -153,7 +177,9 @@ impl CallerRegistry {
                     provider: profile.provider,
                     model: profile.model,
                     effort: profile.effort,
+                    access_mode,
                     parent_worker_id: None,
+                    parent_session: None,
                     assignment: None,
                     activity: WorkerActivityState::Starting,
                     inbox,
@@ -170,6 +196,7 @@ impl CallerRegistry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn issue_as(
         &self,
         project: &Path,
@@ -178,6 +205,27 @@ impl CallerRegistry {
         worker_id: String,
         worker_name: String,
         parent_worker_id: Option<String>,
+    ) -> Result<CallerIdentity, String> {
+        self.issue_as_with_access(
+            project,
+            profile,
+            wake,
+            worker_id,
+            worker_name,
+            parent_worker_id,
+            crate::agents::HarnessAccessMode::Auto,
+        )
+    }
+
+    pub(crate) fn issue_as_with_access(
+        &self,
+        project: &Path,
+        profile: CallerProfile,
+        wake: Option<thread::Thread>,
+        worker_id: String,
+        worker_name: String,
+        parent_worker_id: Option<String>,
+        access_mode: crate::agents::HarnessAccessMode,
     ) -> Result<CallerIdentity, String> {
         if !crate::agents::valid_worker_name(&worker_name) {
             return Err("worker name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
@@ -197,6 +245,12 @@ impl CallerRegistry {
         if duplicate {
             return Err(format!("worker name is already in use: {worker_name}"));
         }
+        let parent_session = parent_worker_id.as_deref().and_then(|parent_id| {
+            callers
+                .values()
+                .find(|caller| caller.worker_id == parent_id && caller.project == project)
+                .and_then(RegisteredCaller::session_key)
+        });
         callers.insert(
             token.clone(),
             RegisteredCaller {
@@ -208,7 +262,9 @@ impl CallerRegistry {
                 provider: profile.provider,
                 model: profile.model,
                 effort: profile.effort,
+                access_mode,
                 parent_worker_id,
+                parent_session,
                 assignment: None,
                 activity: WorkerActivityState::Starting,
                 inbox,
@@ -243,6 +299,7 @@ impl CallerRegistry {
                         provider: caller.provider.clone(),
                         model: caller.model.clone(),
                         effort: caller.effort.clone(),
+                        access_mode: caller.access_mode,
                         parent_worker_id: caller.parent_worker_id.clone(),
                     })
                 })
@@ -290,16 +347,8 @@ impl CallerRegistry {
         let child = callers.values().find(|caller| {
             caller.backend == backend && caller.session.as_deref() == Some(session)
         })?;
-        let parent_id = child.parent_worker_id.as_deref()?;
-        callers
-            .values()
-            .find(|parent| {
-                parent.worker_id == parent_id
-                    && parent.backend == child.backend
-                    && parent.project == child.project
-            })?
-            .session
-            .clone()
+        let parent = child.parent_session.as_ref()?;
+        (parent.backend == child.backend).then(|| parent.session.clone())
     }
 
     pub(crate) fn set_assignment(
@@ -330,11 +379,7 @@ impl CallerRegistry {
             .map_err(|_| "worker caller registry is unavailable")?;
         Ok(callers
             .values()
-            .find(|child| {
-                child.parent_worker_id.as_deref() == Some(parent.worker_id.as_str())
-                    && child.project == parent.project
-                    && child.worker_name.eq_ignore_ascii_case(name)
-            })
+            .find(|child| child.belongs_to(parent) && child.worker_name.eq_ignore_ascii_case(name))
             .and_then(|child| child.assignment.clone()))
     }
 
@@ -365,14 +410,22 @@ impl CallerRegistry {
             .get(token)
             .ok_or_else(|| "unknown Farcaster caller".to_owned())?;
         let recipient = match caller.parent_worker_id.as_deref() {
-            Some(parent_id) => callers.values().find(|candidate| {
-                candidate.worker_id == parent_id
-                    && candidate.project == caller.project
-                    && candidate.session.is_some()
-            }),
+            Some(parent_id) => callers
+                .values()
+                .find(|candidate| {
+                    candidate.worker_id == parent_id
+                        && candidate.project == caller.project
+                        && candidate.session.is_some()
+                })
+                .or_else(|| {
+                    caller.parent_session.as_ref().and_then(|parent| {
+                        callers
+                            .values()
+                            .find(|candidate| candidate.session_key().as_ref() == Some(parent))
+                    })
+                }),
             None => callers.values().find(|candidate| {
-                candidate.parent_worker_id.as_deref() == Some(caller.worker_id.as_str())
-                    && candidate.project == caller.project
+                candidate.belongs_to_registered(caller)
                     && candidate.worker_name.eq_ignore_ascii_case(to)
             }),
         };
@@ -389,6 +442,30 @@ impl CallerRegistry {
 }
 
 impl RegisteredCaller {
+    fn session_key(&self) -> Option<CallerSession> {
+        Some(CallerSession {
+            project: self.project.clone(),
+            backend: self.backend.clone(),
+            session: self.session.clone()?,
+        })
+    }
+
+    fn belongs_to(&self, parent: &CallerContext) -> bool {
+        self.parent_worker_id.as_deref() == Some(parent.worker_id.as_str())
+            || self.parent_session.as_ref().is_some_and(|session| {
+                session.project == parent.project
+                    && session.backend == parent.backend
+                    && session.session == parent.session
+            })
+    }
+
+    fn belongs_to_registered(&self, parent: &RegisteredCaller) -> bool {
+        self.parent_worker_id.as_deref() == Some(parent.worker_id.as_str())
+            || parent
+                .session_key()
+                .is_some_and(|session| self.parent_session.as_ref() == Some(&session))
+    }
+
     fn send_message(&self, from: String, message: String) -> Result<(), String> {
         self.inbox
             .send(PeerMessage { from, message })
@@ -429,12 +506,43 @@ impl CallerIdentity {
     pub(crate) fn bind(&self, session_locator: impl Into<String>) {
         let session_locator = session_locator.into();
         let mut changed = false;
-        if let Ok(mut callers) = self.registry.callers.lock()
-            && let Some(context) = callers.get_mut(&self.token)
+        let mut rebound = None;
+        if let Ok(mut callers) = self.registry.callers.lock() {
+            let session_key = if let Some(context) = callers.get_mut(&self.token) {
+                changed = context.session.as_deref() != Some(session_locator.as_str());
+                context.session = Some(session_locator);
+                context.activity = WorkerActivityState::Idle;
+                (context.parent_worker_id.is_none()).then(|| {
+                    (
+                        context.worker_id.clone(),
+                        context.session_key().expect("bound caller has a session"),
+                    )
+                })
+            } else {
+                None
+            };
+            if let Some((worker_id, session_key)) = session_key {
+                let mut old_ids = Vec::new();
+                for child in callers.values_mut().filter(|caller| {
+                    caller.parent_session.as_ref() == Some(&session_key)
+                        && caller.parent_worker_id.as_deref() != Some(worker_id.as_str())
+                }) {
+                    if let Some(old_id) = child.parent_worker_id.replace(worker_id.clone()) {
+                        old_ids.push(old_id);
+                    }
+                }
+                rebound = Some((old_ids, worker_id));
+            }
+        }
+        if let Some((old_ids, worker_id)) = rebound
+            && let Ok(mut inputs) = self.registry.inputs.lock()
         {
-            changed = context.session.as_deref() != Some(session_locator.as_str());
-            context.session = Some(session_locator);
-            context.activity = WorkerActivityState::Idle;
+            for input in inputs
+                .iter_mut()
+                .filter(|input| old_ids.contains(&input.parent_id))
+            {
+                input.parent_id.clone_from(&worker_id);
+            }
         }
         if changed {
             self.registry.persist_family(&self.token);
@@ -481,24 +589,58 @@ impl CallerIdentity {
             None
         }
     }
+
+    pub(crate) fn discard_pending_messages(&self) {
+        self.pending_message.borrow_mut().take();
+        while self.inbox.try_recv().is_ok() {}
+    }
 }
 
 pub(super) struct WorkerParent {
     pub(super) id: String,
     pub(super) project: PathBuf,
     pub(super) child_name: String,
+    pub(super) backend: Option<String>,
+    session: String,
 }
 
 impl WorkerParent {
+    pub(super) fn new(id: String, project: PathBuf, child_name: String, session: String) -> Self {
+        let backend = CallerRegistry::shared()
+            .callers
+            .lock()
+            .ok()
+            .and_then(|callers| {
+                callers
+                    .values()
+                    .find(|caller| caller.worker_id == id && caller.project == project)
+                    .map(|caller| caller.backend.clone())
+            });
+        Self {
+            id,
+            project,
+            child_name,
+            backend,
+            session,
+        }
+    }
+
+    fn matches(&self, caller: &RegisteredCaller) -> bool {
+        (caller.worker_id == self.id && caller.project == self.project)
+            || (caller.project == self.project
+                && caller.session.as_deref() == Some(self.session.as_str())
+                && self
+                    .backend
+                    .as_ref()
+                    .is_some_and(|backend| caller.backend == *backend))
+    }
+
     pub(super) fn report(&self, message: String) {
         let registry = CallerRegistry::shared();
         let Ok(callers) = registry.callers.lock() else {
             return;
         };
-        let Some(parent) = callers
-            .values()
-            .find(|caller| caller.worker_id == self.id && caller.project == self.project)
-        else {
+        let Some(parent) = callers.values().find(|caller| self.matches(caller)) else {
             zlog::warn!("Parent unavailable for worker {} report", self.child_name);
             return;
         };

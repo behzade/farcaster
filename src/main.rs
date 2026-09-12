@@ -42,18 +42,23 @@ fn main() -> std::process::ExitCode {
         Ok(path) => path,
         Err(error) => return fail(error),
     };
-    let builtin_mcp_enabled = app::persistence::StateStore::open()
-        .and_then(|store| store.load_builtin_mcp_enabled())
+    let state_store = app::persistence::StateStore::open().ok();
+    let builtin_mcp_enabled = state_store
+        .as_ref()
+        .and_then(|store| store.load_builtin_mcp_enabled().ok())
         .unwrap_or(true);
     builtin_mcp::set_enabled(builtin_mcp_enabled);
-    let worker_command = agents::AgentLaunchConfig {
-        session_locator_root: Some(data_root.join("session-locators")),
-        ..agents::AgentLaunchConfig::default()
-    };
+    let worker_command = startup_worker_command(&data_root, state_store.as_ref());
+    let worker_proxy = worker_command.app_proxy.clone();
     let (factories, default_backend) = agents::worker_factories(worker_command);
     let worker_pool = match agents::WorkerPool::new(factories, default_backend, project.clone(), 8)
     {
-        Ok(pool) => pool,
+        Ok(pool) => {
+            if let Err(error) = pool.set_app_proxy(worker_proxy) {
+                return fail(format!("initialize worker proxy: {error}"));
+            }
+            pool
+        }
         Err(error) => return fail(format!("initialize worker pool: {error}")),
     };
     let worker_updates = worker_pool.updates();
@@ -69,6 +74,18 @@ fn main() -> std::process::ExitCode {
     match app::launch::run(project, workgraph_update_receiver, worker_updates) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
+    }
+}
+
+fn startup_worker_command(
+    data_root: &std::path::Path,
+    state_store: Option<&app::persistence::StateStore>,
+) -> agents::AgentLaunchConfig {
+    let app_proxy = state_store.and_then(|store| crate::access::load_proxy(store).unwrap_or(None));
+    agents::AgentLaunchConfig {
+        app_proxy,
+        session_locator_root: Some(data_root.join("session-locators")),
+        ..agents::AgentLaunchConfig::default()
     }
 }
 

@@ -53,6 +53,7 @@ pub(crate) struct StartWorker {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
+    pub(crate) access_mode: super::HarnessAccessMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

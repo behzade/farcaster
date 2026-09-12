@@ -36,9 +36,12 @@ impl WorkerSessionFactory for PiWorkerFactory {
         if launch.ephemeral {
             return Err("Pi workers do not expose isolated ephemeral inference".into());
         }
+        let mut command = self.command.clone();
+        command.access_mode = launch.access_mode;
+        command.app_proxy = launch.app_proxy.clone();
         let spawn = |start| {
             PiRpcProcess::spawn_worker(
-                &self.command,
+                &command,
                 &launch.project,
                 start,
                 launch.worker_id.clone(),
@@ -51,6 +54,10 @@ impl WorkerSessionFactory for PiWorkerFactory {
         };
         let mut process = match &launch.context {
             WorkerContext::Fresh => spawn(SessionLaunch::New)?,
+            WorkerContext::Resume { session_locator } => {
+                let session = canonical_session(session_locator, "resume")?;
+                spawn(SessionLaunch::Resume(&session))?
+            }
             WorkerContext::Session { session_locator } => {
                 let parent = canonical_session(&launch.parent_session, "parent")?;
                 let source = canonical_session(session_locator, "source")?;

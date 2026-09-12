@@ -40,7 +40,8 @@ pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
             }
             value
         }
-        // Pi uses abort to end the current step and consume queued steering.
+        // Pi's native abort applies queued steering. PiRpcProcess intercepts a
+        // user Abort and retires the process so queued work cannot continue.
         SessionCommand::ApplySteering | SessionCommand::Abort => json!({"type": "abort"}),
         SessionCommand::Compact { instructions } => {
             optional_string("compact", "customInstructions", instructions)

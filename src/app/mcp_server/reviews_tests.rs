@@ -13,6 +13,7 @@ fn submission_uses_caller_project_and_returns_validated_artifact() {
         provider: None,
         model: None,
         effort: None,
+        access_mode: crate::agents::HarnessAccessMode::Auto,
         parent_worker_id: None,
     };
     let params = || json!({"title":"Review this", "items":[{"path":"missing.rs", "note":"Inspect deletion", "start_line":1,"end_line":3}]});

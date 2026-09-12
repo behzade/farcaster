@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 const FIXTURES: &str =
     include_str!("../../../../../crates/claude-sdk-types/fixtures/protocol.json");
+const TEST_SESSION_ID: &str = "00000000-0000-4000-8000-000000000001";
 
 #[test]
 fn cancellation_receipt_settles_only_the_named_active_prompt() {
@@ -123,15 +124,18 @@ fn setup() -> (tempfile::TempDir, AgentLaunchConfig) {
     std::fs::write(&script, SCRIPT).expect("test operation should succeed");
     let mut result = fixture("SDKResultSuccess");
     result["result"] = json!("fixture ok");
+    result["session_id"] = json!(TEST_SESSION_ID);
     std::fs::write(script.with_extension("result"), format!("{result}\n"))
         .expect("test operation should succeed");
     let mut assistant = fixture("SDKAssistantMessage");
+    assistant["session_id"] = json!(TEST_SESSION_ID);
     let tool = assistant["message"]["content"][0].clone();
     assistant["message"]["content"] =
         json!([{"type":"text","text":"fixture ok","citations":null},tool]);
     let delta = json!({"type":"stream_event", "event":{"type":"content_block_delta","index":0,
-        "delta":{"type":"text_delta","text":"fixture "}}, "uuid":"delta", "session_id":"one", "parent_tool_use_id":null});
-    let replay = fixture("SDKUserMessageReplay");
+        "delta":{"type":"text_delta","text":"fixture "}}, "uuid":"delta", "session_id":TEST_SESSION_ID, "parent_tool_use_id":null});
+    let mut replay = fixture("SDKUserMessageReplay");
+    replay["session_id"] = json!(TEST_SESSION_ID);
     std::fs::write(
         script.with_extension("turn"),
         format!("{delta}\n{assistant}\n{replay}\n"),
@@ -153,12 +157,75 @@ fn session(command: &AgentLaunchConfig, project: &Path) -> ClaudeSession {
         },
         None,
     );
-    let id = "00000000-0000-4000-8000-000000000001";
+    let id = TEST_SESSION_ID;
     let process = Process::spawn(command, project, id, false, None, None, true)
         .expect("test operation should succeed");
     attach(process, caller, id, command.access_mode)
         .expect("test operation should succeed")
         .0
+}
+
+#[test]
+fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() {
+    let (directory, command) = setup();
+    let script = command.prefix_args[0].clone();
+    let factory = ClaudeWorkerFactory::new(command);
+    let mut worker = factory
+        .create(WorkerLaunch {
+            slot: None,
+            worker_id: "resumed-worker".into(),
+            worker_name: "resumed".into(),
+            project: directory.path().to_owned(),
+            parent_session: "parent".into(),
+            parent_worker_id: None,
+            context: WorkerContext::Resume {
+                session_locator: TEST_SESSION_ID.into(),
+            },
+            provider: None,
+            model: None,
+            effort: None,
+            access_mode: HarnessAccessMode::Sandboxed,
+            app_proxy: None,
+            ephemeral: false,
+        })
+        .expect("resume worker session");
+
+    assert_eq!(
+        worker.poll(),
+        Some(WorkerEvent::SessionChanged {
+            locator: TEST_SESSION_ID.into(),
+        })
+    );
+    worker
+        .send("after restart".into(), WorkerSendMode::Prompt)
+        .expect("send after restart");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut prompt_started = false;
+    while Instant::now() < deadline {
+        if matches!(worker.poll(), Some(WorkerEvent::NeedsInput(_))) {
+            prompt_started = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        prompt_started,
+        "resumed worker did not execute the new prompt"
+    );
+    worker.close().expect("close resumed worker");
+
+    let arguments =
+        std::fs::read_to_string(format!("{script}.args")).expect("read resumed worker arguments");
+    assert!(
+        arguments
+            .lines()
+            .any(|argument| argument == format!("--resume={TEST_SESSION_ID}")),
+        "{arguments}"
+    );
+    assert!(!arguments.lines().any(|argument| argument.contains("fork")));
+    let requests = std::fs::read_to_string(format!("{script}.requests"))
+        .expect("read resumed worker requests");
+    assert!(requests.contains("after restart"), "{requests}");
 }
 
 fn until(
@@ -499,4 +566,92 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
     assert!(session.poll_prompt_ack().is_none());
     session.abort().unwrap();
     assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "queued"));
+}
+
+#[test]
+fn main_session_falls_back_from_steer_to_claude_follow_up() {
+    use crate::agents::extensions::{ExtensionUiResponse, PromptMode};
+    use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+
+    let (directory, command) = setup();
+    let mut claude = session(&command, directory.path());
+    claude
+        .send("first turn".into(), WorkerSendMode::Prompt)
+        .expect("start Claude turn");
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        BACKEND,
+        "session-1".into(),
+        Box::new(claude),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("Claude main-session bridge");
+
+    let queued_id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "next task".into(),
+            images: Vec::new(),
+        })
+        .expect("unsupported live steering should queue a Claude follow-up");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut settled = 0;
+    let mut queue_accepted = false;
+    let mut conversation = ConversationState::default();
+    while (settled < 2 || !queue_accepted) && Instant::now() < deadline {
+        match transport.poll() {
+            Some(SessionEvent::Interaction(request)) => {
+                let id = request.dialog_id().expect("fixture dialog id").to_owned();
+                transport
+                    .respond(ExtensionUiResponse::Value {
+                        id,
+                        value: "Allow".into(),
+                    })
+                    .expect("answer fixture permission");
+            }
+            Some(SessionEvent::Activity(event)) => {
+                if event.value()["type"] == "agent_settled" {
+                    settled += 1;
+                }
+                conversation.reduce(event.value());
+            }
+            Some(SessionEvent::Response(response))
+                if response.id.as_deref() == Some(queued_id.as_str()) =>
+            {
+                queue_accepted = response.result.is_ok();
+            }
+            Some(SessionEvent::Failure(error)) => {
+                panic!("Claude session failed after queued Enter: {error}")
+            }
+            Some(_) => {}
+            None => thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    assert_eq!(settled, 2, "Claude should finish both queued turns");
+    assert!(
+        queue_accepted,
+        "Claude should acknowledge the queued prompt"
+    );
+    assert!(conversation.queue.follow_up.is_empty());
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<Vec<_>>(),
+        ["fixture ok", "fixture ok"],
+        "the queued input must not split either assistant stream"
+    );
+    transport.close().expect("close Claude session");
+    let requests = std::fs::read_to_string(directory.path().join("claude-fixture.requests"))
+        .expect("read Claude fixture requests");
+    assert!(requests.contains("next task"));
+    assert!(!requests.contains("\"subtype\":\"interrupt\""));
 }

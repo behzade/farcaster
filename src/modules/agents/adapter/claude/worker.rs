@@ -34,11 +34,19 @@ impl ClaudeWorkerFactory {
 
 impl WorkerSessionFactory for ClaudeWorkerFactory {
     fn create(&self, launch: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
-        if !matches!(launch.context, WorkerContext::Fresh) {
-            return Err("Claude child workers require fresh context".into());
-        }
+        let (id, resume) = match &launch.context {
+            WorkerContext::Fresh => (uuid::Uuid::new_v4().to_string(), false),
+            WorkerContext::Session { .. } => {
+                return Err("Claude child workers cannot inherit a parent session".into());
+            }
+            WorkerContext::Resume { session_locator } => (session_locator.clone(), true),
+        };
+        uuid::Uuid::parse_str(&id).map_err(|_| "Claude requires a UUID session id")?;
+        let mut command = self.command.clone();
+        command.access_mode = launch.access_mode;
+        command.app_proxy = launch.app_proxy.clone();
         let caller = CallerRegistry::shared()
-            .issue_as(
+            .issue_as_with_access(
                 &launch.project,
                 CallerProfile {
                     backend: BACKEND.into(),
@@ -50,20 +58,20 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
                 launch.worker_id,
                 launch.worker_name,
                 launch.parent_worker_id,
+                launch.access_mode,
             )?
             .with_slot(launch.slot);
-        let id = uuid::Uuid::new_v4().to_string();
         // Child sessions use the shared parent/inbox path, never the Farcaster MCP server.
         let process = Process::spawn(
-            &self.command,
+            &command,
             &launch.project,
             &id,
-            false,
+            resume,
             None,
             None,
             !launch.ephemeral,
         )?;
-        let (mut worker, _) = attach(process, caller, &id, self.command.access_mode)?;
+        let (mut worker, _) = attach(process, caller, &id, launch.access_mode)?;
         if let Some(model) = launch.model {
             worker.select_model(launch.provider.as_deref().unwrap_or(BACKEND), &model)?;
         }
@@ -108,7 +116,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         SessionStart::Fork(_) => return Err("Claude session fork is not supported".into()),
     };
     uuid::Uuid::parse_str(&id).map_err(|_| "Claude requires a UUID session id")?;
-    let caller = CallerRegistry::shared().issue(
+    let caller = CallerRegistry::shared().issue_with_access(
         &launch.project,
         CallerProfile {
             backend: BACKEND.into(),
@@ -117,6 +125,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             effort: None,
         },
         launch.wake.clone(),
+        command.access_mode,
     );
     let process = Process::spawn(
         command,
@@ -264,6 +273,44 @@ fn prompt(
 }
 
 impl ClaudeSession {
+    fn prompt(
+        &self,
+        submission_id: Option<&str>,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> Result<Prompt, String> {
+        let inline_images = images
+            .iter()
+            .cloned()
+            .map(crate::protocol::PromptImage::into_inline)
+            .collect::<Result<Vec<_>, _>>()?;
+        let message_frame = prompt(&self.id, &message, inline_images)?;
+        let delivery = match (submission_id, images.is_empty()) {
+            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
+                submission_id: submission_id.into(),
+                mode,
+                message,
+            },
+            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id: submission_id.into(),
+                mode,
+                message,
+                images,
+            },
+            (None, true) => WorkerActivity::InputDelivered { mode, message },
+            (None, false) => WorkerActivity::InputDeliveredWithImages {
+                mode,
+                message,
+                images,
+            },
+        };
+        Ok(Prompt {
+            message: message_frame,
+            delivery,
+        })
+    }
+
     fn idle(&mut self) {
         self.active = false;
         self.active_uuid = None;
@@ -524,22 +571,7 @@ impl WorkerSession for ClaudeSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
-        let images = images
-            .into_iter()
-            .map(crate::protocol::PromptImage::into_inline)
-            .collect::<Result<Vec<_>, _>>()?;
-        let prompt = Prompt {
-            message: prompt(&self.id, &message, images.clone())?,
-            delivery: if images.is_empty() {
-                WorkerActivity::InputDelivered { mode, message }
-            } else {
-                WorkerActivity::InputDeliveredWithImages {
-                    mode,
-                    message,
-                    images,
-                }
-            },
-        };
+        let prompt = self.prompt(None, message, mode, images)?;
         self.admit(prompt, mode)
     }
     fn submit_prompt(
@@ -549,17 +581,12 @@ impl WorkerSession for ClaudeSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, String> {
-        let queued = self.queued.len();
-        self.send_with_images(message, mode, images)?;
-        let uuid = if self.queued.len() > queued {
-            match &self.queued.back().expect("prompt was queued").message.uuid {
-                Presence::Present(uuid) => Some(uuid.clone()),
-                Presence::Missing => None,
-            }
-        } else {
-            self.active_uuid.clone()
-        }
-        .ok_or("Claude prompt has no acknowledgement id")?;
+        let prompt = self.prompt(Some(&id), message, mode, images)?;
+        let uuid = match &prompt.message.uuid {
+            Presence::Present(uuid) => uuid.clone(),
+            Presence::Missing => return Err("Claude prompt has no acknowledgement id".into()),
+        };
+        self.admit(prompt, mode)?;
         self.prompt_requests.insert(uuid, id);
         Ok(false)
     }

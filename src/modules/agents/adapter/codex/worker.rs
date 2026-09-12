@@ -44,9 +44,12 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         if launch.provider.is_some() != launch.model.is_some() {
             return Err("Codex worker provider and model must be supplied together".into());
         }
-        let mut prepared = self.command.command(&launch.project)?;
+        let mut command = self.command.clone();
+        command.access_mode = launch.access_mode;
+        command.app_proxy = launch.app_proxy.clone();
+        let mut prepared = command.command(&launch.project)?;
         let caller_identity = crate::modules::agents::core::CallerRegistry::shared()
-            .issue_as(
+            .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
                     backend: "codex-cli".into(),
@@ -58,9 +61,10 @@ impl WorkerSessionFactory for CodexWorkerFactory {
                 launch.worker_id.clone(),
                 launch.worker_name.clone(),
                 launch.parent_worker_id.clone(),
+                launch.access_mode,
             )?
             .with_slot(launch.slot.clone());
-        configure_codex_app_server(&mut prepared, self.command.access_mode);
+        configure_codex_app_server(&mut prepared, launch.access_mode);
         let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -69,7 +73,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .map_err(|error| format!("start Codex worker app-server: {error}"))?;
         child_stderr::capture(&mut child, "codex-worker")?;
         let ((mut reader, writer, queued, next_id, thread), skills) =
-            match setup_connection(&mut child, &launch, self.command.access_mode) {
+            match setup_connection(&mut child, &launch, launch.access_mode) {
                 Ok(setup) => setup,
                 Err(error) => {
                     let _ = child.kill();
@@ -111,7 +115,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             effort: launch.effort,
             collaboration_mode: None,
             collaboration_modes: HashMap::new(),
-            command_state: commands::State::new(self.command.access_mode),
+            command_state: commands::State::new(launch.access_mode),
             skills,
             project: launch.project.clone(),
             native_queue: false,
@@ -125,6 +129,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             pending: HashMap::new(),
             pending_inputs: HashMap::new(),
             prompt_requests: HashMap::new(),
+            client_submissions: HashMap::new(),
             prompt_acks: VecDeque::new(),
             queued_inbound: VecDeque::new(),
             peer_messages: VecDeque::new(),
@@ -181,7 +186,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     String,
 > {
     let mut prepared = command.command(&launch.project)?;
-    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
             backend: "codex-cli".into(),
@@ -190,6 +195,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             effort: None,
         },
         launch.wake.clone(),
+        command.access_mode,
     );
     configure_codex_app_server(&mut prepared, command.access_mode);
     if farcaster_mcp::enabled() {
@@ -267,6 +273,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
         prompt_requests: HashMap::new(),
+        client_submissions: HashMap::new(),
         prompt_acks: VecDeque::new(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
@@ -351,6 +358,12 @@ fn setup_connection(
                 launch.model.as_deref(),
                 access_mode,
             )?
+        }
+        WorkerContext::Resume { .. } if launch.ephemeral => {
+            return Err("Codex cannot resume an ephemeral child worker".into());
+        }
+        WorkerContext::Resume { session_locator } => {
+            connection.resume_thread(session_locator, access_mode)?
         }
     };
     let skills = Skills::load(&mut connection, &launch.project);
@@ -520,9 +533,16 @@ enum PendingRequest {
     ObsoleteSkills,
     StartTurn,
     LoadGoal,
-    ChildStatus { id: String, title: Option<String> },
+    ChildStatus {
+        id: String,
+        title: Option<String>,
+    },
     ObsoleteChildStatus,
     Ignore,
+    Control {
+        operation: &'static str,
+        client_id: Option<String>,
+    },
 }
 
 struct CodexWorkerSession {
@@ -549,6 +569,7 @@ struct CodexWorkerSession {
     pending: HashMap<CodexRequestId, PendingRequest>,
     pending_inputs: HashMap<String, CodexRequestId>,
     prompt_requests: HashMap<CodexRequestId, String>,
+    client_submissions: HashMap<String, String>,
     prompt_acks: VecDeque<(String, Result<(), String>)>,
     queued_inbound: VecDeque<Result<CodexInbound, String>>,
     peer_messages: VecDeque<PeerMessage>,
@@ -570,7 +591,7 @@ impl WorkerSession for CodexWorkerSession {
         if self.dispatch_command(&message, mode, &images, None)? {
             return Ok(());
         }
-        self.send_prompt_input(message, mode, images)
+        self.send_prompt_input(message, mode, images, None)
     }
 
     fn submit_prompt(
@@ -583,7 +604,7 @@ impl WorkerSession for CodexWorkerSession {
         if self.dispatch_command(&message, mode, &images, Some(id.clone()))? {
             return Ok(false);
         }
-        self.send_prompt_input(message, mode, images)?;
+        self.send_prompt_input(message, mode, images, Some(&id))?;
         self.prompt_requests
             .insert(CodexRequestId::Number(self.next_id), id);
         Ok(false)
@@ -681,10 +702,7 @@ impl WorkerSession for CodexWorkerSession {
             && let Some(message) = self.peer_messages.pop_front()
         {
             return Some(match self.send_peer_message(&message, mode) {
-                Ok(()) => {
-                    self.events.push_back(WorkerEvent::Started);
-                    WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message })
-                }
+                Ok(()) => WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message }),
                 Err(error) => WorkerEvent::Failed(error),
             });
         }
@@ -708,12 +726,6 @@ impl WorkerSession for CodexWorkerSession {
                                 Ok(())
                             };
                         self.prompt_acks.push_back((prompt, accepted));
-                    }
-                }
-                Ok(CodexInbound::Error { id, error }) => {
-                    if let Some(prompt) = self.prompt_requests.remove(id) {
-                        self.prompt_acks
-                            .push_back((prompt, Err(error.message.clone())));
                     }
                 }
                 _ => {}
@@ -788,18 +800,25 @@ impl WorkerSession for CodexWorkerSession {
                                     id,
                                     title,
                                     is_running,
+                                    outcome: codex_child_thread_outcome(&result["thread"]),
                                 },
                             ));
                         }
                     }
                     Some(
                         PendingRequest::Ignore
+                        | PendingRequest::Control { .. }
                         | PendingRequest::ObsoleteChildStatus
                         | PendingRequest::ObsoleteSkills,
                     )
                     | None => {}
                 },
                 Ok(CodexInbound::Error { id, error }) => {
+                    let rejected_prompt = self.prompt_requests.remove(&id);
+                    if let Some(prompt) = rejected_prompt.as_ref() {
+                        self.prompt_acks
+                            .push_back((prompt.clone(), Err(error.message.clone())));
+                    }
                     match self.pending.remove(&id) {
                         Some(PendingRequest::Command(request)) => {
                             self.command_response(request, Err(error.message));
@@ -827,6 +846,25 @@ impl WorkerSession for CodexWorkerSession {
                         Some(PendingRequest::StartTurn) => {
                             self.abort_starting_turn = false;
                             self.caller_identity.set_activity(WorkerActivityState::Idle);
+                        }
+                        Some(PendingRequest::Control {
+                            operation,
+                            client_id,
+                        }) => {
+                            if let Some(client_id) = client_id {
+                                self.client_submissions.remove(&client_id);
+                            }
+                            zlog::warn!(
+                                "Codex {operation} request was rejected: {}",
+                                error.message
+                            );
+                            if rejected_prompt.is_some() {
+                                continue;
+                            }
+                            return Some(WorkerEvent::RequestFailed {
+                                operation: format!("Codex {operation}"),
+                                error: error.message,
+                            });
                         }
                         Some(PendingRequest::Ignore) | None => {}
                     }
@@ -936,7 +974,7 @@ impl WorkerSession for CodexWorkerSession {
                             );
                         }
                         "item/started" => {
-                            if let Some(activity) = codex_input_delivery(&params["item"]) {
+                            if let Some(activity) = self.input_delivery(&params["item"]) {
                                 return Some(WorkerEvent::Activity(activity));
                             }
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
@@ -1243,11 +1281,43 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn input_delivery(&mut self, item: &Value) -> Option<WorkerActivity> {
+        let activity = codex_input_delivery(item)?;
+        let submission_id = item
+            .get("clientId")
+            .and_then(Value::as_str)
+            .and_then(|client_id| self.client_submissions.remove(client_id));
+        match (submission_id, activity) {
+            (Some(submission_id), WorkerActivity::InputDelivered { mode, message }) => {
+                Some(WorkerActivity::SubmittedInputDelivered {
+                    submission_id,
+                    mode,
+                    message,
+                })
+            }
+            (
+                Some(submission_id),
+                WorkerActivity::InputDeliveredWithImages {
+                    mode,
+                    message,
+                    images,
+                },
+            ) => Some(WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id,
+                mode,
+                message,
+                images,
+            }),
+            (_, activity) => Some(activity),
+        }
+    }
+
     fn send_prompt_input(
         &mut self,
         message: String,
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
+        submission_id: Option<&str>,
     ) -> Result<(), String> {
         let mut input = self.skills.input(message);
         let images = images
@@ -1257,7 +1327,7 @@ impl CodexWorkerSession {
         input.extend(images.into_iter().map(|image| CodexUserInput::Image {
             url: format!("data:{};base64,{}", image.mime_type, image.data),
         }));
-        self.send_input(input, mode)
+        self.send_input(input, mode, submission_id)
     }
 
     fn interrupt_turn(&mut self, turn_id: &str) -> Result<(), String> {
@@ -1265,7 +1335,13 @@ impl CodexWorkerSession {
             "turn/interrupt",
             json!({"threadId": self.thread_id, "turnId": turn_id}),
         )?;
-        self.pending.insert(id, PendingRequest::Ignore);
+        self.pending.insert(
+            id,
+            PendingRequest::Control {
+                operation: "interrupt",
+                client_id: None,
+            },
+        );
         Ok(())
     }
 
@@ -1348,6 +1424,7 @@ impl CodexWorkerSession {
         &mut self,
         input: Vec<CodexUserInput>,
         mode: WorkerSendMode,
+        submission_id: Option<&str>,
     ) -> Result<(), String> {
         if mode == WorkerSendMode::Steer {
             let turn_id = self
@@ -1364,7 +1441,17 @@ impl CodexWorkerSession {
                     "input": input,
                 }),
             )?;
-            self.pending.insert(id, PendingRequest::Ignore);
+            if let Some(submission_id) = submission_id {
+                self.client_submissions
+                    .insert(client_id.clone(), submission_id.into());
+            }
+            self.pending.insert(
+                id,
+                PendingRequest::Control {
+                    operation: "steer",
+                    client_id: Some(client_id),
+                },
+            );
             return Ok(());
         }
         if mode == WorkerSendMode::Queue && self.native_queue {
@@ -1377,7 +1464,17 @@ impl CodexWorkerSession {
                     "input": input,
                 }),
             )?;
-            self.pending.insert(id, PendingRequest::Ignore);
+            if let Some(submission_id) = submission_id {
+                self.client_submissions
+                    .insert(client_id.clone(), submission_id.into());
+            }
+            self.pending.insert(
+                id,
+                PendingRequest::Control {
+                    operation: "queue",
+                    client_id: Some(client_id),
+                },
+            );
             return Ok(());
         }
         self.output.clear();
@@ -1412,6 +1509,7 @@ impl CodexWorkerSession {
                 id: child.to_owned(),
                 title,
                 is_running,
+                outcome: codex_child_event_outcome(item),
             });
         }
         if item["kind"].as_str() != Some("interacted") {
@@ -1592,6 +1690,33 @@ fn codex_telemetry(method: &str, params: &Value) -> Option<WorkerActivity> {
         "account/rateLimits/updated" => Some(WorkerActivity::RateLimitsChanged {
             limits: params.get("rateLimits")?.clone(),
         }),
+        _ => None,
+    }
+}
+
+fn codex_child_event_outcome(item: &Value) -> Option<crate::agents::ChildSessionOutcome> {
+    match item.get("kind").and_then(Value::as_str) {
+        Some("completed") => Some(crate::agents::ChildSessionOutcome::Complete),
+        Some("failed") => Some(crate::agents::ChildSessionOutcome::Failed),
+        Some("interrupted") => Some(crate::agents::ChildSessionOutcome::Incomplete),
+        _ => None,
+    }
+}
+
+fn codex_child_thread_outcome(thread: &Value) -> Option<crate::agents::ChildSessionOutcome> {
+    if thread.pointer("/status/type").and_then(Value::as_str) == Some("systemError") {
+        return Some(crate::agents::ChildSessionOutcome::Failed);
+    }
+    match thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .and_then(|turns| turns.last())
+        .and_then(|turn| turn.get("status"))
+        .and_then(Value::as_str)
+    {
+        Some("completed") => Some(crate::agents::ChildSessionOutcome::Complete),
+        Some("failed") => Some(crate::agents::ChildSessionOutcome::Failed),
+        Some("interrupted") => Some(crate::agents::ChildSessionOutcome::Incomplete),
         _ => None,
     }
 }

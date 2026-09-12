@@ -39,6 +39,10 @@ struct SlotState {
 }
 
 impl WorkerSlot {
+    pub(crate) fn is_active(&self) -> bool {
+        self.0.active.lock().is_ok_and(|active| *active)
+    }
+
     pub(crate) fn try_activate(&self) -> bool {
         let Ok(mut active) = self.0.active.lock() else {
             return false;

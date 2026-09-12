@@ -2,7 +2,7 @@
 set -eu
 case_name=$1
 case "$case_name" in
-  sandbox-*|history-control)
+  sandbox-*|history-control|worker-launch-config)
     mkdir -p "$PWD/sandbox-extension"
     printf '{"name":"pi-nono"}\n' > "$PWD/sandbox-extension/package.json"
     : > "$PWD/sandbox-extension/index.js"
@@ -11,6 +11,9 @@ case "$case_name" in
     fi
     ;;
 esac
+if [ "$case_name" = "worker-launch-config" ]; then
+  printf '%s\n%s\n' "${http_proxy-}" "${https_proxy-}" > "$PWD/worker-launch-proxy"
+fi
 session_file=''
 previous=''
 for argument in "$@"; do
@@ -121,7 +124,7 @@ while IFS= read -r line; do
         sandbox-missing) data='{"commands":[]}' ;;
         sandbox-template) data='{"commands":[{"name":"sandbox-mode","source":"prompt"}]}' ;;
         sandbox-no-source) data='{"commands":[{"name":"sandbox-mode","source":"extension"}]}' ;;
-        sandbox-*|history-control)
+        sandbox-*|history-control|worker-launch-config)
           control_name=sandbox-mode
           if [ "$case_name" = "sandbox-collision" ]; then control_name=sandbox-mode:2; fi
           source_path=$(printf '%s' "$PWD/sandbox-extension/index.js" | sed 's/\\/\\\\/g; s/"/\\"/g')

@@ -64,8 +64,11 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 self.profile.name, self.profile.backend
             ));
         }
+        let mut command = self.command.clone();
+        command.access_mode = launch.access_mode;
+        command.app_proxy = launch.app_proxy.clone();
         let caller_identity = crate::modules::agents::core::CallerRegistry::shared()
-            .issue_as(
+            .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
                     backend: self.profile.backend.into(),
@@ -77,22 +80,23 @@ impl WorkerSessionFactory for AcpWorkerFactory {
                 launch.worker_id.clone(),
                 launch.worker_name.clone(),
                 launch.parent_worker_id.clone(),
+                launch.access_mode,
             )?
             .with_slot(launch.slot.clone());
-        if matches!(launch.context, crate::agents::WorkerContext::Session { .. }) {
-            return Err(format!(
-                "{} does not advertise ACP session fork for inherited workers",
-                self.profile.name
-            ));
-        }
-        let (mut session, _, _) = spawn_session(
-            &self.command,
-            &self.profile,
-            &launch.project,
-            None,
-            None,
-            None,
-        )?;
+        let resume = match &launch.context {
+            crate::agents::WorkerContext::Fresh => None,
+            crate::agents::WorkerContext::Session { .. } => {
+                return Err(format!(
+                    "{} does not advertise ACP session fork for inherited workers",
+                    self.profile.name
+                ));
+            }
+            crate::agents::WorkerContext::Resume { session_locator } => {
+                Some(session_locator.as_str())
+            }
+        };
+        let (mut session, _, _) =
+            spawn_session(&command, &self.profile, &launch.project, resume, None, None)?;
         if let Some(model) = launch.model.as_deref() {
             session.select_model(
                 launch
@@ -120,7 +124,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     profile: &AcpProfile,
     launch: &crate::agents::SessionLaunch,
 ) -> Result<super::MainSession, String> {
-    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue(
+    let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
             backend: profile.backend.into(),
@@ -129,6 +133,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             effort: None,
         },
         launch.wake.clone(),
+        command.access_mode,
     );
     let resume = match &launch.start {
         crate::agents::SessionStart::New => None,
@@ -843,6 +848,58 @@ impl AcpWorkerSession {
         self.connection
             .respond(id, json!({"outcome": {"outcome": "cancelled"}}))
     }
+
+    fn acknowledge_current_prompt_started(&mut self) {
+        let Some(id) = self.current_prompt.as_ref() else {
+            return;
+        };
+        if let Some(ack) = self.prompt_requests.remove(id) {
+            self.prompt_acks.push_back((ack, Ok(())));
+        }
+    }
+
+    fn update_proves_prompt_execution(params: &Value) -> bool {
+        matches!(
+            params
+                .pointer("/update/sessionUpdate")
+                .and_then(Value::as_str),
+            Some(
+                "agent_message_chunk"
+                    | "agent_thought_chunk"
+                    | "tool_call"
+                    | "tool_call_update"
+                    | "plan"
+                    | "usage_update"
+            )
+        )
+    }
+
+    fn input_delivery(
+        submission_id: Option<&str>,
+        mode: WorkerSendMode,
+        message: String,
+        images: Vec<crate::protocol::PromptImage>,
+    ) -> WorkerActivity {
+        match (submission_id, images.is_empty()) {
+            (Some(submission_id), true) => WorkerActivity::SubmittedInputDelivered {
+                submission_id: submission_id.into(),
+                mode,
+                message,
+            },
+            (Some(submission_id), false) => WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id: submission_id.into(),
+                mode,
+                message,
+                images,
+            },
+            (None, true) => WorkerActivity::InputDelivered { mode, message },
+            (None, false) => WorkerActivity::InputDeliveredWithImages {
+                mode,
+                message,
+                images,
+            },
+        }
+    }
 }
 
 impl WorkerSession for AcpWorkerSession {
@@ -1205,13 +1262,16 @@ impl WorkerSession for AcpWorkerSession {
                         ));
                         continue;
                     }
-                    if let Some(ack) = self.prompt_requests.remove(&id) {
-                        self.prompt_acks.push_back((ack, Ok(())));
+                    let ack = self.prompt_requests.remove(&id);
+                    if let Some(ack) = ack.as_ref() {
+                        self.prompt_acks.push_back((ack.clone(), Ok(())));
                     }
-                    return Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
-                        mode: WorkerSendMode::Steer,
+                    return Some(WorkerEvent::Activity(Self::input_delivery(
+                        ack.as_deref(),
+                        WorkerSendMode::Steer,
                         message,
-                    }));
+                        images,
+                    )));
                 }
                 Ok(AcpInbound::Response { id, result })
                     if self.current_prompt.as_ref() == Some(&id) =>
@@ -1231,35 +1291,51 @@ impl WorkerSession for AcpWorkerSession {
                             "ACP prompt response has no stop reason".into(),
                         ));
                     }
+                    let output = self.output.clone();
                     self.current_prompt = None;
                     if let Some((mode, message, images, ack)) = self.queued_prompts.pop_front() {
-                        self.next_prompt_ack = ack;
-                        return Some(match self.start_prompt_request(&message, images) {
-                            Ok(()) => WorkerEvent::Activity(WorkerActivity::InputDelivered {
-                                mode,
-                                message,
-                            }),
-                            Err(error) => WorkerEvent::Failed(error),
-                        });
-                    }
-                    if let Some(identity) = &self.caller_identity {
+                        let delivered_images = images.clone();
+                        self.next_prompt_ack.clone_from(&ack);
+                        match self.start_prompt_request(&message, images) {
+                            Ok(()) => {
+                                self.events.push_back(WorkerEvent::Started);
+                                self.events
+                                    .push_back(WorkerEvent::Activity(Self::input_delivery(
+                                        ack.as_deref(),
+                                        mode,
+                                        message,
+                                        delivered_images,
+                                    )));
+                            }
+                            Err(error) => self.events.push_back(WorkerEvent::Failed(error)),
+                        }
+                    } else if let Some(identity) = &self.caller_identity {
                         identity.set_activity(WorkerActivityState::Idle);
                     }
-                    return Some(WorkerEvent::Settled {
-                        output: self.output.clone(),
-                    });
+                    return Some(WorkerEvent::Settled { output });
                 }
                 Ok(AcpInbound::Response { .. }) => {}
                 Ok(AcpInbound::Error { id, message }) => {
-                    if let Some(ack) = self.prompt_requests.remove(&id) {
-                        self.prompt_acks.push_back((ack, Err(message.clone())));
+                    let rejected_prompt = self.prompt_requests.remove(&id);
+                    if let Some(ack) = rejected_prompt.as_ref() {
+                        self.prompt_acks
+                            .push_back((ack.clone(), Err(message.clone())));
                     }
                     self.pending_steers.remove(&id);
-                    if self.current_prompt.as_ref() == Some(&id) {
+                    let rejected_current_prompt = self.current_prompt.as_ref() == Some(&id);
+                    if rejected_current_prompt {
                         self.current_prompt = None;
                         if let Some(identity) = &self.caller_identity {
                             identity.set_activity(WorkerActivityState::Idle);
                         }
+                    }
+                    if rejected_prompt.is_some() {
+                        if rejected_current_prompt {
+                            return Some(WorkerEvent::Settled {
+                                output: self.output.clone(),
+                            });
+                        }
+                        continue;
                     }
                     return Some(WorkerEvent::Failed(format!(
                         "{} ACP error: {message}",
@@ -1268,7 +1344,11 @@ impl WorkerSession for AcpWorkerSession {
                 }
                 Ok(AcpInbound::Notification { method, params }) => {
                     if method == "session/update" {
+                        let proves_execution = Self::update_proves_prompt_execution(&params);
                         if let Some(event) = self.update(params) {
+                            if proves_execution {
+                                self.acknowledge_current_prompt_started();
+                            }
                             return Some(event);
                         }
                     } else if let Some(event) = self.cursor_notification(&method, &params) {
@@ -1286,6 +1366,7 @@ impl WorkerSession for AcpWorkerSession {
                     if method == "session/request_permission"
                         && let Some(event) = self.permission_request(&id, &params)
                     {
+                        self.acknowledge_current_prompt_started();
                         return Some(event);
                     }
                     if let Some(event) = self.cursor_request(&id, &method, &params) {

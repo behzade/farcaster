@@ -10,6 +10,7 @@ fn caller(id: &str, name: &str) -> CallerContext {
         provider: None,
         model: None,
         effort: None,
+        access_mode: crate::agents::HarnessAccessMode::Auto,
         parent_worker_id: None,
     }
 }

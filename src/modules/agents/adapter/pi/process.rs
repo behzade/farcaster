@@ -111,6 +111,16 @@ pub(crate) struct PiRpcProcess {
     sandbox_mode: Option<HarnessAccessMode>,
     caller_identity: crate::modules::agents::core::CallerIdentity,
     _mcp_config: Option<TransientMcpConfig>,
+    launch_command: AgentLaunchConfig,
+    project: PathBuf,
+    is_worker: bool,
+    parent_worker_id: Option<String>,
+    native_parent_session: Option<String>,
+    wake: Option<thread::Thread>,
+    steering_configured: bool,
+    selected_model: Option<(String, String)>,
+    selected_reasoning: Option<String>,
+    pending_configurations: HashMap<String, PendingConfiguration>,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -123,6 +133,13 @@ pub(crate) struct PiRpcProcess {
     parent_session: Option<String>,
     pending_parent_stamp: Option<PathBuf>,
     expected_resume: Option<PathBuf>,
+    session_locator: Option<PathBuf>,
+}
+
+enum PendingConfiguration {
+    Steering,
+    Model { provider: String, model_id: String },
+    Reasoning(String),
 }
 
 impl PiRpcProcess {
@@ -217,16 +234,17 @@ impl PiRpcProcess {
             .as_ref()
             .and_then(|(id, _)| registry.native_parent_session(id, "pi"));
         let caller_identity = if let Some((worker_id, worker_name)) = worker {
-            registry.issue_as(
+            registry.issue_as_with_access(
                 project,
                 profile,
                 wake.clone(),
                 worker_id,
                 worker_name,
-                parent_worker_id,
+                parent_worker_id.clone(),
+                command.access_mode,
             )?
         } else {
-            registry.issue(project, profile, wake.clone())
+            registry.issue_with_access(project, profile, wake.clone(), command.access_mode)
         };
         let mcp_config = (!is_worker && crate::modules::agents::adapter::farcaster_mcp::enabled())
             .then(|| TransientMcpConfig::create(caller_identity.token()))
@@ -272,7 +290,10 @@ impl PiRpcProcess {
             .ok_or_else(|| "Pi stderr was not piped".to_owned())?;
         let child = Arc::new(Mutex::new(child));
         let (sender, incoming) = mpsc::channel();
-        let sender = ReaderSender { sender, wake };
+        let sender = ReaderSender {
+            sender,
+            wake: wake.clone(),
+        };
         spawn_stdout_reader(stdout, sender.clone());
         spawn_stderr_reader(stderr, sender);
         let mut rpc = Self {
@@ -281,6 +302,16 @@ impl PiRpcProcess {
             sandbox_mode: None,
             caller_identity,
             _mcp_config: mcp_config,
+            launch_command: command.clone(),
+            project: project.to_path_buf(),
+            is_worker,
+            parent_worker_id,
+            native_parent_session: parent_session.clone(),
+            wake,
+            steering_configured: false,
+            selected_model: None,
+            selected_reasoning: None,
+            pending_configurations: HashMap::new(),
             child,
             stdin: Arc::new(Mutex::new(stdin)),
             incoming,
@@ -296,6 +327,7 @@ impl PiRpcProcess {
                 SessionLaunch::Resume(path) => Some(crate::sessions::normalize_session_path(path)),
                 _ => None,
             },
+            session_locator: None,
         };
         rpc.readiness_handshake(Duration::from_secs(15))?;
         rpc.configure_sandbox(command.access_mode)?;
@@ -342,16 +374,37 @@ impl PiRpcProcess {
                 ..
             }
         );
-        match &request {
+        if matches!(&request, SessionCommand::Abort) {
+            self.restart_after_abort()?;
+            let id = self.next_request_id();
+            self.queued
+                .push_back(SessionEvent::Response(SessionResponse::success(
+                    Some(id.clone()),
+                    crate::agents::SessionResponsePayload::Abort,
+                )));
+            self.queued.push_back(SessionEvent::Activity(
+                serde_json::json!({"type": "agent_settled"}).into(),
+            ));
+            return Ok(id);
+        }
+        let configuration = match &request {
+            SessionCommand::ConfigureSteering => Some(PendingConfiguration::Steering),
             SessionCommand::SelectModel { provider, model_id } => {
-                self.caller_identity.select_model(provider, model_id);
+                Some(PendingConfiguration::Model {
+                    provider: provider.clone(),
+                    model_id: model_id.clone(),
+                })
             }
             SessionCommand::SelectReasoning { level } => {
-                self.caller_identity.select_effort(level);
+                Some(PendingConfiguration::Reasoning(level.clone()))
             }
-            _ => {}
-        }
+            _ => None,
+        };
         let id = self.send_command(super::protocol::encode_request(request)?)?;
+        if let Some(configuration) = configuration {
+            self.pending_configurations
+                .insert(id.clone(), configuration);
+        }
         if starts_run {
             self.set_activity(WorkerActivityState::Starting);
         }
@@ -367,8 +420,7 @@ impl PiRpcProcess {
             .and_then(Value::as_str)
             .ok_or_else(|| "RPC command requires a string type".to_owned())?
             .to_owned();
-        self.next_id = self.next_id.saturating_add(1);
-        let id = format!("gpui-{}", self.next_id);
+        let id = self.next_request_id();
         object.insert("id".into(), Value::String(id.clone()));
         let encoded = encode_json_line(&command)
             .map_err(|error| format!("encode {command_type}: {error}"))?;
@@ -378,6 +430,143 @@ impl PiRpcProcess {
             return Err(error);
         }
         Ok(id)
+    }
+
+    fn next_request_id(&mut self) -> String {
+        self.next_id = self.next_id.saturating_add(1);
+        format!("gpui-{}", self.next_id)
+    }
+
+    fn restart_after_abort(&mut self) -> Result<(), String> {
+        let session = self.session_locator.clone();
+        let restore_steering = self.steering_configured;
+        let restore_model = self.selected_model.clone();
+        let restore_reasoning = self.selected_reasoning.clone();
+        self.peer_messages.clear();
+        self.caller_identity.discard_pending_messages();
+        self.force_stop()?;
+
+        let launch = session
+            .as_deref()
+            .map_or(SessionLaunch::New, SessionLaunch::Resume);
+        let mut prepared = rpc_command(
+            &self.launch_command,
+            &self.project,
+            launch,
+            self._mcp_config.as_ref().map(TransientMcpConfig::path),
+        )
+        .map_err(|error| restart_error(session.as_deref(), error))?;
+        metadata::apply(
+            &mut prepared,
+            &self.project,
+            &launch,
+            self.is_worker,
+            self.caller_identity.worker_identity().as_ref(),
+            self.parent_worker_id.as_deref(),
+            self.native_parent_session.as_deref(),
+        );
+        let mut child = prepared
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| restart_error(session.as_deref(), error.to_string()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| restart_error(session.as_deref(), "stdin was not piped".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| restart_error(session.as_deref(), "stdout was not piped".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| restart_error(session.as_deref(), "stderr was not piped".into()))?;
+        let (sender, incoming) = mpsc::channel();
+        let sender = ReaderSender {
+            sender,
+            wake: self.wake.clone(),
+        };
+        spawn_stdout_reader(stdout, sender.clone());
+        spawn_stderr_reader(stderr, sender);
+        self.child = Arc::new(Mutex::new(child));
+        self.stdin = Arc::new(Mutex::new(stdin));
+        self.incoming = incoming;
+        let completed = self
+            .queued
+            .drain(..)
+            .filter(|event| {
+                matches!(
+                    event,
+                    SessionEvent::Response(response)
+                        if matches!(
+                            response.operation(),
+                            crate::agents::SessionOperation::Prompt(_)
+                        )
+                )
+            })
+            .collect::<Vec<_>>();
+        let abandoned = std::mem::take(&mut self.pending);
+        self.pending_configurations.clear();
+        self.stderr.clear();
+        self.expected_resume = session
+            .as_deref()
+            .map(crate::sessions::normalize_session_path);
+        self.set_activity(WorkerActivityState::Idle);
+        let restore = (|| {
+            self.readiness_handshake(Duration::from_secs(15))?;
+            if restore_steering {
+                self.request_and_wait(SessionCommand::ConfigureSteering)?;
+            }
+            if let Some((provider, model_id)) = restore_model {
+                self.request_and_wait(SessionCommand::SelectModel { provider, model_id })?;
+            }
+            if let Some(level) = restore_reasoning {
+                self.request_and_wait(SessionCommand::SelectReasoning { level })?;
+            }
+            self.configure_sandbox(self.launch_command.access_mode)
+        })();
+        if let Err(error) = restore {
+            let cleanup = self.force_stop();
+            return Err(restart_error(
+                session.as_deref(),
+                cleanup.map_or_else(
+                    |cleanup| format!("{error}; cleanup failed: {cleanup}"),
+                    |()| error.clone(),
+                ),
+            ));
+        }
+        self.queued.extend(completed);
+        self.queued
+            .extend(abandoned.into_iter().map(|(id, command)| {
+                SessionEvent::Response(SessionResponse::failure(
+                    Some(id),
+                    super::wire::response_operation(&command),
+                    "request cancelled because Pi stopped".into(),
+                ))
+            }));
+        Ok(())
+    }
+
+    fn force_stop(&mut self) -> Result<(), String> {
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| "Pi process lock was poisoned".to_owned())?;
+        if child
+            .try_wait()
+            .map_err(|error| format!("check Pi before forced stop: {error}"))?
+            .is_none()
+        {
+            child
+                .kill()
+                .map_err(|error| format!("force stop Pi: {error}"))?;
+        }
+        child
+            .wait()
+            .map_err(|error| format!("confirm forced Pi stop: {error}"))?;
+        Ok(())
     }
 
     pub(crate) fn request_and_wait(
@@ -680,6 +869,21 @@ impl PiRpcProcess {
                         "response {id} was for {command}, expected {expected_command}"
                     ));
                 }
+                if let Some(configuration) = self.pending_configurations.remove(id)
+                    && response.result.is_ok()
+                {
+                    match configuration {
+                        PendingConfiguration::Steering => self.steering_configured = true,
+                        PendingConfiguration::Model { provider, model_id } => {
+                            self.caller_identity.select_model(&provider, &model_id);
+                            self.selected_model = Some((provider, model_id));
+                        }
+                        PendingConfiguration::Reasoning(level) => {
+                            self.caller_identity.select_effort(&level);
+                            self.selected_reasoning = Some(level);
+                        }
+                    }
+                }
                 if matches!(
                     &response.result,
                     Ok(crate::agents::SessionResponsePayload::ListCommands(_))
@@ -699,7 +903,17 @@ impl PiRpcProcess {
                 if let Ok(crate::agents::SessionResponsePayload::LoadState(state)) =
                     &response.result
                 {
+                    self.selected_model = state.model.as_ref().map(|model| {
+                        self.caller_identity
+                            .select_model(&model.provider, &model.id);
+                        (model.provider.clone(), model.id.clone())
+                    });
+                    self.selected_reasoning = state.thinking_level.clone();
+                    if let Some(level) = &self.selected_reasoning {
+                        self.caller_identity.select_effort(level);
+                    }
                     let session = state.session_file.as_deref();
+                    self.session_locator = session.map(PathBuf::from);
                     if let Some(expected) = self.expected_resume.take() {
                         let actual = session
                             .map(|path| crate::sessions::normalize_session_path(Path::new(path)));
@@ -829,6 +1043,18 @@ impl Drop for PiRpcProcess {
     fn drop(&mut self) {
         let _ = self.terminate();
     }
+}
+
+fn restart_error(session: Option<&Path>, error: String) -> String {
+    session.map_or_else(
+        || format!("Pi stopped; could not start a fresh session: {error}"),
+        |session| {
+            format!(
+                "Pi stopped; could not resume {}: {error}",
+                session.display()
+            )
+        },
+    )
 }
 
 fn spawn_stdout_reader(mut stdout: impl std::io::Read + Send + 'static, sender: ReaderSender) {

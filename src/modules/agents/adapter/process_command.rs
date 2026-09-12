@@ -44,10 +44,16 @@ impl AgentLaunchConfig {
         command.args(&self.prefix_args).current_dir(project);
         if let Some(environment) = environment {
             command.env_clear().envs(environment);
+        } else if let Some(proxy) = network.app_proxy {
+            command.env("http_proxy", &proxy).env("https_proxy", proxy);
         }
         Ok(command)
     }
 }
+
+#[cfg(test)]
+#[path = "process_command_tests.rs"]
+mod tests;
 
 pub(super) fn resolve_agent_program(
     program: &Path,

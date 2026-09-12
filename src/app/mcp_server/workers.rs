@@ -59,6 +59,19 @@ pub(super) fn send(
             "assignment": assignment,
         }));
     }
+    if let Some(assignment) = pool.resume_child(
+        &caller,
+        &to,
+        params.message.clone(),
+        params.profile.as_deref(),
+    )? {
+        return Ok(serde_json::json!({
+            "worker": to,
+            "created": false,
+            "queued": true,
+            "assignment": assignment,
+        }));
+    }
 
     pool.allow_project(&caller.project)?;
     let name = to;
@@ -134,6 +147,7 @@ fn new_worker(
         provider: Some(assignment.execution.provider.clone()),
         model: Some(assignment.execution.model.clone()),
         effort: assignment.execution.effort.clone(),
+        access_mode: caller.access_mode,
     }
 }
 

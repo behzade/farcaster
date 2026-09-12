@@ -149,7 +149,7 @@ fn add_model_efforts(data: &mut Value) {
     }
 }
 
-fn response_operation(command: &str) -> SessionOperation {
+pub(super) fn response_operation(command: &str) -> SessionOperation {
     match command {
         "set_steering_mode" => SessionOperation::ConfigureSteering,
         "get_state" => SessionOperation::LoadState,

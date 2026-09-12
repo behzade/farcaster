@@ -16,6 +16,8 @@ pub(crate) use caller::{
     CallerContext, CallerIdentity, CallerProfile, CallerRegistry, WorkerFamilyLink,
     is_child_input_id,
 };
+#[cfg(test)]
+pub(crate) use concurrency::WorkerConcurrency;
 pub(crate) use concurrency::WorkerSlot;
 pub(crate) use pool::WorkerPool;
 pub(crate) use prompt_store::{
@@ -24,6 +26,7 @@ pub(crate) use prompt_store::{
     has_queued_for as has_queued_prompts_for, queued as queued_prompts,
 };
 pub(crate) use worker::{
-    CommonTool, TokenUsage, ToolReviewState, WorkerActivity, WorkerActivityState, WorkerEvent,
-    WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage,
+    ChildSessionOutcome, CommonTool, TokenUsage, ToolReviewState, WorkerActivity,
+    WorkerActivityState, WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession,
+    WorkerSessionFactory, WorkerUsage,
 };

@@ -492,6 +492,9 @@ pub(crate) enum WorkerContext {
     Session {
         session_locator: String,
     },
+    Resume {
+        session_locator: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

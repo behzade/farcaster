@@ -11,6 +11,12 @@ use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, notices, server_config};
 
 static SERVER: Mutex<Option<ServerState>> = Mutex::new(None);
 
+#[cfg(test)]
+static TEST_WORKER_POOL: Mutex<Option<crate::agents::WorkerPool>> = Mutex::new(None);
+
+#[cfg(test)]
+static TEST_WORKER_POOL_LOCK: Mutex<()> = Mutex::new(());
+
 pub(crate) struct McpServer;
 
 struct ServerState {
@@ -74,6 +80,102 @@ pub(crate) fn set_enabled(enabled: bool) -> Result<(), String> {
     }
     crate::builtin_mcp::set_enabled(enabled);
     Ok(())
+}
+
+pub(crate) fn set_worker_app_proxy(proxy: Option<String>) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(workers) = TEST_WORKER_POOL
+        .lock()
+        .map_err(|_| "test worker pool is unavailable")?
+        .as_ref()
+        .cloned()
+    {
+        return workers.set_app_proxy(proxy);
+    }
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    let Some(server) = current.as_ref() else {
+        return Ok(());
+    };
+    server.service.workers.set_app_proxy(proxy)
+}
+
+pub(crate) fn stop_session_family_workers(
+    project: &std::path::Path,
+    sessions: &[(String, PathBuf)],
+) -> Result<usize, String> {
+    #[cfg(test)]
+    if let Some(workers) = TEST_WORKER_POOL
+        .lock()
+        .map_err(|_| "test worker pool is unavailable")?
+        .as_ref()
+        .cloned()
+    {
+        return workers.stop_session_family(project, sessions);
+    }
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    let Some(server) = current.as_ref() else {
+        return Ok(0);
+    };
+    server
+        .service
+        .workers
+        .stop_session_family(project, sessions)
+}
+
+pub(crate) fn finish_session_family_worker_stop(
+    project: &std::path::Path,
+    sessions: &[(String, PathBuf)],
+) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(workers) = TEST_WORKER_POOL
+        .lock()
+        .map_err(|_| "test worker pool is unavailable")?
+        .as_ref()
+        .cloned()
+    {
+        return workers.finish_session_family_stop(project, sessions);
+    }
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    let Some(server) = current.as_ref() else {
+        return Ok(());
+    };
+    server
+        .service
+        .workers
+        .finish_session_family_stop(project, sessions)
+}
+
+#[cfg(test)]
+pub(crate) fn with_test_worker_pool<T>(
+    workers: crate::agents::WorkerPool,
+    test: impl FnOnce() -> T,
+) -> T {
+    let _serial = TEST_WORKER_POOL_LOCK.lock().expect("test worker pool lock");
+    *TEST_WORKER_POOL.lock().expect("test worker pool") = Some(workers);
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            *TEST_WORKER_POOL.lock().expect("test worker pool") = None;
+        }
+    }
+    let _clear = Clear;
+    test()
+}
+
+pub(crate) fn worker_snapshots() -> Result<Vec<crate::agents::WorkerSnapshot>, String> {
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    let Some(server) = current.as_ref() else {
+        return Ok(Vec::new());
+    };
+    server.service.workers.snapshots()
 }
 
 impl Drop for McpServer {

@@ -23,7 +23,7 @@ pub(super) fn observe(parent: &str, item: &Value) -> Option<bool> {
     let child = item.get("agentThreadId").and_then(Value::as_str)?;
     let running = match item.get("kind").and_then(Value::as_str) {
         Some("started") => true,
-        Some("interrupted" | "completed") => false,
+        Some("interrupted" | "completed" | "failed") => false,
         // Message delivery does not start a turn, even when the child is idle.
         _ => return None,
     };

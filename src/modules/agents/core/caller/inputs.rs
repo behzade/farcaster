@@ -8,11 +8,17 @@ pub(crate) fn is_child_input_id(id: &str) -> bool {
 }
 
 pub(super) struct PendingInput {
-    parent_id: String,
+    pub(super) parent_id: String,
     input: WorkerInput,
     original_id: String,
     delivered: bool,
     responses: mpsc::Sender<WorkerInputResponse>,
+    parent_session: CallerSession,
+}
+
+pub(super) struct ExpiredInput {
+    parent: CallerSession,
+    id: String,
 }
 
 pub(in crate::modules::agents::core) struct InputLease {
@@ -23,7 +29,31 @@ pub(in crate::modules::agents::core) struct InputLease {
 impl Drop for InputLease {
     fn drop(&mut self) {
         if let Ok(mut inputs) = self.registry.inputs.lock() {
-            inputs.retain(|pending| pending.input.id != self.id);
+            let Some(index) = inputs
+                .iter()
+                .position(|pending| pending.input.id == self.id)
+            else {
+                return;
+            };
+            let pending = inputs.remove(index);
+            drop(inputs);
+            if !pending.delivered {
+                return;
+            }
+            if let Ok(mut expired) = self.registry.expired_inputs.lock() {
+                expired.push(ExpiredInput {
+                    parent: pending.parent_session.clone(),
+                    id: pending.input.id,
+                });
+            }
+            if let Ok(callers) = self.registry.callers.lock()
+                && let Some(parent) = callers
+                    .values()
+                    .find(|caller| caller.session_key().as_ref() == Some(&pending.parent_session))
+                && let Some(wake) = &parent.wake
+            {
+                wake.unpark();
+            }
         }
     }
 }
@@ -82,6 +112,32 @@ impl CallerRegistry {
             .map_err(|_| "worker is no longer available".into())
     }
 
+    pub(crate) fn take_expired_child_inputs(
+        &self,
+        project: &Path,
+        backend: &str,
+        session: &str,
+    ) -> Vec<String> {
+        let parent = CallerSession {
+            project: canonical_project(project),
+            backend: backend.to_owned(),
+            session: session.to_owned(),
+        };
+        let Ok(mut expired) = self.expired_inputs.lock() else {
+            return Vec::new();
+        };
+        let mut ids = Vec::new();
+        let mut index = 0;
+        while index < expired.len() {
+            if expired[index].parent == parent {
+                ids.push(expired.remove(index).id);
+            } else {
+                index += 1;
+            }
+        }
+        ids
+    }
+
     pub(in crate::modules::agents::core) fn request_child_input(
         &self,
         child: &WorkerParent,
@@ -93,16 +149,26 @@ impl CallerRegistry {
             .lock()
             .map_err(|_| "worker caller registry is unavailable")?;
         let mut parent_id = &child.id;
+        let mut direct = true;
         let parent = loop {
             let parent = callers
                 .values()
                 .find(|caller| caller.worker_id == *parent_id && caller.project == child.project)
+                .or_else(|| {
+                    direct
+                        .then(|| callers.values().find(|caller| child.matches(caller)))
+                        .flatten()
+                })
                 .ok_or("parent worker is unavailable")?;
+            direct = false;
             match &parent.parent_worker_id {
                 Some(id) => parent_id = id,
                 None => break parent,
             }
         };
+        let parent_session = parent
+            .session_key()
+            .ok_or("parent worker has no persistent session")?;
         let original_id = input.id;
         input.id = new_identity("farcaster-worker-input");
         input.prompt = format!("Child {}\n\n{}", child.child_name, input.prompt);
@@ -116,6 +182,7 @@ impl CallerRegistry {
                 original_id,
                 delivered: false,
                 responses,
+                parent_session,
             });
         if let Some(wake) = &parent.wake {
             wake.unpark();

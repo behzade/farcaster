@@ -20,11 +20,12 @@ pub(crate) use contract::{
     SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
     SessionHistory, SessionLaunch, SessionMetadata, SessionOperation, SessionResponse,
     SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
-    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, valid_worker_name,
+    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerSnapshot, WorkerStatus,
+    valid_worker_name,
 };
 pub(crate) use core::{
-    CallerContext, CallerProfile, CallerRegistry, CommonTool, PromptStore, TokenUsage,
-    ToolCategory, ToolMetadata, ToolReviewState, WorkerActivity, WorkerActivityState,
+    CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool, PromptStore,
+    TokenUsage, ToolCategory, ToolMetadata, ToolReviewState, WorkerActivity, WorkerActivityState,
     WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerLaunch, WorkerPool,
     WorkerProfile, WorkerProfiles, WorkerSendMode, WorkerSession, WorkerSessionFactory,
     WorkerUsage, begin_prompt, complete_prompt, enqueue_prompt_with_presentation, fail_prompt,

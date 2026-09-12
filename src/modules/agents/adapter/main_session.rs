@@ -41,8 +41,14 @@ fn finished_tool_result(result: Value) -> Value {
 
 struct PendingPrompt {
     requested_mode: PromptMode,
-    delivery_mode: PromptMode,
-    queued_message: Option<String>,
+}
+
+struct PromptDelivery {
+    request_id: String,
+    mode: PromptMode,
+    message: String,
+    acknowledged: bool,
+    delivered: bool,
 }
 
 pub(super) struct WorkerSessionTransport {
@@ -53,6 +59,7 @@ pub(super) struct WorkerSessionTransport {
     pending: VecDeque<SessionEvent>,
     next_id: u64,
     pending_prompts: BTreeMap<String, PendingPrompt>,
+    prompt_deliveries: VecDeque<PromptDelivery>,
     running: bool,
     steering: Vec<String>,
     follow_up: Vec<String>,
@@ -108,6 +115,7 @@ impl WorkerSessionTransport {
             pending: VecDeque::new(),
             next_id: 0,
             pending_prompts: BTreeMap::new(),
+            prompt_deliveries: VecDeque::new(),
             running: false,
             steering: Vec::new(),
             follow_up: Vec::new(),
@@ -131,20 +139,30 @@ impl WorkerSessionTransport {
     }
 
     fn finish_prompt_ack(&mut self, id: String, result: Result<(), String>) {
-        let Some(PendingPrompt {
-            requested_mode,
-            delivery_mode,
-            queued_message,
-        }) = self.pending_prompts.remove(&id)
-        else {
+        let Some(PendingPrompt { requested_mode }) = self.pending_prompts.remove(&id) else {
             return;
         };
         if result.is_ok() {
             self.message_count = self.message_count.saturating_add(1);
-            if let Some(message) = queued_message {
-                self.enqueue_message(delivery_mode, message);
+            if let Some(delivery) = self
+                .prompt_deliveries
+                .iter_mut()
+                .find(|delivery| delivery.request_id == id)
+            {
+                delivery.acknowledged = true;
+                if !delivery.delivered {
+                    let mode = delivery.mode;
+                    let message = delivery.message.clone();
+                    self.enqueue_message(mode, message);
+                }
             }
+        } else {
+            self.prompt_deliveries
+                .retain(|delivery| delivery.request_id != id);
         }
+        self.prompt_deliveries.retain(|delivery| {
+            !(delivery.request_id == id && delivery.acknowledged && delivery.delivered)
+        });
         let response = match result {
             Ok(()) => SessionResponse::success(Some(id), Payload::Prompt(requested_mode)),
             Err(error) => {
@@ -177,11 +195,44 @@ impl WorkerSessionTransport {
         self.enqueue_queue_update();
     }
 
-    fn acknowledge_delivery(&mut self, mode: WorkerSendMode, message: &str) {
-        let queue = match mode {
+    fn acknowledge_delivery(
+        &mut self,
+        submission_id: Option<&str>,
+        mode: WorkerSendMode,
+        message: &str,
+    ) {
+        let delivery_mode = match mode {
             WorkerSendMode::Prompt => return,
-            WorkerSendMode::Steer => &mut self.steering,
-            WorkerSendMode::Queue => &mut self.follow_up,
+            WorkerSendMode::Steer => PromptMode::Steer,
+            WorkerSendMode::Queue => PromptMode::FollowUp,
+        };
+        let acknowledged = self
+            .prompt_deliveries
+            .iter_mut()
+            .find(|delivery| {
+                !delivery.delivered
+                    && delivery.mode == delivery_mode
+                    && delivery.message == message
+                    && submission_id.is_none_or(|id| delivery.request_id == id)
+            })
+            .map(|delivery| {
+                delivery.delivered = true;
+                delivery.acknowledged
+            });
+        if acknowledged == Some(true) {
+            self.remove_queued_message(delivery_mode, message);
+        } else if acknowledged.is_none() && submission_id.is_none() {
+            self.remove_queued_message(delivery_mode, message);
+        }
+        self.prompt_deliveries
+            .retain(|delivery| !(delivery.acknowledged && delivery.delivered));
+    }
+
+    fn remove_queued_message(&mut self, mode: PromptMode, message: &str) {
+        let queue = match mode {
+            PromptMode::Normal => return,
+            PromptMode::Steer => &mut self.steering,
+            PromptMode::FollowUp => &mut self.follow_up,
         };
         if let Some(index) = queue.iter().position(|queued| queued == message) {
             queue.remove(index);
@@ -190,6 +241,7 @@ impl WorkerSessionTransport {
     }
 
     fn clear_queue(&mut self) {
+        self.prompt_deliveries.clear();
         if self.steering.is_empty() && self.follow_up.is_empty() {
             return;
         }
@@ -201,19 +253,20 @@ impl WorkerSessionTransport {
     fn enqueue_worker_event(&mut self, event: WorkerEvent) {
         match event {
             WorkerEvent::Started => {
-                self.running = true;
-                self.assistant_message.clear();
-                self.observed_text.clear();
-                self.usage.turn = TokenUsage::default();
-                self.pending
-                    .push_back(activity(json!({"type": "agent_start"})));
+                if !self.running {
+                    self.running = true;
+                    self.assistant_message.clear();
+                    self.observed_text.clear();
+                    self.usage.turn = TokenUsage::default();
+                    self.pending
+                        .push_back(activity(json!({"type": "agent_start"})));
+                }
             }
             WorkerEvent::Settled { output } => {
                 self.running = false;
                 self.reconcile_completed_output(&output);
                 self.start_assistant_message();
                 self.finish_assistant_message(Some(self.usage.turn));
-                self.clear_queue();
                 self.pending
                     .push_back(activity(json!({"type": "agent_settled"})));
                 self.assistant_message.clear();
@@ -229,6 +282,12 @@ impl WorkerSessionTransport {
                     .push_back(SessionEvent::Interaction(interaction(input)));
             }
             WorkerEvent::Activity(activity) => self.enqueue_activity(activity),
+            WorkerEvent::RequestFailed { operation, error } => {
+                self.pending.push_back(activity(json!({
+                    "type": "extension_error",
+                    "error": format!("{operation}: {error}"),
+                })));
+            }
             WorkerEvent::Failed(error) => {
                 for id in self.pending_prompts.keys().cloned().collect::<Vec<_>>() {
                     self.finish_prompt_ack(id, Err(error.clone()));
@@ -242,7 +301,7 @@ impl WorkerSessionTransport {
     fn enqueue_activity(&mut self, worker_activity: WorkerActivity) {
         let event = match worker_activity {
             WorkerActivity::InputDelivered { mode, message } => {
-                self.input_delivered(mode, &message, json!(message));
+                self.input_delivered(None, mode, &message, json!(message));
                 return;
             }
             WorkerActivity::InputDeliveredWithImages {
@@ -256,7 +315,30 @@ impl WorkerSessionTransport {
                         "type":"image", "data":image.data, "mimeType":image.mime_type,
                     })
                 }));
-                self.input_delivered(mode, &message, json!(content));
+                self.input_delivered(None, mode, &message, json!(content));
+                return;
+            }
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id,
+                mode,
+                message,
+            } => {
+                self.input_delivered(Some(&submission_id), mode, &message, json!(message));
+                return;
+            }
+            WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id,
+                mode,
+                message,
+                images,
+            } => {
+                let mut content = vec![json!({"type":"text","text":message})];
+                content.extend(images.into_iter().map(|image| {
+                    json!({
+                        "type":"image", "data":image.data, "mimeType":image.mime_type,
+                    })
+                }));
+                self.input_delivered(Some(&submission_id), mode, &message, json!(content));
                 return;
             }
             WorkerActivity::PeerInputDelivered { message } => json!({
@@ -327,6 +409,7 @@ impl WorkerSessionTransport {
                 id,
                 title,
                 is_running,
+                outcome,
             } => {
                 let path = self
                     .path
@@ -336,6 +419,7 @@ impl WorkerSessionTransport {
                 json!({"type": "child_sessions_changed", "child": {
                     "id": id, "path": path, "title": title,
                     "parent_session": self.locator, "is_running": is_running,
+                    "outcome": outcome.map(|outcome| outcome.as_str()),
                 }})
             }
             WorkerActivity::ToolMetadataChanged { id, args, metadata } => {
@@ -465,8 +549,14 @@ impl WorkerSessionTransport {
         self.pending.push_back(activity(event));
     }
 
-    fn input_delivered(&mut self, mode: WorkerSendMode, text: &str, content: Value) {
-        self.acknowledge_delivery(mode, text);
+    fn input_delivered(
+        &mut self,
+        submission_id: Option<&str>,
+        mode: WorkerSendMode,
+        text: &str,
+        content: Value,
+    ) {
+        self.acknowledge_delivery(submission_id, mode, text);
         self.finish_assistant_message(None);
         let message =
             json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
@@ -584,9 +674,8 @@ impl SessionTransport for WorkerSessionTransport {
                 images,
             } => {
                 let requested_mode = mode;
-                // Cursor has no mid-turn steering; show and deliver it as a follow-up.
-                let mode = if self.harness == super::cursor::PROFILE.backend
-                    && mode == PromptMode::Steer
+                // Backends without live steering still admit Enter as a follow-up.
+                let mode = if mode == PromptMode::Steer && !super::supports_steering(&self.harness)
                 {
                     PromptMode::FollowUp
                 } else {
@@ -601,14 +690,17 @@ impl SessionTransport for WorkerSessionTransport {
                 let accepted =
                     self.worker
                         .submit_prompt(id.clone(), message, worker_mode, images)?;
-                self.pending_prompts.insert(
-                    id.clone(),
-                    PendingPrompt {
-                        requested_mode,
-                        delivery_mode: mode,
-                        queued_message,
-                    },
-                );
+                self.pending_prompts
+                    .insert(id.clone(), PendingPrompt { requested_mode });
+                if let Some(message) = queued_message {
+                    self.prompt_deliveries.push_back(PromptDelivery {
+                        request_id: id.clone(),
+                        mode,
+                        message,
+                        acknowledged: false,
+                        delivered: false,
+                    });
+                }
                 if accepted {
                     self.finish_prompt_ack(id.clone(), Ok(()));
                 }

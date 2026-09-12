@@ -68,6 +68,8 @@ pub(crate) struct WorkerLaunch {
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
+    pub(crate) access_mode: crate::agents::HarnessAccessMode,
+    pub(crate) app_proxy: Option<String>,
     pub(crate) ephemeral: bool,
 }
 
@@ -112,12 +114,40 @@ pub(crate) enum ToolReviewState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ChildSessionOutcome {
+    Complete,
+    Failed,
+    Incomplete,
+}
+
+impl ChildSessionOutcome {
+    pub(crate) const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Complete => "complete",
+            Self::Failed => "failed",
+            Self::Incomplete => "incomplete",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum WorkerActivity {
     InputDelivered {
         mode: WorkerSendMode,
         message: String,
     },
     InputDeliveredWithImages {
+        mode: WorkerSendMode,
+        message: String,
+        images: Vec<crate::protocol::PromptImage>,
+    },
+    SubmittedInputDelivered {
+        submission_id: String,
+        mode: WorkerSendMode,
+        message: String,
+    },
+    SubmittedInputDeliveredWithImages {
+        submission_id: String,
         mode: WorkerSendMode,
         message: String,
         images: Vec<crate::protocol::PromptImage>,
@@ -193,6 +223,7 @@ pub(crate) enum WorkerActivity {
         id: String,
         title: Option<String>,
         is_running: bool,
+        outcome: Option<ChildSessionOutcome>,
     },
     CompactionStarted,
     CompactionFinished {
@@ -208,6 +239,7 @@ pub(crate) enum WorkerEvent {
     SessionChanged { locator: String },
     NeedsInput(WorkerInput),
     Activity(WorkerActivity),
+    RequestFailed { operation: String, error: String },
     Failed(String),
 }
 

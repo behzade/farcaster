@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn worker_factory_resumes_the_saved_thread_and_accepts_a_new_prompt() -> Result<(), String> {
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"initialize"'*) result='{"userAgent":"fixture","codexHome":"/tmp/codex-fixture","platformFamily":"unix","platformOs":"macos"}' ;;
+    *'"method":"thread/resume"'*) result='{"thread":{"id":"saved-thread","cwd":"/project"},"cwd":"/project"}' ;;
+    *'"method":"skills/list"'*) result='{"data":[]}' ;;
+    *'"method":"turn/start"'*) result='{"turn":{"id":"new-turn","status":"inProgress"}}' ;;
+    *) result='{}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let script = project.path().join("codex-resume-fixture.sh");
+    std::fs::write(&script, SCRIPT).map_err(|error| error.to_string())?;
+    let factory = CodexWorkerFactory::new(AgentLaunchConfig::test_script(&script, Vec::new()));
+    let mut worker = factory.create(WorkerLaunch {
+        slot: None,
+        worker_id: "resumed-worker".into(),
+        worker_name: "resumed".into(),
+        project: project.path().to_owned(),
+        parent_session: "parent-thread".into(),
+        parent_worker_id: None,
+        context: WorkerContext::Resume {
+            session_locator: "saved-thread".into(),
+        },
+        provider: None,
+        model: None,
+        effort: None,
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        ephemeral: false,
+    })?;
+
+    assert_eq!(
+        worker.poll(),
+        Some(WorkerEvent::SessionChanged {
+            locator: "saved-thread".into(),
+        })
+    );
+    worker.send("after restart".into(), WorkerSendMode::Prompt)?;
+    worker.close()?;
+
+    let requests = std::fs::read_to_string(script.with_extension("sh.requests"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        requests.contains("\"method\":\"thread/resume\""),
+        "{requests}"
+    );
+    assert!(
+        requests.contains("\"threadId\":\"saved-thread\""),
+        "{requests}"
+    );
+    assert!(
+        !requests.contains("\"method\":\"thread/fork\""),
+        "{requests}"
+    );
+    assert!(requests.contains("after restart"), "{requests}");
+    Ok(())
+}
+
+#[test]
 fn delivered_inputs_preserve_images() {
     use crate::protocol::PromptImage;
 
@@ -118,6 +184,7 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
         ("interacted", Some(true)),
         ("interrupted", Some(false)),
         ("completed", Some(false)),
+        ("failed", Some(false)),
         ("interacted", Some(false)),
     ] {
         let item = json!({"type": "subAgentActivity", "id": kind,
@@ -136,6 +203,12 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
                 }));
         }
         if kind != "interacted" {
+            let outcome = match kind {
+                "completed" => Some(crate::agents::ChildSessionOutcome::Complete),
+                "failed" => Some(crate::agents::ChildSessionOutcome::Failed),
+                "interrupted" => Some(crate::agents::ChildSessionOutcome::Incomplete),
+                _ => None,
+            };
             assert_eq!(
                 session.poll(),
                 Some(WorkerEvent::Activity(
@@ -143,6 +216,7 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
                         id: "native-event-child".into(),
                         title: Some("/root/reviewer".into()),
                         is_running: running.expect("test operation should succeed"),
+                        outcome,
                     }
                 ))
             );
@@ -176,7 +250,7 @@ fn interactions_read_child_turn_status_and_discard_superseded_reads() {
     let (mut session, mut sent) = writable_test_session();
     session.thread_id = "interaction-read-parent".into();
     let child = "interaction-read-child";
-    for status in ["completed", "inProgress", "completed"] {
+    for status in ["completed", "inProgress", "failed", "completed"] {
         session.observe_child_activity(&json!({
             "agentThreadId": child, "agentPath": "/root/reviewer", "kind": "interacted"
         }));
@@ -200,6 +274,11 @@ fn interactions_read_child_turn_status_and_discard_superseded_reads() {
                     id: child.into(),
                     title: Some("/root/reviewer".into()),
                     is_running: status == "inProgress",
+                    outcome: match status {
+                        "completed" => Some(crate::agents::ChildSessionOutcome::Complete),
+                        "failed" => Some(crate::agents::ChildSessionOutcome::Failed),
+                        _ => None,
+                    },
                 }
             ))
         );
@@ -279,6 +358,7 @@ fn test_session() -> CodexWorkerSession {
         pending: HashMap::new(),
         pending_inputs: HashMap::new(),
         prompt_requests: HashMap::new(),
+        client_submissions: HashMap::new(),
         prompt_acks: VecDeque::new(),
         queued_inbound: VecDeque::new(),
         peer_messages: VecDeque::new(),
@@ -817,4 +897,309 @@ fn rejected_or_malformed_codex_reply_never_acknowledges_success() {
         }
         assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "submission"));
     }
+}
+
+#[test]
+fn rejected_steer_and_interrupt_requests_do_not_fail_the_session() {
+    let (mut session, _sent) = writable_test_session();
+    session.current_turn = Some("active".into());
+    session
+        .submit_prompt(
+            "steer-submission".into(),
+            "redirect".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("send steer");
+    let steer_id = CodexRequestId::Number(session.next_id);
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: steer_id,
+        error: super::super::contract::CodexRpcError {
+            code: -32000,
+            message: "turn is no longer active".into(),
+            data: Value::Null,
+        },
+    }));
+    assert!(session.poll().is_none());
+    assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "steer-submission"));
+
+    session.interrupt_turn("active").expect("send interrupt");
+    let interrupt_id = CodexRequestId::Number(session.next_id);
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: interrupt_id,
+        error: super::super::contract::CodexRpcError {
+            code: -32000,
+            message: "turn is no longer active".into(),
+            data: Value::Null,
+        },
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::RequestFailed { operation, error })
+            if operation == "Codex interrupt" && error == "turn is no longer active"
+    ));
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/agentMessage/delta".into(),
+            params: json!({"threadId":"thread-1","turnId":"active","delta":"still alive"}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+            if delta == "still alive"
+    ));
+}
+
+#[test]
+fn correlated_codex_control_rejection_reaches_the_session_caller() {
+    use crate::agents::extensions::PromptMode;
+    use crate::agents::{SessionCommand, SessionEvent, SessionOperation, SessionTransport};
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+
+    let (mut session, _sent) = writable_test_session();
+    let (incoming, receiver) = mpsc::channel();
+    session.incoming = receiver;
+    session.current_turn = Some("active".into());
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(session),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("Codex transport");
+    let submission_id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("send steer");
+    incoming
+        .send(Ok(CodexInbound::Error {
+            id: CodexRequestId::Number(1),
+            error: super::super::contract::CodexRpcError {
+                code: -32000,
+                message: "turn is no longer active".into(),
+                data: Value::Null,
+            },
+        }))
+        .expect("steer rejection");
+
+    let response = loop {
+        if let Some(SessionEvent::Response(response)) = transport.poll() {
+            break response;
+        }
+    };
+    assert_eq!(response.id.as_deref(), Some(submission_id.as_str()));
+    let error = response.result.expect_err("steer must be rejected");
+    assert_eq!(error.message, "turn is no longer active");
+    assert_eq!(error.operation, SessionOperation::Prompt(PromptMode::Steer));
+}
+
+#[test]
+fn native_queue_delivery_correlates_duplicate_text_before_other_rejection() {
+    let (mut session, _sent) = writable_test_session();
+    session.native_queue = true;
+    session.current_turn = Some("active".into());
+    session
+        .submit_prompt(
+            "first-submission".into(),
+            "same text".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("submit first queue item");
+    session
+        .submit_prompt(
+            "second-submission".into(),
+            "same text".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("submit second queue item");
+
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","item":{
+                "type":"userMessage",
+                "clientId":"farcaster-queue-2",
+                "content":[{"type":"text","text":"same text"}]
+            }}),
+        }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id,
+            mode: WorkerSendMode::Queue,
+            message,
+        })) if submission_id == "second-submission" && message == "same text"
+    ));
+    assert_eq!(
+        session
+            .client_submissions
+            .get("farcaster-queue-1")
+            .map(String::as_str),
+        Some("first-submission")
+    );
+    assert!(!session.client_submissions.contains_key("farcaster-queue-2"));
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: CodexRequestId::Number(1),
+        error: super::super::contract::CodexRpcError {
+            code: -32000,
+            message: "queue rejected".into(),
+            data: Value::Null,
+        },
+    }));
+    assert!(session.poll().is_none());
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("first-submission".into(), Err("queue rejected".into())))
+    );
+    assert!(!session.client_submissions.contains_key("farcaster-queue-1"));
+}
+
+#[test]
+fn native_queue_stays_visible_across_turn_completion_until_delivery() {
+    use crate::agents::extensions::PromptMode;
+    use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
+    use crate::app::views::transcript::conversation::ConversationState;
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+
+    let (mut session, _sent) = writable_test_session();
+    let (incoming, receiver) = mpsc::channel();
+    session.incoming = receiver;
+    session.native_queue = true;
+    session.current_turn = Some("turn-1".into());
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(session),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("Codex transport");
+    fn drain(transport: &mut WorkerSessionTransport, conversation: &mut ConversationState) {
+        while let Some(event) = transport.poll() {
+            if let SessionEvent::Activity(activity) = event {
+                conversation.reduce(activity.value());
+            }
+        }
+    }
+    let mut conversation = ConversationState::default();
+
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "next task".into(),
+            images: Vec::new(),
+        })
+        .expect("queue prompt");
+    incoming
+        .send(Ok(CodexInbound::Response {
+            id: CodexRequestId::Number(1),
+            result: json!({}),
+        }))
+        .expect("queue admission response");
+    drain(&mut transport, &mut conversation);
+    assert_eq!(conversation.queue.follow_up, ["next task"]);
+
+    incoming
+        .send(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}),
+        }))
+        .expect("turn completion");
+    drain(&mut transport, &mut conversation);
+    assert_eq!(conversation.queue.follow_up, ["next task"]);
+
+    incoming
+        .send(Ok(CodexInbound::Notification {
+            method: "item/started".into(),
+            params: json!({"threadId":"thread-1","item":{
+                "type":"userMessage",
+                "clientId":"farcaster-queue-1",
+                "content":[{"type":"text","text":"next task"}]
+            }}),
+        }))
+        .expect("queue delivery");
+    drain(&mut transport, &mut conversation);
+    assert!(conversation.queue.follow_up.is_empty());
+}
+
+#[test]
+fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
+    use crate::agents::{SessionEvent, SessionTransport, WorkerActivityState};
+    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::modules::agents::adapter::main_session::{
+        MainSessionMetadata, WorkerSessionTransport,
+    };
+
+    let (mut session, _sent) = writable_test_session();
+    let (incoming, receiver) = mpsc::channel();
+    session.incoming = receiver;
+    session.current_turn = Some("turn-1".into());
+    session.output = "hello ".into();
+    session
+        .caller_identity
+        .set_activity(WorkerActivityState::Working);
+    session.events.extend([
+        WorkerEvent::Started,
+        WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: "hello ".into(),
+        }),
+    ]);
+    session.peer_messages.push_back(crate::agents::PeerMessage {
+        from: "reviewer".into(),
+        message: "keep going".into(),
+    });
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        "codex-cli",
+        "thread-1".into(),
+        Box::new(session),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("Codex transport");
+    incoming
+        .send(Ok(CodexInbound::Notification {
+            method: "item/agentMessage/delta".into(),
+            params: json!({"threadId":"thread-1","turnId":"turn-1","delta":"world"}),
+        }))
+        .expect("continued delta");
+    incoming
+        .send(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}),
+        }))
+        .expect("turn completion");
+
+    let mut conversation = ConversationState::default();
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(activity) = event {
+            conversation.reduce(activity.value());
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<Vec<_>>(),
+        ["hello world"]
+    );
 }

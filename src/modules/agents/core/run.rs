@@ -1,5 +1,9 @@
 use std::{
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::Duration,
 };
@@ -12,6 +16,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(super) enum RunCommand {
     Stop,
+    Retire,
 }
 
 pub(super) fn spawn(
@@ -21,11 +26,22 @@ pub(super) fn spawn(
     slot: super::WorkerSlot,
     parent: Option<WorkerParent>,
     updates: async_channel::Sender<()>,
+    cleanup_confirmed: Arc<AtomicBool>,
 ) -> Result<(mpsc::Sender<RunCommand>, thread::JoinHandle<()>), String> {
     let (commands, receiver) = mpsc::channel();
     let handle = thread::Builder::new()
         .name(format!("farcaster-worker-{id}"))
-        .spawn(move || run(session, receiver, snapshot, slot, parent, &updates))
+        .spawn(move || {
+            run(
+                session,
+                receiver,
+                snapshot,
+                slot,
+                parent,
+                &updates,
+                &cleanup_confirmed,
+            )
+        })
         .map_err(|error| format!("start worker thread: {error}"))?;
     Ok((commands, handle))
 }
@@ -37,6 +53,7 @@ fn run(
     slot: super::WorkerSlot,
     parent: Option<WorkerParent>,
     updates: &async_channel::Sender<()>,
+    cleanup_confirmed: &AtomicBool,
 ) {
     let (responses, response_rx) = mpsc::channel::<crate::agents::WorkerInputResponse>();
     let mut input_leases = Vec::new();
@@ -46,15 +63,35 @@ fn run(
             Ok(RunCommand::Stop) => {
                 let _ = session.abort();
                 let close_error = session.close().err();
+                cleanup_confirmed.store(close_error.is_none(), Ordering::SeqCst);
                 slot.release();
                 update(&snapshot, |current| {
-                    current.status = WorkerStatus::Stopped;
-                    current.error = close_error;
+                    if let Some(error) = close_error {
+                        current.status = WorkerStatus::Failed;
+                        current.error = Some(format!("worker cleanup failed: {error}"));
+                    } else {
+                        current.status = WorkerStatus::Stopped;
+                        current.error = None;
+                    }
                 });
+                notify(updates);
+                return;
+            }
+            Ok(RunCommand::Retire) => {
+                let close_error = session.close().err();
+                cleanup_confirmed.store(close_error.is_none(), Ordering::SeqCst);
+                slot.release();
+                if let Some(error) = close_error {
+                    update(&snapshot, |current| {
+                        current.status = WorkerStatus::Failed;
+                        current.error = Some(format!("worker cleanup failed: {error}"));
+                    });
+                }
+                notify(updates);
                 return;
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                let _ = session.close();
+                cleanup_confirmed.store(session.close().is_ok(), Ordering::SeqCst);
                 slot.release();
                 return;
             }
@@ -129,11 +166,16 @@ fn run(
                     notify(updates);
                 }
                 WorkerEvent::Activity(_) => {}
+                WorkerEvent::RequestFailed { operation, error } => {
+                    if let Some(parent) = &parent {
+                        parent.report(format!("{operation} failed: {error}"));
+                    }
+                }
                 WorkerEvent::Failed(error) => break 'run error,
             }
         }
     };
-    let error = close_failed(&mut *session, &snapshot, error);
+    let error = close_failed(&mut *session, &snapshot, error, cleanup_confirmed);
     slot.release();
     if let Some(parent) = &parent {
         parent.report(format!("Worker failed: {error}"));
@@ -155,8 +197,11 @@ fn close_failed(
     session: &mut dyn WorkerSession,
     snapshot: &Mutex<WorkerSnapshot>,
     mut error: String,
+    cleanup_confirmed: &AtomicBool,
 ) -> String {
-    if let Err(close_error) = session.close() {
+    let close_error = session.close().err();
+    cleanup_confirmed.store(close_error.is_none(), Ordering::SeqCst);
+    if let Some(close_error) = close_error {
         error.push_str(&format!("; worker cleanup failed: {close_error}"));
     }
     update(snapshot, |current| {

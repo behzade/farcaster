@@ -81,6 +81,8 @@ fn generate_worker_title(
         provider: selection.map(|model| model.provider.clone()),
         model: selection.map(|model| model.id.clone()),
         effort,
+        access_mode: config.access_mode,
+        app_proxy: config.app_proxy.clone(),
         ephemeral: true,
     })?;
     if let Err(error) = session.send(title_prompt(first_prompt), WorkerSendMode::Prompt) {
