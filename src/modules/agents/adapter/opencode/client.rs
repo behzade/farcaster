@@ -142,6 +142,19 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         )
     }
 
+    pub(crate) fn default_model(
+        &mut self,
+        directory: &str,
+    ) -> Result<Option<super::contract::OpenCodeModelSelection>, String> {
+        let directory =
+            url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();
+        self.json(
+            OpenCodeHttpMethod::Get,
+            format!("/api/model/default?directory={directory}"),
+            None,
+        )
+    }
+
     pub(crate) fn commands(&mut self, directory: &str) -> Result<Value, String> {
         let directory =
             url::form_urlencoded::byte_serialize(directory.as_bytes()).collect::<String>();

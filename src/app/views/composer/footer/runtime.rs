@@ -42,8 +42,9 @@ pub(in crate::app::views) fn render(
         },
         |model| model.name.clone(),
     );
-    let effort = identity.effort.unwrap_or("off");
-    let shows_effort = !app.snapshot.available_thinking_levels().is_empty() || effort != "off";
+    let effort = identity.effort.unwrap_or("default");
+    let shows_effort = !app.snapshot.available_thinking_levels().is_empty()
+        || identity.effort.is_some_and(|effort| effort != "off");
     let runtime_content = div()
         .flex()
         .items_center()
@@ -111,7 +112,7 @@ fn runtime_slash() -> AnyElement {
 
 fn effort_color(level: &str) -> gpui::Rgba {
     match level.to_ascii_lowercase().as_str() {
-        "off" => THEME.colors.subtle,
+        "off" | "none" | "default" => THEME.colors.subtle,
         "minimal" => THEME.colors.muted,
         "low" => THEME.colors.link,
         "medium" => THEME.colors.accent,

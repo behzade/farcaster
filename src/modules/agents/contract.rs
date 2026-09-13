@@ -2,7 +2,9 @@ use std::{fmt, path::PathBuf, thread, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+mod effort;
 pub(crate) mod extensions;
+pub(crate) use effort::{effort_rank, model_efforts};
 mod workers;
 
 pub(crate) use workers::{
@@ -71,6 +73,8 @@ pub(crate) struct DiscoveredHistory {
 pub(crate) struct ConfigurationCatalog {
     pub(crate) models: Vec<extensions::Model>,
     pub(crate) efforts: Vec<String>,
+    #[serde(default)]
+    pub(crate) sandbox_adapter: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,6 +93,9 @@ pub(crate) struct SessionGoal {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct QueuedPrompt {
     pub(crate) id: i64,
+    /// Identifies the exact UI submission while this process remains alive.
+    /// Recovered rows predate the UI process and have no pending composer entry.
+    pub(crate) submission_id: Option<String>,
     pub(crate) target: String,
     pub(crate) harness: String,
     pub(crate) project: PathBuf,
@@ -245,6 +252,7 @@ pub(crate) enum SessionCommand {
     SelectReasoning {
         level: String,
     },
+    ResetReasoning,
     SelectServiceTier {
         tier: String,
     },
@@ -277,7 +285,9 @@ impl SessionCommand {
             Self::Rename { .. } => SessionOperation::Rename,
             Self::ForkAt { .. } => SessionOperation::ForkAt,
             Self::SelectModel { .. } => SessionOperation::SelectModel,
-            Self::SelectReasoning { .. } => SessionOperation::SelectReasoning,
+            Self::SelectReasoning { .. } | Self::ResetReasoning => {
+                SessionOperation::SelectReasoning
+            }
             Self::SelectServiceTier { .. } => SessionOperation::SelectServiceTier,
             Self::SelectMode { .. } => SessionOperation::SelectMode,
         }
@@ -306,6 +316,7 @@ impl SessionCommand {
             Self::ForkAt { .. } => "fork session",
             Self::SelectModel { .. } => "select model",
             Self::SelectReasoning { .. } => "select reasoning",
+            Self::ResetReasoning => "reset reasoning",
             Self::SelectServiceTier { .. } => "select service tier",
             Self::SelectMode { .. } => "select mode",
         }
@@ -440,6 +451,8 @@ pub(crate) struct ConfigurationCapabilities {
     pub models: CapabilitySupport,
     pub select_model: CapabilitySupport,
     pub reasoning_effort: CapabilitySupport,
+    pub effort_label: &'static str,
+    pub reset_reasoning_effort: CapabilitySupport,
     pub modes: CapabilitySupport,
     pub commands: CapabilitySupport,
     pub mcp_servers: CapabilitySupport,

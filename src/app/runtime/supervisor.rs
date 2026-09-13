@@ -294,6 +294,7 @@ fn update_selected_configuration(
         RuntimeCommand::SetThinking(effort) => {
             configurations.set_effort(&snapshot.harness, effort.clone())
         }
+        RuntimeCommand::ResetThinking => configurations.reset_effort(&snapshot.harness),
         _ => false,
     }
 }
@@ -382,6 +383,7 @@ struct Supervisor {
     // Coalesce in-flight requests and keep successful loads for this app run.
     // A failed result removes its key so the next selection can retry.
     configuration_requests: HashSet<(String, PathBuf)>,
+    requested_access_modes: HashMap<String, (String, PathBuf, HarnessAccessMode)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
     recovery: crate::app::runtime::recovery::InterruptedPromptRecovery,
     published_recovery_selection: Option<(u64, String, PathBuf, Option<PathBuf>)>,
@@ -560,6 +562,7 @@ impl Supervisor {
             configuration_rx,
             configuration_tx: refresh_configuration.then_some(configuration_tx),
             configuration_requests: HashSet::new(),
+            requested_access_modes: HashMap::new(),
             published_statuses,
             recovery,
             published_recovery_selection: None,

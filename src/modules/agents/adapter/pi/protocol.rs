@@ -8,6 +8,9 @@ use crate::{
 
 pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
     Ok(match request {
+        SessionCommand::ResetReasoning => {
+            return Err("Pi does not advertise reasoning reset".into());
+        }
         SessionCommand::SelectServiceTier { .. } => {
             return Err("Pi does not advertise service tier selection".into());
         }

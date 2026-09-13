@@ -13,7 +13,7 @@ use crate::agents::{
     SessionResponsePayload as Payload, SessionTransport, TokenUsage, ToolReviewState,
     WorkerActivity, WorkerEvent, WorkerInput, WorkerInputResponse, WorkerSendMode, WorkerSession,
     WorkerUsage,
-    extensions::{ExtensionUiRequest, ExtensionUiResponse, Model, PromptMode},
+    extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
 
 #[derive(Default)]
@@ -60,6 +60,11 @@ impl PromptDelivery {
         activity(json!({
             "type": "prompt_delivery", "submissionId": self.request_id, "status": status,
             "message": {"role": "user", "content": self.content,
+                "promptMode": match self.mode {
+                    PromptMode::Normal => "normal",
+                    PromptMode::Steer => "steer",
+                    PromptMode::FollowUp => "follow_up",
+                },
                 "queued": self.mode != PromptMode::Normal, "deliveryTracked": self.delivery_tracked},
         }))
     }
@@ -99,17 +104,27 @@ impl WorkerSessionTransport {
         history: Option<crate::agents::DiscoveredHistory>,
     ) -> Result<Self, String> {
         let path = external_session_path(locator_root, harness, &locator);
-        let model = history
-            .as_ref()
-            .and_then(|history| history.model.clone())
-            .or_else(|| {
-                metadata.models.first().and_then(|model| {
-                    Some((
-                        model.get("provider")?.as_str()?.to_owned(),
-                        model.get("id")?.as_str()?.to_owned(),
-                    ))
-                })
-            });
+        let selection =
+            worker
+                .model_selection()
+                .unwrap_or_else(|| crate::agents::WorkerModelSelection {
+                    model: history
+                        .as_ref()
+                        .and_then(|history| history.model.clone())
+                        .or_else(|| {
+                            metadata.models.first().and_then(|model| {
+                                Some((
+                                    model.get("provider")?.as_str()?.to_owned(),
+                                    model.get("id")?.as_str()?.to_owned(),
+                                ))
+                            })
+                        }),
+                    effort: history
+                        .as_ref()
+                        .and_then(|history| history.thinking_level.clone())
+                        .filter(|level| !level.is_empty())
+                        .or_else(|| metadata.efforts.first().cloned()),
+                });
         let selected_mode = metadata
             .modes
             .first()
@@ -137,12 +152,8 @@ impl WorkerSessionTransport {
             follow_up: Vec::new(),
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
-            model,
-            effort: history
-                .as_ref()
-                .and_then(|history| history.thinking_level.clone())
-                .filter(|level| !level.is_empty())
-                .or_else(|| metadata.efforts.first().cloned()),
+            model: selection.model,
+            effort: selection.effort,
             metadata,
             message_count: history.as_ref().map_or(0, |history| history.messages.len()),
             history: history.map(|history| history.messages),
@@ -780,7 +791,7 @@ impl SessionTransport for WorkerSessionTransport {
             }
             SessionCommand::ListReasoningLevels => self.response(
                 Some(id.clone()),
-                Payload::ListReasoningLevels(self.metadata.efforts.clone()),
+                Payload::ListReasoningLevels(self.reasoning_levels()),
             ),
             SessionCommand::Prompt {
                 mode,
@@ -844,23 +855,22 @@ impl SessionTransport for WorkerSessionTransport {
             SessionCommand::SelectModel { provider, model_id } => {
                 self.worker.select_model(&provider, &model_id)?;
                 self.model = Some((provider.clone(), model_id.clone()));
+                self.sync_model_selection();
                 self.response(
                     Some(id.clone()),
-                    Payload::SelectModel(Model {
-                        id: model_id.clone(),
-                        name: model_id,
-                        provider,
-                        context_window: 0,
-                        reasoning: true,
-                        efforts: None,
-                        resolved_model: None,
-                        access_modes: None,
-                    }),
+                    Payload::SelectModel(self.catalog_model(&provider, &model_id)),
                 );
             }
             SessionCommand::SelectReasoning { level } => {
                 self.worker.select_effort(&level)?;
                 self.effort = Some(level);
+                self.sync_model_selection();
+                self.response(Some(id.clone()), Payload::SelectReasoning);
+            }
+            SessionCommand::ResetReasoning => {
+                self.worker.reset_effort()?;
+                self.effort = None;
+                self.sync_model_selection();
                 self.response(Some(id.clone()), Payload::SelectReasoning);
             }
             SessionCommand::SelectServiceTier { tier } => {

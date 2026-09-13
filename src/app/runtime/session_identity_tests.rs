@@ -52,6 +52,7 @@ fn cached_catalog_replaces_a_resident_loading_or_stale_snapshot() {
         crate::agents::ConfigurationCatalog {
             models: vec![loaded.clone()],
             efforts: vec![],
+            sandbox_adapter: None,
         },
     );
     store.refresh_snapshot_catalog(&mut snapshot);
@@ -64,6 +65,34 @@ fn cached_catalog_replaces_a_resident_loading_or_stale_snapshot() {
     snapshot.models.clear();
     store.refresh_snapshot_catalog(&mut snapshot);
     assert!(snapshot.models.is_empty());
+}
+
+#[test]
+fn pi_catalog_capability_reaches_a_model_less_draft() {
+    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
+
+    let project = PathBuf::from("/project");
+    let mut store = HarnessConfigurationStore::default();
+    store.set_catalog(
+        "pi".into(),
+        project.clone(),
+        crate::agents::ConfigurationCatalog {
+            models: vec![],
+            efforts: vec!["off".into()],
+            sandbox_adapter: Some("pi-nono".into()),
+        },
+    );
+    assert!(store.catalog_command("pi", &project).is_some());
+
+    let mut snapshot = RuntimeSnapshot {
+        harness: "pi".into(),
+        project,
+        ..RuntimeSnapshot::default()
+    };
+    store.refresh_snapshot_catalog(&mut snapshot);
+
+    assert_eq!(snapshot.sandbox_adapter.as_deref(), Some("pi-nono"));
+    assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
 }
 
 #[test]
@@ -97,6 +126,41 @@ fn non_reasoning_models_have_no_effort_choices() {
     };
 
     assert!(snapshot.available_thinking_levels().is_empty());
+}
+
+#[test]
+fn session_default_is_not_replaced_by_stale_draft_effort() {
+    let snapshot = RuntimeSnapshot {
+        harness: "opencode2".into(),
+        prefill_thinking_level: Some("high".into()),
+        session: Some(
+            serde_json::from_value(serde_json::json!({
+                "isStreaming": false, "isCompacting": false, "sessionId": "ses_default",
+                "autoCompactionEnabled": false, "messageCount": 0, "pendingMessageCount": 0
+            }))
+            .unwrap(),
+        ),
+        ..Default::default()
+    };
+    assert_eq!(snapshot.session_identity().effort, None);
+}
+
+#[test]
+fn cleared_default_stays_unset_after_configuration_restore() {
+    let mut store = HarnessConfigurationStore::default();
+    store.set_model("opencode2", model("astra", true, Some(&["low", "high"])));
+    store.set_effort("opencode2", "high".into());
+    assert!(store.reset_effort("opencode2"));
+    assert!(!store.reset_effort("opencode2"));
+    let mut restored = HarnessConfigurationStore::default();
+    restored.restore(store.cached());
+    let mut draft = RuntimeSnapshot {
+        harness: "opencode2".into(),
+        ..Default::default()
+    };
+    restored.reconcile_snapshot(&mut draft, true);
+    assert_eq!(draft.session_identity().effort, None);
+    assert_eq!(draft.session_identity().model.unwrap().id, "astra");
 }
 
 #[test]

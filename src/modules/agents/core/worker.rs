@@ -312,6 +312,12 @@ pub(crate) trait WorkerSession: Send {
     fn select_effort(&mut self, _effort: &str) -> Result<(), String> {
         Err("worker backend does not support effort selection".into())
     }
+    fn reset_effort(&mut self) -> Result<(), String> {
+        Err("worker backend does not support effort reset".into())
+    }
+    fn model_selection(&self) -> Option<WorkerModelSelection> {
+        None
+    }
     fn select_service_tier(&mut self, _tier: &str) -> Result<(), String> {
         Err("worker backend does not support service tier selection".into())
     }
@@ -320,6 +326,13 @@ pub(crate) trait WorkerSession: Send {
     }
     fn poll(&mut self) -> Option<WorkerEvent>;
     fn close(&mut self) -> Result<(), String>;
+}
+
+/// An authoritative selection, including an explicitly unset effort.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WorkerModelSelection {
+    pub model: Option<(String, String)>,
+    pub effort: Option<String>,
 }
 
 pub(crate) trait WorkerSessionFactory: Send + Sync {

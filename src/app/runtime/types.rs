@@ -13,6 +13,7 @@ pub(crate) struct TaskSettings {
 #[allow(dead_code)]
 pub(crate) enum RuntimeCommand {
     Prompt {
+        submission_id: String,
         target: String,
         mode: PromptMode,
         message: String,
@@ -103,6 +104,7 @@ pub(crate) enum RuntimeCommand {
     },
     SetModel(Model),
     SetThinking(String),
+    ResetThinking,
     SetServiceTier(String),
     SetAccessMode(HarnessAccessMode),
     SetAppProxy(Option<String>),
@@ -178,6 +180,7 @@ pub(crate) enum RuntimeEvent {
         id: String,
     },
     PromptResult {
+        submission_id: Option<String>,
         target: String,
         outcome: crate::agents::PromptOutcome,
         session: Option<PathBuf>,

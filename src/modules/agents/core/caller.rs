@@ -568,10 +568,14 @@ impl CallerIdentity {
     }
 
     pub(crate) fn select_effort(&self, effort: &str) {
+        self.set_effort(Some(effort));
+    }
+
+    pub(crate) fn set_effort(&self, effort: Option<&str>) {
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(context) = callers.get_mut(&self.token)
         {
-            context.effort = Some(effort.to_owned());
+            context.effort = effort.map(str::to_owned);
         }
         self.registry.persist_family(&self.token);
     }

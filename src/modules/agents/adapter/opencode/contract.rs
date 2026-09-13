@@ -69,8 +69,15 @@ pub(crate) struct OpenCodeModelSelection {
     pub id: String,
     #[serde(rename = "providerID")]
     pub provider_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_variant")]
     pub variant: Option<String>,
+}
+
+fn deserialize_variant<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    // OpenCode persists an omitted selection as the reserved "default" marker.
+    Ok(Option::<String>::deserialize(deserializer)?.filter(|variant| variant != "default"))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

@@ -3,7 +3,8 @@ use super::*;
 #[derive(Default)]
 pub(super) struct PendingSessionControls {
     model: Option<(String, String)>,
-    thinking: Option<String>,
+    // Outer None means no pending change; Some(None) is an explicit reset.
+    thinking: Option<Option<String>>,
     service_tier: Option<String>,
     model_requests: std::collections::HashSet<String>,
     sent_model: Option<(String, String)>,
@@ -77,13 +78,17 @@ impl PendingSessionControls {
 
 enum SessionControl {
     Model(String, String),
-    Thinking(String),
+    Thinking(Option<String>),
     ServiceTier(String),
 }
 
 impl SessionControl {
     fn supported_by(&self, harness: &str) -> bool {
-        !matches!(self, Self::Thinking(_)) || crate::agents::supports_reasoning_effort(harness)
+        match self {
+            Self::Thinking(None) => crate::agents::supports_reasoning_reset(harness),
+            Self::Thinking(Some(_)) => crate::agents::supports_reasoning_effort(harness),
+            _ => true,
+        }
     }
 
     fn command_name(&self) -> &'static str {
@@ -97,7 +102,8 @@ impl SessionControl {
     fn into_request(self) -> SessionCommand {
         match self {
             Self::Model(provider, model_id) => SessionCommand::SelectModel { provider, model_id },
-            Self::Thinking(level) => SessionCommand::SelectReasoning { level },
+            Self::Thinking(Some(level)) => SessionCommand::SelectReasoning { level },
+            Self::Thinking(None) => SessionCommand::ResetReasoning,
             Self::ServiceTier(tier) => SessionCommand::SelectServiceTier { tier },
         }
     }
@@ -144,19 +150,23 @@ impl RuntimeOwner {
             if let Some(effort) = replacement_effort {
                 self.snapshot.prefill_thinking_level = Some(effort.clone());
                 self.pending_session_controls
-                    .set(SessionControl::Thinking(effort));
+                    .set(SessionControl::Thinking(Some(effort)));
             }
             self.publish();
             return;
         }
         self.send_session_control(control);
         if let Some(effort) = replacement_effort {
-            self.send_session_control(SessionControl::Thinking(effort));
+            self.send_session_control(SessionControl::Thinking(Some(effort)));
         }
     }
 
     pub(super) fn set_thinking(&mut self, level: String) {
-        self.send_session_control(SessionControl::Thinking(level));
+        self.send_session_control(SessionControl::Thinking(Some(level)));
+    }
+
+    pub(super) fn reset_thinking(&mut self) {
+        self.send_session_control(SessionControl::Thinking(None));
     }
 
     pub(super) fn set_service_tier(&mut self, tier: String) {
@@ -197,7 +207,7 @@ impl RuntimeOwner {
                         .cloned();
                 }
                 SessionControl::Thinking(level) => {
-                    self.snapshot.prefill_thinking_level = Some(level.clone());
+                    self.snapshot.prefill_thinking_level = level.clone();
                 }
                 SessionControl::ServiceTier(_) => {}
             }

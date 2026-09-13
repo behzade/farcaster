@@ -64,7 +64,7 @@ impl PickerScope {
             Self::Harnesses => "Set harness",
             Self::Providers => "Choose provider",
             Self::Models(_) => "Choose model",
-            Self::Efforts(_) => "Choose reasoning effort",
+            Self::Efforts(_) => "Choose model preset",
             Self::ArchivedSessions => "Restore session",
         }
     }
@@ -78,7 +78,7 @@ impl PickerScope {
             Self::Harnesses => "Search harnesses…",
             Self::Providers => "Search providers…",
             Self::Models(_) => "Search models…",
-            Self::Efforts(_) => "Search reasoning efforts…",
+            Self::Efforts(_) => "Search model presets…",
             Self::ArchivedSessions => "Search archived sessions…",
         }
     }
@@ -445,7 +445,9 @@ impl FarcasterApp {
             PickerCommand::SetRuntime { model, effort } => {
                 self.close_picker(window, cx);
                 self.select_model(&model, cx);
-                if let Some(effort) = effort {
+                if effort.is_some()
+                    || crate::agents::supports_reasoning_reset(&self.snapshot.harness)
+                {
                     self.set_thinking_level(effort, cx);
                 }
             }

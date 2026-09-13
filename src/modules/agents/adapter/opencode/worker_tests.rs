@@ -289,8 +289,8 @@ fn cli_model_fallback_preserves_provider_and_nested_model_ids() {
     assert_eq!(
         models_from_cli("openai/gpt-5\nopenrouter/anthropic/claude\nnoise\n"),
         vec![
-            json!({"id":"gpt-5","name":"gpt-5","provider":"openai","contextWindow":0,"reasoning":true}),
-            json!({"id":"anthropic/claude","name":"anthropic/claude","provider":"openrouter","contextWindow":0,"reasoning":true}),
+            json!({"id":"gpt-5","name":"gpt-5","provider":"openai","contextWindow":0,"reasoning":true,"efforts":[]}),
+            json!({"id":"anthropic/claude","name":"anthropic/claude","provider":"openrouter","contextWindow":0,"reasoning":true,"efforts":[]}),
         ]
     );
 }
@@ -1345,7 +1345,13 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
         .iter()
         .filter(|item| item.kind == TranscriptKind::User && !item.images.is_empty())
         .count();
-    assert_eq!(retained, 4);
+    assert_eq!(retained, 3, "only delivered inputs enter the transcript");
+    let pending = conversation.pending_receipts();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, cancelled);
+    assert_eq!(pending[0].text, "same text");
+    assert_eq!(pending[0].images.len(), 1);
+    assert!(!pending[0].unknown);
     let ids_with_status = |status: &str| {
         receipt_statuses
             .iter()

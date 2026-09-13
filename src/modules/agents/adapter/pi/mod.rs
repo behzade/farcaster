@@ -54,6 +54,8 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 models: Available,
                 select_model: Available,
                 reasoning_effort: Available,
+                effort_label: "Effort",
+                reset_reasoning_effort: Unsupported,
                 modes: Unsupported,
                 commands: Available,
                 mcp_servers: Available,

@@ -65,17 +65,54 @@ impl WorkerSessionTransport {
         }
     }
 
+    pub(super) fn sync_model_selection(&mut self) {
+        if let Some(selection) = self.worker.model_selection() {
+            self.model = selection.model;
+            self.effort = selection.effort;
+        }
+    }
+
+    pub(super) fn catalog_model(&self, provider: &str, id: &str) -> Model {
+        let mut model: Model = self
+            .metadata
+            .models
+            .iter()
+            .find(|model| model["provider"] == provider && model["id"] == id)
+            .and_then(|model| serde_json::from_value(model.clone()).ok())
+            .unwrap_or_else(|| Model {
+                id: id.into(),
+                name: id.into(),
+                provider: provider.into(),
+                context_window: self.usage.context_window,
+                reasoning: true,
+                efforts: None,
+                resolved_model: None,
+                access_modes: None,
+            });
+        if model.context_window == 0 {
+            // Some adapters report the live limit separately from their catalog.
+            model.context_window = self.usage.context_window;
+        }
+        model
+    }
+
+    pub(super) fn reasoning_levels(&self) -> Vec<String> {
+        self.model.as_ref().map_or_else(
+            || self.metadata.efforts.clone(),
+            |(provider, id)| {
+                crate::agents::model_efforts(
+                    &self.catalog_model(provider, id),
+                    &self.metadata.efforts,
+                )
+            },
+        )
+    }
+
     pub(super) fn state(&self) -> SessionState {
-        let model = self.model.as_ref().map(|(provider, id)| Model {
-            id: id.clone(),
-            name: id.clone(),
-            provider: provider.clone(),
-            context_window: self.usage.context_window,
-            reasoning: true,
-            efforts: None,
-            resolved_model: None,
-            access_modes: None,
-        });
+        let model = self
+            .model
+            .as_ref()
+            .map(|(provider, id)| self.catalog_model(provider, id));
         SessionState {
             model,
             service_tier: self.metadata.service_tier.clone(),

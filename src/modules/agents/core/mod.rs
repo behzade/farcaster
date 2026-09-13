@@ -28,6 +28,6 @@ pub(crate) use prompt_store::{
 };
 pub(crate) use worker::{
     ChildSessionOutcome, CommonTool, TokenUsage, ToolReviewState, WorkerActivity,
-    WorkerActivityState, WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerUsage,
+    WorkerActivityState, WorkerEvent, WorkerLaunch, WorkerModelSelection, WorkerSendMode,
+    WorkerSession, WorkerSessionFactory, WorkerUsage,
 };

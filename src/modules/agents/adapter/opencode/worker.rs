@@ -8,6 +8,10 @@ use std::{
 
 use serde_json::{Value, json};
 
+#[cfg(test)]
+#[path = "selection_tests.rs"]
+mod selection_tests;
+
 use super::{
     server::OpenCodeServerProcess,
     tool::{normalize_opencode_tool, opencode_tool_metadata},
@@ -209,12 +213,6 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     if let Err(error) = complete_model_catalog(command, &launch.project, &mut metadata) {
         zlog::warn!("OpenCode started without a refreshed model catalog: {error}");
     }
-    let context_window = metadata
-        .models
-        .first()
-        .and_then(|model| model.get("contextWindow"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
     let session = match &launch.start {
         crate::agents::SessionStart::New => {
             client.create_session(&launch.project.to_string_lossy(), None, None)?
@@ -234,6 +232,24 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             client.fork_session(&session_id, None)?
         }
     };
+    let selection = match session.model {
+        Some(selection) => Some(selection),
+        None => client.default_model(&launch.project.to_string_lossy())?,
+    };
+    let context_window = selection
+        .as_ref()
+        .and_then(|selected| {
+            metadata.models.iter().find(|model| {
+                model["provider"] == selected.provider_id && model["id"] == selected.id
+            })
+        })
+        .and_then(|model| model.get("contextWindow"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if let Some(selected) = &selection {
+        caller_identity.select_model(&selected.provider_id, &selected.id);
+        caller_identity.set_effort(selected.variant.as_deref());
+    }
     metadata.session_name = session.title;
     let session_id = session.id;
     let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;
@@ -243,9 +259,11 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             caller_identity,
             server,
             session_id: session_id.clone(),
-            provider: None,
-            model: None,
-            effort: None,
+            provider: selection
+                .as_ref()
+                .map(|selected| selected.provider_id.clone()),
+            model: selection.as_ref().map(|selected| selected.id.clone()),
+            effort: selection.and_then(|selected| selected.variant),
             effort_catalog: effort_catalog(&metadata),
             access_mode: command.access_mode,
             incoming,
@@ -312,6 +330,7 @@ fn models_from_cli(output: &str) -> Vec<Value> {
                     "provider": provider,
                     "contextWindow": 0,
                     "reasoning": true,
+                    "efforts": [],
                 })
             })
         })
@@ -335,7 +354,6 @@ fn load_main_metadata(
         }
         thread::sleep(Duration::from_millis(50));
     };
-    let mut efforts = Vec::new();
     let models = model_rows
         .iter()
         .filter(|model| model.get("enabled").and_then(Value::as_bool) != Some(false))
@@ -346,19 +364,13 @@ fn load_main_metadata(
                 .and_then(Value::as_str)
                 .unwrap_or("opencode");
             let model_efforts = model_variant_efforts(model);
-            let efforts_known = model.get("variants").is_some();
-            for effort in &model_efforts {
-                if !efforts.iter().any(|known| known == effort) {
-                    efforts.push(effort.to_owned());
-                }
-            }
             Some(json!({
                 "id": id,
                 "name": model.get("name").and_then(Value::as_str).unwrap_or(id),
                 "provider": provider,
                 "contextWindow": model.pointer("/limit/context").and_then(Value::as_u64).unwrap_or(0),
                 "reasoning": true,
-                "efforts": efforts_known.then_some(model_efforts),
+                "efforts": model_efforts,
             }))
         })
         .collect::<Vec<_>>();
@@ -405,7 +417,7 @@ fn load_main_metadata(
     Ok(
         crate::modules::agents::adapter::main_session::MainSessionMetadata {
             models,
-            efforts,
+            // OpenCode presets are model-specific; there is no global fallback list.
             commands,
             modes,
             ..Default::default()
@@ -533,6 +545,27 @@ struct OpenCodeWorkerSession {
 }
 
 impl OpenCodeWorkerSession {
+    fn apply_effort(&mut self, effort: Option<&str>) -> Result<(), String> {
+        let (provider, model) = self
+            .provider
+            .as_ref()
+            .zip(self.model.as_ref())
+            .ok_or("OpenCode has no selected model")?;
+        let known = self.effort_catalog.get(&(provider.clone(), model.clone()));
+        if effort.is_some() && variant_for_model(effort, known).is_none() {
+            return Err(format!(
+                "OpenCode model {provider}/{model} does not advertise variant {}",
+                effort.unwrap_or_default()
+            ));
+        }
+        self.server
+            .client()
+            .select_model(&self.session_id, provider, model, effort)?;
+        self.effort = effort.map(str::to_owned);
+        self.caller_identity.set_effort(effort);
+        Ok(())
+    }
+
     fn send_prompt(
         &mut self,
         submission_id: Option<String>,
@@ -1416,27 +1449,30 @@ impl WorkerSession for OpenCodeWorkerSession {
             .effort_catalog
             .get(&(provider.to_owned(), model.to_owned()));
         let variant = variant_for_model(self.effort.as_deref(), known);
-        self.caller_identity.select_model(provider, model);
         self.server
             .client()
             .select_model(&self.session_id, provider, model, variant.as_deref())?;
         self.provider = Some(provider.to_owned());
         self.model = Some(model.to_owned());
-        if variant.is_none() {
-            self.effort = None;
-        }
+        self.effort = variant;
+        self.caller_identity.select_model(provider, model);
+        self.caller_identity.set_effort(self.effort.as_deref());
         Ok(())
     }
 
     fn select_effort(&mut self, effort: &str) -> Result<(), String> {
-        self.caller_identity.select_effort(effort);
-        self.effort = Some(effort.to_owned());
-        if let (Some(provider), Some(model)) = (self.provider.as_deref(), self.model.as_deref()) {
-            self.server
-                .client()
-                .select_model(&self.session_id, provider, model, Some(effort))?;
-        }
-        Ok(())
+        self.apply_effort(Some(effort))
+    }
+
+    fn reset_effort(&mut self) -> Result<(), String> {
+        self.apply_effort(None)
+    }
+
+    fn model_selection(&self) -> Option<crate::agents::WorkerModelSelection> {
+        Some(crate::agents::WorkerModelSelection {
+            model: self.provider.clone().zip(self.model.clone()),
+            effort: self.effort.clone(),
+        })
     }
 
     fn select_mode(&mut self, mode: &str) -> Result<(), String> {

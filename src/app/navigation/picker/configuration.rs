@@ -1,16 +1,9 @@
 use super::*;
+use crate::agents::model_efforts;
 use crate::{
     protocol::Model,
     runtime::{ConfigurationStatus, HarnessAccessMode},
 };
-
-fn model_efforts<'a>(model: &'a Model, catalog: &'a [String]) -> &'a [String] {
-    if model.reasoning {
-        model.efforts.as_deref().unwrap_or(catalog)
-    } else {
-        &[]
-    }
-}
 
 impl FarcasterApp {
     pub(in crate::app) fn open_runtime_picker(
@@ -164,33 +157,7 @@ impl FarcasterApp {
                     )
                 })
                 .collect(),
-            PickerScope::Efforts(model) => model_efforts(&model, &self.snapshot.thinking_levels)
-                .iter()
-                .enumerate()
-                .map(|(index, effort)| {
-                    let selected = current_model.is_some_and(|current| {
-                        current.id == model.id && current.provider == model.provider
-                    }) && identity.effort == Some(effort.as_str());
-                    picker_row(
-                        commands,
-                        &format!("effort:{index}"),
-                        PickerCommand::SetRuntime {
-                            model: model.clone(),
-                            effort: Some(effort.clone()),
-                        },
-                        AppIcon::List,
-                        effort,
-                        Some(format!(
-                            "{} / {}{}",
-                            model.provider,
-                            model.name,
-                            if selected { " · Current" } else { "" }
-                        )),
-                        None,
-                        "reasoning thinking effort",
-                    )
-                })
-                .collect(),
+            PickerScope::Efforts(model) => effort_picker_rows(&self.snapshot, &model, commands),
             PickerScope::ArchivedSessions => {
                 let mut sessions = self
                     .all_sessions
@@ -230,6 +197,43 @@ impl FarcasterApp {
     }
 }
 
+fn effort_picker_rows(
+    snapshot: &crate::runtime::RuntimeSnapshot,
+    model: &Model,
+    commands: &mut HashMap<String, PickerCommand>,
+) -> Vec<PickerRow> {
+    let model = snapshot.catalog_model(model);
+    let identity = snapshot.session_identity();
+    snapshot
+        .effort_choices(model)
+        .into_iter()
+        .enumerate()
+        .map(|(index, effort)| {
+            let selected = identity.model.is_some_and(|current| {
+                current.id == model.id && current.provider == model.provider
+            }) && identity.effort == effort.as_deref();
+            picker_row(
+                commands,
+                &format!("effort:{index}"),
+                PickerCommand::SetRuntime {
+                    model: model.clone(),
+                    effort: effort.clone(),
+                },
+                AppIcon::List,
+                effort.as_deref().unwrap_or("Default"),
+                Some(format!(
+                    "{} / {}{}",
+                    model.provider,
+                    model.name,
+                    if selected { " · Current" } else { "" }
+                )),
+                None,
+                "reasoning thinking effort variant default",
+            )
+        })
+        .collect()
+}
+
 pub(super) fn selected_row(
     rows: &[PickerRow],
     commands: &HashMap<String, PickerCommand>,
@@ -257,9 +261,13 @@ pub(super) fn selected_row(
             Some(PickerCommand::OpenScope(PickerScope::Efforts(model))) => is_current_model(model),
             Some(PickerCommand::SetRuntime { model, effort }) => {
                 is_current_model(model)
-                    && effort
-                        .as_deref()
-                        .is_none_or(|effort| identity.effort == Some(effort))
+                    && (effort.as_deref() == identity.effort
+                        || (effort.is_none()
+                            && model_efforts(
+                                snapshot.catalog_model(model),
+                                &snapshot.thinking_levels,
+                            )
+                            .is_empty()))
             }
             _ => false,
         })

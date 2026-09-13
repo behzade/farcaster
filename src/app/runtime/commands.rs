@@ -44,9 +44,17 @@ impl RuntimeOwner {
                 } else {
                     PromptMode::Normal
                 };
-                self.send_prompt(target, mode, message, Vec::new(), false);
+                self.send_prompt_for_submission(
+                    uuid::Uuid::new_v4().to_string(),
+                    target,
+                    mode,
+                    message,
+                    Vec::new(),
+                    false,
+                );
             }
             RuntimeCommand::Prompt {
+                submission_id,
                 target,
                 mode,
                 message,
@@ -55,10 +63,16 @@ impl RuntimeOwner {
                 images,
                 allow_while_running,
             } => match (display_message, invocation) {
-                (None, None) => {
-                    self.send_prompt(target, mode, message, images, allow_while_running)
-                }
-                (display_message, invocation) => self.send_prompt_with_presentation(
+                (None, None) => self.send_prompt_for_submission(
+                    submission_id,
+                    target,
+                    mode,
+                    message,
+                    images,
+                    allow_while_running,
+                ),
+                (display_message, invocation) => self.send_prompt_with_presentation_for_submission(
+                    submission_id,
                     target,
                     mode,
                     message,
@@ -75,14 +89,34 @@ impl RuntimeOwner {
                 catalog,
             } => {
                 if self.harness == harness && self.project == project {
+                    let mut changed = false;
                     for snapshot in
                         std::iter::once(&mut self.snapshot).chain(self.parked_snapshot.iter_mut())
                     {
-                        snapshot.models.clone_from(&catalog.models);
-                        snapshot.thinking_levels.clone_from(&catalog.efforts);
-                        snapshot.configuration_status = ConfigurationStatus::Loaded;
+                        if snapshot.models != catalog.models {
+                            snapshot.models.clone_from(&catalog.models);
+                            changed = true;
+                        }
+                        if snapshot.thinking_levels != catalog.efforts {
+                            snapshot.thinking_levels.clone_from(&catalog.efforts);
+                            changed = true;
+                        }
+                        if !snapshot.connected
+                            && snapshot.sandbox_adapter != catalog.sandbox_adapter
+                        {
+                            snapshot
+                                .sandbox_adapter
+                                .clone_from(&catalog.sandbox_adapter);
+                            changed = true;
+                        }
+                        if snapshot.configuration_status != ConfigurationStatus::Loaded {
+                            snapshot.configuration_status = ConfigurationStatus::Loaded;
+                            changed = true;
+                        }
                     }
-                    self.publish();
+                    if changed {
+                        self.publish();
+                    }
                 }
             }
             RuntimeCommand::Abort => {
@@ -199,6 +233,7 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetModel(model) => self.set_model(model),
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
+            RuntimeCommand::ResetThinking => self.reset_thinking(),
             RuntimeCommand::SetServiceTier(tier) => self.set_service_tier(tier),
             RuntimeCommand::SetAccessMode(mode) => self.set_access_mode(mode),
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),

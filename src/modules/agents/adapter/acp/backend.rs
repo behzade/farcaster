@@ -46,6 +46,8 @@ pub(in crate::modules::agents::adapter) fn descriptor(
                 models: Available,
                 select_model: Available,
                 reasoning_effort: Available,
+                effort_label: "Effort",
+                reset_reasoning_effort: Unsupported,
                 modes: Available,
                 commands: Available,
                 mcp_servers: Available,

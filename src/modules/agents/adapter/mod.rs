@@ -53,7 +53,7 @@ pub(crate) fn available_access_modes(
         .into_iter()
         .find(|descriptor| descriptor.id.as_str() == harness)
     else {
-        return vec![crate::agents::HarnessAccessMode::Full];
+        return Vec::new();
     };
     let capabilities = descriptor.capabilities.configuration;
     let declared = model.and_then(|model| model.access_modes.as_deref());
@@ -87,6 +87,23 @@ pub(crate) fn supports_reasoning_effort(harness: &str) -> bool {
             && descriptor.capabilities.configuration.reasoning_effort
                 == super::contract::CapabilitySupport::Available
     })
+}
+
+pub(crate) fn supports_reasoning_reset(harness: &str) -> bool {
+    known_backend_descriptors().into_iter().any(|descriptor| {
+        descriptor.id.as_str() == harness
+            && descriptor.capabilities.configuration.reset_reasoning_effort
+                == super::contract::CapabilitySupport::Available
+    })
+}
+
+pub(crate) fn effort_label(harness: &str) -> &'static str {
+    known_backend_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.id.as_str() == harness)
+        .map_or("Effort", |descriptor| {
+            descriptor.capabilities.configuration.effort_label
+        })
 }
 
 pub(crate) fn supports_session_fork(harness: &str) -> bool {
@@ -188,16 +205,16 @@ pub(crate) fn load_configuration_catalog(
 ) -> Result<crate::agents::ConfigurationCatalog, String> {
     match harness {
         "codex-cli" => {
-            let command = launch_configuration(config, harness)?;
+            let command = configuration_launch(config, harness)?;
             codex::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "cursor-cli" => cursor::load_configuration(project).and_then(configuration_catalog),
         "opencode2" => {
-            let command = launch_configuration(config, harness)?;
+            let command = configuration_launch(config, harness)?;
             opencode::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "claude" => {
-            let command = launch_configuration(config, harness)?;
+            let command = configuration_launch(config, harness)?;
             claude::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "pi" => load_pi_configuration(config, project),
@@ -208,6 +225,42 @@ pub(crate) fn load_configuration_catalog(
             configuration_catalog(metadata)
         }
     }
+}
+
+fn configuration_launch(
+    config: &crate::agents::AgentLaunchConfig,
+    harness: &str,
+) -> Result<crate::agents::AgentLaunchConfig, String> {
+    let mut command = launch_configuration(config, harness)?;
+    command.access_mode = configuration_access_mode(harness, config.access_mode)?;
+    Ok(command)
+}
+
+fn configuration_access_mode(
+    harness: &str,
+    requested: crate::agents::HarnessAccessMode,
+) -> Result<crate::agents::HarnessAccessMode, String> {
+    use crate::agents::HarnessAccessMode::{Auto, Sandboxed};
+
+    // Pi learns its modes from the loaded extension command catalog. Its adapter
+    // resolves Auto to a confirmed mode before Pi configuration is returned.
+    if supports_sandbox_discovery(harness) {
+        return Ok(requested);
+    }
+    let descriptor = known_backend_descriptors()
+        .into_iter()
+        .find(|descriptor| descriptor.id.as_str() == harness)
+        .ok_or_else(|| format!("unsupported session harness: {harness}"))?;
+    let supported = descriptor.capabilities.configuration.access_modes;
+    if supported.contains(&requested) {
+        return Ok(requested);
+    }
+    if requested == Auto && supported.contains(&Sandboxed) {
+        return Ok(Sandboxed);
+    }
+    Err(format!(
+        "{harness} does not support the requested {requested:?} access mode"
+    ))
 }
 
 fn configuration_catalog(
@@ -222,6 +275,7 @@ fn configuration_catalog(
     Ok(crate::agents::ConfigurationCatalog {
         models,
         efforts: metadata.efforts,
+        sandbox_adapter: None,
     })
 }
 
@@ -258,8 +312,10 @@ fn load_pi_configuration(
             None => std::thread::sleep(std::time::Duration::from_millis(5)),
         }
     }
+    let sandbox_adapter = process.sandbox_adapter().map(str::to_owned);
     let _ = process.close();
     if models_loaded && efforts_loaded {
+        catalog.sandbox_adapter = sandbox_adapter;
         Ok(catalog)
     } else {
         Err("timed out loading Pi configuration catalog".into())

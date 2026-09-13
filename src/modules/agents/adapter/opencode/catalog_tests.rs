@@ -26,6 +26,34 @@ fn restores_the_latest_opencode_session_identity() {
 }
 
 #[test]
+fn default_variant_is_unset_without_resurrecting_an_older_effort() {
+    let old = json!({"model": {"id": "astra", "providerID": "openai", "variant": "high"}});
+    for selection in [
+        json!({"id": "astra", "providerID": "openai"}),
+        json!({"id": "astra", "providerID": "openai", "variant": "default"}),
+    ] {
+        let saved: OpenCodeModelSelection = serde_json::from_value(selection.clone()).unwrap();
+        assert_eq!(
+            latest_identity(&[old.clone()], Some(&saved))
+                .unwrap()
+                .variant,
+            None
+        );
+        assert_eq!(
+            latest_identity(&[old.clone(), json!({"model": selection})], None)
+                .unwrap()
+                .variant,
+            None
+        );
+    }
+    let none: OpenCodeModelSelection = serde_json::from_value(json!({
+        "id": "glm", "providerID": "provider", "variant": "none"
+    }))
+    .unwrap();
+    assert_eq!(none.variant.as_deref(), Some("none"));
+}
+
+#[test]
 fn translates_session_metadata() -> Result<(), String> {
     let project = std::env::current_dir().map_err(|error| error.to_string())?;
     let value = json!({

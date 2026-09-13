@@ -65,8 +65,18 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn set_thinking_level(&mut self, level: String, cx: &mut Context<Self>) {
-        self.send(RuntimeCommand::SetThinking(level), cx);
+    pub(in crate::app) fn set_thinking_level(
+        &mut self,
+        level: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.send(
+            match level {
+                Some(level) => RuntimeCommand::SetThinking(level),
+                None => RuntimeCommand::ResetThinking,
+            },
+            cx,
+        );
         cx.notify();
     }
 

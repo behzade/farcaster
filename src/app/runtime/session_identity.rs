@@ -1,5 +1,6 @@
 use std::{collections::HashMap, path::PathBuf};
 
+use crate::agents::effort_rank;
 use crate::protocol::Model;
 
 use super::{ConfigurationStatus, RuntimeSnapshot};
@@ -25,19 +26,6 @@ pub(super) fn replacement_effort(model: &Model, current: Option<&str>) -> Option
             _ => u8::MAX,
         })
         .cloned()
-}
-
-fn effort_rank(effort: &str) -> Option<u8> {
-    match effort {
-        "off" | "none" => Some(0),
-        "minimal" => Some(1),
-        "low" => Some(2),
-        "medium" => Some(3),
-        "high" => Some(4),
-        "xhigh" => Some(5),
-        "max" => Some(6),
-        _ => None,
-    }
 }
 
 impl RuntimeSnapshot {
@@ -69,7 +57,7 @@ impl RuntimeSnapshot {
             .or_else(|| self.models.first())
     }
 
-    pub(super) fn catalog_model<'a>(&'a self, selected: &'a Model) -> &'a Model {
+    pub(crate) fn catalog_model<'a>(&'a self, selected: &'a Model) -> &'a Model {
         self.models
             .iter()
             .find(|model| model.id == selected.id && model.provider == selected.provider)
@@ -100,17 +88,29 @@ impl RuntimeSnapshot {
             .as_ref()
             .and_then(|session| session.model.as_ref())
             .or(self.prefill_model.as_ref());
-        let effort = self
-            .session
-            .as_ref()
-            .and_then(|session| session.thinking_level.as_deref())
-            .filter(|level| !level.is_empty())
-            .or(self.prefill_thinking_level.as_deref());
+        // A live session's unset effort is authoritative, not a missing draft value.
+        let effort = match &self.session {
+            Some(session) => session.thinking_level.as_deref(),
+            None => self.prefill_thinking_level.as_deref(),
+        }
+        .filter(|level| !level.is_empty());
         SessionIdentity {
             provider: model.map(|model| model.provider.as_str()),
             model,
             effort,
         }
+    }
+
+    pub(crate) fn effort_choices(&self, model: &Model) -> Vec<Option<String>> {
+        crate::agents::supports_reasoning_reset(&self.harness)
+            .then_some(None)
+            .into_iter()
+            .chain(
+                crate::agents::model_efforts(self.catalog_model(model), &self.thinking_levels)
+                    .into_iter()
+                    .map(Some),
+            )
+            .collect()
     }
 
     pub(crate) fn available_thinking_levels(&self) -> &[String] {
@@ -142,6 +142,7 @@ pub(super) struct HarnessConfigurationStore {
 struct HarnessCatalog {
     models: Vec<Model>,
     efforts: Vec<String>,
+    sandbox_adapter: Option<String>,
     status: ConfigurationStatus,
 }
 
@@ -224,6 +225,18 @@ impl HarnessConfigurationStore {
         true
     }
 
+    pub fn reset_effort(&mut self, harness: &str) -> bool {
+        if !crate::agents::supports_reasoning_reset(harness) {
+            return false;
+        }
+        self.identities
+            .entry(harness.to_owned())
+            .or_default()
+            .effort
+            .take()
+            .is_some()
+    }
+
     pub fn set_catalog(
         &mut self,
         harness: String,
@@ -233,6 +246,7 @@ impl HarnessConfigurationStore {
         let cached = self.catalogs.entry((harness, project)).or_default();
         cached.models = catalog.models;
         cached.efforts = catalog.efforts;
+        cached.sandbox_adapter = catalog.sandbox_adapter;
         cached.status = ConfigurationStatus::Loaded;
     }
 
@@ -253,7 +267,7 @@ impl HarnessConfigurationStore {
         let catalog = self
             .catalogs
             .get(&(harness.to_owned(), project.to_owned()))?;
-        if catalog.models.is_empty() {
+        if catalog.models.is_empty() && catalog.sandbox_adapter.is_none() {
             return None;
         }
         Some(super::RuntimeCommand::UpdateConfigurationCatalog {
@@ -262,8 +276,27 @@ impl HarnessConfigurationStore {
             catalog: crate::agents::ConfigurationCatalog {
                 models: catalog.models.clone(),
                 efforts: catalog.efforts.clone(),
+                sandbox_adapter: catalog.sandbox_adapter.clone(),
             },
         })
+    }
+
+    pub fn catalog_command_for_snapshot(
+        &self,
+        snapshot: &RuntimeSnapshot,
+    ) -> Option<super::RuntimeCommand> {
+        if snapshot.connected {
+            return None;
+        }
+        let command = self.catalog_command(&snapshot.harness, &snapshot.project)?;
+        let super::RuntimeCommand::UpdateConfigurationCatalog { catalog, .. } = &command else {
+            unreachable!("catalog_command returned a non-catalog command")
+        };
+        let current = snapshot.models == catalog.models
+            && snapshot.thinking_levels == catalog.efforts
+            && snapshot.sandbox_adapter == catalog.sandbox_adapter
+            && snapshot.configuration_status == ConfigurationStatus::Loaded;
+        (!current).then_some(command)
     }
 
     pub fn refresh_snapshot_catalog(&self, snapshot: &mut RuntimeSnapshot) {
@@ -273,6 +306,11 @@ impl HarnessConfigurationStore {
         {
             snapshot.models.clone_from(&catalog.models);
             snapshot.thinking_levels.clone_from(&catalog.efforts);
+            if !snapshot.connected {
+                snapshot
+                    .sandbox_adapter
+                    .clone_from(&catalog.sandbox_adapter);
+            }
             snapshot.configuration_status.clone_from(&catalog.status);
         }
     }
@@ -297,6 +335,15 @@ impl HarnessConfigurationStore {
             snapshot.thinking_levels.clone_from(&catalog.efforts);
         } else {
             catalog.efforts.clone_from(&snapshot.thinking_levels);
+        }
+        if !snapshot.connected && snapshot.sandbox_adapter.is_none() {
+            snapshot
+                .sandbox_adapter
+                .clone_from(&catalog.sandbox_adapter);
+        } else {
+            catalog
+                .sandbox_adapter
+                .clone_from(&snapshot.sandbox_adapter);
         }
         snapshot.configuration_status.clone_from(&catalog.status);
         let identity = self.identities.entry(snapshot.harness.clone()).or_default();

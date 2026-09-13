@@ -123,7 +123,9 @@ impl FarcasterApp {
             })
             .cloned()
             .collect::<Vec<_>>();
-        let selected = identity.model;
+        let selected = identity
+            .model
+            .map(|model| self.snapshot.catalog_model(model));
         let feedback = if self.snapshot.models.is_empty() {
             match &self.snapshot.configuration_status {
                 crate::runtime::ConfigurationStatus::Loading => "Loading models…".to_owned(),
@@ -139,13 +141,8 @@ impl FarcasterApp {
         };
         let levels = selected
             .filter(|model| model.reasoning && Some(&model.provider) == provider.as_ref())
-            .map(|model| {
-                model
-                    .efforts
-                    .as_deref()
-                    .unwrap_or(&self.snapshot.thinking_levels)
-            })
-            .unwrap_or(&[]);
+            .map(|model| self.snapshot.effort_choices(model))
+            .unwrap_or_default();
         let service_tiers = self
             .snapshot
             .session
@@ -309,7 +306,7 @@ impl FarcasterApp {
                 .track_scroll(&self.runtime_picker.scroll)
                 .into_any_element()
             })
-            .when(!levels.is_empty(), |panel| {
+            .when(levels.iter().any(Option::is_some), |panel| {
                 panel.child(
                     div()
                         .flex_none()
@@ -320,15 +317,18 @@ impl FarcasterApp {
                         .p(THEME.space.sm)
                         .border_t(THEME.border)
                         .border_color(THEME.colors.border)
-                        .child(div().text_color(THEME.colors.muted).child("Effort"))
+                        .child(
+                            div()
+                                .text_color(THEME.colors.muted)
+                                .child(crate::agents::effort_label(&self.snapshot.harness)),
+                        )
                         .child(div().flex().flex_wrap().gap(THEME.space.xs).children(
-                            levels.iter().enumerate().map(|(index, level)| {
+                            levels.iter().cloned().enumerate().map(|(index, level)| {
                                 let entity = entity.clone();
-                                let level = level.clone();
-                                let current = identity.effort == Some(level.as_str());
+                                let current = identity.effort == level.as_deref();
                                 button(
                                     ("runtime-effort", index),
-                                    level.clone(),
+                                    level.clone().unwrap_or_else(|| "Default".into()),
                                     if current {
                                         ButtonTone::Accent
                                     } else {
