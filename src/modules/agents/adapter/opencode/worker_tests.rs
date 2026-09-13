@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use serde_json::json;
 
 #[test]
@@ -648,6 +649,28 @@ fn extracts_the_last_assistant_text() {
 }
 
 #[test]
+fn question_prompt_preserves_native_question_and_option_descriptions() {
+    // OpenCode 2.0.1 question tool: form title is generic; question is in description.
+    let form = json!({"title": "Questions", "fields": [{
+        "key": "q0", "type": "string", "title": "When it freezes",
+        "description": "Do values freeze after replies or while working?",
+        "options": [
+            {"value": "idle", "label": "After replies", "description": "The assistant is idle."},
+            {"value": "active", "label": "While working", "description": "Tools are still running."}
+        ],
+        "custom": true
+    }]});
+    assert_eq!(
+        opencode_form_prompt(&form, &form["fields"][0]),
+        "When it freezes\n\nDo values freeze after replies or while working?\n\nAfter replies: The assistant is idle.\nWhile working: Tools are still running."
+    );
+    assert_eq!(
+        opencode_form_prompt(&json!({"title": "Choose a destination"}), &json!({})),
+        "Choose a destination"
+    );
+}
+
+#[test]
 fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<(), String> {
     let child = std::process::Command::new("sh")
         .args(["-c", "printf '{\"url\":\"http://127.0.0.1:4096\"}\\n'; cat"])
@@ -661,7 +684,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode".into(),
+            backend: Backend::OpenCode,
             provider: None,
             model: None,
             effort: None,
@@ -843,7 +866,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode".into(),
+            backend: Backend::OpenCode,
             provider: None,
             model: None,
             effort: None,
@@ -947,7 +970,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode".into(),
+            backend: Backend::OpenCode,
             provider: None,
             model: None,
             effort: None,
@@ -1021,7 +1044,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         .map_err(|error| error.to_string())?;
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode",
+        Backend::OpenCode,
         "session-1".into(),
         Box::new(worker),
         MainSessionMetadata::default(),
@@ -1246,7 +1269,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode".into(),
+            backend: Backend::OpenCode,
             provider: None,
             model: None,
             effort: None,
@@ -1283,7 +1306,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
     };
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode",
+        Backend::OpenCode,
         "session-1".into(),
         Box::new(worker),
         MainSessionMetadata::default(),

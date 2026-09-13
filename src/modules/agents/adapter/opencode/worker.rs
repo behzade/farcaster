@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     process::Stdio,
@@ -52,7 +53,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
-                    backend: "opencode".into(),
+                    backend: Backend::OpenCode,
                     provider: launch.provider.clone(),
                     model: launch.model.clone(),
                     effort: launch.effort.clone(),
@@ -84,7 +85,8 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         let session = match launch.context {
             WorkerContext::Fresh => {
                 let parent_id = launch.parent_worker_id.as_deref().and_then(|id| {
-                    crate::agents::CallerRegistry::shared().native_parent_session(id, "opencode")
+                    crate::agents::CallerRegistry::shared()
+                        .native_parent_session(id, Backend::OpenCode)
                 });
                 client.create_session(
                     &launch.project.to_string_lossy(),
@@ -186,7 +188,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode".into(),
+            backend: Backend::OpenCode,
             provider: None,
             model: None,
             effort: None,
@@ -1204,11 +1206,6 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "form is missing id");
                         continue;
                     };
-                    let title = form
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or("OpenCode question")
-                        .to_owned();
                     let Some(fields) = form.get("fields").and_then(Value::as_array) else {
                         log_bad_opencode_event(&event, "form has no fields");
                         continue;
@@ -1246,7 +1243,7 @@ impl OpenCodeWorkerSession {
                         .insert(id.clone(), PendingOpenCodeInput::Form { key, values });
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id,
-                        prompt: title,
+                        prompt: opencode_form_prompt(form, field),
                         options,
                         secret: false,
                     }));
@@ -1614,6 +1611,40 @@ fn completed_opencode_delta(streamed: &str, completed: &str) -> Option<String> {
         .strip_prefix(streamed)
         .filter(|suffix| !suffix.is_empty())
         .map(str::to_owned)
+}
+
+fn opencode_form_prompt(form: &Value, field: &Value) -> String {
+    let text = |value: &Value| {
+        value
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    let mut sections = vec![
+        text(&field["title"])
+            .or_else(|| text(&form["title"]))
+            .unwrap_or_else(|| "OpenCode question".into()),
+    ];
+    // OpenCode's question tool stores the question in the field description.
+    if let Some(description) = text(&field["description"]) {
+        sections.push(description);
+    }
+    let descriptions = field["options"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            let value = option["value"].as_str()?;
+            let description = text(&option["description"])?;
+            let label = option["label"].as_str().unwrap_or(value);
+            Some(format!("{label}: {description}"))
+        })
+        .collect::<Vec<_>>();
+    if !descriptions.is_empty() {
+        sections.push(descriptions.join("\n"));
+    }
+    sections.join("\n\n")
 }
 
 fn opencode_event_error(data: &Value, fallback: &str) -> String {
