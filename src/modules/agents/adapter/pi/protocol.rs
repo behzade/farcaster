@@ -43,9 +43,12 @@ pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
             }
             value
         }
-        // Pi's native abort applies queued steering. PiRpcProcess intercepts a
-        // user Abort and retires the process so queued work cannot continue.
-        SessionCommand::ApplySteering | SessionCommand::Abort => json!({"type": "abort"}),
+        // The extension resumes with a fresh signal after Pi finishes aborting.
+        SessionCommand::ApplySteering => json!({
+            "type": "prompt", "message": "/farcaster-apply-steering"
+        }),
+        // PiRpcProcess intercepts Abort and retires the process, discarding queues.
+        SessionCommand::Abort => json!({"type": "abort"}),
         SessionCommand::Compact { instructions } => {
             optional_string("compact", "customInstructions", instructions)
         }

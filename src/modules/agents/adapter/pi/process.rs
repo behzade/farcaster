@@ -133,6 +133,7 @@ pub(crate) struct PiRpcProcess {
     sandbox_mode: Option<HarnessAccessMode>,
     caller_identity: crate::modules::agents::core::CallerIdentity,
     _mcp_config: Option<TransientMcpConfig>,
+    steering_extension: tempfile::NamedTempFile,
     launch_command: AgentLaunchConfig,
     project: PathBuf,
     is_worker: bool,
@@ -145,6 +146,7 @@ pub(crate) struct PiRpcProcess {
     pending_configurations: HashMap<String, PendingConfiguration>,
     pending_queue_configurations: HashMap<String, PendingQueueConfiguration>,
     apply_steering_requests: HashSet<String>,
+    apply_steering_settled: bool,
     child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     incoming: mpsc::Receiver<ReaderItem>,
@@ -279,12 +281,21 @@ impl PiRpcProcess {
         let mcp_config = (!is_worker && crate::modules::agents::adapter::farcaster_mcp::enabled())
             .then(|| TransientMcpConfig::create(caller_identity.token()))
             .transpose()?;
+        let mut steering_extension = tempfile::Builder::new()
+            .prefix("farcaster-steering-")
+            .suffix(".mjs")
+            .tempfile()
+            .map_err(|error| format!("create Pi steering extension: {error}"))?;
+        steering_extension
+            .write_all(include_bytes!("steering.js"))
+            .map_err(|error| format!("write Pi steering extension: {error}"))?;
         let mut prepared = rpc_command(
             command,
             project,
             launch,
             mcp_config.as_ref().map(TransientMcpConfig::path),
         )?;
+        prepared.arg("--extension").arg(steering_extension.path());
         metadata::apply(
             &mut prepared,
             project,
@@ -332,6 +343,7 @@ impl PiRpcProcess {
             sandbox_mode: None,
             caller_identity,
             _mcp_config: mcp_config,
+            steering_extension,
             launch_command: command.clone(),
             project: project.to_path_buf(),
             is_worker,
@@ -344,6 +356,7 @@ impl PiRpcProcess {
             pending_configurations: HashMap::new(),
             pending_queue_configurations: HashMap::new(),
             apply_steering_requests: HashSet::new(),
+            apply_steering_settled: false,
             child,
             stdin: Arc::new(Mutex::new(stdin)),
             incoming,
@@ -523,6 +536,9 @@ impl PiRpcProcess {
             self._mcp_config.as_ref().map(TransientMcpConfig::path),
         )
         .map_err(|error| restart_error(session.as_deref(), error))?;
+        prepared
+            .arg("--extension")
+            .arg(self.steering_extension.path());
         metadata::apply(
             &mut prepared,
             &self.project,
@@ -570,6 +586,7 @@ impl PiRpcProcess {
             .collect::<Vec<_>>();
         let abandoned = std::mem::take(&mut self.pending);
         let abandoned_apply_steering = std::mem::take(&mut self.apply_steering_requests);
+        self.apply_steering_settled = false;
         self.pending_configurations.clear();
         self.pending_queue_configurations.clear();
         self.stderr.clear();
@@ -970,6 +987,13 @@ impl PiRpcProcess {
                     return self.route_queue_configuration(response, configuration);
                 }
                 if self.apply_steering_requests.remove(&id) {
+                    if self.apply_steering_requests.is_empty() && self.apply_steering_settled {
+                        self.apply_steering_settled = false;
+                        self.set_activity(WorkerActivityState::Idle);
+                        self.queued.push_back(SessionEvent::Activity(
+                            serde_json::json!({"type":"agent_settled"}).into(),
+                        ));
+                    }
                     response = remap_response(
                         response,
                         crate::agents::SessionOperation::ApplySteering,
@@ -1062,8 +1086,17 @@ impl PiRpcProcess {
             }
             ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => {
                 match event.get("type").and_then(Value::as_str) {
-                    Some("agent_start") => self.set_activity(WorkerActivityState::Working),
-                    Some("agent_settled") => self.set_activity(WorkerActivityState::Idle),
+                    Some("agent_start") => {
+                        self.apply_steering_settled = false;
+                        self.set_activity(WorkerActivityState::Working);
+                    }
+                    Some("agent_settled") => {
+                        if !self.apply_steering_requests.is_empty() {
+                            self.apply_steering_settled = true;
+                            return SessionEvent::Stderr(String::new());
+                        }
+                        self.set_activity(WorkerActivityState::Idle);
+                    }
                     _ => {}
                 }
                 SessionEvent::Activity(event.into())

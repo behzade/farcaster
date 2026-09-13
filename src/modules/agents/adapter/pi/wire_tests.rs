@@ -155,6 +155,7 @@ fn malformed_catalogs_are_correlated_failures_not_empty_successes() {
             "get_commands",
             SessionOperation::ListCommands,
             vec![
+                serde_json::json!(42),
                 serde_json::json!({}),
                 serde_json::json!({"commands":[{"name":"bad","source":"unknown"}]}),
             ],

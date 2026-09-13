@@ -82,3 +82,20 @@ fn leaves_custom_tool_intent_unknown_and_keeps_native_metadata() {
     assert!(metadata.get("targets").is_none());
     assert_eq!(metadata["native"], json!({"provider": "custom"}));
 }
+
+#[test]
+fn cancelled_provider_setup_is_an_abort_in_live_events_and_history() {
+    for (error, reason) in [
+        ("This operation was aborted", "aborted"),
+        ("provider unavailable", "error"),
+    ] {
+        let original =
+            json!({"role":"assistant", "content":[], "stopReason":"error", "errorMessage":error});
+        let mut history = original.clone();
+        annotate_pi_message(&mut history);
+        let mut live = json!({"type":"message_end", "message":original});
+        annotate_pi_value(&mut live);
+        assert_eq!(live["message"], history);
+        assert_eq!(history["stopReason"], reason);
+    }
+}

@@ -45,7 +45,12 @@ export default function fixtureProvider(pi) {
       const result = new Promise((resolve) => { resolveResult = resolve; });
       return {
         async *[Symbol.asyncIterator]() {
-          if (text.startsWith("hold")) {
+          if (text === "hold tool" && !options?.signal?.aborted) {
+            output.content = [{ type: "toolCall", id: "fixture-tool", name: "bash", arguments: { command: "printf started > fixture-tool-started; sleep 30" } }];
+            output.stopReason = "toolUse";
+            resolveResult(output);
+            yield { type: "done", reason: "toolUse", message: output };
+          } else if (options?.signal?.aborted || text.startsWith("hold")) {
             await new Promise((resolve) => {
               if (options?.signal?.aborted) resolve();
               else options?.signal?.addEventListener("abort", resolve, { once: true });

@@ -56,6 +56,10 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "$PWD/fixture-rpc-lines"
   id=$(read_id "$line")
   type=$(read_type "$line")
+  reply_type=$type
+  case "$line" in
+    *'"message":"/farcaster-apply-steering"'*) type=abort ;;
+  esac
   case "$type" in
     get_state)
       if [ "$case_name" = 'second-readiness-fails' ] && [ "$launch_count" -eq 2 ]; then
@@ -152,7 +156,9 @@ while IFS= read -r line; do
       ;;
     abort)
       if [ "$case_name" = 'slow-handoff' ]; then sleep 1; fi
-      printf '{"type":"response","id":"%s","command":"abort","success":true}\n' "$id"
+      printf '{"type":"agent_settled"}\n'
+      printf '{"type":"agent_start"}\n'
+      printf '{"type":"response","id":"%s","command":"%s","success":true}\n' "$id" "$reply_type"
       while [ -s "$steering_queue" ]; do
         delivering=$(sed -n '1p' "$steering_queue")
         printf '%s\n' "$delivering" >> "$PWD/fixture-requests"

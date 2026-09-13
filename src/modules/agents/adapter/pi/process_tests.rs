@@ -871,6 +871,77 @@ fn abort_discards_old_peer_reports_but_accepts_new_ones() -> TestResult {
 }
 
 #[test]
+#[ignore = "requires installed Pi; isolated local provider and tool, no network"]
+fn installed_pi_apply_steering_resumes_after_tool_and_stream_abort() -> TestResult {
+    let _mcp = DisabledMcp::new();
+    for initial in ["hold tool", "hold stream"] {
+        let project = tempdir()?;
+        let command = installed_pi_fixture(project.path())?;
+        let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+        rpc.request_and_wait(SessionCommand::ConfigureSteering)?;
+        prompt(&mut rpc, crate::protocol::PromptMode::Normal, initial)?;
+        wait_for_activity(
+            &mut rpc,
+            if initial == "hold tool" {
+                crate::agents::SessionActivityKind::ToolStarted
+            } else {
+                crate::agents::SessionActivityKind::AgentStarted
+            },
+        )?;
+        if initial == "hold tool" {
+            let started = project.path().join("fixture-tool-started");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !started.exists() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(started.exists(), "shell command did not start");
+        }
+        for _ in 0..2 {
+            let id = prompt(&mut rpc, crate::protocol::PromptMode::Steer, "next")?;
+            wait_for_response(&mut rpc, &id)?;
+        }
+        let apply = rpc.send_request(SessionCommand::ApplySteering)?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let mut acknowledged = false;
+        let mut answered = false;
+        let mut settled = false;
+        while Instant::now() < deadline && !(acknowledged && settled) {
+            match rpc.try_next() {
+                Some(SessionEvent::Response(response))
+                    if response.id.as_deref() == Some(&apply) =>
+                {
+                    response.result?;
+                    acknowledged = true;
+                }
+                Some(SessionEvent::Activity(event)) => {
+                    let value = event.value();
+                    if value["type"] == "message_end" && value["message"]["role"] == "assistant" {
+                        assert_ne!(value["message"]["stopReason"], "error", "{value}");
+                        answered |= value["message"]["content"][0]["text"] == "done: next";
+                    }
+                    if value["type"] == "agent_settled" {
+                        assert!(
+                            answered,
+                            "{initial}: exposed settlement before resumed answer"
+                        );
+                        settled = true;
+                    }
+                }
+                Some(SessionEvent::Failure(error)) => return Err(error.into()),
+                _ => thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        assert!(acknowledged && settled, "{initial}: handoff did not finish");
+        let requests = fs::read_to_string(project.path().join("fixture-requests"))?;
+        let last: Vec<String> =
+            serde_json::from_str(requests.lines().last().ok_or("no requests")?)?;
+        assert_eq!(last, [initial, "next", "next"]);
+        rpc.terminate()?;
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires Pi 0.84.2 or newer installed on PATH"]
 fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestResult {
     let _mcp = DisabledMcp::new();

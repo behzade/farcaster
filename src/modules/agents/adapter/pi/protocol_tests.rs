@@ -5,7 +5,7 @@ use crate::agents::extensions::PromptImage;
 fn encodes_pi_requests_only_at_the_adapter_boundary() {
     assert_eq!(
         encode_request(SessionCommand::ApplySteering).expect("test operation should succeed"),
-        json!({"type":"abort"})
+        json!({"type":"prompt", "message":"/farcaster-apply-steering"})
     );
     assert_eq!(
         encode_request(SessionCommand::ConfigureSteering).expect("test operation should succeed"),

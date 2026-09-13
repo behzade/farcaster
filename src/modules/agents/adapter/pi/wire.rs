@@ -63,6 +63,14 @@ pub(crate) fn parse_frame(frame: &[u8]) -> Result<PiWireMessage, String> {
             if response.success && response.command == "get_session_stats" {
                 add_usage_total(response.data.get_mut("tokens"));
             }
+            if response.command == "get_commands"
+                && let Some(commands) = response
+                    .data
+                    .get_mut("commands")
+                    .and_then(Value::as_array_mut)
+            {
+                commands.retain(|command| command["name"] != "farcaster-apply-steering");
+            }
             let operation = response_operation(&response.command);
             let mut commands = Vec::new();
             let result = if response.success {

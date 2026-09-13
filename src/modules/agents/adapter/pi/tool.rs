@@ -40,6 +40,11 @@ pub(crate) fn annotate_pi_message(message: &mut Value) {
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
         return;
     }
+    // Pi can classify a cancelled provider setup as an error instead of an abort.
+    // Normalize both live events and saved history at the Pi boundary.
+    if message["stopReason"] == "error" && message["errorMessage"] == "This operation was aborted" {
+        message["stopReason"] = Value::String("aborted".into());
+    }
     let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
         return;
     };
