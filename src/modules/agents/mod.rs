@@ -34,4 +34,6 @@ pub(crate) use core::{
 };
 
 #[cfg(test)]
+pub(crate) use adapter::live_tests::support as live_e2e_support;
+#[cfg(test)]
 pub(crate) use core::CallerIdentity;

@@ -8,7 +8,11 @@ mod codex;
 mod cursor;
 mod farcaster_mcp;
 #[cfg(test)]
-mod live_tests;
+mod live_basic_tests;
+#[cfg(test)]
+mod live_input_tests;
+#[cfg(test)]
+pub(crate) mod live_tests;
 mod main_session;
 #[allow(dead_code)]
 mod opencode;

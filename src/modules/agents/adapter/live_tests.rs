@@ -25,9 +25,9 @@ use super::{
     main_session::external_session_locator, spawn_session,
 };
 
-const TURN_TIMEOUT: Duration = Duration::from_secs(180);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-const LIVE_HARNESSES: [&str; 6] = [
+pub(crate) const TURN_TIMEOUT: Duration = Duration::from_secs(180);
+pub(crate) const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const LIVE_HARNESSES: [&str; 6] = [
     "pi",
     "codex-cli",
     "cursor-cli",
@@ -35,12 +35,12 @@ const LIVE_HARNESSES: [&str; 6] = [
     "claude",
     "antigravity-acp",
 ];
-const TEST_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4EKBBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULACvxoEydbL2eAAAAAElFTkSuQmCC";
+pub(crate) const TEST_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4EKBBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULACvxoEydbL2eAAAAAElFTkSuQmCC";
 
-struct McpGuard;
+pub(crate) struct McpGuard;
 
 impl McpGuard {
-    fn disabled() -> Self {
+    pub(crate) fn disabled() -> Self {
         farcaster_mcp::set_enabled(false);
         Self
     }
@@ -102,7 +102,7 @@ impl Coverage {
     }
 }
 
-fn select_harnesses(selected: Option<&str>) -> Result<Vec<&'static str>, String> {
+pub(crate) fn select_harnesses(selected: Option<&str>) -> Result<Vec<&'static str>, String> {
     let Some(selected) = selected else {
         return Ok(LIVE_HARNESSES.to_vec());
     };
@@ -118,7 +118,7 @@ fn select_harnesses(selected: Option<&str>) -> Result<Vec<&'static str>, String>
         })
 }
 
-fn descriptor(harness: &str) -> Result<AgentBackendDescriptor, String> {
+pub(crate) fn descriptor(harness: &str) -> Result<AgentBackendDescriptor, String> {
     known_backend_descriptors()
         .into_iter()
         .find(|descriptor| descriptor.id.as_str() == harness)
@@ -127,7 +127,7 @@ fn descriptor(harness: &str) -> Result<AgentBackendDescriptor, String> {
 
 #[test]
 #[ignore = "runs all six backends against live LLM accounts; consumes usage and retains sessions when deletion is unsupported"]
-fn live_harnesses_conform_to_session_outcomes() -> Result<(), String> {
+fn live_e2e_session_catalog_model_resume_move_delete() -> Result<(), String> {
     let _mcp = McpGuard::disabled();
     let selected = std::env::var("FARCASTER_E2E_HARNESS").ok();
     for harness in select_harnesses(selected.as_deref())? {
@@ -140,21 +140,23 @@ fn live_harnesses_conform_to_session_outcomes() -> Result<(), String> {
 
 fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Result<(), String> {
     let coverage = Coverage::from_capabilities(capabilities);
-    let project_guard =
-        tempfile::tempdir_in(std::env::current_dir().map_err(|error| error.to_string())?)
-            .map_err(|error| format!("create isolated live-test project: {error}"))?;
+    let case_dir = support::e2e_case_dir()?;
+    let project_guard = tempfile::tempdir_in(&case_dir)
+        .map_err(|error| format!("create isolated live-test project: {error}"))?;
+    fs::write(
+        project_guard.path().join("AGENTS.md"),
+        "# Live E2E fixture\n\nUse only files in this directory. Do not inspect or modify parent directories. Run only the exact tool command requested by the prompt.\n",
+    )
+    .map_err(|error| format!("write isolated project instructions: {error}"))?;
     let project = project_guard
         .path()
         .canonicalize()
         .map_err(|error| error.to_string())?;
-    let locator_root = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "HOME is required for live harness tests".to_owned())?
-        .join(".local/share/farcaster/session-locators");
+    let locator_root = support::isolated_locator_root()?;
     let config = AgentLaunchConfig {
         program: PathBuf::from(harness),
         prefix_args: Vec::new(),
-        access_mode: HarnessAccessMode::Full,
+        access_mode: support::live_access_mode_for_harness(harness)?,
         app_proxy: None,
         session_locator_root: Some(locator_root),
     };
@@ -170,7 +172,7 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
     if !coverage.delete {
         writeln!(
             std::io::stderr().lock(),
-            "{harness}: live test session {} will remain because deletion is unsupported",
+            "E2E_LIMIT: {harness} live test session {} will remain because deletion is unsupported",
             path.display()
         )
         .expect("write test diagnostics");
@@ -207,12 +209,25 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
         Err(error) => return Err(cleanup_error(error, close, harness, &path, coverage)),
     };
     close.map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))?;
-    if coverage.move_project {
-        exercise_live_move(harness, &config, &project, &path, &marker, coverage)
-            .map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))?;
+    // A temporary live project intentionally blocks catalog discovery and
+    // therefore move coverage.  Do not let that expected limitation skip the
+    // independent resume, history, persistence, and cleanup checks below.
+    let move_outcome = coverage
+        .move_project
+        .then(|| exercise_live_move(harness, &config, &project, &path, &marker, coverage))
+        .unwrap_or(Ok(()));
+    let persistence_outcome =
+        verify_persistence_and_cleanup(harness, &config, &launch, &path, &marker, coverage);
+    match (move_outcome, persistence_outcome) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(move_error), Ok(())) => Err(move_error),
+        (Ok(()), Err(error)) => Err(cleanup_error(error, Ok(()), harness, &path, coverage)),
+        (Err(move_error), Err(error)) => Err(format!(
+            "{}; persistence/cleanup: {}",
+            move_error.replacen("E2E_BLOCKED: ", "move/catalog coverage blocked: ", 1),
+            cleanup_error(error, Ok(()), harness, &path, coverage)
+        )),
     }
-    verify_persistence_and_cleanup(harness, &config, &launch, &path, &marker, coverage)
-        .map_err(|error| cleanup_error(error, Ok(()), harness, &path, coverage))
 }
 
 fn exercise_live_move(
@@ -223,9 +238,15 @@ fn exercise_live_move(
     marker: &str,
     coverage: Coverage,
 ) -> Result<(), String> {
+    if crate::projects::is_temporary_project(source) {
+        return Err(format!(
+            "E2E_BLOCKED: {} catalog discovery intentionally excludes the per-case temporary project {}; move/catalog coverage needs an explicit non-temporary project opt-in",
+            harness,
+            source.display()
+        ));
+    }
     let destination_guard =
-        tempfile::tempdir_in(std::env::current_dir().map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
+        tempfile::tempdir_in(support::e2e_case_dir()?).map_err(|error| error.to_string())?;
     let destination = destination_guard
         .path()
         .canonicalize()
@@ -374,8 +395,7 @@ fn exercise_catalog(session: &mut dyn SessionTransport, coverage: Coverage) -> R
             let model = state
                 .model
                 .as_ref()
-                .or_else(|| models.first())
-                .ok_or_else(|| "live model catalog is empty".to_owned())?;
+                .ok_or_else(|| "E2E_BLOCKED: current model is unknown; refusing to change native defaults to an arbitrary catalog model".to_owned())?;
             if model.context_window != 0 {
                 request(
                     session,
@@ -393,7 +413,11 @@ fn exercise_catalog(session: &mut dyn SessionTransport, coverage: Coverage) -> R
         else {
             return Err("expected effort catalog".into());
         };
-        if let Some(level) = levels.first() {
+        if let Some(level) = state
+            .thinking_level
+            .as_ref()
+            .filter(|level| levels.contains(level))
+        {
             request(
                 session,
                 SessionCommand::SelectReasoning {
@@ -430,13 +454,15 @@ fn exercise_live_session(
     session: &mut dyn SessionTransport,
     coverage: Coverage,
 ) -> Result<String, String> {
-    let marker = format!("FARCASTER_LIVE_{}", std::process::id());
+    let marker = support::marker("legacy_normal");
+    let steer_marker = support::marker("legacy_steer");
+    let follow_up_marker = support::marker("legacy_follow_up");
     let final_marker = if coverage.follow_up {
-        "FARCASTER_FOLLOWUP_OK"
+        &follow_up_marker
     } else if coverage.steer {
-        "FARCASTER_STEER_OK"
+        &steer_marker
     } else {
-        marker.as_str()
+        &marker
     };
     let mut conversation = ConversationState::default();
     let mut lifecycle = Lifecycle::default();
@@ -465,22 +491,27 @@ fn exercise_live_session(
         &mut lifecycle,
         &mut responses,
         TURN_TIMEOUT,
-        |session, event, _| {
+        |session, event, conversation| {
             if event.get("type").and_then(Value::as_str) == Some("tool_execution_start")
                 && coverage.steer
                 && !steered
             {
                 let id = session.send(SessionCommand::Prompt {
                     mode: PromptMode::Steer,
-                    message:
-                        "Your final response must also include the exact token FARCASTER_STEER_OK."
-                            .into(),
+                    message: format!(
+                        "Your final response must also include the exact token {steer_marker}."
+                    ),
                     images: Vec::new(),
                 })?;
                 steer_id = Some(id);
                 steered = true;
             }
-            Ok(event.get("type").and_then(Value::as_str) == Some("agent_settled"))
+            let settled = event.get("type").and_then(Value::as_str) == Some("agent_settled");
+            if coverage.steer {
+                Ok(steered && settled && conversation_contains(conversation, &steer_marker))
+            } else {
+                Ok(settled)
+            }
         },
     )?;
     lifecycle.require_turn(
@@ -492,7 +523,7 @@ fn exercise_live_session(
     require_assistant_text(
         &conversation,
         if coverage.steer {
-            "FARCASTER_STEER_OK"
+            &steer_marker
         } else {
             &marker
         },
@@ -507,9 +538,10 @@ fn exercise_live_session(
         let mut follow_lifecycle = Lifecycle::default();
         session.send(SessionCommand::Prompt {
             mode: PromptMode::Normal,
-            message:
-                "Use the shell tool to run `sleep 2`; then reply with FARCASTER_QUEUE_BASE_OK."
-                    .into(),
+            message: format!(
+                "Use the shell tool to run `sleep 2`; then reply with {}.",
+                support::marker("legacy_queue_base")
+            ),
             images: Vec::new(),
         })?;
         poll_until(
@@ -524,15 +556,15 @@ fn exercise_live_session(
                 {
                     let id = session.send(SessionCommand::Prompt {
                         mode: PromptMode::FollowUp,
-                        message:
-                            "After the current turn, reply with the exact token FARCASTER_FOLLOWUP_OK."
-                                .into(),
+                        message: format!(
+                            "After the current turn, reply with the exact token {follow_up_marker}."
+                        ),
                         images: Vec::new(),
                     })?;
                     follow_up_id = Some(id);
                     follow_up_sent = true;
                 }
-                Ok(conversation_contains(conversation, "FARCASTER_FOLLOWUP_OK")
+                Ok(conversation_contains(conversation, &follow_up_marker)
                     && event.get("type").and_then(Value::as_str) == Some("agent_settled"))
             },
         )?;
@@ -550,7 +582,7 @@ fn exercise_live_session(
         )?;
         require_assistant_text(&conversation, final_marker)?;
     }
-    Ok(final_marker.into())
+    Ok(final_marker.to_owned())
 }
 
 #[derive(Default)]
@@ -659,7 +691,7 @@ fn exercise_abort(session: &mut dyn SessionTransport) -> Result<(), String> {
                     abort_response = response.operation() == SessionOperation::Abort;
                 }
             }
-            Some(SessionEvent::Interaction(request)) => approve(session, request)?,
+            Some(SessionEvent::Interaction(request)) => approve(session, request, &[])?,
             Some(SessionEvent::Failure(error)) => return Err(error),
             Some(SessionEvent::Stderr(_)) | None => thread::sleep(Duration::from_millis(20)),
         }
@@ -703,7 +735,7 @@ fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String>
                 }
                 response = item.operation() == SessionOperation::Compact;
             }
-            Some(SessionEvent::Interaction(request)) => approve(session, request)?,
+            Some(SessionEvent::Interaction(request)) => approve(session, request, &[])?,
             Some(SessionEvent::Failure(error)) if compaction_not_needed(&error) => return Ok(()),
             Some(SessionEvent::Failure(error)) => return Err(error),
             Some(SessionEvent::Response(_) | SessionEvent::Stderr(_)) | None => {
@@ -839,7 +871,7 @@ fn request(session: &mut dyn SessionTransport, command: SessionCommand) -> Resul
                 }
                 return response.result.map_err(|error| error.to_string());
             }
-            Some(SessionEvent::Interaction(request)) => approve(session, request)?,
+            Some(SessionEvent::Interaction(request)) => approve(session, request, &[])?,
             Some(SessionEvent::Failure(error)) => return Err(error),
             Some(_) | None => thread::sleep(Duration::from_millis(20)),
         }
@@ -898,7 +930,7 @@ fn poll_until(
                     return Ok(());
                 }
             }
-            SessionEvent::Interaction(request) => approve(session, request)?,
+            SessionEvent::Interaction(request) => approve(session, request, &[])?,
             SessionEvent::Response(response) => {
                 if let Some(id) = response.id.clone() {
                     responses.insert(id, response);
@@ -926,25 +958,25 @@ fn require_response(
     }
 }
 
-fn approve(session: &mut dyn SessionTransport, request: ExtensionUiRequest) -> Result<(), String> {
-    let response = match request {
-        ExtensionUiRequest::Select { id, options, .. } => ExtensionUiResponse::Value {
-            id,
-            value: options.into_iter().next().unwrap_or_else(|| "Allow".into()),
-        },
-        ExtensionUiRequest::Confirm { id, .. } => ExtensionUiResponse::Confirmed {
-            id,
-            confirmed: true,
-        },
-        ExtensionUiRequest::Input { id, .. } | ExtensionUiRequest::Editor { id, .. } => {
-            ExtensionUiResponse::Value {
-                id,
-                value: "Allow".into(),
-            }
+fn approve(
+    session: &mut dyn SessionTransport,
+    request: ExtensionUiRequest,
+    gates: &[support::TurnGate],
+) -> Result<(), String> {
+    match request {
+        // These mutate only harness UI state.  They have no dialog ID under
+        // the production contract, so there is no response to send and no
+        // permission to grant.
+        ExtensionUiRequest::Notify { .. }
+        | ExtensionUiRequest::SetStatus { .. }
+        | ExtensionUiRequest::SetWidget { .. }
+        | ExtensionUiRequest::SetTitle { .. }
+        | ExtensionUiRequest::SetEditorText { .. } => Ok(()),
+        request => {
+            let response = support::bounded_gate_permission(&request, gates)?;
+            session.respond(response)
         }
-        _ => return Ok(()),
-    };
-    session.respond(response)
+    }
 }
 
 fn conversation_contains(conversation: &ConversationState, expected: &str) -> bool {
@@ -966,6 +998,1703 @@ fn require_assistant_text(conversation: &ConversationState, expected: &str) -> R
     Err(format!(
         "assistant transcript does not contain {expected:?}: {assistant:?}"
     ))
+}
+
+/// Test-only support for ignored tests that run the installed harness against a
+/// real account.  It deliberately speaks only through `spawn_session` and the
+/// normalized transport; fixture processes and injected activities belong in
+/// adapter tests, not here.
+pub(crate) mod support {
+    use super::*;
+
+    pub(crate) use super::{McpGuard, TEST_IMAGE, TURN_TIMEOUT};
+
+    pub(crate) const EVENT_POLL: Duration = Duration::from_millis(20);
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct Submission {
+        pub(crate) id: String,
+        pub(crate) mode: PromptMode,
+        pub(crate) text: String,
+        /// `marker` is the exact caller-provided text.  Live tests use an
+        /// unguessable marker in it, rather than a process ID or fixed token.
+        pub(crate) marker: String,
+        pub(crate) images: Vec<PromptImage>,
+    }
+
+    /// The strongest receipt evidence a harness actually exposes.  Native
+    /// history is enough for one unique functional marker, never for matching
+    /// equal text or delayed image receipts.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum PromptObservation {
+        CorrelatedDelivery,
+        NativeHistoryOnly,
+    }
+
+    /// The exact provider/model pair accepted by a short-lived real harness
+    /// session.  Child E2E profiles use this instead of guessing from the
+    /// first entry in a possibly stale configuration catalog.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub(crate) struct LiveWorkerModel {
+        pub(crate) provider: String,
+        pub(crate) model: String,
+    }
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct TraceEvent {
+        pub(crate) elapsed: Duration,
+        pub(crate) value: Value,
+    }
+
+    #[derive(Clone, Debug)]
+    pub(crate) struct TurnGate {
+        file_name: String,
+        script_path: PathBuf,
+        pid_path: PathBuf,
+        started_path: PathBuf,
+        release_path: PathBuf,
+        timeout_path: PathBuf,
+        pub(crate) marker: String,
+    }
+
+    impl TurnGate {
+        pub(crate) fn new(project: &Path, label: &str) -> Result<Self, String> {
+            let suffix = uuid::Uuid::new_v4().simple().to_string();
+            let file_name = format!("farcaster-live-gate-{suffix}");
+            let script_path = project.join(format!("{file_name}.sh"));
+            let pid_path = project.join(format!("{file_name}.pid"));
+            let started_path = project.join(format!("{file_name}.started"));
+            let release_path = project.join(&file_name);
+            let timeout_path = project.join(format!("{file_name}.timed-out"));
+            if script_path.exists()
+                || pid_path.exists()
+                || started_path.exists()
+                || release_path.exists()
+                || timeout_path.exists()
+            {
+                return Err(format!(
+                    "live test gate unexpectedly already exists: {}, {}, {}, {}, or {}",
+                    script_path.display(),
+                    pid_path.display(),
+                    started_path.display(),
+                    release_path.display(),
+                    timeout_path.display()
+                ));
+            }
+            let gate = Self {
+                script_path,
+                pid_path,
+                started_path,
+                release_path,
+                timeout_path,
+                file_name,
+                marker: format!("FARCASTER_GATE_{}_{}", label.to_ascii_uppercase(), suffix),
+            };
+            fs::write(&gate.script_path, gate.script()).map_err(|error| {
+                format!(
+                    "write deterministic live tool gate {}: {error}",
+                    gate.script_path.display()
+                )
+            })?;
+            Ok(gate)
+        }
+
+        pub(crate) fn file_name(&self) -> &str {
+            &self.file_name
+        }
+
+        /// The only shell command a live E2E permission responder may allow.
+        /// It runs the owned, project-local gate without arguments or shell
+        /// composition.
+        pub(crate) fn shell_command(&self) -> String {
+            format!("sh ./{}", self.script_file_name())
+        }
+
+        pub(crate) fn prompt(&self) -> String {
+            format!(
+                "Use the shell tool to run exactly `{}`. Do not edit the script or any gate files. Do not answer before it exits. Then reply with the exact token {}.",
+                self.shell_command(),
+                self.marker
+            )
+        }
+
+        /// UI tests can release a real tool process without owning the
+        /// transport that started it.
+        pub(crate) fn release(&self) -> Result<(), String> {
+            self.assert_still_closed()?;
+            fs::write(&self.release_path, format!("{}\n", self.marker))
+                .map_err(|error| format!("release live tool gate {}: {error}", self.file_name))
+        }
+
+        /// Control tests call this before release.  It rules out the tool's
+        /// bounded timeout as the reason a turn settled or a handoff started.
+        pub(crate) fn assert_still_closed(&self) -> Result<(), String> {
+            if self.timeout_path.exists() {
+                return Err(format!(
+                    "live tool gate {} timed out before the control assertion",
+                    self.file_name
+                ));
+            }
+            if self.release_path.exists() {
+                return Err(format!(
+                    "live tool gate {} was released before the control assertion",
+                    self.file_name
+                ));
+            }
+            Ok(())
+        }
+
+        pub(crate) fn has_started(&self) -> bool {
+            self.started_path.is_file()
+        }
+
+        pub(crate) fn assert_started(&self) -> Result<(), String> {
+            self.assert_still_closed()?;
+            if self.has_started() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "live tool gate {} did not write its shell-start witness",
+                    self.file_name
+                ))
+            }
+        }
+
+        /// Verifies that the PID emitted by the live shell gate is observable
+        /// before a control command.  This calibrates `kill -0` against a
+        /// process we own, so a later failure is meaningful exit evidence.
+        pub(crate) fn assert_process_alive(&self) -> Result<(), String> {
+            self.assert_started()?;
+            let pid = self.pid()?;
+            if gate_process_alive(pid)? {
+                Ok(())
+            } else {
+                Err(format!(
+                    "live tool gate {} wrote PID {pid}, but /bin/kill -0 could not observe it before control",
+                    self.file_name
+                ))
+            }
+        }
+
+        /// After an acknowledged Abort, waits a bounded time for exactly the
+        /// shell process that opened this gate to exit.  It sends no signal;
+        /// `kill -0` only probes liveness.  A release or natural timeout makes
+        /// this fail rather than masking a no-op Abort.
+        pub(crate) fn assert_process_exited_after_abort(&self) -> Result<(), String> {
+            self.assert_still_closed()?;
+            self.assert_started()?;
+            let pid = self.pid()?;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if !gate_process_alive(pid)? {
+                    return Ok(());
+                }
+                thread::park_timeout(EVENT_POLL);
+                self.assert_still_closed()?;
+            }
+            Err(format!(
+                "live tool gate {} PID {pid} remained alive for 10 seconds after Abort",
+                self.file_name
+            ))
+        }
+
+        fn pid(&self) -> Result<u32, String> {
+            let pid = fs::read_to_string(&self.pid_path)
+                .map_err(|error| {
+                    format!(
+                        "read live tool gate PID witness {}: {error}",
+                        self.pid_path.display()
+                    )
+                })?
+                .trim()
+                .parse::<u32>()
+                .map_err(|error| {
+                    format!(
+                        "parse live tool gate PID witness {}: {error}",
+                        self.pid_path.display()
+                    )
+                })?;
+            if pid == 0 {
+                return Err(format!(
+                    "live tool gate PID witness {} must not be zero",
+                    self.pid_path.display()
+                ));
+            }
+            Ok(pid)
+        }
+
+        fn script(&self) -> String {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{}'\nprintf started > '{}'\nfor i in $(seq 1 4800); do\n  if [ -s '{}' ]; then\n    cat '{}'\n    exit 0\n  fi\n  sleep 0.1\ndone\nprintf timed-out > '{}'\nexit 124\n",
+                self.pid_file_name(),
+                self.started_file_name(),
+                self.file_name,
+                self.file_name,
+                self.timeout_file_name(),
+            )
+        }
+
+        fn script_file_name(&self) -> &str {
+            self.script_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("turn gate script fixture name is valid UTF-8")
+        }
+
+        fn started_file_name(&self) -> &str {
+            self.started_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("turn gate start fixture name is valid UTF-8")
+        }
+
+        fn pid_file_name(&self) -> &str {
+            self.pid_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("turn gate PID fixture name is valid UTF-8")
+        }
+
+        fn timeout_file_name(&self) -> &str {
+            self.timeout_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("turn gate timeout fixture name is valid UTF-8")
+        }
+    }
+
+    /// Returns a reply only for the exact Bash permission required by one of
+    /// this process's registered project-local gates.  Live tests never grant
+    /// a general shell permission, even though the fixture itself is safe.
+    pub(crate) fn bounded_gate_permission(
+        request: &ExtensionUiRequest,
+        gates: &[TurnGate],
+    ) -> Result<ExtensionUiResponse, String> {
+        let ExtensionUiRequest::Select {
+            id, title, options, ..
+        } = request
+        else {
+            return Err(format!(
+                "E2E_BLOCKED: live harness requested unmanaged interaction {request:?}; refusing to grant permission outside the fixture scope"
+            ));
+        };
+        if options.len() != 2 || options[0] != "Deny" || options[1] != "Allow" {
+            return Err(format!(
+                "E2E_BLOCKED: refusing gate permission with unexpected choices: {options:?}"
+            ));
+        }
+        let payload = title.strip_prefix("Allow Bash?\n").ok_or_else(|| {
+            format!(
+                "E2E_BLOCKED: refusing non-gate selection while waiting for a registered gate: {title:?}"
+            )
+        })?;
+        let payload: Value = serde_json::from_str(payload).map_err(|error| {
+            format!("E2E_BLOCKED: refusing malformed gate permission payload: {error}")
+        })?;
+        let command = payload
+            .as_object()
+            .and_then(|object| object.get("command"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                "E2E_BLOCKED: refusing gate permission without an exact command".to_owned()
+            })?;
+        if !gates.iter().any(|gate| command == gate.shell_command()) {
+            return Err(format!(
+                "E2E_BLOCKED: refusing Bash command outside the registered project-local gate: {command:?}"
+            ));
+        }
+        Ok(ExtensionUiResponse::Value {
+            id: id.clone(),
+            value: "Allow".into(),
+        })
+    }
+
+    fn gate_process_alive(pid: u32) -> Result<bool, String> {
+        use std::process::{Command, Stdio};
+
+        let pid_text = pid.to_string();
+        let output = Command::new("/bin/kill")
+            .args(["-0", pid_text.as_str()])
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| format!("run /bin/kill -0 for live gate PID {pid}: {error}"))?;
+        if output.status.success() {
+            return Ok(true);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+        if stderr.contains("no such process") {
+            return Ok(false);
+        }
+        Err(format!(
+            "/bin/kill -0 for live gate PID {pid} did not prove exit (status={}, stderr={stderr:?})",
+            output.status
+        ))
+    }
+
+    /// An isolated project plus a single real installed harness session.
+    ///
+    /// `FARCASTER_DATA_DIR` is set by `scripts/e2e.sh`.  We reject an absent
+    /// setting here so a developer cannot accidentally point the live suite at
+    /// their normal Farcaster database.
+    pub(crate) struct LiveSession {
+        harness: String,
+        capabilities: AgentCapabilities,
+        project_guard: tempfile::TempDir,
+        locator_guard: tempfile::TempDir,
+        config: AgentLaunchConfig,
+        transport: Box<dyn SessionTransport>,
+        path: PathBuf,
+        conversation: ConversationState,
+        responses: HashMap<String, SessionResponse>,
+        activities: Vec<TraceEvent>,
+        stderr: Vec<String>,
+        gates: Vec<TurnGate>,
+        started_at: Instant,
+        program_version: String,
+        model_identity: Option<String>,
+        _mcp: McpGuard,
+    }
+
+    impl LiveSession {
+        pub(crate) fn start(harness: &str) -> Result<Self, String> {
+            let case_dir = e2e_case_dir()?;
+            let descriptor = descriptor(harness)?;
+            let project_guard = tempfile::tempdir_in(&case_dir)
+                .map_err(|error| format!("create isolated live-test project: {error}"))?;
+            fs::write(
+                project_guard.path().join("AGENTS.md"),
+                "# Live E2E fixture\n\nUse only files in this directory. Do not inspect or modify parent directories. Run only the exact tool command requested by the prompt.\n",
+            )
+            .map_err(|error| format!("write isolated project instructions: {error}"))?;
+            let locator_guard = tempfile::tempdir_in(project_guard.path())
+                .map_err(|error| format!("create isolated live locator root: {error}"))?;
+            let project = project_guard
+                .path()
+                .canonicalize()
+                .map_err(|error| format!("canonicalize live project: {error}"))?;
+            let config = AgentLaunchConfig {
+                program: PathBuf::from(harness),
+                prefix_args: Vec::new(),
+                access_mode: live_access_mode_for_harness(harness)?,
+                app_proxy: None,
+                session_locator_root: Some(locator_guard.path().into()),
+            };
+            let resolved_config = super::super::launch_configuration(&config, harness)?;
+            let program_version = program_version(&resolved_config.program);
+            let _mcp = McpGuard::disabled();
+            let transport = spawn_session(
+                &config,
+                SessionLaunch {
+                    harness: harness.into(),
+                    session_id: None,
+                    project,
+                    start: SessionStart::New,
+                    wake: Some(thread::current()),
+                },
+            )?;
+            let mut live = Self {
+                harness: harness.into(),
+                capabilities: descriptor.capabilities,
+                project_guard,
+                locator_guard,
+                config,
+                transport,
+                path: PathBuf::new(),
+                conversation: ConversationState::default(),
+                responses: HashMap::new(),
+                activities: Vec::new(),
+                stderr: Vec::new(),
+                gates: Vec::new(),
+                started_at: Instant::now(),
+                program_version,
+                model_identity: None,
+                _mcp,
+            };
+            let state = live.load_state()?;
+            live.path = state
+                .session_file
+                .map(PathBuf::from)
+                .ok_or_else(|| "live session state omitted its locator path".to_owned())?;
+            live.model_identity = state.model.map(|model| {
+                format!(
+                    "{}/{}",
+                    model.provider,
+                    model.resolved_model.unwrap_or(model.id)
+                )
+            });
+            eprintln!(
+                "live E2E harness={} version={} model={}",
+                live.harness,
+                live.program_version,
+                live.model_identity.as_deref().unwrap_or("unreported")
+            );
+            Ok(live)
+        }
+
+        pub(crate) fn harness(&self) -> &str {
+            &self.harness
+        }
+
+        pub(crate) fn capabilities(&self) -> &AgentCapabilities {
+            &self.capabilities
+        }
+
+        pub(crate) fn project(&self) -> &Path {
+            self.project_guard.path()
+        }
+
+        pub(crate) fn launch_config(&self) -> AgentLaunchConfig {
+            self.config.clone()
+        }
+
+        pub(crate) fn session_path(&mut self) -> Result<PathBuf, String> {
+            let Payload::LoadState(state) = self.request(SessionCommand::LoadState)? else {
+                return Err("expected state response".into());
+            };
+            state
+                .session_file
+                .map(PathBuf::from)
+                .ok_or_else(|| "live session state omitted its locator path".to_owned())
+        }
+
+        pub(crate) fn path(&self) -> &Path {
+            &self.path
+        }
+
+        pub(crate) fn program_version(&self) -> &str {
+            &self.program_version
+        }
+
+        pub(crate) fn model_identity(&self) -> Option<&str> {
+            self.model_identity.as_deref()
+        }
+
+        pub(crate) fn conversation(&self) -> &ConversationState {
+            &self.conversation
+        }
+
+        pub(crate) fn activities(&self) -> &[TraceEvent] {
+            &self.activities
+        }
+
+        pub(crate) fn stderr(&self) -> &[String] {
+            &self.stderr
+        }
+
+        pub(crate) fn require_available(
+            &self,
+            feature: &str,
+            support: &CapabilitySupport,
+        ) -> Result<(), String> {
+            if *support == CapabilitySupport::Available {
+                Ok(())
+            } else {
+                Err(format!(
+                    "E2E_BLOCKED: {} declares {feature} unsupported; live E2E may not mark this feature passed",
+                    self.harness
+                ))
+            }
+        }
+
+        pub(crate) fn configure_steering(&mut self) -> Result<(), String> {
+            self.request(SessionCommand::ConfigureSteering)?;
+            Ok(())
+        }
+
+        pub(crate) fn submit(
+            &mut self,
+            mode: PromptMode,
+            text: impl Into<String>,
+            images: Vec<PromptImage>,
+        ) -> Result<Submission, String> {
+            let text = text.into();
+            let id = self.transport.send(SessionCommand::Prompt {
+                mode,
+                message: text.clone(),
+                images: images.clone(),
+            })?;
+            Ok(Submission {
+                id,
+                mode,
+                marker: text.clone(),
+                text,
+                images,
+            })
+        }
+
+        pub(crate) fn tracks_prompt_delivery(&self, mode: PromptMode) -> bool {
+            self.transport.tracks_prompt_delivery(mode)
+        }
+
+        pub(crate) fn require_prompt_delivery_tracking(
+            &self,
+            mode: PromptMode,
+        ) -> Result<(), String> {
+            if self.tracks_prompt_delivery(mode) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "E2E_BLOCKED: {} does not expose exact delivery IDs for {mode:?}; refusing text/FIFO inference",
+                    self.harness
+                ))
+            }
+        }
+
+        pub(crate) fn require_functional_prompt_observation(
+            &self,
+            mode: PromptMode,
+        ) -> Result<PromptObservation, String> {
+            if self.tracks_prompt_delivery(mode) {
+                return Ok(PromptObservation::CorrelatedDelivery);
+            }
+            self.require_available("native history", &self.capabilities.sessions.history)?;
+            eprintln!(
+                "E2E_LIMIT: {} has no exact delivery IDs for {mode:?}; using unique-marker native history only",
+                self.harness
+            );
+            Ok(PromptObservation::NativeHistoryOnly)
+        }
+
+        pub(crate) fn apply_steering(&mut self) -> Result<String, String> {
+            self.transport.send(SessionCommand::ApplySteering)
+        }
+
+        pub(crate) fn abort(&mut self) -> Result<String, String> {
+            self.transport.send(SessionCommand::Abort)
+        }
+
+        /// Ask the real model to hold an actual shell invocation.  Tests wait
+        /// for that observed tool event before writing the release file.
+        pub(crate) fn start_gated_turn(&mut self, label: &str) -> Result<TurnGate, String> {
+            self.require_available(
+                "tool activity",
+                &self.capabilities.observation.tool_activity,
+            )?;
+            let gate = TurnGate::new(self.project(), label)?;
+            // Register before the real prompt leaves this process.  Claude
+            // can ask its exact Bash permission before any tool activity.
+            self.gates.push(gate.clone());
+            self.submit(PromptMode::Normal, gate.prompt(), Vec::new())?;
+            self.wait_for_tool_start(gate.file_name(), TURN_TIMEOUT)?;
+            self.wait_for_gate_started(&gate, TURN_TIMEOUT)?;
+            gate.assert_process_alive()?;
+            Ok(gate)
+        }
+
+        pub(crate) fn hold_turn(&mut self, label: &str) -> Result<TurnGate, String> {
+            self.start_gated_turn(label)
+        }
+
+        pub(crate) fn release_gate(&mut self, gate: &TurnGate) -> Result<(), String> {
+            gate.release()
+        }
+
+        pub(crate) fn activity_cursor(&self) -> usize {
+            self.activities.len()
+        }
+
+        pub(crate) fn wait_for_tool_start(
+            &mut self,
+            gate_file: &str,
+            timeout: Duration,
+        ) -> Result<Value, String> {
+            self.wait_for_activity(timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("tool_execution_start")
+                    && event.to_string().contains(gate_file)
+            })
+            .map_err(|error| format!("{error}; trace={}", self.trace_summary()))
+        }
+
+        /// Finds the one real shell tool invocation made by this gate.  The
+        /// generated gate filename is unique per case, so this never matches
+        /// another turn by text order.
+        pub(crate) fn gate_tool_call_id(&self, gate: &TurnGate) -> Result<String, String> {
+            let matching = self
+                .activities
+                .iter()
+                .filter(|event| {
+                    event.value.get("type").and_then(Value::as_str) == Some("tool_execution_start")
+                        && event.value.to_string().contains(gate.file_name())
+                })
+                .collect::<Vec<_>>();
+            if matching.len() != 1 {
+                return Err(format!(
+                    "expected exactly one live gate tool start for {}, found {}; trace={}",
+                    gate.file_name(),
+                    matching.len(),
+                    self.trace_summary()
+                ));
+            }
+            matching[0]
+                .value
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    format!(
+                        "live gate tool start omitted toolCallId: {}",
+                        matching[0].value
+                    )
+                })
+        }
+
+        /// Waits for the actual gated shell invocation to finish after a
+        /// control command.  Harnesses such as OpenCode can keep the outer
+        /// turn alive after ApplySteering, so an unrelated `agent_start` is
+        /// not evidence that the control took effect.
+        pub(crate) fn wait_for_gate_tool_end_after(
+            &mut self,
+            cursor: usize,
+            gate: &TurnGate,
+            timeout: Duration,
+        ) -> Result<Value, String> {
+            let tool_call_id = self.gate_tool_call_id(gate)?;
+            self.wait_for_activity_after(cursor, timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("tool_execution_end")
+                    && event.get("toolCallId").and_then(Value::as_str)
+                        == Some(tool_call_id.as_str())
+            })
+        }
+
+        /// Proves the first-Escape handoff reached a real turn boundary without
+        /// assuming every harness starts a replacement turn.  Some continue
+        /// the outer turn and finish the original shell tool; others settle it
+        /// and begin a new turn.  The tool path uses the exact observed call
+        /// ID, while the replacement path requires `agent_start` after—not
+        /// merely near—the matching settlement.
+        pub(crate) fn wait_for_apply_handoff_after(
+            &mut self,
+            cursor: usize,
+            gate: &TurnGate,
+            timeout: Duration,
+        ) -> Result<Value, String> {
+            let tool_call_id = self.gate_tool_call_id(gate)?;
+            let deadline = Instant::now() + timeout;
+            let mut inspected = cursor;
+            let mut settled = false;
+
+            while Instant::now() < deadline {
+                while let Some(event) = self.activities.get(inspected) {
+                    inspected += 1;
+                    let kind = event.value.get("type").and_then(Value::as_str);
+                    if kind == Some("tool_execution_end")
+                        && event.value.get("toolCallId").and_then(Value::as_str)
+                            == Some(tool_call_id.as_str())
+                    {
+                        return Ok(event.value.clone());
+                    }
+                    if kind == Some("agent_settled") {
+                        settled = true;
+                        continue;
+                    }
+                    if settled && kind == Some("agent_start") {
+                        return Ok(event.value.clone());
+                    }
+                }
+                self.pump_one()?;
+            }
+
+            Err(format!(
+                "timed out after {} seconds waiting for ApplySteering to finish gate tool {} or start after settlement; trace={}",
+                timeout.as_secs(),
+                tool_call_id,
+                self.trace_summary()
+            ))
+        }
+
+        /// A cancelled gate may report an end event as part of cancellation,
+        /// so its end alone cannot prove later execution.  A new start of the
+        /// uniquely named gate after settlement does prove that the stopped
+        /// shell work restarted.  Keep this tied to the gate filename rather
+        /// than any assistant text, which models may echo or reason about.
+        pub(crate) fn assert_no_gate_tool_start_after(
+            &self,
+            cursor: usize,
+            gate: &TurnGate,
+        ) -> Result<(), String> {
+            if let Some(event) = self.activities.iter().skip(cursor).find(|event| {
+                event.value.get("type").and_then(Value::as_str) == Some("tool_execution_start")
+                    && event.value.to_string().contains(gate.file_name())
+            }) {
+                return Err(format!(
+                    "cancelled gate {} started real shell work after settlement: +{}ms {}; trace={}",
+                    gate.file_name(),
+                    event.elapsed.as_millis(),
+                    event.value,
+                    self.trace_summary()
+                ));
+            }
+            Ok(())
+        }
+
+        pub(crate) fn wait_for_gate_started(
+            &mut self,
+            gate: &TurnGate,
+            timeout: Duration,
+        ) -> Result<(), String> {
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                if gate.has_started() {
+                    return gate.assert_started();
+                }
+                self.pump_one()?;
+            }
+            Err(format!(
+                "timed out after {} seconds waiting for shell-start witness for {}",
+                timeout.as_secs(),
+                gate.file_name()
+            ))
+        }
+
+        pub(crate) fn wait_for_activity(
+            &mut self,
+            timeout: Duration,
+            predicate: impl Fn(&Value) -> bool,
+        ) -> Result<Value, String> {
+            if let Some(event) = self
+                .activities
+                .iter()
+                .map(|event| &event.value)
+                .find(|event| predicate(event))
+            {
+                return Ok(event.clone());
+            }
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                self.pump_one()?;
+                if let Some(event) = self
+                    .activities
+                    .iter()
+                    .map(|event| &event.value)
+                    .rfind(|event| predicate(event))
+                {
+                    return Ok(event.clone());
+                }
+            }
+            Err(format!(
+                "timed out after {} seconds waiting for activity",
+                timeout.as_secs()
+            ))
+        }
+
+        pub(crate) fn wait_for_activity_after(
+            &mut self,
+            cursor: usize,
+            timeout: Duration,
+            predicate: impl Fn(&Value) -> bool,
+        ) -> Result<Value, String> {
+            if let Some(event) = self
+                .activities
+                .iter()
+                .skip(cursor)
+                .map(|event| &event.value)
+                .find(|event| predicate(event))
+            {
+                return Ok(event.clone());
+            }
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                self.pump_one()?;
+                if let Some(event) = self
+                    .activities
+                    .iter()
+                    .skip(cursor)
+                    .map(|event| &event.value)
+                    .rfind(|event| predicate(event))
+                {
+                    return Ok(event.clone());
+                }
+            }
+            Err(format!(
+                "timed out after {} seconds waiting for activity after trace position {cursor}",
+                timeout.as_secs()
+            ))
+        }
+
+        pub(crate) fn wait_for_response(
+            &mut self,
+            id: &str,
+            timeout: Duration,
+        ) -> Result<SessionResponse, String> {
+            if let Some(response) = self.responses.get(id) {
+                return Ok(response.clone());
+            }
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                self.pump_one()?;
+                if let Some(response) = self.responses.get(id) {
+                    return Ok(response.clone());
+                }
+            }
+            Err(format!(
+                "timed out after {} seconds waiting for response {id}; trace={}",
+                timeout.as_secs(),
+                self.trace_summary()
+            ))
+        }
+
+        pub(crate) fn wait_for_delivery(
+            &mut self,
+            submission_id: &str,
+            timeout: Duration,
+        ) -> Result<Value, String> {
+            self.wait_for_activity(timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                    && event.get("submissionId").and_then(Value::as_str) == Some(submission_id)
+                    && event.get("status").and_then(Value::as_str) == Some("delivered")
+            })
+        }
+
+        pub(crate) fn wait_for_delivery_after(
+            &mut self,
+            cursor: usize,
+            submission_id: &str,
+            timeout: Duration,
+        ) -> Result<Value, String> {
+            self.wait_for_activity_after(cursor, timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                    && event.get("submissionId").and_then(Value::as_str) == Some(submission_id)
+                    && event.get("status").and_then(Value::as_str) == Some("delivered")
+            })
+        }
+
+        pub(crate) fn wait_for_functional_observation_after(
+            &mut self,
+            cursor: usize,
+            submission: &Submission,
+            marker: &str,
+            timeout: Duration,
+        ) -> Result<PromptObservation, String> {
+            match self.require_functional_prompt_observation(submission.mode)? {
+                PromptObservation::CorrelatedDelivery => {
+                    self.wait_for_delivery_after(cursor, &submission.id, timeout)?;
+                    Ok(PromptObservation::CorrelatedDelivery)
+                }
+                PromptObservation::NativeHistoryOnly => {
+                    self.wait_for_native_user_marker(marker, &submission.images, timeout)?;
+                    Ok(PromptObservation::NativeHistoryOnly)
+                }
+            }
+        }
+
+        pub(crate) fn wait_for_settled(&mut self, timeout: Duration) -> Result<(), String> {
+            self.wait_for_activity(timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("agent_settled")
+            })?;
+            Ok(())
+        }
+
+        pub(crate) fn wait_for_native_idle(&mut self, timeout: Duration) -> Result<(), String> {
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                let state = self.load_state()?;
+                if !state.is_streaming && !state.is_compacting && state.pending_message_count == 0 {
+                    return Ok(());
+                }
+                self.pump_one()?;
+                thread::park_timeout(Duration::from_millis(100));
+            }
+            Err(format!(
+                "native session did not become idle before the later Normal prompt; trace={}",
+                self.trace_summary()
+            ))
+        }
+
+        pub(crate) fn wait_for_settled_after(
+            &mut self,
+            cursor: usize,
+            timeout: Duration,
+        ) -> Result<(), String> {
+            self.wait_for_activity_after(cursor, timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("agent_settled")
+            })?;
+            Ok(())
+        }
+
+        pub(crate) fn wait_for_replacement_start_after(
+            &mut self,
+            cursor: usize,
+            timeout: Duration,
+        ) -> Result<Value, String> {
+            self.wait_for_activity_after(cursor, timeout, |event| {
+                event.get("type").and_then(Value::as_str) == Some("agent_start")
+            })
+        }
+
+        pub(crate) fn wait_for_assistant_text(
+            &mut self,
+            expected: &str,
+            timeout: Duration,
+        ) -> Result<(), String> {
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                if conversation_contains(&self.conversation, expected) {
+                    return Ok(());
+                }
+                self.pump_one()?;
+            }
+            require_assistant_text(&self.conversation, expected)
+                .map_err(|error| format!("{error}; trace={}", self.trace_summary()))
+        }
+
+        pub(crate) fn assert_no_delivery(&self, submission_id: &str) -> Result<(), String> {
+            if self.activities.iter().any(|event| {
+                event.value.get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                    && event.value.get("submissionId").and_then(Value::as_str)
+                        == Some(submission_id)
+                    && event.value.get("status").and_then(Value::as_str) == Some("delivered")
+            }) {
+                Err(format!(
+                    "submission {submission_id} delivered before the test released its gate; trace={}",
+                    self.trace_summary()
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        pub(crate) fn assert_no_delivery_before(
+            &self,
+            cursor: usize,
+            submission_id: &str,
+        ) -> Result<(), String> {
+            if self.activities.iter().skip(cursor).any(|event| {
+                event.value.get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                    && event.value.get("submissionId").and_then(Value::as_str)
+                        == Some(submission_id)
+                    && event.value.get("status").and_then(Value::as_str) == Some("delivered")
+            }) {
+                Err(format!(
+                    "submission {submission_id} delivered before its intended boundary; trace={}",
+                    self.trace_summary()
+                ))
+            } else {
+                Ok(())
+            }
+        }
+
+        pub(crate) fn assert_functional_marker_absent(
+            &mut self,
+            submission: &Submission,
+            marker: &str,
+        ) -> Result<(), String> {
+            match self.require_functional_prompt_observation(submission.mode)? {
+                PromptObservation::CorrelatedDelivery => self.assert_no_delivery(&submission.id),
+                PromptObservation::NativeHistoryOnly => {
+                    if self
+                        .history()?
+                        .iter()
+                        .any(|message| history_user_contains(message, marker))
+                    {
+                        Err(format!(
+                            "untracked input marker {marker:?} appeared in native history before its intended boundary"
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                }
+            }
+        }
+
+        pub(crate) fn assert_transcript_user_once(
+            &self,
+            marker: &str,
+            expected_images: usize,
+        ) -> Result<(), String> {
+            let users = self
+                .conversation
+                .items
+                .iter()
+                .filter(|item| {
+                    item.kind == TranscriptKind::User && item.complete_text().contains(marker)
+                })
+                .collect::<Vec<_>>();
+            if users.len() != 1 {
+                return Err(format!(
+                    "expected exactly one user transcript row containing {marker:?}, found {}; transcript={}",
+                    users.len(),
+                    self.transcript_summary()
+                ));
+            }
+            if users[0].images.len() != expected_images {
+                return Err(format!(
+                    "user transcript row {marker:?} has {} images, expected {expected_images}",
+                    users[0].images.len()
+                ));
+            }
+            Ok(())
+        }
+
+        pub(crate) fn assert_submission_once(
+            &mut self,
+            submission: &Submission,
+        ) -> Result<(), String> {
+            self.assert_transcript_user_once(&submission.marker, submission.images.len())?;
+            self.assert_native_user_once(&submission.marker, &submission.images)
+        }
+
+        pub(crate) fn assert_functional_submission_once(
+            &mut self,
+            submission: &Submission,
+            marker: &str,
+        ) -> Result<(), String> {
+            match self.require_functional_prompt_observation(submission.mode)? {
+                PromptObservation::CorrelatedDelivery => self.assert_submission_once(submission),
+                PromptObservation::NativeHistoryOnly => {
+                    self.assert_transcript_user_once(marker, submission.images.len())?;
+                    self.assert_native_user_once(marker, &submission.images)
+                }
+            }
+        }
+
+        /// Equal text cannot establish identity.  This assertion requires the
+        /// native history and normalized delivery events to retain each real
+        /// submission ID; a backend that cannot do so reports a blocked E2E
+        /// case instead of guessing with text order.
+        pub(crate) fn assert_duplicate_submissions_once(
+            &mut self,
+            first: &Submission,
+            second: &Submission,
+        ) -> Result<(), String> {
+            if first.text != second.text || first.id == second.id {
+                return Err(
+                    "duplicate-submission assertion requires equal text and distinct IDs".into(),
+                );
+            }
+            for submission in [first, second] {
+                self.require_prompt_delivery_tracking(submission.mode)?;
+                let delivered = self
+                    .activities
+                    .iter()
+                    .filter(|event| {
+                        event.value.get("type").and_then(Value::as_str) == Some("prompt_delivery")
+                            && event.value.get("submissionId").and_then(Value::as_str)
+                                == Some(submission.id.as_str())
+                            && event.value.get("status").and_then(Value::as_str)
+                                == Some("delivered")
+                    })
+                    .collect::<Vec<_>>();
+                if delivered.len() != 1 {
+                    return Err(format!(
+                        "expected one correlated delivery for {}, found {}; trace={}",
+                        submission.id,
+                        delivered.len(),
+                        self.trace_summary()
+                    ));
+                }
+                require_event_images(&delivered[0].value, &submission.images)?;
+            }
+            let rows = self
+                .conversation
+                .items
+                .iter()
+                .filter(|item| {
+                    item.kind == TranscriptKind::User && item.complete_text().contains(&first.text)
+                })
+                .collect::<Vec<_>>();
+            if rows.len() != 2 || rows.iter().any(|item| item.images.len() != 1) {
+                return Err(format!(
+                    "equal-text submissions did not remain two one-image transcript rows: {}",
+                    self.transcript_summary()
+                ));
+            }
+            let history = self.history()?;
+            for submission in [first, second] {
+                let native = history
+                    .iter()
+                    .filter(|message| {
+                        history_submission_id(message) == Some(submission.id.as_str())
+                            && history_user_contains(message, &submission.text)
+                    })
+                    .collect::<Vec<_>>();
+                if native.len() != 1 {
+                    return Err(format!(
+                        "E2E_BLOCKED: {} native history cannot prove exact record for submission {} (found {}); refusing equal-text identity inference",
+                        self.harness,
+                        submission.id,
+                        native.len()
+                    ));
+                }
+                require_wire_images(native[0], &submission.images)?;
+            }
+            Ok(())
+        }
+
+        pub(crate) fn assert_native_user_once(
+            &mut self,
+            marker: &str,
+            expected_images: &[PromptImage],
+        ) -> Result<(), String> {
+            let history = self.history()?;
+            let expected_images = expected_images
+                .iter()
+                .map(|image| {
+                    let data = if image.data.is_empty() {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.encode(image.bytes()?)
+                    } else {
+                        image.data.clone()
+                    };
+                    Ok::<_, String>((data, image.mime_type.clone()))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let matching = history
+                .iter()
+                .filter(|message| {
+                    history_user_contains(message, marker)
+                        && expected_images.iter().all(|(data, mime_type)| {
+                            let wire = message.to_string();
+                            wire.contains(data.as_str()) && wire.contains(mime_type.as_str())
+                        })
+                })
+                .collect::<Vec<_>>();
+            if matching.len() != 1 {
+                return Err(format!(
+                    "expected exactly one native user record containing {marker:?}, found {}; history={history:?}",
+                    matching.len()
+                ));
+            }
+            for (data, mime_type) in expected_images {
+                let wire = matching[0].to_string();
+                if !wire.contains(data.as_str()) || !wire.contains(mime_type.as_str()) {
+                    return Err(format!(
+                        "native user record for {marker:?} omitted exact image bytes or MIME {mime_type}: {}",
+                        matching[0]
+                    ));
+                }
+            }
+            Ok(())
+        }
+
+        fn wait_for_native_user_marker(
+            &mut self,
+            marker: &str,
+            images: &[PromptImage],
+            timeout: Duration,
+        ) -> Result<(), String> {
+            let deadline = Instant::now() + timeout;
+            let mut last_error = String::new();
+            while Instant::now() < deadline {
+                match self.assert_native_user_once(marker, images) {
+                    Ok(()) => return Ok(()),
+                    Err(error) => last_error = error,
+                }
+                thread::park_timeout(EVENT_POLL);
+            }
+            Err(format!(
+                "timed out after {} seconds waiting for unique native input marker {marker:?}: {last_error}",
+                timeout.as_secs()
+            ))
+        }
+
+        pub(crate) fn history(&mut self) -> Result<Vec<Value>, String> {
+            if self.harness != "pi" {
+                return load_external_history(&self.path)
+                    .ok_or_else(|| {
+                        format!(
+                            "E2E_BLOCKED: {} does not expose a native external history loader",
+                            self.harness
+                        )
+                    })?
+                    .map(|history| history.messages)
+                    .map_err(|error| format!("load native {} history: {error}", self.harness));
+            }
+            let Payload::LoadHistory(SessionHistory::Replace(messages)) =
+                self.request(SessionCommand::LoadHistory)?
+            else {
+                return Err("expected replacement history".into());
+            };
+            Ok(messages)
+        }
+
+        pub(crate) fn replace_with_history(&mut self) -> Result<Vec<Value>, String> {
+            let history = self.history()?;
+            self.conversation.replace_history(&history);
+            Ok(history)
+        }
+
+        pub(crate) fn history_reload(&mut self) -> Result<Vec<Value>, String> {
+            self.reopen()?;
+            self.replace_with_history()
+        }
+
+        pub(crate) fn reopen(&mut self) -> Result<(), String> {
+            self.transport.close()?;
+            let session_id = if self.harness == "pi" {
+                None
+            } else {
+                Some(
+                    external_session_locator(&self.harness, &self.path).ok_or_else(|| {
+                        format!("invalid live session locator: {}", self.path.display())
+                    })?,
+                )
+            };
+            self.transport = spawn_session(
+                &self.config,
+                SessionLaunch {
+                    harness: self.harness.clone(),
+                    session_id,
+                    project: self.project().into(),
+                    start: SessionStart::Resume(self.path.clone()),
+                    wake: Some(thread::current()),
+                },
+            )?;
+            let reopened_path = self.session_path()?;
+            if reopened_path != self.path {
+                return Err(format!(
+                    "resume forked or replaced live session: {} != {}",
+                    reopened_path.display(),
+                    self.path.display()
+                ));
+            }
+            Ok(())
+        }
+
+        pub(crate) fn trace_summary(&self) -> String {
+            self.activities
+                .iter()
+                .map(|event| format!("+{}ms {}", event.elapsed.as_millis(), event.value))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
+
+        pub(crate) fn transcript_summary(&self) -> String {
+            self.conversation
+                .items
+                .iter()
+                .map(|item| format!("{:?}:{}", item.kind, item.complete_text()))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
+
+        pub(crate) fn close_cleanup(mut self) -> Result<(), String> {
+            let release = self
+                .gates
+                .iter()
+                .filter(|gate| !gate.release_path.exists())
+                .map(TurnGate::release)
+                .collect::<Result<Vec<_>, _>>();
+            let close = self.transport.close();
+            let evidence = self.write_evidence();
+            let cleanup = self.cleanup_locator();
+            match (release, close, evidence, cleanup) {
+                (Ok(_), Ok(()), Ok(()), Ok(())) => Ok(()),
+                (release, close, evidence, cleanup) => Err([
+                    release
+                        .err()
+                        .map(|error| format!("release live gate: {error}")),
+                    close
+                        .err()
+                        .map(|error| format!("close live {} session: {error}", self.harness)),
+                    evidence.err(),
+                    cleanup.err(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("; ")),
+            }
+        }
+
+        fn request(&mut self, command: SessionCommand) -> Result<Payload, String> {
+            let operation = command.response_operation();
+            let id = self.transport.send(command)?;
+            let response = self.wait_for_response(&id, COMMAND_TIMEOUT)?;
+            if response.operation() != operation {
+                return Err(format!(
+                    "command {id} returned {:?}, expected {operation:?}",
+                    response.operation()
+                ));
+            }
+            response.result.map_err(|error| error.to_string())
+        }
+
+        fn load_state(&mut self) -> Result<crate::agents::extensions::SessionState, String> {
+            let Payload::LoadState(state) = self.request(SessionCommand::LoadState)? else {
+                return Err("expected state response".into());
+            };
+            Ok(*state)
+        }
+
+        fn pump_one(&mut self) -> Result<(), String> {
+            match self.transport.poll() {
+                Some(SessionEvent::Activity(event)) => {
+                    let value = event.value().clone();
+                    self.conversation.reduce(&value);
+                    self.activities.push(TraceEvent {
+                        elapsed: self.started_at.elapsed(),
+                        value,
+                    });
+                }
+                Some(SessionEvent::Response(response)) => {
+                    if let Some(id) = response.id.clone() {
+                        self.responses.insert(id, response);
+                    }
+                }
+                Some(SessionEvent::Interaction(request)) => {
+                    let gates = self.gates.clone();
+                    approve(&mut *self.transport, request, &gates)?
+                }
+                Some(SessionEvent::Failure(error)) => {
+                    return Err(format!("live {} transport failure: {error}", self.harness));
+                }
+                Some(SessionEvent::Stderr(line)) => self.stderr.push(line),
+                None => thread::park_timeout(EVENT_POLL),
+            }
+            Ok(())
+        }
+
+        fn cleanup_locator(&self) -> Result<(), String> {
+            if self.harness == "pi" {
+                return if self.path.is_file() {
+                    fs::remove_file(&self.path).map_err(|error| {
+                        format!("delete Pi live session {}: {error}", self.path.display())
+                    })
+                } else {
+                    Ok(())
+                };
+            }
+            if self.capabilities.sessions.delete != CapabilitySupport::Available {
+                let identity = external_session_locator(&self.harness, &self.path)
+                    .unwrap_or_else(|| self.path.display().to_string());
+                eprintln!(
+                    "E2E_LIMIT: {} does not support native session deletion; retaining isolated native session {identity}",
+                    self.harness
+                );
+                return Ok(());
+            }
+            let Some(delete) = delete_external_session(&self.path) else {
+                return Err(format!(
+                    "{} declares native session deletion but no test deletion path exists for {}",
+                    self.harness,
+                    self.path.display()
+                ));
+            };
+            delete.map_err(|error| format!("delete live {} session: {error}", self.harness))
+        }
+
+        fn write_evidence(&self) -> Result<(), String> {
+            let directory = std::env::var_os("FARCASTER_E2E_ARTIFACT_DIR")
+                .map(PathBuf::from)
+                .ok_or_else(|| "write E2E evidence without artifact directory".to_owned())?;
+            let mut trace = fs::File::create(directory.join("activities.jsonl"))
+                .map_err(|error| format!("create raw activity evidence: {error}"))?;
+            for event in &self.activities {
+                serde_json::to_writer(
+                    &mut trace,
+                    &json!({"elapsedMs": event.elapsed.as_millis(), "event": event.value}),
+                )
+                .map_err(|error| format!("encode raw activity evidence: {error}"))?;
+                writeln!(trace).map_err(|error| format!("write raw activity evidence: {error}"))?;
+            }
+            fs::write(
+                directory.join("session.json"),
+                serde_json::to_vec_pretty(&json!({
+                    "harness": &self.harness,
+                    "programVersion": &self.program_version,
+                    "model": &self.model_identity,
+                    "sessionPath": &self.path,
+                    "activityCount": self.activities.len(),
+                    "stderr": self.stderr,
+                }))
+                .map_err(|error| format!("encode E2E session evidence: {error}"))?,
+            )
+            .map_err(|error| format!("write E2E session evidence: {error}"))
+        }
+    }
+
+    pub(crate) fn selected_live_harnesses() -> Result<Vec<&'static str>, String> {
+        select_harnesses(std::env::var("FARCASTER_E2E_HARNESS").ok().as_deref())
+    }
+
+    /// Resolves a child model from the installed harness's real `LoadState`.
+    /// An explicit `FARCASTER_E2E_MODEL` must agree with that actual selection;
+    /// this helper never asks for a catalog or changes a model.  The probe
+    /// always closes before its caller can launch MCP-backed child workers,
+    /// which restores the scoped MCP guard.
+    pub(crate) fn selected_live_worker_model(harness: &str) -> Result<LiveWorkerModel, String> {
+        let mut probe = LiveSession::start(harness)?;
+        let outcome = (|| {
+            let state = probe.load_state()?;
+            let model = state.model.ok_or_else(|| {
+                format!(
+                    "E2E_BLOCKED: {harness} LoadState omitted a selected model; refusing to choose an arbitrary catalog entry"
+                )
+            })?;
+            if model.provider.trim().is_empty() || model.id.trim().is_empty() {
+                return Err(format!(
+                    "E2E_BLOCKED: {harness} LoadState reported an incomplete model identity provider={:?} model={:?}",
+                    model.provider, model.id
+                ));
+            }
+            if let Some(model_id) = std::env::var("FARCASTER_E2E_MODEL")
+                .ok()
+                .filter(|model_id| !model_id.trim().is_empty())
+            {
+                let matches_selected = model_id == model.id
+                    || model.resolved_model.as_deref() == Some(model_id.as_str());
+                if !matches_selected {
+                    return Err(format!(
+                        "FARCASTER_E2E_MODEL {model_id:?} differs from {harness} LoadState model {}/{}; this child probe will not guess from a catalog or send a model-selection request",
+                        model.provider, model.id
+                    ));
+                }
+            }
+            Ok(LiveWorkerModel {
+                provider: model.provider,
+                model: model.id,
+            })
+        })();
+        let cleanup = probe.close_cleanup();
+        match (outcome, cleanup) {
+            (Ok(model), Ok(())) => Ok(model),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => Err(format!("{error}; probe cleanup: {cleanup}")),
+        }
+    }
+
+    pub(crate) fn e2e_case_dir() -> Result<PathBuf, String> {
+        require_e2e_isolation()
+    }
+
+    pub(crate) fn isolated_locator_root() -> Result<PathBuf, String> {
+        let data_dir = std::env::var_os("FARCASTER_DATA_DIR")
+            .map(PathBuf::from)
+            .ok_or_else(|| "E2E_BLOCKED: missing FARCASTER_DATA_DIR".to_owned())?;
+        let root = data_dir.join("session-locators");
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("create isolated session locator root: {error}"))?;
+        Ok(root)
+    }
+
+    pub(crate) fn live_access_mode(
+        capabilities: &AgentCapabilities,
+    ) -> Result<HarnessAccessMode, String> {
+        match std::env::var("FARCASTER_E2E_ACCESS_MODE").ok().as_deref() {
+            None | Some("sandboxed")
+                if capabilities
+                    .configuration
+                    .access_modes
+                    .contains(&HarnessAccessMode::Sandboxed) =>
+            {
+                Ok(HarnessAccessMode::Sandboxed)
+            }
+            // Full access requires a deliberate environment opt-in. Pi's
+            // sandbox support comes from an optional adapter and therefore is
+            // not listed in its static descriptor.
+            Some("full") => Ok(HarnessAccessMode::Full),
+            None | Some("sandboxed") => Err(
+                "E2E_BLOCKED: selected harness has no sandboxed access mode; set FARCASTER_E2E_ACCESS_MODE=full only after approving a full-access live run"
+                    .into(),
+            ),
+            Some(other) => Err(format!(
+                "E2E_BLOCKED: unsupported FARCASTER_E2E_ACCESS_MODE {other:?}; expected sandboxed or full"
+            )),
+        }
+    }
+
+    pub(crate) fn live_access_mode_for_harness(harness: &str) -> Result<HarnessAccessMode, String> {
+        if harness == "pi" {
+            return match std::env::var("FARCASTER_E2E_ACCESS_MODE").ok().as_deref() {
+                None | Some("sandboxed") => Ok(HarnessAccessMode::Sandboxed),
+                Some("full") => Ok(HarnessAccessMode::Full),
+                Some(other) => Err(format!(
+                    "E2E_BLOCKED: unsupported FARCASTER_E2E_ACCESS_MODE {other:?}; expected sandboxed or full"
+                )),
+            };
+        }
+        live_access_mode(&descriptor(harness)?.capabilities)
+    }
+
+    pub(crate) fn native_questions_available(harness: &str) -> Result<bool, String> {
+        Ok(
+            descriptor(harness)?.capabilities.interactions.questions
+                == CapabilitySupport::Available,
+        )
+    }
+
+    pub(crate) fn native_approvals_available(harness: &str) -> Result<bool, String> {
+        Ok(
+            descriptor(harness)?.capabilities.interactions.approvals
+                == CapabilitySupport::Available,
+        )
+    }
+
+    pub(crate) fn require_native_input_support(harness: &str) -> Result<(), String> {
+        let capabilities = descriptor(harness)?.capabilities;
+        if capabilities.interactions.questions == CapabilitySupport::Available
+            || capabilities.interactions.approvals == CapabilitySupport::Available
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "E2E_BLOCKED: {harness} declares both native questions and approvals unavailable"
+            ))
+        }
+    }
+
+    pub(crate) fn for_each_selected(
+        mut exercise: impl FnMut(&mut LiveSession) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for harness in selected_live_harnesses()? {
+            let mut session = LiveSession::start(harness)
+                .map_err(|error| format!("{harness}: start live session: {error}"))?;
+            let outcome = exercise(&mut session).map_err(|error| format!("{harness}: {error}"));
+            let cleanup = session.close_cleanup();
+            match (outcome, cleanup) {
+                (Ok(()), Ok(())) => {}
+                (Err(error), Ok(())) | (Ok(()), Err(error)) => return Err(error),
+                (Err(error), Err(cleanup)) => return Err(format!("{error}; cleanup: {cleanup}")),
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn run_selected_live_case(
+        exercise: impl FnMut(&mut LiveSession) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for_each_selected(exercise)
+    }
+
+    pub(crate) fn marker(label: &str) -> String {
+        format!(
+            "FARCASTER_E2E_{}_{}",
+            label.to_ascii_uppercase(),
+            uuid::Uuid::new_v4().simple()
+        )
+    }
+
+    pub(crate) fn image(data: &str, mime_type: &str) -> PromptImage {
+        PromptImage::new(data.into(), mime_type.into())
+    }
+
+    pub(crate) fn alternate_image() -> PromptImage {
+        // Valid 1×1 GIF, distinct from TEST_IMAGE's PNG bytes.
+        image(
+            "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+            "image/gif",
+        )
+    }
+
+    pub(crate) type LiveGate = TurnGate;
+
+    pub(crate) fn new_turn_gate(project: &Path, label: &str) -> Result<TurnGate, String> {
+        TurnGate::new(project, label)
+    }
+
+    fn require_e2e_isolation() -> Result<PathBuf, String> {
+        let data_dir = std::env::var_os("FARCASTER_DATA_DIR")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                "E2E_BLOCKED: live E2E requires FARCASTER_DATA_DIR from scripts/e2e.sh".to_owned()
+            })?;
+        let artifact_dir = std::env::var_os("FARCASTER_E2E_ARTIFACT_DIR")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                "E2E_BLOCKED: live E2E requires FARCASTER_E2E_ARTIFACT_DIR from scripts/e2e.sh"
+                    .to_owned()
+            })?;
+        let data_parent = data_dir.parent();
+        let artifact_parent = artifact_dir.parent();
+        if !data_dir.is_absolute()
+            || !artifact_dir.is_absolute()
+            || data_dir.file_name().and_then(|name| name.to_str()) != Some("data")
+            || artifact_dir.file_name().and_then(|name| name.to_str()) != Some("evidence")
+            || data_parent != artifact_parent
+            || !data_dir.is_dir()
+            || !artifact_dir.is_dir()
+        {
+            return Err(format!(
+                "E2E_BLOCKED: live state/evidence must be sibling case data and evidence directories: data={}, evidence={}",
+                data_dir.display(),
+                artifact_dir.display()
+            ));
+        }
+        Ok(data_parent.expect("checked matching parent").to_owned())
+    }
+
+    fn program_version(program: &Path) -> String {
+        use std::process::{Command, Stdio};
+
+        let Ok(mut child) = Command::new(program)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        else {
+            return format!("unavailable ({})", program.display());
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            match child.try_wait() {
+                Ok(Some(_)) => match child.wait_with_output() {
+                    Ok(output) => {
+                        let text = String::from_utf8_lossy(&output.stdout);
+                        let text = text.trim();
+                        return if text.is_empty() {
+                            String::from_utf8_lossy(&output.stderr).trim().to_owned()
+                        } else {
+                            text.lines().next().unwrap_or_default().to_owned()
+                        };
+                    }
+                    Err(error) => return format!("read failed: {error}"),
+                },
+                Ok(None) => thread::sleep(EVENT_POLL),
+                Err(error) => return format!("wait failed: {error}"),
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        "timed out after 5 seconds".into()
+    }
+
+    fn history_user_contains(message: &Value, marker: &str) -> bool {
+        let role = message.get("role").and_then(Value::as_str).or_else(|| {
+            message
+                .get("message")
+                .and_then(|message| message.get("role"))
+                .and_then(Value::as_str)
+        });
+        role == Some("user") && message.to_string().contains(marker)
+    }
+
+    fn history_submission_id(message: &Value) -> Option<&str> {
+        message
+            .get("submissionId")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                message
+                    .get("message")
+                    .and_then(|message| message.get("submissionId"))
+                    .and_then(Value::as_str)
+            })
+    }
+
+    fn require_event_images(event: &Value, images: &[PromptImage]) -> Result<(), String> {
+        let message = event.get("message").unwrap_or(&Value::Null);
+        require_wire_images(message, images)
+    }
+
+    fn require_wire_images(message: &Value, images: &[PromptImage]) -> Result<(), String> {
+        for image in images {
+            let data = if image.data.is_empty() {
+                use base64::Engine as _;
+                base64::engine::general_purpose::STANDARD.encode(image.bytes()?)
+            } else {
+                image.data.clone()
+            };
+            let wire = message.to_string();
+            if !wire.contains(&data) || !wire.contains(&image.mime_type) {
+                return Err(format!(
+                    "record omitted exact image payload or MIME {}: {message}",
+                    image.mime_type
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
