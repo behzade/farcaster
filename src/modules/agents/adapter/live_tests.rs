@@ -1129,6 +1129,12 @@ pub(crate) mod support {
         /// Control tests call this before release.  It rules out the tool's
         /// bounded timeout as the reason a turn settled or a handoff started.
         pub(crate) fn assert_still_closed(&self) -> Result<(), String> {
+            if !self.script_path.is_file() {
+                return Err(format!(
+                    "live tool gate {} script disappeared before the control assertion",
+                    self.file_name
+                ));
+            }
             if self.timeout_path.exists() {
                 return Err(format!(
                     "live tool gate {} timed out before the control assertion",
@@ -1225,9 +1231,10 @@ pub(crate) mod support {
 
         fn script(&self) -> String {
             format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{}'\nprintf started > '{}'\nfor i in $(seq 1 4800); do\n  if [ -s '{}' ]; then\n    cat '{}'\n    exit 0\n  fi\n  sleep 0.1\ndone\nprintf timed-out > '{}'\nexit 124\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$$\" > '{}'\nprintf started > '{}'\nfor i in $(seq 1 4800); do\n  if [ ! -f './{}' ]; then\n    exit 125\n  fi\n  if [ -s '{}' ]; then\n    cat '{}'\n    exit 0\n  fi\n  sleep 0.1\ndone\nprintf timed-out > '{}'\nexit 124\n",
                 self.pid_file_name(),
                 self.started_file_name(),
+                self.script_file_name(),
                 self.file_name,
                 self.file_name,
                 self.timeout_file_name(),

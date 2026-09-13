@@ -5,7 +5,11 @@
 //! `spawn_session`, the installed binary, its real model account, normalized
 //! activities, transcript projection, and native history together.
 
-use std::time::Duration;
+use std::{
+    process::{Child, Command, ExitStatus, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 use serde_json::Value;
 
@@ -24,6 +28,98 @@ use super::live_tests::support::{
 use super::live_tests::{TEST_IMAGE, TURN_TIMEOUT};
 
 const BASIC_TIMEOUT: Duration = TURN_TIMEOUT;
+const GATE_SCRIPT_TIMEOUT: Duration = Duration::from_secs(5);
+
+struct OwnedGateChild(Child);
+
+impl OwnedGateChild {
+    fn spawn(project: &std::path::Path, gate: &TurnGate) -> Result<Self, String> {
+        Command::new("/bin/sh")
+            .arg(format!("./{}.sh", gate.file_name()))
+            .current_dir(project)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(Self)
+            .map_err(|error| format!("start owned live gate script: {error}"))
+    }
+
+    fn wait_for_exit(&mut self) -> Result<ExitStatus, String> {
+        let deadline = Instant::now() + GATE_SCRIPT_TIMEOUT;
+        while Instant::now() < deadline {
+            if let Some(status) = self
+                .0
+                .try_wait()
+                .map_err(|error| format!("poll owned live gate script: {error}"))?
+            {
+                return Ok(status);
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        Err("owned live gate script did not exit within 5 seconds".into())
+    }
+}
+
+impl Drop for OwnedGateChild {
+    fn drop(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+fn wait_for_gate_process(gate: &TurnGate) -> Result<(), String> {
+    let deadline = Instant::now() + GATE_SCRIPT_TIMEOUT;
+    while Instant::now() < deadline {
+        if gate.has_started() {
+            return gate.assert_process_alive();
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    Err("owned live gate script did not write its start witness within 5 seconds".into())
+}
+
+#[test]
+fn turn_gate_explicit_release_exits_zero() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let gate = TurnGate::new(project.path(), "release")?;
+    let mut child = OwnedGateChild::spawn(project.path(), &gate)?;
+    wait_for_gate_process(&gate)?;
+    gate.release()?;
+    let status = child.wait_for_exit()?;
+    if status.code() != Some(0) {
+        return Err(format!(
+            "released live gate script exited as {status:?}, expected 0"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn turn_gate_project_teardown_exits_125_before_timeout() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let gate = TurnGate::new(project.path(), "teardown")?;
+    let mut child = OwnedGateChild::spawn(project.path(), &gate)?;
+    wait_for_gate_process(&gate)?;
+    project
+        .close()
+        .map_err(|error| format!("remove owned live gate project: {error}"))?;
+    let closed = gate
+        .assert_still_closed()
+        .expect_err("removed live gate script must not pass a control assertion");
+    if !closed.contains("script disappeared") {
+        return Err(format!("unexpected removed-gate error: {closed}"));
+    }
+    let status = child.wait_for_exit()?;
+    if status.code() != Some(125) {
+        return Err(format!(
+            "torn-down live gate script exited as {status:?}, expected 125"
+        ));
+    }
+    Ok(())
+}
 
 #[test]
 #[ignore = "real installed harness/model E2E; run through scripts/e2e.sh"]
