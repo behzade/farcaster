@@ -5,6 +5,42 @@ use gpui::{
 };
 use gpui_component::FocusTrapElement as _;
 
+pub(crate) fn confirmation_modal(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    focus: &FocusHandle,
+    key_context: &'static str,
+    on_dismiss: impl Fn(&mut Window, &mut App) + Clone + 'static,
+    on_confirm: impl Fn(&mut Window, &mut App) + 'static,
+    configure: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
+) -> Stateful<Div> {
+    modal(
+        id,
+        label,
+        focus,
+        key_context,
+        on_dismiss.clone(),
+        |surface| {
+            configure(surface)
+                .on_action(move |_: &crate::app::DismissSurface, window, cx| {
+                    cx.stop_propagation();
+                    on_dismiss(window, cx);
+                })
+                .capture_key_down(move |event, window, cx| {
+                    if event.keystroke.key == "enter"
+                        && event.keystroke.modifiers == gpui::Modifiers::default()
+                    {
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        if !event.is_held {
+                            on_confirm(window, cx);
+                        }
+                    }
+                })
+        },
+    )
+}
+
 pub(crate) fn modal(
     id: &'static str,
     label: impl Into<SharedString>,

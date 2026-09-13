@@ -3,7 +3,7 @@ use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEn
 use crate::app::{
     FarcasterApp, OVERLAY_KEY_CONTEXT,
     ui::{
-        primitives::{ButtonTone, button, modal},
+        primitives::{ButtonTone, button, confirmation_modal},
         theme::THEME,
     },
 };
@@ -16,12 +16,16 @@ pub(in crate::app::views) fn render(
     let on_cancel = move |window: &mut gpui::Window, cx: &mut gpui::App| {
         let _ = dismiss.update(cx, |this, cx| this.close_quit_confirmation(window, cx));
     };
-    modal(
+    let on_confirm = move |_: &mut gpui::Window, cx: &mut gpui::App| {
+        let _ = entity.update(cx, |this, cx| this.confirm_application_quit(cx));
+    };
+    confirmation_modal(
         "quit-application",
         "Exit Farcaster?",
         &app.pending_quit.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
         on_cancel.clone(),
+        on_confirm.clone(),
         |surface| {
             surface.child(
                 div()
@@ -41,9 +45,7 @@ pub(in crate::app::views) fn render(
                             .justify_end()
                             .gap(THEME.space.sm)
                             .child(button("cancel-application-quit", "Cancel", ButtonTone::Neutral, true, on_cancel))
-                            .child(button("confirm-application-quit", "Exit", ButtonTone::Danger, true, move |_, cx| {
-                                let _ = entity.update(cx, |this, cx| this.confirm_application_quit(cx));
-                            })),
+                            .child(button("confirm-application-quit", "Exit", ButtonTone::Danger, true, on_confirm)),
                     ),
             )
         },

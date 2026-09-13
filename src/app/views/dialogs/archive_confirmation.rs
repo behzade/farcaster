@@ -3,7 +3,7 @@ use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEn
 use crate::app::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
-    app::ui::primitives::{ButtonTone, button, modal},
+    app::ui::primitives::{ButtonTone, button, confirmation_modal},
     app::ui::theme::THEME,
 };
 
@@ -12,19 +12,22 @@ pub(in crate::app::views) fn render(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let dismiss = entity.clone();
-    modal(
+    let on_cancel = move |window: &mut gpui::Window, cx: &mut gpui::App| {
+        let _ = dismiss.update(cx, |this, cx| this.close_archive_confirmation(window, cx));
+    };
+    let on_confirm = move |window: &mut gpui::Window, cx: &mut gpui::App| {
+        let _ = entity.update(cx, |this, cx| {
+            this.stop_and_archive_pending_session(window, cx)
+        });
+    };
+    confirmation_modal(
         "archive-active-session",
         "Session is active",
         &app.pending_archive.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
-        move |window, cx| {
-            let _ = dismiss.update(cx, |this, cx| {
-                this.close_archive_confirmation(window, cx)
-            });
-        },
+        on_cancel.clone(),
+        on_confirm.clone(),
         |surface| {
-            let cancel = entity.clone();
-            let confirm = entity;
             surface.child(
                 div()
                     .flex()
@@ -47,22 +50,14 @@ pub(in crate::app::views) fn render(
                                 "Cancel",
                                 ButtonTone::Neutral,
                                 true,
-                                move |window, cx| {
-                                    let _ = cancel.update(cx, |this, cx| {
-                                        this.close_archive_confirmation(window, cx)
-                                    });
-                                },
+                                on_cancel,
                             ))
                             .child(button(
                                 "stop-and-archive-session",
                                 "Stop all and archive",
                                 ButtonTone::Danger,
                                 true,
-                                move |window, cx| {
-                                    let _ = confirm.update(cx, |this, cx| {
-                                        this.stop_and_archive_pending_session(window, cx)
-                                    });
-                                },
+                                on_confirm,
                             )),
                     ),
             )
