@@ -224,6 +224,25 @@ impl Process {
     }
     pub(super) fn close(&mut self) -> Result<(), String> {
         self.input.take();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            // The reader uses a bounded channel. Keep consuming while the CLI handles EOF,
+            // or a full channel can stop its stdout pipe and prevent its final state flush.
+            for _ in 0..256 {
+                if self.incoming.try_recv().is_err() {
+                    break;
+                }
+            }
+            if self
+                .child
+                .try_wait()
+                .map_err(|error| error.to_string())?
+                .is_some()
+            {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
         if self
             .child
             .try_wait()
