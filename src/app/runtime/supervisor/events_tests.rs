@@ -352,7 +352,7 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
 }
 
 #[test]
-fn cold_selection_publishes_recovery_after_snapshot_and_keeps_needs_input() -> Result<(), String> {
+fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let session = temp.path().join("session.jsonl");
@@ -430,7 +430,7 @@ fn cold_selection_publishes_recovery_after_snapshot_and_keeps_needs_input() -> R
     );
     assert_eq!(
         fixture.supervisor.published_statuses[&recovered_target].1,
-        "Needs input"
+        "Delivery unknown"
     );
 
     fixture.supervisor.handle_actor_event(
@@ -447,12 +447,12 @@ fn cold_selection_publishes_recovery_after_snapshot_and_keeps_needs_input() -> R
         },
     );
     assert_eq!(
-        fixture.supervisor.published_statuses[&recovered_target].1, "Needs input",
+        fixture.supervisor.published_statuses[&recovered_target].1, "Delivery unknown",
         "later settled snapshots must not overwrite the recovery blocker"
     );
     assert!(fixture.drain().iter().all(|event| !matches!(
         event,
-        RuntimeEvent::SessionStatus { status, .. } if status != "Needs input"
+        RuntimeEvent::SessionStatus { status, .. } if status != "Delivery unknown"
     )));
 
     fixture
@@ -542,7 +542,7 @@ fn draft_actor_locator_snapshot_reveals_its_interrupted_prompt() -> Result<(), S
 }
 
 #[test]
-fn last_child_dismissal_keeps_unknown_recovery_in_needs_input() -> Result<(), String> {
+fn last_child_dismissal_keeps_unknown_recovery_visible() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let session = temp.path().join("session.jsonl");
@@ -592,11 +592,11 @@ fn last_child_dismissal_keeps_unknown_recovery_in_needs_input() -> Result<(), St
     );
     assert_eq!(
         fixture.supervisor.published_statuses[&recovered_target].1,
-        "Needs input"
+        "Delivery unknown"
     );
     assert!(fixture.drain().iter().all(|event| !matches!(
         event,
-        RuntimeEvent::SessionStatus { status, .. } if status != "Needs input"
+        RuntimeEvent::SessionStatus { status, .. } if status != "Delivery unknown"
     )));
     Ok(())
 }
@@ -670,5 +670,94 @@ fn selected_reset_allows_recovery_to_publish_after_the_next_snapshot() -> Result
         )),
         "recovery must publish again after reset cleared the UI"
     );
+    Ok(())
+}
+
+#[test]
+fn recovered_prompts_do_not_block_app_quit_without_live_agents() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session.jsonl");
+    let target = format!("session:{}", session.display());
+    let state = StateStore::open_at(&database)?;
+    let id = state.enqueue_prompt(
+        &target,
+        "codex-cli",
+        temp.path(),
+        Some(&session),
+        PromptMode::Normal,
+        "interrupted prompt",
+        &[],
+    )?;
+    state.begin_prompt(id)?;
+    drop(state);
+    let state = StateStore::open_at(&database)?;
+    let recovery = crate::app::runtime::recovery::InterruptedPromptRecovery::recover(&state)?;
+    let mut fixture =
+        SupervisorFixture::new("draft:startup", temp.path().into(), Some(state), recovery);
+    assert!(fixture.supervisor.actors.is_empty());
+    let mut statuses = fixture
+        .drain()
+        .into_iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::SessionStatus { target, status, .. } => Some((target, status)),
+            _ => None,
+        })
+        .collect::<HashMap<_, _>>();
+    assert!(
+        !statuses.is_empty(),
+        "must exercise startup recovery statuses"
+    );
+    assert!(
+        !crate::app::session::activity::application_has_active_work(
+            &statuses,
+            &RuntimeSnapshot::default(),
+            &HashMap::new(),
+            &[],
+            &[]
+        ),
+        "saved recovery prompts are not running agents: {statuses:?}"
+    );
+    // A recovered record must not hide new work in the same session, nor
+    // leave an active status behind once that work finishes.
+    for status in ["Working", "Compacting", "Retrying", "Needs input", "Done"] {
+        let mut snapshot = RuntimeSnapshot {
+            project: temp.path().into(),
+            selected_session: Some(session.clone()),
+            ..Default::default()
+        };
+        let conversation = Arc::make_mut(&mut snapshot.conversation);
+        conversation.running = status == "Working";
+        conversation.compacting = status == "Compacting";
+        conversation.retrying = status == "Retrying";
+        if status == "Needs input" {
+            fixture.supervisor.needs_input.insert(target.clone());
+        } else {
+            fixture.supervisor.needs_input.remove(&target);
+        }
+        fixture.supervisor.handle_actor_event(
+            target.clone(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(snapshot),
+            },
+        );
+        for event in fixture.drain() {
+            if let RuntimeEvent::SessionStatus { target, status, .. } = event {
+                statuses.insert(target, status);
+            }
+        }
+        assert_eq!(
+            crate::app::session::activity::application_has_active_work(
+                &statuses,
+                &RuntimeSnapshot::default(),
+                &HashMap::new(),
+                &[],
+                &[]
+            ),
+            status != "Done",
+            "quit activity for {status}: {statuses:?}"
+        );
+    }
     Ok(())
 }

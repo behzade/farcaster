@@ -99,6 +99,17 @@ pub(super) fn serve_acp(mut peer: Peer, state: Arc<Mutex<BackendState>>, stop: A
                 json!({"sessionId":"main-thread","models":{"currentModelId":"fixture-model","availableModels":[{"modelId":"fixture-model","name":"Fixture"}]}})
             }
             "cursor/list_available_models" => json!({"models":[]}),
+            "session/prompt" => {
+                write(
+                    peer.reader.get_mut(),
+                    json!({"jsonrpc":"2.0", "method":"session/update",
+                        "params":{"sessionId":"main-thread", "update": {
+                            "sessionUpdate":"agent_message_chunk", "content":{"type":"text","text":"Done"}
+                        }}
+                    }),
+                );
+                json!({"stopReason":"end_turn"})
+            }
             _ => panic!("unhandled ACP request: {request}"),
         };
         write(

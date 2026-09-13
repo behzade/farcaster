@@ -11,6 +11,7 @@ use crate::runtime::{RuntimeCommand, TaskSettings};
 
 #[derive(Clone)]
 struct TaskChat {
+    submission_id: String,
     target: String,
     project: PathBuf,
     session: Option<PathBuf>,
@@ -79,6 +80,7 @@ impl FarcasterApp {
             return;
         }
         let chat = TaskChat {
+            submission_id: uuid::Uuid::new_v4().to_string(),
             target: target.clone(),
             project: project.clone(),
             session: destination
@@ -88,6 +90,7 @@ impl FarcasterApp {
             new_task: false,
         };
         if let Err(error) = self.runtime.send(RuntimeCommand::SendToSession {
+            submission_id: chat.submission_id.clone(),
             target: target.clone(),
             session: destination.session,
             project,
@@ -142,12 +145,14 @@ impl FarcasterApp {
         self.draft_session_ids
             .insert(draft.id.clone(), draft.app_session_id);
         let chat = TaskChat {
+            submission_id: uuid::Uuid::new_v4().to_string(),
             target: target.clone(),
             project: settings.project.clone(),
             session: None,
             new_task: true,
         };
         match self.runtime.send(RuntimeCommand::StartTask {
+            submission_id: chat.submission_id.clone(),
             id: draft.id,
             settings,
             message: message.clone(),
@@ -167,7 +172,7 @@ impl FarcasterApp {
         let target = &chat.target;
         self.begin_draft_submission(target, &message);
         self.composer_sessions.record_submission(target, &message);
-        let submission_id = uuid::Uuid::new_v4().to_string();
+        let submission_id = chat.submission_id.clone();
         self.pending_submissions.insert(
             submission_id.clone(),
             PendingSubmission {

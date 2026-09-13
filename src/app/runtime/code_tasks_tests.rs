@@ -16,6 +16,7 @@ fn ready_original() -> Harness {
 
 fn task(harness: &Harness, id: &str, model: Option<Model>) -> RuntimeCommand {
     RuntimeCommand::StartTask {
+        submission_id: format!("draft:{id}:submission"),
         id: id.into(),
         settings: TaskSettings {
             project: harness.project.clone(),
@@ -48,12 +49,14 @@ fn result_for(harness: &Harness, expected: &str, background: bool) -> (bool, Opt
                 );
             }
             Ok(RuntimeEvent::PromptResult {
+                submission_id,
                 target,
                 outcome,
                 session,
                 ..
             }) => {
                 assert_eq!(target, expected);
+                assert_eq!(submission_id, Some(format!("{expected}:submission")));
                 return (outcome == crate::agents::PromptOutcome::Accepted, session);
             }
             _ => {}
@@ -93,6 +96,7 @@ fn comment_reuses_running_background_session_and_queues_when_steering_is_unavail
             harness
                 .runtime
                 .send(RuntimeCommand::SendToSession {
+                    submission_id: format!("{target}:submission"),
                     target: target.clone(),
                     session: Some(crate::sessions::SessionTarget {
                         path: path.clone(),
@@ -131,6 +135,7 @@ fn missing_comment_draft_is_rejected_without_sending_to_selected_chat() {
             harness
                 .runtime
                 .send(RuntimeCommand::SendToSession {
+                    submission_id: "draft:missing:submission".into(),
                     target: "draft:missing".into(),
                     session: None,
                     project: harness.project.clone(),
@@ -161,6 +166,7 @@ fn comment_resumes_an_unopened_session_without_selecting_it() {
             harness
                 .runtime
                 .send(RuntimeCommand::SendToSession {
+                    submission_id: format!("{target}:submission"),
                     target: target.clone(),
                     session: Some(crate::sessions::SessionTarget {
                         path: path.clone(),

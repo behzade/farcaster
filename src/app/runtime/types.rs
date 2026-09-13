@@ -64,11 +64,13 @@ pub(crate) enum RuntimeCommand {
         project: PathBuf,
     },
     StartTask {
+        submission_id: String,
         id: String,
         settings: TaskSettings,
         message: String,
     },
     SendToSession {
+        submission_id: String,
         target: String,
         session: Option<crate::sessions::SessionTarget>,
         project: PathBuf,

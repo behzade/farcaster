@@ -10,6 +10,9 @@ use std::sync::{
 #[path = "title_native_tests.rs"]
 mod title_native_tests;
 
+#[path = "close_lifecycle_tests.rs"]
+mod close_lifecycle_tests;
+
 const GENERATED: &str = "Inspect archive contents";
 
 fn isolated_title(name: &str, run: impl FnOnce()) {
@@ -209,6 +212,10 @@ fn serve(
             }
             "thread/goal/get" => json!({"goal":null}),
             "turn/start" => json!({"turn":{"id":"turn-1", "status":"inProgress"}}),
+            "thread/queue/add" => json!({"queuedSubmission": {
+                "id":"queued-1", "clientUserMessageId":request["params"]["clientUserMessageId"],
+                "input":request["params"]["input"]
+            }}),
             "thread/name/set" | "set_session_name" => {
                 let mut state = state.lock().unwrap();
                 failure = state.reject_rename;
@@ -253,7 +260,7 @@ fn serve(
         } else {
             peer.reply(&request, result);
         }
-        if method == "turn/start" {
+        if matches!(method, "turn/start" | "thread/queue/add") {
             let text = if ephemeral {
                 let Some(title) = title_output(&state, &stop) else {
                     return;
@@ -281,6 +288,16 @@ fn serve(
                     json!({"threadId":id,"turn":{"id":"turn-1","status":"completed"}}),
                 ),
             ] {
+                if method == "item/completed" && request["method"] == "thread/queue/add" {
+                    write(
+                        peer.reader.get_mut(),
+                        json!({"method":"item/started", "params": {
+                            "threadId":id, "item": {"id":"queued-user", "type":"userMessage",
+                                "clientId":request["params"]["clientUserMessageId"],
+                                "content":request["params"]["input"]}
+                        }}),
+                    );
+                }
                 write(
                     peer.reader.get_mut(),
                     json!({"method":method,"params":params}),

@@ -157,7 +157,14 @@ impl RuntimeOwner {
                 snapshot.session_identity().model.cloned(),
             )
         });
+        // This prompt belongs to the process we are starting, not the one being
+        // reset. Its UI identity must survive until acknowledgement.
+        let deferred_submission_id = self
+            .deferred_prompt
+            .as_ref()
+            .and(self.pending_submission_id.clone());
         self.reset_process_runtime();
+        self.pending_submission_id = deferred_submission_id;
         // Missing backend metadata must never make a resume or fork eligible for a title.
         self.title_generation.new_session = session.is_none() && fork.is_none();
         self.active_session = session.clone();

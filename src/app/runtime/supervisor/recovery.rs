@@ -10,7 +10,7 @@ impl Supervisor {
                 &mut self.published_statuses,
                 &prompt.target,
                 prompt.session.clone(),
-                "Needs input",
+                "Delivery unknown",
             );
         }
     }
@@ -48,6 +48,26 @@ impl Supervisor {
         self.recovery.target_for(key, &snapshot.project, session)
     }
 
+    pub(super) fn status_with_recovery(
+        &self,
+        key: &str,
+        snapshot: &RuntimeSnapshot,
+    ) -> &'static str {
+        if self.needs_input.contains(key) {
+            return "Needs input";
+        }
+        let status = semantic_status(snapshot);
+        // Recovery records are durable, not work that quitting can interrupt.
+        // Keep live work visible when it shares a session with an old record.
+        if !crate::app::session::activity::status_has_active_work(status)
+            && self.recovery_target_for_snapshot(key, snapshot).is_some()
+        {
+            "Delivery unknown"
+        } else {
+            status
+        }
+    }
+
     pub(super) fn resolve_recovery_response(&mut self, response: &ExtensionUiResponse) -> bool {
         let Some(state) = self.catalog_state.as_mut() else {
             return false;
@@ -65,20 +85,20 @@ impl Supervisor {
                 true
             }
             Ok(RecoveryResolution::Resolved { target, session }) => {
-                let still_pending = !self
-                    .recovery
-                    .requests_for(
-                        &self.selected,
-                        &self.selected_project,
-                        self.selected_session.as_deref(),
-                    )
-                    .is_empty();
-                let status = if still_pending {
-                    "Needs input"
-                } else {
-                    self.latest
-                        .get(&self.selected)
-                        .map_or("Done", |snapshot| semantic_status(snapshot))
+                let status = match self.latest.get(&self.selected) {
+                    Some(snapshot) => self.status_with_recovery(&self.selected, snapshot),
+                    None if self
+                        .recovery
+                        .target_for(
+                            &self.selected,
+                            &self.selected_project,
+                            self.selected_session.as_deref(),
+                        )
+                        .is_some() =>
+                    {
+                        "Delivery unknown"
+                    }
+                    None => "Done",
                 };
                 publish_session_status_if_changed(
                     &self.event_tx,

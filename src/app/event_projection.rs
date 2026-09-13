@@ -888,7 +888,7 @@ fn record_pending_prompt_result(
     record_pending_prompt_result_for_submission(pending, None, target, outcome, session);
 }
 
-fn record_pending_prompt_result_for_submission(
+pub(in crate::app) fn record_pending_prompt_result_for_submission(
     pending: &mut HashMap<String, PendingSubmission>,
     submission_id: Option<&str>,
     target: &str,

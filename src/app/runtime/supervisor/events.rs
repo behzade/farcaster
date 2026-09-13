@@ -157,11 +157,7 @@ impl Supervisor {
                 let recovery_target = self
                     .recovery_target_for_snapshot(&key, &snapshot)
                     .map(str::to_owned);
-                let status = if self.needs_input.contains(&key) || recovery_target.is_some() {
-                    "Needs input"
-                } else {
-                    semantic_status(&snapshot)
-                };
+                let status = self.status_with_recovery(&key, &snapshot);
                 publish_session_status_if_changed(
                     &self.event_tx,
                     &mut self.published_statuses,
@@ -205,11 +201,7 @@ impl Supervisor {
                     let recovery_target = self
                         .recovery_target_for_snapshot(&key, snapshot)
                         .map(str::to_owned);
-                    let status = if self.needs_input.contains(&key) || recovery_target.is_some() {
-                        "Needs input"
-                    } else {
-                        semantic_status(snapshot)
-                    };
+                    let status = self.status_with_recovery(&key, snapshot);
                     publish_session_status_if_changed(
                         &self.event_tx,
                         &mut self.published_statuses,

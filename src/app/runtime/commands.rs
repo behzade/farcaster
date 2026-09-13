@@ -33,7 +33,10 @@ impl RuntimeOwner {
     pub(super) fn apply_command(&mut self, runtime_command: RuntimeCommand) {
         match runtime_command {
             RuntimeCommand::SendToSession {
-                target, message, ..
+                submission_id,
+                target,
+                message,
+                ..
             } => {
                 let mode = if self.active_snapshot().conversation.running {
                     if agents::supports_steering(&self.harness) {
@@ -45,7 +48,7 @@ impl RuntimeOwner {
                     PromptMode::Normal
                 };
                 self.send_prompt_for_submission(
-                    uuid::Uuid::new_v4().to_string(),
+                    submission_id,
                     target,
                     mode,
                     message,

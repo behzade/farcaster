@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::Path};
 
 use crate::{
     app::composer::{sessions::session_target, submissions::PendingSubmission},
+    protocol::{BackgroundJob, BackgroundJobState},
     runtime::RuntimeSnapshot,
     sessions::{SessionSummary, session_family_for_path},
 };
@@ -19,6 +20,27 @@ pub(in crate::app) fn snapshot_has_active_work(snapshot: &RuntimeSnapshot) -> bo
             || snapshot.conversation.compacting
             || snapshot.conversation.retrying
             || snapshot.pending_question.is_some())
+}
+
+pub(in crate::app) fn application_has_active_work(
+    statuses: &HashMap<String, String>,
+    snapshot: &RuntimeSnapshot,
+    submissions: &HashMap<String, PendingSubmission>,
+    sessions: &[SessionSummary],
+    jobs: &[BackgroundJob],
+) -> bool {
+    statuses
+        .values()
+        .any(|status| status_has_active_work(status))
+        || snapshot_has_active_work(snapshot)
+        || !submissions.is_empty()
+        || sessions.iter().any(|session| session.is_running)
+        || jobs.iter().any(|job| {
+            matches!(
+                job.state,
+                BackgroundJobState::Starting | BackgroundJobState::Running
+            )
+        })
 }
 
 pub(in crate::app) fn session_has_live_work(
@@ -49,7 +71,7 @@ impl super::FarcasterApp {
     }
 }
 
-pub(super) fn session_family_has_active_work(
+pub(in crate::app) fn session_family_has_active_work(
     sessions: &[SessionSummary],
     path: &Path,
     statuses: &HashMap<String, String>,

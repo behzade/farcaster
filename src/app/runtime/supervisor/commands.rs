@@ -3,6 +3,7 @@ use super::*;
 impl Supervisor {
     fn send_to_session(&mut self, command: RuntimeCommand) {
         let RuntimeCommand::SendToSession {
+            submission_id,
             target,
             session,
             project,
@@ -49,7 +50,7 @@ impl Supervisor {
             actor.send(command);
         } else {
             let _ = self.event_tx.send(RuntimeEvent::PromptResult {
-                submission_id: None,
+                submission_id: Some(submission_id.clone()),
                 target: target.clone(),
                 outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 session: session.as_ref().map(|session| session.path.clone()),
@@ -57,7 +58,13 @@ impl Supervisor {
         }
     }
 
-    fn start_background_task(&mut self, id: String, settings: TaskSettings, message: String) {
+    fn start_background_task(
+        &mut self,
+        submission_id: String,
+        id: String,
+        settings: TaskSettings,
+        message: String,
+    ) {
         let key = format!("draft:{id}");
         // Retrying the same creation request must not launch or submit twice.
         if self.actors.contains_key(&key) {
@@ -85,7 +92,7 @@ impl Supervisor {
             actor.send(RuntimeCommand::SetThinking(effort));
         }
         actor.send(RuntimeCommand::Prompt {
-            submission_id: uuid::Uuid::new_v4().to_string(),
+            submission_id,
             target: key.clone(),
             mode: PromptMode::Normal,
             message,
@@ -182,12 +189,13 @@ impl Supervisor {
                     return true;
                 }
                 if let RuntimeCommand::StartTask {
+                    submission_id,
                     id,
                     settings,
                     message,
                 } = command
                 {
-                    self.start_background_task(id, settings, message);
+                    self.start_background_task(submission_id, id, settings, message);
                     return true;
                 }
                 if let RuntimeCommand::LoadConfiguration { harness, project } = &command {

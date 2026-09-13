@@ -3,8 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use gpui::{App, Context, FocusHandle, WeakEntity, Window};
 
 use super::{FarcasterApp, QuitApplication};
-use crate::app::session::activity::{snapshot_has_active_work, status_has_active_work};
-use crate::protocol::BackgroundJobState;
+use crate::app::session::activity::application_has_active_work;
 
 pub(in crate::app) struct PendingQuit {
     pub(in crate::app) focus: FocusHandle,
@@ -46,19 +45,13 @@ impl FarcasterApp {
             return;
         }
 
-        let active = self
-            .run_statuses
-            .values()
-            .any(|status| status_has_active_work(status))
-            || snapshot_has_active_work(&self.snapshot)
-            || !self.pending_submissions.is_empty()
-            || self.all_sessions.iter().any(|session| session.is_running)
-            || self.background_jobs.iter().any(|job| {
-                matches!(
-                    job.state,
-                    BackgroundJobState::Starting | BackgroundJobState::Running
-                )
-            });
+        let active = application_has_active_work(
+            &self.run_statuses,
+            &self.snapshot,
+            &self.pending_submissions,
+            &self.all_sessions,
+            &self.background_jobs,
+        );
         if !active {
             cx.quit();
             return;
