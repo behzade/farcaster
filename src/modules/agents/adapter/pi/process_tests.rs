@@ -90,6 +90,12 @@ fn assert_installed_default(project: &Path, expected: &str) -> TestResult {
     Ok(())
 }
 
+fn installed_default_thinking(project: &Path) -> TestResult<Value> {
+    let settings: Value =
+        serde_json::from_str(&fs::read_to_string(project.join("pi-agent/settings.json"))?)?;
+    Ok(settings["defaultThinkingLevel"].clone())
+}
+
 #[test]
 #[ignore = "requires installed Pi; real RPC with isolated settings and local provider, no network"]
 fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> TestResult {
@@ -103,6 +109,7 @@ fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> Tes
         model_id: "fixture".into(),
     })?;
     let factory = super::super::worker::PiWorkerFactory::new(command.clone());
+    let original_thinking = installed_default_thinking(project.path())?;
     let mut context = WorkerContext::Fresh;
     let mut saved_locator = None;
     for index in 0..2 {
@@ -116,13 +123,17 @@ fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> Tes
             context,
             provider: Some("farcaster-fixture".into()),
             model: Some("fixture-child".into()),
-            effort: None,
+            effort: Some("high".into()),
             access_mode: HarnessAccessMode::Auto,
             app_proxy: None,
             ephemeral: false,
         })?;
         // Check the real settings file immediately, not just launch arguments.
         assert_installed_default(project.path(), "fixture")?;
+        assert_eq!(
+            installed_default_thinking(project.path())?,
+            original_thinking
+        );
         child.send(format!("child turn {index}"), WorkerSendMode::Prompt)?;
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut locator = None;
@@ -187,6 +198,9 @@ fn installed_pi_abort_preserves_its_model_without_overwriting_another_sessions_s
         provider: "farcaster-fixture".into(),
         model_id: "fixture-child".into(),
     })?;
+    first.request_and_wait(SessionCommand::SelectReasoning {
+        level: "high".into(),
+    })?;
     prompt(
         &mut first,
         crate::protocol::PromptMode::Normal,
@@ -202,11 +216,16 @@ fn installed_pi_abort_preserves_its_model_without_overwriting_another_sessions_s
         provider: "farcaster-fixture".into(),
         model_id: "fixture-other".into(),
     })?;
+    second.request_and_wait(SessionCommand::SelectReasoning {
+        level: "low".into(),
+    })?;
     first.send_request(SessionCommand::Abort)?;
     assert_installed_model(&mut first, "fixture-child")?;
+    assert_eq!(first.selected_reasoning.as_deref(), Some("high"));
     assert_eq!(first.session_locator.as_ref(), Some(&path));
     assert_installed_model(&mut second, "fixture-other")?;
     assert_installed_default(project.path(), "fixture-other")?;
+    assert_eq!(installed_default_thinking(project.path())?, "low");
     first.terminate()?;
     second.terminate()?;
     let mut default_command = command;

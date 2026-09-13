@@ -9,7 +9,7 @@ export default function fixtureProvider(pi) {
     models: ["fixture", "fixture-child", "fixture-other"].map((id) => ({
       id,
       name: "Farcaster fixture",
-      reasoning: false,
+      reasoning: id !== "fixture",
       input: ["text", "image"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 8192,
