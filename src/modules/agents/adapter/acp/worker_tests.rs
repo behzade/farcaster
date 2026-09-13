@@ -1623,3 +1623,41 @@ fn acp_metadata_does_not_acknowledge_prompt_execution() {
     ));
     assert!(session.poll_prompt_ack().is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
+    use std::os::unix::net::UnixStream;
+    let mut session = inert_session();
+    let (client, _peer) = UnixStream::pair().unwrap();
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().unwrap()),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .unwrap();
+    let image = crate::protocol::PromptImage::new("YWJj".into(), "image/png".into());
+    for (id, mode) in [
+        ("steer-1", WorkerSendMode::Steer),
+        ("steer-2", WorkerSendMode::Steer),
+        ("queue", WorkerSendMode::Queue),
+    ] {
+        session
+            .submit_prompt(id.into(), "same".into(), mode, vec![image.clone()])
+            .unwrap();
+    }
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Response {
+            id: AcpRequestId::Number(1),
+            result: json!({"stopReason":"end_turn"}),
+        }]));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.queued_prompts.is_empty());
+    assert!(session.poll_prompt_ack().is_none());
+    session.acknowledge_current_prompt_started();
+    for id in ["steer-1", "steer-2", "queue"] {
+        assert_eq!(session.poll_prompt_ack(), Some((id.into(), Ok(()))));
+    }
+    assert!(session.poll_prompt_ack().is_none());
+}

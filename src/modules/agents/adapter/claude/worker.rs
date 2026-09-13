@@ -468,15 +468,24 @@ impl ClaudeSession {
         if !self.handoff_pending || self.active {
             return;
         }
-        if self.queued.is_empty() {
-            self.handoff_pending = false;
-            return;
-        }
         self.handoff_pending = false;
-        let prompts = self.queued.drain(..).collect::<Vec<_>>();
+        self.handoff_uuid = self.dispatch_queued();
+    }
+
+    fn dispatch_queued(&mut self) -> Option<String> {
+        let prompt = self.queued.pop_front()?;
+        if self.queued.is_empty() {
+            let uuid = match &prompt.message.uuid {
+                Presence::Present(uuid) => Some(uuid.clone()),
+                Presence::Missing => None,
+            };
+            self.deliver(prompt);
+            return uuid;
+        }
+        let prompts = std::iter::once(prompt).chain(self.queued.drain(..));
         let mut content = Vec::new();
         let mut deliveries = Vec::new();
-        for (index, prompt) in prompts.into_iter().enumerate() {
+        for (index, prompt) in prompts.enumerate() {
             if index > 0 {
                 content.push(json!({"type":"text", "text":"\n\n"}));
             }
@@ -506,9 +515,12 @@ impl ClaudeSession {
                     message,
                     deliveries,
                 });
-                self.handoff_uuid = uuid;
+                uuid
             }
-            Err(error) => self.events.pending.push_back(WorkerEvent::Failed(error)),
+            Err(error) => {
+                self.events.pending.push_back(WorkerEvent::Failed(error));
+                None
+            }
         }
     }
 
@@ -846,8 +858,8 @@ impl WorkerSession for ClaudeSession {
         if !self.active {
             if self.handoff_pending {
                 self.dispatch_handoff();
-            } else if let Some(prompt) = self.queued.pop_front() {
-                self.deliver(prompt);
+            } else if !self.queued.is_empty() {
+                self.dispatch_queued();
             } else if let Some(message) = self.caller.try_recv()
                 && let Err(error) = self.send_peer_message(&message, WorkerSendMode::Prompt)
             {

@@ -600,10 +600,22 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
 
 #[test]
 fn process_handoff_batches_equal_text_and_images_with_original_receipts() {
+    queued_batch_round_trip(true);
+}
+
+#[test]
+fn natural_completion_batches_equal_text_and_images_with_original_receipts() {
+    queued_batch_round_trip(false);
+}
+
+fn queued_batch_round_trip(interrupt: bool) {
     let (directory, command) = setup();
     let mut session = session(&command, directory.path());
     session
-        .send("hold".into(), WorkerSendMode::Prompt)
+        .send(
+            if interrupt { "hold" } else { "original" }.into(),
+            WorkerSendMode::Prompt,
+        )
         .expect("start original turn");
     let png = crate::protocol::PromptImage::new("YWJj".into(), "image/png".into());
     let jpeg = crate::protocol::PromptImage::new("ZGVm".into(), "image/jpeg".into());
@@ -623,7 +635,23 @@ fn process_handoff_batches_equal_text_and_images_with_original_receipts() {
             vec![jpeg.clone()],
         )
         .expect("queue follow-up");
-    session.apply_steering().expect("apply handoff");
+    if interrupt {
+        session.apply_steering().expect("apply handoff");
+    } else {
+        let events = until(&mut session, |event| {
+            matches!(event, WorkerEvent::NeedsInput(_))
+        });
+        let WorkerEvent::NeedsInput(input) = events.last().unwrap() else {
+            unreachable!()
+        };
+        session
+            .respond(WorkerInputResponse {
+                id: input.id.clone(),
+                value: Some("Allow".into()),
+                cancel: false,
+            })
+            .unwrap();
+    }
     until(&mut session, |event| {
         matches!(event, WorkerEvent::Settled { .. })
     });

@@ -934,14 +934,15 @@ impl AcpWorkerSession {
     }
 
     fn start_next_queued_prompt(&mut self) {
-        let Some(input) = self.queued_prompts.pop_front() else {
+        if self.queued_prompts.is_empty() {
             if let Some(identity) = &self.caller_identity {
                 identity.set_activity(WorkerActivityState::Idle);
             }
             return;
-        };
-        if let Err(error) = self.start_prompt_request(vec![input.clone()]) {
-            self.reject_inputs([input], &error);
+        }
+        let inputs = self.queued_prompts.drain(..).collect::<Vec<_>>();
+        if let Err(error) = self.start_prompt_request(inputs.clone()) {
+            self.reject_inputs(inputs, &error);
             self.events.push_back(WorkerEvent::Failed(error));
             return;
         }
