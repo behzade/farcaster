@@ -593,8 +593,14 @@ fn withheld_post_completion_native_abort_cleanup_ack_never_reports_settled() {
 
 #[test]
 fn native_abort_cleanup_deadline_wakes_an_idle_worker_loop() {
+    for active in [true, false] {
+        assert_native_cleanup_wakes_before_watchdog(active);
+    }
+}
+
+fn assert_native_cleanup_wakes_before_watchdog(active: bool) {
     let (mut session, _sent) = writable_test_session();
-    session.current_turn = Some("turn-1".into());
+    session.current_turn = active.then(|| "turn-1".into());
     session.wake = Some(std::thread::current());
     session.abort_cleanup_response_timeout = std::time::Duration::from_millis(20);
     session.abort().expect("abort active turn");
@@ -604,17 +610,21 @@ fn native_abort_cleanup_deadline_wakes_an_idle_worker_loop() {
         std::thread::park_timeout(
             test_deadline.saturating_duration_since(std::time::Instant::now()),
         );
+        assert!(
+            std::time::Instant::now() < test_deadline,
+            "idle worker woke only at the test watchdog, not its cleanup deadline"
+        );
         if let Some(event) = session.poll() {
             break event;
         }
-        assert!(
-            std::time::Instant::now() < test_deadline,
-            "idle worker received no cleanup-deadline wake"
-        );
     };
     assert!(matches!(
         failure,
-        WorkerEvent::Failed(error) if error.contains("initial cleanup acknowledgement")
+        WorkerEvent::Failed(error) if error.contains(if active {
+            "initial cleanup acknowledgement"
+        } else {
+            "post-completion cleanup acknowledgement"
+        })
     ));
 }
 
@@ -1336,10 +1346,23 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
             .iter()
             .filter(|item| item.kind == TranscriptKind::User)
             .collect::<Vec<_>>();
-        assert_eq!(users.len(), 1);
-        assert_eq!(users[0].text, "retain unknown");
-        assert_eq!(users[0].images.len(), 1);
-        assert_eq!(users[0].label, "Delivery unknown");
+        if mode == PromptMode::Normal {
+            assert_eq!(users.len(), 1);
+            assert_eq!(users[0].text, "retain unknown");
+            assert_eq!(users[0].images.len(), 1);
+            assert_eq!(users[0].label, "Delivery unknown");
+        } else {
+            assert!(
+                users.is_empty(),
+                "undelivered queued input is not a User row"
+            );
+            let pending = conversation.pending_receipts();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].id, submission_id);
+            assert_eq!(pending[0].text, "retain unknown");
+            assert_eq!(pending[0].images.len(), 1);
+            assert!(pending[0].unknown);
+        }
 
         let client_id = match mode {
             PromptMode::Normal => "farcaster-normal-1",
@@ -1372,6 +1395,7 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
         assert_eq!(users[0].text, "retain unknown");
         assert_eq!(users[0].images.len(), 1);
         assert!(users[0].label.is_empty());
+        assert!(conversation.pending_receipts().is_empty());
 
         let later_id = transport
             .send(SessionCommand::Prompt {

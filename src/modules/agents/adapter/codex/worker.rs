@@ -114,7 +114,9 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             child,
             writer: Some(writer),
             incoming,
-            wake: launch.wake.clone(),
+            // Pool workers poll on their run-loop interval; only the main
+            // session supplies a parked runtime thread that needs a wake.
+            wake: None,
             thread_id: thread_id.clone(),
             model: launch.model,
             effort: launch.effort,
@@ -1943,7 +1945,11 @@ impl CodexWorkerSession {
         thread::Builder::new()
             .name("codex-abort-cleanup-deadline".into())
             .spawn(move || {
-                thread::park_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
+                while std::time::Instant::now() < deadline {
+                    thread::park_timeout(
+                        deadline.saturating_duration_since(std::time::Instant::now()),
+                    );
+                }
                 wake.unpark();
             })
             .map(|_| ())

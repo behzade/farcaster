@@ -38,6 +38,42 @@ enum AbortReceipt {
     RejectedBeforeAcceptance,
 }
 
+struct UnrelatedProcess(std::process::Child);
+
+impl UnrelatedProcess {
+    fn start() -> Result<Self, String> {
+        let child = std::process::Command::new("sleep")
+            .arg("3600")
+            .spawn()
+            .map_err(|error| format!("start unrelated Abort sentinel: {error}"))?;
+        eprintln!(
+            "E2E_ABORT_SENTINEL: started owned fixture pid={}",
+            child.id()
+        );
+        Ok(Self(child))
+    }
+
+    fn assert_alive(&mut self) -> Result<(), String> {
+        if let Some(status) = self
+            .0
+            .try_wait()
+            .map_err(|error| format!("check unrelated Abort sentinel: {error}"))?
+        {
+            return Err(format!("Abort stopped an unrelated fixture: {status}"));
+        }
+        eprintln!("E2E_ABORT_SENTINEL: alive pid={}", self.0.id());
+        Ok(())
+    }
+}
+
+impl Drop for UnrelatedProcess {
+    fn drop(&mut self) {
+        // Only the Child created above belongs to this cleanup.
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 #[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
 fn live_e2e_input_queue_runs_once_after_the_held_turn() -> Result<(), String> {
@@ -148,6 +184,7 @@ fn live_e2e_input_apply_steering_interrupts_and_handoffs_immediately() -> Result
 #[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
 fn live_e2e_input_abort_stops_an_active_real_tool_turn() -> Result<(), String> {
     run_input_case(|live| {
+        let mut sentinel = UnrelatedProcess::start()?;
         live.require_available("interrupt", &live.capabilities().turns.interrupt)?;
         let gate = live.start_gated_turn("abort-active")?;
         let aborted_at = live.activity_cursor();
@@ -156,9 +193,11 @@ fn live_e2e_input_abort_stops_an_active_real_tool_turn() -> Result<(), String> {
         live.wait_for_settled_after(aborted_at, TURN_TIMEOUT)?;
         let settled_at = settled_position_after(live, aborted_at)?;
         gate.assert_process_exited_after_abort()?;
+        sentinel.assert_alive()?;
         gate.assert_still_closed()?;
         live.release_gate(&gate)?;
         prove_same_session_liveness(live)?;
+        sentinel.assert_alive()?;
         live.assert_no_gate_tool_start_after(settled_at, &gate)
     })
 }
