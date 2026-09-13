@@ -21,80 +21,43 @@ pub(crate) fn filter_session_tree(
     if needle.is_empty() {
         return sessions;
     }
-    let by_id = sessions
-        .iter()
-        .map(|session| (session.id.as_str(), session))
-        .collect::<HashMap<_, _>>();
+    let index = SessionRootIndex::new(&sessions);
     let mut included = sessions
         .iter()
         .filter(|session| session.search_text().contains(&needle))
-        .map(|session| session.id.clone())
+        .map(|session| session.path.clone())
         .collect::<HashSet<_>>();
-    for id in included.clone() {
-        let mut current = by_id.get(id.as_str()).copied();
+    for path in included.clone() {
+        let mut current = index.by_path.get(path.as_path()).copied();
         let mut seen = HashSet::new();
         while let Some(session) = current {
-            if !seen.insert(session.id.as_str()) {
+            if !seen.insert(session.path.as_path()) {
                 break;
             }
-            included.insert(session.id.clone());
-            current = session
-                .parent_session
-                .as_deref()
-                .and_then(|parent| by_id.get(parent).copied());
+            included.insert(session.path.clone());
+            current = index.parent(session);
         }
     }
-    let by_parent = sessions.iter().fold(
-        HashMap::<&str, Vec<&str>>::new(),
-        |mut children, session| {
-            if let Some(parent) = session.parent_session.as_deref() {
-                children
-                    .entry(parent)
-                    .or_default()
-                    .push(session.id.as_str());
-            }
-            children
-        },
-    );
+    let by_parent = index.children(&sessions);
     let mut stack = included.iter().cloned().collect::<Vec<_>>();
-    let mut expanded = HashSet::new();
     while let Some(parent) = stack.pop() {
-        if !expanded.insert(parent.clone()) {
-            continue;
-        }
-        if let Some(children) = by_parent.get(parent.as_str()) {
+        if let Some(children) = by_parent.get(parent.as_path()) {
             for child in children {
-                included.insert((*child).to_owned());
-                stack.push((*child).to_owned());
+                if included.insert(child.path.clone()) {
+                    stack.push(child.path.clone());
+                }
             }
         }
     }
-    sessions.retain(|session| included.contains(&session.id));
+    sessions.retain(|session| included.contains(&session.path));
     sessions
 }
 
 pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary> {
-    let ids = sessions
-        .iter()
-        .map(|session| {
-            (
-                session.project.as_path(),
-                session.harness.as_str(),
-                session.id.as_str(),
-            )
-        })
-        .collect::<HashSet<_>>();
+    let index = SessionRootIndex::new(sessions);
     sessions
         .iter()
-        .filter(|session| {
-            session.parent_session.as_deref().is_none_or(|parent| {
-                let parent_harness = session
-                    .parent_harness
-                    .as_deref()
-                    .unwrap_or(&session.harness);
-                !ids.contains(&(session.project.as_path(), parent_harness, parent))
-            })
-        })
+        .filter(|session| index.parent(session).is_none())
         .collect()
 }
 
@@ -105,11 +68,17 @@ mod tests;
 pub(crate) struct SessionRootIndex<'a> {
     by_id: HashMap<(&'a Path, &'a str, &'a str), &'a SessionSummary>,
     by_path: HashMap<&'a Path, &'a SessionSummary>,
+    by_app_id: HashMap<i64, &'a SessionSummary>,
 }
 
 impl<'a> SessionRootIndex<'a> {
     pub(crate) fn new(sessions: &'a [SessionSummary]) -> Self {
         Self {
+            by_app_id: sessions
+                .iter()
+                .filter(|session| session.app_session_id > 0)
+                .map(|session| (session.app_session_id, session))
+                .collect(),
             by_id: sessions
                 .iter()
                 .map(|session| {
@@ -130,23 +99,44 @@ impl<'a> SessionRootIndex<'a> {
         }
     }
 
+    fn parent(&self, session: &SessionSummary) -> Option<&'a SessionSummary> {
+        if let Some(id) = session.parent_app_session_id {
+            // An unresolved cached parent must not bind to a native-ID homonym.
+            return self.by_app_id.get(&id).copied();
+        }
+        let parent = session.parent_session.as_deref()?;
+        let harness = session
+            .parent_harness
+            .as_deref()
+            .unwrap_or(&session.harness);
+        self.by_id
+            .get(&(session.project.as_path(), harness, parent))
+            .copied()
+    }
+
+    fn children(
+        &self,
+        sessions: &'a [SessionSummary],
+    ) -> HashMap<&'a Path, Vec<&'a SessionSummary>> {
+        let mut children: HashMap<&Path, Vec<&SessionSummary>> = HashMap::new();
+        for session in sessions {
+            if let Some(parent) = self.parent(session) {
+                children
+                    .entry(parent.path.as_path())
+                    .or_default()
+                    .push(session);
+            }
+        }
+        children
+    }
+
     pub(crate) fn root_for_path(&self, selected: Option<&Path>) -> Option<&'a SessionSummary> {
         let mut current = *self.by_path.get(selected?)?;
-        for _ in 0..self.by_id.len() {
-            let Some(parent) = current.parent_session.as_deref() else {
+        for _ in 0..self.by_path.len() {
+            let Some(parent) = self.parent(current) else {
                 break;
             };
-            let parent_harness = current
-                .parent_harness
-                .as_deref()
-                .unwrap_or(&current.harness);
-            let Some(parent) = self
-                .by_id
-                .get(&(current.project.as_path(), parent_harness, parent))
-            else {
-                break;
-            };
-            current = *parent;
+            current = parent;
         }
         Some(current)
     }
@@ -182,46 +172,23 @@ pub(crate) fn descendant_sessions_for_root<'a>(
     sessions: &'a [SessionSummary],
     root: &SessionSummary,
 ) -> Vec<(&'a SessionSummary, usize)> {
-    let mut by_parent: HashMap<(&Path, &str, &str), Vec<&SessionSummary>> = HashMap::new();
-    for session in sessions {
-        if let Some(parent) = session.parent_session.as_deref() {
-            let parent_harness = session
-                .parent_harness
-                .as_deref()
-                .unwrap_or(&session.harness);
-            by_parent
-                .entry((session.project.as_path(), parent_harness, parent))
-                .or_default()
-                .push(session);
-        }
-    }
+    let index = SessionRootIndex::new(sessions);
+    let by_parent = index.children(sessions);
     let mut stack = by_parent
-        .get(&(
-            root.project.as_path(),
-            root.harness.as_str(),
-            root.id.as_str(),
-        ))
+        .get(root.path.as_path())
         .into_iter()
         .flatten()
         .rev()
         .map(|session| (*session, 1_usize))
         .collect::<Vec<_>>();
     let mut descendants = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::from([root.path.as_path()]);
     while let Some((session, depth)) = stack.pop() {
-        if !seen.insert((
-            session.project.as_path(),
-            session.harness.as_str(),
-            session.id.as_str(),
-        )) {
+        if !seen.insert(session.path.as_path()) {
             continue;
         }
         descendants.push((session, depth));
-        if let Some(children) = by_parent.get(&(
-            session.project.as_path(),
-            session.harness.as_str(),
-            session.id.as_str(),
-        )) {
+        if let Some(children) = by_parent.get(session.path.as_path()) {
             stack.extend(
                 children
                     .iter()

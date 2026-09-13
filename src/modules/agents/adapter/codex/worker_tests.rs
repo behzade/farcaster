@@ -2521,3 +2521,6 @@ fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
         ["hello world"]
     );
 }
+
+#[path = "worker_handoff_tests.rs"]
+mod handoff_recovery;

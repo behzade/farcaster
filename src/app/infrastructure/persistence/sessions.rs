@@ -23,7 +23,7 @@ impl StateStore {
                         s.total_tokens, s.cost_micros, s.search_text,
                         s.archived_at IS NOT NULL, s.harness,
                         m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
-                        parent.harness
+                        parent.harness, s.parent_id
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
@@ -113,8 +113,8 @@ impl StateStore {
                title=COALESCE(?5,NULLIF(title,''),?6,''),
                first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?6,'') ELSE first_user_message END,
                parent_backend_id=COALESCE(?7,parent_backend_id),
-               parent_id=COALESCE((SELECT id FROM sessions
-                 WHERE harness=?8 AND project_id=?2 AND backend_id=?7 LIMIT 1),parent_id),
+               parent_id=COALESCE(parent_id,(SELECT id FROM sessions
+                 WHERE harness=?8 AND project_id=?2 AND backend_id=?7 LIMIT 1)),
                message_count=COALESCE(?9,message_count), modified_ms=?10
              WHERE id=?1",
             params![id, project, path.to_string_lossy(), update.id, update.title,
@@ -192,12 +192,12 @@ impl StateStore {
         }
         transaction
             .execute_batch(
-                "UPDATE sessions AS child SET parent_id=COALESCE(
+                "UPDATE sessions AS child SET parent_id=COALESCE(child.parent_id,
                (SELECT parent.id FROM sessions parent
                  WHERE parent.harness=child.harness AND parent.project_id=child.project_id
                    AND (parent.backend_id=child.parent_backend_id
                         OR parent.locator=child.parent_backend_id)
-                   AND parent.id != child.id LIMIT 1), child.parent_id)
+                   AND parent.id != child.id LIMIT 1))
              WHERE child.parent_backend_id IS NOT NULL;",
             )
             .map_err(|error| format!("resolve session parents: {error}"))?;
@@ -661,6 +661,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     )
     .with_app_session_id(id);
     session.parent_session = row.get(6)?;
+    session.parent_app_session_id = row.get(23)?;
     session.parent_harness = row.get::<_, Option<String>>(22)?.or_else(|| {
         session
             .parent_session
@@ -677,3 +678,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
 #[cfg(test)]
 #[path = "sessions_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_family_tests.rs"]
+mod family_tests;

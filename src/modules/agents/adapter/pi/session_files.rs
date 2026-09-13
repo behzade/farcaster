@@ -695,6 +695,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             first_user_message,
             timestamp,
             parent_harness: parent_session.as_ref().map(|_| "pi".into()),
+            parent_app_session_id: None,
             parent_session,
             modified,
             message_count,
