@@ -16,8 +16,8 @@ test:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test
 
 e2e:
-	$(if $(HARNESS),FARCASTER_E2E_HARNESS="$(HARNESS)" )CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" \
-		cargo test live_harnesses_conform_to_session_outcomes -- --ignored --nocapture
+	HARNESS="$(HARNESS)" CASE="$(CASE)" CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" \
+		sh scripts/e2e.sh
 
 debug:
 	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
