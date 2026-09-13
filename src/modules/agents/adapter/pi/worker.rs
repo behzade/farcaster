@@ -39,6 +39,11 @@ impl WorkerSessionFactory for PiWorkerFactory {
         let mut command = self.command.clone();
         command.access_mode = launch.access_mode;
         command.app_proxy = launch.app_proxy.clone();
+        super::process::launch_selection(
+            &mut command,
+            launch.provider.as_deref().zip(launch.model.as_deref()),
+            launch.effort.as_deref(),
+        );
         let spawn = |start| {
             PiRpcProcess::spawn_worker(
                 &command,
@@ -79,10 +84,7 @@ impl WorkerSessionFactory for PiWorkerFactory {
         process.set_worker_slot(launch.slot);
         process.request_and_wait(SessionCommand::ConfigureSteering)?;
         if let (Some(provider), Some(model_id)) = (launch.provider, launch.model) {
-            process.request_and_wait(SessionCommand::SelectModel { provider, model_id })?;
-        }
-        if let Some(level) = launch.effort {
-            process.request_and_wait(SessionCommand::SelectReasoning { level })?;
+            process.confirm_model(&provider, &model_id)?;
         }
         Ok(Box::new(PiWorkerSession {
             process,

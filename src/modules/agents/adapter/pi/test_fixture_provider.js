@@ -6,15 +6,15 @@ export default function fixtureProvider(pi) {
     api: "farcaster-fixture",
     baseUrl: "http://127.0.0.1.invalid",
     apiKey: "fixture",
-    models: [{
-      id: "fixture",
+    models: ["fixture", "fixture-child", "fixture-other"].map((id) => ({
+      id,
       name: "Farcaster fixture",
       reasoning: false,
       input: ["text", "image"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 8192,
       maxTokens: 1024,
-    }],
+    })),
     streamSimple(model, context, options) {
       const userTexts = context.messages
         .filter((message) => message.role === "user")

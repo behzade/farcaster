@@ -4,9 +4,15 @@ case_name=$1
 shift
 
 session_file="$PWD/session.jsonl"
+launch_provider=''
+launch_model=''
+launch_thinking=''
 previous=''
 for argument in "$@"; do
   if [ "$previous" = '--session' ]; then session_file=$argument; fi
+  if [ "$previous" = '--provider' ]; then launch_provider=$argument; fi
+  if [ "$previous" = '--model' ]; then launch_model=$argument; fi
+  if [ "$previous" = '--thinking' ]; then launch_thinking=$argument; fi
   previous=$argument
 done
 touch "$session_file"
@@ -18,6 +24,10 @@ if [ -f "$PWD/fixture-launch-count" ]; then
 fi
 printf '%s' "$launch_count" > "$PWD/fixture-launch-count"
 test -f "$PWD/fixture-thinking" || printf 'off' > "$PWD/fixture-thinking"
+if [ -n "$launch_model" ]; then
+  printf '{"id":"%s","name":"Fixture","provider":"%s","contextWindow":8192,"reasoning":true}' "$launch_model" "$launch_provider" > "$PWD/fixture-model"
+fi
+if [ -n "$launch_thinking" ]; then printf '%s' "$launch_thinking" > "$PWD/fixture-thinking"; fi
 steering_queue="$PWD/fixture-steering-queue.$$"
 follow_up_queue="$PWD/fixture-follow-up-queue.$$"
 : > "$steering_queue"
@@ -55,7 +65,7 @@ while IFS= read -r line; do
       model=null
       test ! -f "$PWD/fixture-model" || model=$(cat "$PWD/fixture-model")
       thinking=$(cat "$PWD/fixture-thinking")
-      if [ "$case_name" = 'replacement-defaults' ] && [ "$launch_count" -eq 2 ] && [ ! -f "$PWD/fixture-replacement-default-reported" ]; then
+      if [ "$case_name" = 'replacement-defaults' ] && [ "$launch_count" -eq 2 ] && [ -z "$launch_model" ] && [ ! -f "$PWD/fixture-replacement-default-reported" ]; then
         model='{"id":"replacement-default","name":"Replacement default","provider":"fixture","contextWindow":8192,"reasoning":true}'
         thinking='low'
         touch "$PWD/fixture-replacement-default-reported"

@@ -45,6 +45,28 @@ fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("pi"))
 }
 
+/// Pi's model/thinking RPCs change global defaults. Automatic launches must
+/// select their own configuration without changing the user's next session.
+pub(super) fn launch_selection(
+    command: &mut AgentLaunchConfig,
+    model: Option<(&str, &str)>,
+    reasoning: Option<&str>,
+) {
+    if let Some((provider, model)) = model {
+        command.prefix_args.extend([
+            "--provider".into(),
+            provider.into(),
+            "--model".into(),
+            model.into(),
+        ]);
+    }
+    if let Some(reasoning) = reasoning {
+        command
+            .prefix_args
+            .extend(["--thinking".into(), reasoning.into()]);
+    }
+}
+
 #[derive(Clone)]
 struct ReaderSender {
     sender: mpsc::Sender<ReaderItem>,
@@ -486,8 +508,16 @@ impl PiRpcProcess {
         let launch = session
             .as_deref()
             .map_or(SessionLaunch::New, SessionLaunch::Resume);
+        let mut command = self.launch_command.clone();
+        launch_selection(
+            &mut command,
+            restore_model
+                .as_ref()
+                .map(|(provider, model)| (provider.as_str(), model.as_str())),
+            restore_reasoning.as_deref(),
+        );
         let mut prepared = rpc_command(
-            &self.launch_command,
+            &command,
             &self.project,
             launch,
             self._mcp_config.as_ref().map(TransientMcpConfig::path),
@@ -552,11 +582,11 @@ impl PiRpcProcess {
             if restore_steering {
                 self.request_and_wait(SessionCommand::ConfigureSteering)?;
             }
-            if let Some((provider, model_id)) = restore_model {
-                self.request_and_wait(SessionCommand::SelectModel { provider, model_id })?;
+            if let Some((provider, model_id)) = &restore_model {
+                self.confirm_model(provider, model_id)?;
             }
-            if let Some(level) = restore_reasoning {
-                self.request_and_wait(SessionCommand::SelectReasoning { level })?;
+            if restore_reasoning.is_some() && self.selected_reasoning != restore_reasoning {
+                return Err("Pi did not restore the selected thinking level".into());
             }
             self.configure_sandbox(self.launch_command.access_mode)
         })();
@@ -597,6 +627,23 @@ impl PiRpcProcess {
         self.queued.extend(abandoned);
         self.pending_prompt_modes.clear();
         Ok(())
+    }
+
+    pub(super) fn confirm_model(&self, provider: &str, model_id: &str) -> Result<(), String> {
+        if self
+            .selected_model
+            .as_ref()
+            .is_some_and(|(actual_provider, actual_model)| {
+                actual_provider == provider && actual_model == model_id
+            })
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Pi did not select requested model {provider}/{model_id}; actual {:?}",
+                self.selected_model
+            ))
+        }
     }
 
     fn force_stop(&mut self) -> Result<(), String> {

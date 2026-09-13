@@ -66,6 +66,159 @@ fn installed_pi_fixture(project: &Path) -> TestResult<AgentLaunchConfig> {
     ))
 }
 
+fn assert_installed_model(rpc: &mut PiRpcProcess, expected: &str) -> TestResult {
+    let response = rpc.request_and_wait(SessionCommand::LoadState)?;
+    let crate::agents::SessionResponsePayload::LoadState(state) = response.result? else {
+        return Err("expected Pi state".into());
+    };
+    let model = state.model.ok_or("missing selected model")?;
+    assert_eq!(
+        (model.provider.as_str(), model.id.as_str()),
+        ("farcaster-fixture", expected)
+    );
+    Ok(())
+}
+
+fn assert_installed_default(project: &Path, expected: &str) -> TestResult {
+    let settings: Value =
+        serde_json::from_str(&fs::read_to_string(project.join("pi-agent/settings.json"))?)?;
+    assert_eq!(settings["defaultProvider"], "farcaster-fixture");
+    assert_eq!(
+        settings["defaultModel"], expected,
+        "automatic launch changed Pi's saved selection"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires installed Pi; real RPC with isolated settings and local provider, no network"]
+fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> TestResult {
+    use crate::agents::{WorkerContext, WorkerEvent, WorkerLaunch, WorkerSessionFactory};
+    let _mcp = DisabledMcp::new();
+    let project = tempdir()?;
+    let command = installed_pi_fixture(project.path())?;
+    let mut parent = PiRpcProcess::spawn(&command, project.path(), None)?;
+    parent.request_and_wait(SessionCommand::SelectModel {
+        provider: "farcaster-fixture".into(),
+        model_id: "fixture".into(),
+    })?;
+    let factory = super::super::worker::PiWorkerFactory::new(command.clone());
+    let mut context = WorkerContext::Fresh;
+    let mut saved_locator = None;
+    for index in 0..2 {
+        let mut child = factory.create(WorkerLaunch {
+            slot: None,
+            worker_id: format!("model-child-{index}"),
+            worker_name: format!("model-child-{index}"),
+            project: project.path().to_path_buf(),
+            parent_session: "parent".into(),
+            parent_worker_id: None,
+            context,
+            provider: Some("farcaster-fixture".into()),
+            model: Some("fixture-child".into()),
+            effort: None,
+            access_mode: HarnessAccessMode::Auto,
+            app_proxy: None,
+            ephemeral: false,
+        })?;
+        // Check the real settings file immediately, not just launch arguments.
+        assert_installed_default(project.path(), "fixture")?;
+        child.send(format!("child turn {index}"), WorkerSendMode::Prompt)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut locator = None;
+        let mut settled = false;
+        while Instant::now() < deadline && (!settled || locator.is_none()) {
+            match child.poll() {
+                Some(WorkerEvent::SessionChanged { locator: path }) => locator = Some(path),
+                Some(WorkerEvent::Settled { output }) => {
+                    assert!(output.contains(&format!("child turn {index}")));
+                    settled = true;
+                }
+                Some(WorkerEvent::Failed(error) | WorkerEvent::RequestFailed { error, .. }) => {
+                    return Err(error.into());
+                }
+                _ => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        child.close()?;
+        assert!(settled, "real Pi child did not complete");
+        let locator = locator.ok_or("child omitted locator")?;
+        if let Some(previous) = &saved_locator {
+            assert_eq!(&locator, previous);
+        }
+        let history = fs::read_to_string(&locator)?;
+        let messages = history
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<Result<Vec<_>, _>>()?;
+        assert!(
+            messages
+                .iter()
+                .any(|entry| entry["message"]["role"] == "assistant"
+                    && entry["message"]["model"] == "fixture-child")
+        );
+        saved_locator = Some(locator.clone());
+        context = WorkerContext::Resume {
+            session_locator: locator,
+        };
+        assert_installed_default(project.path(), "fixture")?;
+        assert_installed_model(&mut parent, "fixture")?;
+    }
+    parent.terminate()?;
+    let mut default_command = command;
+    default_command
+        .prefix_args
+        .truncate(default_command.prefix_args.len() - 4);
+    let mut next = PiRpcProcess::spawn(&default_command, project.path(), None)?;
+    assert_installed_model(&mut next, "fixture")?;
+    next.terminate()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires installed Pi; real RPC with isolated settings and local provider, no network"]
+fn installed_pi_abort_preserves_its_model_without_overwriting_another_sessions_selection()
+-> TestResult {
+    let _mcp = DisabledMcp::new();
+    let project = tempdir()?;
+    let command = installed_pi_fixture(project.path())?;
+    let mut first = PiRpcProcess::spawn(&command, project.path(), None)?;
+    first.request_and_wait(SessionCommand::SelectModel {
+        provider: "farcaster-fixture".into(),
+        model_id: "fixture-child".into(),
+    })?;
+    prompt(
+        &mut first,
+        crate::protocol::PromptMode::Normal,
+        "persist selected model",
+    )?;
+    wait_for_activity(&mut first, crate::agents::SessionActivityKind::AgentSettled)?;
+    let path = first
+        .session_locator
+        .clone()
+        .ok_or("missing first session")?;
+    let mut second = PiRpcProcess::spawn(&command, project.path(), None)?;
+    second.request_and_wait(SessionCommand::SelectModel {
+        provider: "farcaster-fixture".into(),
+        model_id: "fixture-other".into(),
+    })?;
+    first.send_request(SessionCommand::Abort)?;
+    assert_installed_model(&mut first, "fixture-child")?;
+    assert_eq!(first.session_locator.as_ref(), Some(&path));
+    assert_installed_model(&mut second, "fixture-other")?;
+    assert_installed_default(project.path(), "fixture-other")?;
+    first.terminate()?;
+    second.terminate()?;
+    let mut default_command = command;
+    default_command
+        .prefix_args
+        .truncate(default_command.prefix_args.len() - 4);
+    let mut next = PiRpcProcess::spawn(&default_command, project.path(), None)?;
+    assert_installed_model(&mut next, "fixture-other")?;
+    next.terminate()?;
+    Ok(())
+}
+
 fn wait_for_activity(
     rpc: &mut PiRpcProcess,
     expected: crate::agents::SessionActivityKind,
