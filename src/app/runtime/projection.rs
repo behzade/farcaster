@@ -265,6 +265,14 @@ impl RuntimeOwner {
             let blocks_resume = self.deferred_prompt.is_some() && startup_query;
             let blocks_session_command_resume =
                 !self.pending_session_controls.is_empty() && startup_query;
+            // Ignore cancelled refreshes unless they gate a pending prompt or control.
+            if error.kind == crate::agents::SessionResponseErrorKind::Cancelled
+                && (startup_query || operation == SessionOperation::LoadUsage)
+                && !blocks_resume
+                && !blocks_session_command_resume
+            {
+                return;
+            }
             if blocks_session_command_resume {
                 let details = format!("{operation:?}: {}", error.message);
                 self.fail_session_control_resume("Command not sent", "Command not sent", details);

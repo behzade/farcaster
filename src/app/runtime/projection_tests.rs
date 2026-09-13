@@ -94,3 +94,83 @@ fn failed_startup_payload_does_not_mark_state_or_history_loaded() {
         assert_eq!(owner.active_snapshot().status, "Command failed");
     }
 }
+
+#[test]
+fn cancelled_background_refreshes_preserve_transcript_and_status() {
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    let status = owner.active_snapshot().status.clone();
+    let item_count = owner.active_snapshot().conversation.items.len();
+    for operation in [
+        SessionOperation::LoadState,
+        SessionOperation::LoadHistory,
+        SessionOperation::LoadUsage,
+    ] {
+        owner.apply_response(SessionResponse::cancelled(
+            "refresh".into(),
+            operation,
+            "transport restarted".into(),
+        ));
+        assert_eq!(owner.active_snapshot().status, status);
+        assert_eq!(owner.active_snapshot().conversation.items.len(), item_count);
+    }
+}
+
+#[test]
+fn cancelled_startup_query_resolves_deferred_prompt_failure() {
+    for operation in [SessionOperation::LoadState, SessionOperation::LoadHistory] {
+        let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+        owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+            mode: PromptMode::Normal,
+            message: "waiting for startup".into(),
+            display_message: None,
+            invocation: None,
+            images: Vec::new(),
+            outbox_id: None,
+        });
+        owner.apply_response(SessionResponse::cancelled(
+            "startup".into(),
+            operation,
+            "transport restarted".into(),
+        ));
+        assert!(owner.deferred_prompt.is_none());
+        assert_eq!(owner.active_snapshot().status, "Command failed");
+    }
+}
+
+#[test]
+fn real_refresh_failure_and_cancelled_user_command_remain_visible() {
+    for response in [
+        SessionResponse::failure(
+            Some("refresh".into()),
+            SessionOperation::LoadUsage,
+            "backend error".into(),
+        ),
+        SessionResponse::cancelled(
+            "command".into(),
+            SessionOperation::Compact,
+            "transport restarted".into(),
+        ),
+    ] {
+        let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+        owner.apply_response(response);
+        assert_eq!(owner.active_snapshot().status, "Command failed");
+        assert!(!owner.active_snapshot().conversation.items.is_empty());
+    }
+}
+
+#[test]
+fn cancelled_startup_query_resolves_pending_control_failure() {
+    for operation in [SessionOperation::LoadState, SessionOperation::LoadHistory] {
+        let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+        owner.set_thinking("high".into());
+        assert!(!owner.pending_session_controls.is_empty());
+        owner.apply_response(SessionResponse::cancelled(
+            "startup".into(),
+            operation,
+            "transport restarted".into(),
+        ));
+        assert!(owner.pending_session_controls.is_empty());
+        assert_eq!(owner.active_snapshot().status, "Command not sent");
+        assert!(!owner.active_snapshot().conversation.items.is_empty());
+    }
+}

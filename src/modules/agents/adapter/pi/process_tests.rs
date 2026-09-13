@@ -1564,3 +1564,9 @@ fn malformed_catalog_fails_its_request_without_poisoning_the_transport() -> Test
     rpc.terminate()?;
     Ok(())
 }
+
+#[path = "process_receipt_tests.rs"]
+mod receipts;
+
+#[path = "process_cancellation_tests.rs"]
+mod cancellations;

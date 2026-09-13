@@ -36,6 +36,17 @@ impl SessionResponse {
         }
     }
 
+    pub(crate) fn cancelled(id: String, operation: SessionOperation, message: String) -> Self {
+        Self {
+            id: Some(id),
+            result: Err(SessionResponseError {
+                operation,
+                message,
+                kind: SessionResponseErrorKind::Cancelled,
+            }),
+        }
+    }
+
     pub(crate) fn prompt_delivery_unknown(id: String, mode: PromptMode, message: String) -> Self {
         Self {
             id: Some(id),
@@ -67,6 +78,8 @@ pub(crate) struct SessionResponseError {
 pub(crate) enum SessionResponseErrorKind {
     #[default]
     RejectedBeforeAcceptance,
+    /// The transport abandoned the request during a lifecycle change, not a backend rejection.
+    Cancelled,
     DeliveryUnknown,
 }
 

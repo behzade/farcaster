@@ -131,6 +131,7 @@ pub(crate) struct PiRpcProcess {
     pending_prompt_modes: HashMap<String, crate::protocol::PromptMode>,
     peer_messages: VecDeque<PeerMessage>,
     next_id: u64,
+    request_namespace: uuid::Uuid,
     activity: WorkerActivityState,
     stderr: String,
     parent_session: Option<String>,
@@ -329,6 +330,7 @@ impl PiRpcProcess {
             pending_prompt_modes: HashMap::new(),
             peer_messages: VecDeque::new(),
             next_id: 0,
+            request_namespace: uuid::Uuid::new_v4(),
             activity: WorkerActivityState::Idle,
             stderr: String::new(),
             parent_session,
@@ -468,7 +470,8 @@ impl PiRpcProcess {
 
     fn next_request_id(&mut self) -> String {
         self.next_id = self.next_id.saturating_add(1);
-        format!("gpui-{}", self.next_id)
+        // Receipts outlive the transport in runtime recovery and saved history.
+        format!("gpui-{}-{}", self.request_namespace, self.next_id)
     }
 
     fn restart_after_abort(&mut self) -> Result<(), String> {
@@ -583,8 +586,8 @@ impl PiRpcProcess {
                         "prompt dispatch was interrupted before Pi acknowledged it".into(),
                     ))
                 } else {
-                    SessionEvent::Response(SessionResponse::failure(
-                        Some(id),
+                    SessionEvent::Response(SessionResponse::cancelled(
+                        id,
                         operation,
                         "request cancelled because Pi stopped".into(),
                     ))
