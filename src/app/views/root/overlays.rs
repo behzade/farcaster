@@ -184,6 +184,9 @@ impl FarcasterApp {
                         )),
                 )
             })
+            .when(self.pending_quit.is_some(), |root| {
+                root.child(dialogs::quit_confirmation::render(self, entity.clone()))
+            })
     }
 }
 

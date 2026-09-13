@@ -172,6 +172,7 @@ impl FarcasterApp {
             pending_submissions: HashMap::new(),
             post_render_focus: None,
             pending_archive: None,
+            pending_quit: None,
             pending_delete: None,
             session_import: None,
             session_import_generation: 0,

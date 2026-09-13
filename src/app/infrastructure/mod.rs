@@ -9,5 +9,5 @@ pub(crate) mod performance;
 pub(crate) mod persistence;
 #[cfg(test)]
 mod persistence_tests;
-mod quit;
+pub(super) mod quit;
 pub(crate) mod shell_environment;

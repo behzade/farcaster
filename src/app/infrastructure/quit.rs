@@ -1,10 +1,15 @@
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{App, Context, PromptButton, PromptLevel, WeakEntity, Window};
+use gpui::{App, Context, FocusHandle, WeakEntity, Window};
 
 use super::{FarcasterApp, QuitApplication};
 use crate::app::session::activity::{snapshot_has_active_work, status_has_active_work};
 use crate::protocol::BackgroundJobState;
+
+pub(in crate::app) struct PendingQuit {
+    pub(in crate::app) focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
+}
 
 pub(super) fn install<T: 'static>(
     app: Rc<RefCell<Option<WeakEntity<T>>>>,
@@ -36,6 +41,11 @@ pub(super) fn install_window(window: &Window, cx: &App) {
 
 impl FarcasterApp {
     pub(crate) fn request_application_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = &self.pending_quit {
+            pending.focus.focus(window, cx);
+            return;
+        }
+
         let active = self
             .run_statuses
             .values()
@@ -54,19 +64,33 @@ impl FarcasterApp {
             return;
         }
 
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            "Exit Farcaster?",
-            Some("Agents, subagents, or tool runs are still active. Exiting may interrupt this work."),
-            &[PromptButton::cancel("Cancel"), PromptButton::ok("Exit")],
-            cx,
-        );
-        cx.spawn(async move |_, cx| {
-            if answer.await == Ok(1) {
-                cx.update(|cx| cx.quit());
-            }
-        })
-        .detach();
+        self.cover_native_workspace_surface(cx);
+        let pending = PendingQuit {
+            focus: cx.focus_handle(),
+            return_focus: window.focused(cx),
+        };
+        pending.focus.focus(window, cx);
+        self.pending_quit = Some(pending);
+        cx.notify();
+    }
+
+    pub(in crate::app) fn close_quit_confirmation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.pending_quit.take() else {
+            return;
+        };
+        self.restore_overlay_focus(pending.return_focus, &pending.focus, window, cx);
+        self.restore_active_native_workspace_surface(window, cx);
+        cx.notify();
+    }
+
+    pub(in crate::app) fn confirm_application_quit(&mut self, cx: &mut Context<Self>) {
+        if self.pending_quit.take().is_some() {
+            cx.quit();
+        }
     }
 }
 

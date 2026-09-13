@@ -1,23 +1,18 @@
 use super::*;
 use gpui::{InteractiveElement as _, Render, TestAppContext, div};
 
-struct ActiveWorkView {
+struct QuitRoutingView {
     focus: gpui::FocusHandle,
+    quit_requests: usize,
 }
 
-impl ActiveWorkView {
-    fn request_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _answer = window.prompt(
-            PromptLevel::Warning,
-            "Exit Farcaster?",
-            Some("Agents are still active."),
-            &[PromptButton::cancel("Cancel"), PromptButton::ok("Exit")],
-            cx,
-        );
+impl QuitRoutingView {
+    fn request_quit(&mut self, _: &mut Window, _: &mut Context<Self>) {
+        self.quit_requests += 1;
     }
 }
 
-impl Render for ActiveWorkView {
+impl Render for QuitRoutingView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
         div()
             .track_focus(&self.focus)
@@ -25,19 +20,22 @@ impl Render for ActiveWorkView {
     }
 }
 
-fn assert_quit_prompts(
+fn assert_quit_routes_to_guard(
     cx: &mut TestAppContext,
     request: impl FnOnce(&mut gpui::VisualTestContext),
 ) {
     let (view, cx) = cx.add_window_view(|window, cx| {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        ActiveWorkView { focus }
+        QuitRoutingView {
+            focus,
+            quit_requests: 0,
+        }
     });
     cx.update(|window, cx| {
         install(
             Rc::new(RefCell::new(Some(view.downgrade()))),
-            ActiveWorkView::request_quit,
+            QuitRoutingView::request_quit,
             cx,
         );
         install_window(window, cx);
@@ -46,38 +44,35 @@ fn assert_quit_prompts(
         crate::app::infrastructure::menus::install(cx);
         window.draw(cx).clear(cx);
     });
-    assert!(!cx.has_pending_prompt());
-
     request(cx);
-    assert!(
-        cx.has_pending_prompt(),
-        "quit request bypassed the active-work quit guard"
-    );
-    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        assert_eq!(view.read(cx).quit_requests, 1, "quit bypassed the guard");
+    });
 }
 
 #[gpui::test]
-fn quit_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {
-    assert_quit_prompts(cx, |cx| {
+fn quit_shortcut_routes_to_guard(cx: &mut TestAppContext) {
+    assert_quit_routes_to_guard(cx, |cx| {
         cx.simulate_keystrokes(&crate::app::ui::keybindings::application_key("q"));
     });
 }
 
 #[cfg(target_os = "linux")]
 #[gpui::test]
-fn super_quit_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {
-    assert_quit_prompts(cx, |cx| cx.simulate_keystrokes("super-q"));
+fn super_quit_shortcut_routes_to_guard(cx: &mut TestAppContext) {
+    assert_quit_routes_to_guard(cx, |cx| cx.simulate_keystrokes("super-q"));
 }
 
 #[cfg(target_os = "macos")]
 #[gpui::test]
-fn close_window_shortcut_prompts_for_active_work(cx: &mut TestAppContext) {
-    assert_quit_prompts(cx, |cx| cx.simulate_keystrokes("cmd-shift-w"));
+fn close_window_shortcut_routes_to_guard(cx: &mut TestAppContext) {
+    assert_quit_routes_to_guard(cx, |cx| cx.simulate_keystrokes("cmd-shift-w"));
 }
 
 #[gpui::test]
-fn native_window_close_prompts_for_active_work(cx: &mut TestAppContext) {
-    assert_quit_prompts(cx, |cx| {
+fn native_window_close_routes_to_guard(cx: &mut TestAppContext) {
+    assert_quit_routes_to_guard(cx, |cx| {
         cx.update(|window, _| window.activate_window());
         cx.run_until_parked();
         cx.update(|window, cx| {

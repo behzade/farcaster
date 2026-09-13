@@ -73,7 +73,9 @@ impl FarcasterApp {
         _window: &Window,
         cx: &gpui::App,
     ) -> Option<FocusHandle> {
-        if let Some(dialog) = &self.send_to_chat
+        if let Some(pending) = &self.pending_quit {
+            Some(pending.focus.clone())
+        } else if let Some(dialog) = &self.send_to_chat
             && !self.overlays.project_trust
         {
             Some(dialog.picker.as_ref().map_or_else(
@@ -362,6 +364,7 @@ impl FarcasterApp {
             || self.overlays.keybindings
             || self.overlays.settings
             || self.overlays.project_trust
+            || self.pending_quit.is_some()
             || self.pending_archive.is_some()
             || self.pending_delete.is_some()
             || self.session_import.is_some()
@@ -848,7 +851,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn dismiss_surface(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.send_to_chat.is_some() && !self.overlays.project_trust {
+        if self.pending_quit.is_some() {
+            self.close_quit_confirmation(window, cx);
+        } else if self.send_to_chat.is_some() && !self.overlays.project_trust {
             self.close_send_to_chat(window, cx);
         } else if self.image_preview.is_some() {
             self.close_image_preview(window, cx);

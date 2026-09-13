@@ -278,6 +278,7 @@ pub(crate) struct FarcasterApp {
     pending_submissions: HashMap<String, PendingSubmission>,
     post_render_focus: Option<PostRenderFocus>,
     pending_archive: Option<session::archive::PendingArchive>,
+    pending_quit: Option<infrastructure::quit::PendingQuit>,
     pending_delete: Option<session::deletion::PendingDelete>,
     session_import: Option<session::import::SessionImportDialog>,
     session_import_generation: u64,
