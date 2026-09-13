@@ -4,7 +4,7 @@ impl RuntimeOwner {
     pub(super) fn start_auto_title_generation(&mut self, prompt: String) {
         if !self.title_generation.new_session
             || self.title_generation.in_flight
-            || !agents::supports_auto_title_generation(&self.harness)
+            || !agents::supports_auto_title_generation(self.harness)
             || self
                 .active_snapshot()
                 .session
@@ -22,7 +22,9 @@ impl RuntimeOwner {
             .as_ref()
             .and_then(|session| session.model.clone());
         let config = self.process_command.clone();
-        let harness = self.harness.clone();
+        let Some(harness) = self.harness else {
+            return;
+        };
         let project = self.project.clone();
         let sender = self.title_generation.sender.clone();
         let wake = thread::current();
@@ -32,7 +34,7 @@ impl RuntimeOwner {
             .spawn(move || {
                 let result = agents::generate_session_title(
                     &config,
-                    &harness,
+                    harness,
                     &project,
                     &prompt,
                     active_model.as_ref(),
@@ -82,7 +84,7 @@ impl RuntimeOwner {
     }
 
     pub(super) fn backend_name(&self) -> String {
-        agents::backend_display_name(&self.harness)
+        agents::backend_display_name(self.harness)
     }
 
     pub(super) fn start_process(&mut self, session: Option<PathBuf>) {
@@ -227,16 +229,21 @@ impl RuntimeOwner {
         } else {
             SessionStart::New
         };
-        let process = crate::agents::spawn_session(
-            &self.process_command,
-            SessionLaunch {
-                harness: self.harness.clone(),
-                session_id: self.session_id.clone(),
-                project: self.project.clone(),
-                start,
-                wake: Some(thread::current()),
-            },
-        );
+        let process = self
+            .harness
+            .ok_or_else(|| "Choose a backend before launching a session.".to_owned())
+            .and_then(|harness| {
+                crate::agents::spawn_session(
+                    &self.process_command,
+                    SessionLaunch {
+                        harness,
+                        session_id: self.session_id.clone(),
+                        project: self.project.clone(),
+                        start,
+                        wake: Some(thread::current()),
+                    },
+                )
+            });
         match process {
             Ok(process) => {
                 if let Some(mode) = process.sandbox_mode() {
@@ -256,7 +263,7 @@ impl RuntimeOwner {
 
     pub(super) fn send_startup_queries(&mut self) {
         for command in startup_commands() {
-            if agents::supports_startup_command(&self.harness, &command) {
+            if agents::supports_startup_command(self.harness, &command) {
                 self.send(command);
             }
         }

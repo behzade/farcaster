@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::path::{Path, PathBuf};
 
 use gpui::{Context, Window};
@@ -44,10 +45,10 @@ impl FarcasterApp {
         }
         match startup_trust(project) {
             Ok(StartupTrust::Ready) => {
-                let backend = command_backend(&command)
-                    .unwrap_or(&self.snapshot.harness)
-                    .to_owned();
-                if self.ensure_backend_trust(&backend, project, window, cx) {
+                let backend = command_backend(&command).or(self.snapshot.harness);
+                if backend
+                    .is_none_or(|backend| self.ensure_backend_trust(backend, project, window, cx))
+                {
                     self.send(command, cx);
                 } else {
                     self.pending_project_trust_command = Some(command);
@@ -73,7 +74,7 @@ impl FarcasterApp {
             .clone()
             .unwrap_or_else(|| self.project.clone());
         let backend = self.project_trust_backend.clone();
-        let applied = match backend.as_deref() {
+        let applied = match backend {
             Some(backend) => crate::agents::apply_project_trust(backend, &project, choice),
             None => apply(&project, choice),
         };
@@ -105,7 +106,7 @@ impl FarcasterApp {
                     let status = match backend {
                         Some(backend) => format!(
                             "{} project {decision} in {scope}. Restart existing sessions to apply the new decision.",
-                            crate::agents::backend_display_name(&backend)
+                            crate::agents::backend_display_name(backend)
                         ),
                         None => format!("Farcaster project {decision} in {scope}."),
                     };
@@ -138,7 +139,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn ensure_backend_trust(
         &mut self,
-        backend: &str,
+        backend: Backend,
         project: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -160,7 +161,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn open_backend_project_trust(
         &mut self,
-        backend: String,
+        backend: Backend,
         project: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -171,13 +172,13 @@ impl FarcasterApp {
     }
 }
 
-fn command_backend(command: &RuntimeCommand) -> Option<&str> {
+fn command_backend(command: &RuntimeCommand) -> Option<Backend> {
     match command {
         RuntimeCommand::NewSession { harness, .. }
-        | RuntimeCommand::ResumeDraft { harness, .. }
-        | RuntimeCommand::SelectSession { harness, .. }
+        | RuntimeCommand::ResumeDraft { harness, .. } => *harness,
+        RuntimeCommand::SelectSession { harness, .. }
         | RuntimeCommand::RestartSession { harness, .. }
-        | RuntimeCommand::ForkSession { harness, .. } => Some(harness),
+        | RuntimeCommand::ForkSession { harness, .. } => Some(*harness),
         _ => None,
     }
 }

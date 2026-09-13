@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 #[path = "commands.rs"]
 mod commands;
 
@@ -56,7 +57,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
-                    backend: "codex-cli".into(),
+                    backend: Backend::Codex,
                     provider: launch.provider.clone(),
                     model: launch.model.clone(),
                     effort: launch.effort.clone(),
@@ -204,7 +205,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,

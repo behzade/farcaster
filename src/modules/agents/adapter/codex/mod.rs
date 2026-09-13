@@ -51,7 +51,7 @@ fn configure_permissions(
 }
 
 use super::super::contract::{
-    AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
+    AgentBackendDescriptor, AgentCapabilities, Backend, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,
 };
@@ -61,7 +61,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::Available;
 
     AgentBackendDescriptor {
-        id: AgentBackendId::new("codex-cli").expect("Codex backend id is valid"),
+        id: Backend::Codex,
         name: "Codex".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {

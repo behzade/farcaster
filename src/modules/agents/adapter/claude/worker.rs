@@ -73,7 +73,10 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
         )?;
         let (mut worker, _) = attach(process, caller, &id, launch.access_mode)?;
         if let Some(model) = launch.model {
-            worker.select_model(launch.provider.as_deref().unwrap_or(BACKEND), &model)?;
+            worker.select_model(
+                launch.provider.as_deref().unwrap_or(BACKEND.as_str()),
+                &model,
+            )?;
         }
         if let Some(effort) = launch.effort {
             worker.select_effort(&effort)?;
@@ -565,7 +568,7 @@ impl ClaudeSession {
     fn receive(&mut self, frame: StdoutMessage) -> Result<(), String> {
         if let StdoutMessage::SDKSystemMessage(init) = &frame {
             self.model = Some(init.model.clone());
-            self.caller.select_model(BACKEND, &init.model);
+            self.caller.select_model(BACKEND.as_str(), &init.model);
             if let claude_sdk_types::Presence::Present(effort) = &init.effort {
                 self.effort = effort.as_ref().map(|effort| {
                     serde_json::to_value(effort)
@@ -880,7 +883,7 @@ impl WorkerSession for ClaudeSession {
         self.process.close()
     }
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
-        if provider != BACKEND {
+        if provider != BACKEND.as_str() {
             return Err(format!("Claude does not support provider {provider}"));
         }
         self.process

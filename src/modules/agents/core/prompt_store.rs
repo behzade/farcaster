@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::path::{Path, PathBuf};
 
 use super::super::contract::{
@@ -12,7 +13,7 @@ pub(crate) trait PromptStore {
     fn enqueue(
         &self,
         target: &str,
-        harness: &str,
+        harness: Backend,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,
@@ -24,7 +25,7 @@ pub(crate) trait PromptStore {
     fn enqueue_with_presentation(
         &self,
         target: &str,
-        harness: &str,
+        harness: Backend,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,
@@ -63,7 +64,7 @@ pub(crate) fn has_queued_for(store: &impl PromptStore, paths: &[PathBuf]) -> Res
 pub(crate) fn enqueue_with_presentation(
     store: &impl PromptStore,
     target: &str,
-    harness: &str,
+    harness: Backend,
     project: &Path,
     session: Option<&Path>,
     mode: PromptMode,

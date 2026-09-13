@@ -1,11 +1,12 @@
 use super::*;
+use crate::agents::Backend;
 
 #[cfg(unix)]
 use std::{fs, os::unix::fs::symlink};
 
 fn metadata(id: &str) -> crate::agents::SessionMetadata {
     crate::agents::SessionMetadata {
-        harness: "codex-cli".into(),
+        harness: Backend::Codex,
         id: id.into(),
         path: PathBuf::from(format!("/locators/codex-cli/{id}")),
         project: PathBuf::from("/project"),
@@ -257,7 +258,7 @@ fn legacy_synthetic_locator_mutators_use_canonical_identity() -> Result<(), Stri
     let queued = &normal[3].1;
     store.enqueue_prompt(
         &format!("session:{}", queued.display()),
-        "codex-cli",
+        Backend::Codex,
         &project,
         Some(queued),
         crate::protocol::PromptMode::Normal,
@@ -358,8 +359,13 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
     std::fs::create_dir(&project).map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let mut store = StateStore::open_at(&database)?;
-    let draft =
-        crate::projects::DraftSession::new("pi".into(), "saved-work".into(), 0, project.clone(), 1);
+    let draft = crate::projects::DraftSession::new(
+        Some(Backend::Pi),
+        "saved-work".into(),
+        0,
+        project.clone(),
+        1,
+    );
     store.save_registry(&crate::projects::Registry {
         projects: vec![project.clone()],
         excluded_projects: Vec::new(),
@@ -376,7 +382,7 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
     })?;
     store.enqueue_prompt(
         "draft:saved-work",
-        "pi",
+        Backend::Pi,
         &project,
         None,
         crate::protocol::PromptMode::Normal,
@@ -428,9 +434,9 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
     store.update_session_metadata(&parent)?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: temp.path().to_path_buf(),
-        parent_backend: "codex-cli".into(),
+        parent_backend: Backend::Codex,
         parent_session: "parent".into(),
-        child_backend: "codex-cli".into(),
+        child_backend: Backend::Codex,
         child_session: "new-child-id".into(),
         execution: None,
     })?;
@@ -442,23 +448,23 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
         .ok_or("missing child")?;
     assert_eq!(
         crate::agents::external_session_identity(&child.path),
-        Some(("codex-cli", "new-child-id".into()))
+        Some((Backend::Codex, "new-child-id".into()))
     );
     crate::agents::validate_session_move(std::slice::from_ref(child))?;
     let other_project = temp.path().join("other-project");
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: other_project.clone(),
-        parent_backend: "codex-cli".into(),
+        parent_backend: Backend::Codex,
         parent_session: "parent".into(),
-        child_backend: "codex-cli".into(),
+        child_backend: Backend::Codex,
         child_session: "new-child-id".into(),
         execution: None,
     })?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: temp.path().to_path_buf(),
-        parent_backend: "codex-cli".into(),
+        parent_backend: Backend::Codex,
         parent_session: "parent".into(),
-        child_backend: "opencode".into(),
+        child_backend: Backend::OpenCode,
         child_session: "new-child-id".into(),
         execution: None,
     })?;
@@ -496,8 +502,8 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
     );
     assert!(families.iter().any(|family| {
         family.project == crate::sessions::normalize_session_path(temp.path())
-            && family.parent_backend == "codex-cli"
-            && family.child_backend == "opencode"
+            && family.parent_backend == Backend::Codex
+            && family.child_backend == Backend::OpenCode
             && family.child_session == "new-child-id"
     }));
     let backend_isolation: i64 = store
@@ -520,9 +526,9 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
     let project = temp.path().to_path_buf();
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: project.clone(),
-        parent_backend: "codex-cli".into(),
+        parent_backend: Backend::Codex,
         parent_session: "parent".into(),
-        child_backend: "codex-cli".into(),
+        child_backend: Backend::Codex,
         child_session: "child".into(),
         execution: None,
     })?;
@@ -571,7 +577,7 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
     })?;
     store.enqueue_prompt(
         &format!("session:{}", placeholder_parent.path.display()),
-        "codex-cli",
+        Backend::Codex,
         &project,
         Some(&placeholder_parent.path),
         crate::protocol::PromptMode::Normal,
@@ -720,7 +726,7 @@ fn interrupted_prompts_require_explicit_safe_disposition() -> Result<(), String>
         .map(|message| {
             store.enqueue_prompt(
                 &format!("session:{}", session.path.display()),
-                "codex-cli",
+                Backend::Codex,
                 &session.project,
                 Some(&session.path),
                 crate::protocol::PromptMode::Normal,
@@ -798,7 +804,7 @@ fn cancelling_queued_prompts_is_atomic_and_scoped_to_exact_rows() -> Result<(), 
         .map(|message| {
             store.enqueue_prompt(
                 "draft:cancel-scope",
-                "codex-cli",
+                Backend::Codex,
                 project,
                 None,
                 crate::protocol::PromptMode::Normal,
@@ -813,7 +819,7 @@ fn cancelling_queued_prompts_is_atomic_and_scoped_to_exact_rows() -> Result<(), 
 
     let later = store.enqueue_prompt(
         "draft:cancel-scope",
-        "codex-cli",
+        Backend::Codex,
         project,
         None,
         crate::protocol::PromptMode::Normal,
@@ -905,9 +911,9 @@ fn v12_migration_preserves_native_id_worker_family_links() -> Result<(), String>
     }
     let link = crate::agents::WorkerFamilyLink {
         project: "/project".into(),
-        parent_backend: "pi".into(),
+        parent_backend: Backend::Pi,
         parent_session: "/sessions/parent.jsonl".into(),
-        child_backend: "codex-cli".into(),
+        child_backend: Backend::Codex,
         child_session: "native-child".into(),
         execution: None,
     };
@@ -991,7 +997,7 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
     let session = store.update_session_metadata(&update)?;
     let queued_id = store.enqueue_prompt(
         &format!("session:{}", session.path.display()),
-        "codex-cli",
+        Backend::Codex,
         &session.project,
         Some(&session.path),
         crate::protocol::PromptMode::Normal,
@@ -1001,7 +1007,7 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
     let image = PromptImage::new("aGVsbG8=".into(), "image/png".into());
     let id = store.enqueue_prompt_with_presentation(
         &format!("session:{}", session.path.display()),
-        "codex-cli",
+        Backend::Codex,
         &session.project,
         Some(&session.path),
         crate::protocol::PromptMode::FollowUp,
@@ -1013,7 +1019,7 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
     store.begin_prompt(id)?;
     let failed_id = store.enqueue_prompt(
         &format!("session:{}", session.path.display()),
-        "codex-cli",
+        Backend::Codex,
         &session.project,
         Some(&session.path),
         crate::protocol::PromptMode::Normal,

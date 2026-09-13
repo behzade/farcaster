@@ -1,7 +1,8 @@
 use super::acp::AcpProfile;
+use crate::agents::Backend;
 
 pub(super) const PROFILE: AcpProfile = AcpProfile {
-    backend: "antigravity-acp",
+    backend: Backend::Antigravity,
     name: "Antigravity",
     command: if cfg!(windows) {
         "agy_acp_server.exe"

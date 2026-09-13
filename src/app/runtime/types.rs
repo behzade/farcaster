@@ -1,9 +1,10 @@
 use super::*;
+use crate::agents::Backend;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TaskSettings {
     pub project: PathBuf,
-    pub harness: String,
+    pub harness: Option<Backend>,
     pub model: Option<Model>,
     pub effort: Option<String>,
     pub access_mode: HarnessAccessMode,
@@ -23,7 +24,7 @@ pub(crate) enum RuntimeCommand {
         allow_while_running: bool,
     },
     UpdateConfigurationCatalog {
-        harness: String,
+        harness: Backend,
         project: PathBuf,
         catalog: crate::agents::ConfigurationCatalog,
     },
@@ -37,7 +38,7 @@ pub(crate) enum RuntimeCommand {
     },
     Reload,
     LoadConfiguration {
-        harness: String,
+        harness: Backend,
         project: PathBuf,
     },
     Compact {
@@ -49,7 +50,7 @@ pub(crate) enum RuntimeCommand {
     SetSessionName(String),
     RenameSession {
         path: PathBuf,
-        harness: String,
+        harness: Backend,
         session_id: String,
         project: PathBuf,
         name: String,
@@ -60,7 +61,7 @@ pub(crate) enum RuntimeCommand {
     },
     NewSession {
         id: String,
-        harness: String,
+        harness: Option<Backend>,
         project: PathBuf,
     },
     StartTask {
@@ -78,31 +79,31 @@ pub(crate) enum RuntimeCommand {
     },
     ForkSession {
         path: PathBuf,
-        harness: String,
+        harness: Backend,
         session_id: String,
         project: PathBuf,
     },
     ResumeDraft {
         id: String,
-        harness: String,
+        harness: Option<Backend>,
         project: PathBuf,
     },
     SelectSession {
         path: PathBuf,
-        harness: String,
+        harness: Backend,
         session_id: String,
         project: PathBuf,
     },
     RestartSession {
         path: PathBuf,
-        harness: String,
+        harness: Backend,
         session_id: String,
         project: PathBuf,
     },
     RefreshSessionDocument {
         path: PathBuf,
         project: PathBuf,
-        harness: String,
+        harness: Option<Backend>,
     },
     SetModel(Model),
     SetThinking(String),
@@ -121,7 +122,7 @@ pub(crate) enum RuntimeCommand {
     UpdateSessionMetadata(agents::SessionMetadata),
     ScheduleSessionRefresh,
     PreviewImport {
-        harness: String,
+        harness: Backend,
         generation: u64,
     },
     CommitImport {
@@ -194,12 +195,12 @@ pub(crate) enum RuntimeEvent {
     },
     ImportPreview {
         generation: u64,
-        harness: String,
+        harness: Backend,
         sessions: Vec<SessionSummary>,
     },
     ImportPreviewFailed {
         generation: u64,
-        harness: String,
+        harness: Backend,
         message: String,
     },
     Stopped,
@@ -217,7 +218,7 @@ pub(crate) enum ConfigurationStatus {
 pub(crate) struct RuntimeSnapshot {
     pub connected: bool,
     pub status: String,
-    pub harness: String,
+    pub harness: Option<Backend>,
     pub project: PathBuf,
     pub live_session: Option<PathBuf>,
     pub live_status: String,

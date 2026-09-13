@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn empty_is_deliberate_and_invalid_definitions_fail_closed() {
@@ -32,7 +33,12 @@ fn empty_is_deliberate_and_invalid_definitions_fail_closed() {
 #[test]
 fn every_default_profile_works_with_any_single_harness() {
     let profiles = WorkerProfiles::default();
-    for harness in ["pi", "codex-cli", "cursor-cli", "opencode"] {
+    for harness in [
+        Backend::Pi,
+        Backend::Codex,
+        Backend::Cursor,
+        Backend::OpenCode,
+    ] {
         for profile in &profiles.profiles {
             let assignment = profiles
                 .resolve(&profile.name, |model| model.harness == harness)

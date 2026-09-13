@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn upgrades_saved_opencode_sessions_and_settings_without_changing_user_content()
@@ -53,7 +54,7 @@ fn upgrades_saved_opencode_sessions_and_settings_without_changing_user_content()
     assert_eq!(
         store
             .load_preferred_harness(Path::new("/project/opencode2"))?
-            .as_deref(),
+            .map(Backend::as_str),
         Some("opencode")
     );
     let child: (String, i64) = store.connection.query_row(

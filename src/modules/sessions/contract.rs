@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::SystemTime};
 
 use serde_json::Value;
@@ -30,7 +31,7 @@ impl UsageSummary {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct SessionTarget {
-    pub harness: String,
+    pub harness: Backend,
     pub id: String,
     pub path: PathBuf,
 }
@@ -38,7 +39,7 @@ pub(crate) struct SessionTarget {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SessionImport {
     pub id: String,
-    pub harness: String,
+    pub harness: Backend,
     pub path: PathBuf,
     pub project: PathBuf,
     pub title: String,
@@ -57,14 +58,14 @@ pub(crate) struct SessionImport {
 pub(crate) struct SessionSummary {
     pub id: String,
     pub app_session_id: i64,
-    pub harness: String,
+    pub harness: Backend,
     pub path: PathBuf,
     pub project: PathBuf,
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
     pub parent_session: Option<String>,
-    pub parent_harness: Option<String>,
+    pub parent_harness: Option<Backend>,
     /// Resolved application identity; a parent need not share this session's project.
     pub parent_app_session_id: Option<i64>,
     pub modified: SystemTime,
@@ -110,7 +111,7 @@ impl SessionSummary {
 
     pub(crate) fn target(&self) -> SessionTarget {
         SessionTarget {
-            harness: self.harness.clone(),
+            harness: self.harness,
             id: self.id.clone(),
             path: self.path.clone(),
         }
@@ -144,7 +145,7 @@ impl SessionSummary {
     ) -> Self {
         Self::from_cached_for_harness(
             id,
-            "pi".into(),
+            Backend::Pi,
             path,
             project,
             title,
@@ -163,7 +164,7 @@ impl SessionSummary {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_cached_for_harness(
         id: String,
-        harness: String,
+        harness: Backend,
         path: PathBuf,
         project: PathBuf,
         title: String,

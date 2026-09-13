@@ -17,7 +17,7 @@ pub(super) use tool::annotate_pi_message as annotate_history_message;
 pub(super) use worker::PiWorkerFactory;
 
 use super::super::contract::{
-    AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
+    AgentBackendDescriptor, AgentCapabilities, Backend, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,
 };
@@ -26,7 +26,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
-        id: AgentBackendId::new("pi").expect("Pi backend id is valid"),
+        id: Backend::Pi,
         name: "Pi".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {

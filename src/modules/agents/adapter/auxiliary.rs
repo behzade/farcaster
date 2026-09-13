@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     path::Path,
     process::Stdio,
@@ -14,13 +15,16 @@ use crate::agents::{
 const TITLE_TIMEOUT: Duration = Duration::from_secs(45);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-pub(crate) fn supports_auto_title_generation(harness: &str) -> bool {
-    matches!(harness, "pi" | "codex-cli")
+pub(crate) fn supports_auto_title_generation(harness: impl Into<Option<Backend>>) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
+    matches!(harness, Backend::Pi | Backend::Codex)
 }
 
 pub(crate) fn generate_session_title(
     config: &AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
     project: &Path,
     first_prompt: &str,
     active_model: Option<&crate::protocol::Model>,
@@ -37,14 +41,14 @@ pub(crate) fn generate_session_title(
         .unwrap_or_else(|| "backend-default".into());
     zlog::info!("Generating {harness} session title with {selected}");
     let output = match harness {
-        "pi" => generate_pi_title(
+        Backend::Pi => generate_pi_title(
             &super::pi::launch_configuration(config),
             project,
             first_prompt,
             selection.as_ref(),
             effort.as_deref(),
         ),
-        "codex-cli" => generate_worker_title(
+        Backend::Codex => generate_worker_title(
             config,
             harness,
             project,
@@ -52,14 +56,16 @@ pub(crate) fn generate_session_title(
             selection.as_ref(),
             effort,
         ),
-        _ => unreachable!("unsupported title backend was rejected above"),
+        Backend::Cursor | Backend::OpenCode | Backend::Claude | Backend::Antigravity => {
+            unreachable!("unsupported title backend was rejected above")
+        }
     }?;
     normalize_title(&output)
 }
 
 fn generate_worker_title(
     config: &AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
     project: &Path,
     first_prompt: &str,
     selection: Option<&crate::protocol::Model>,
@@ -203,23 +209,23 @@ fn read_output(mut reader: impl std::io::Read) -> Vec<u8> {
 
 fn title_factory(
     config: &AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
 ) -> Result<Arc<dyn WorkerSessionFactory>, String> {
     let (factories, _) = super::worker_factories(config.clone());
     factories
-        .get(harness)
+        .get(&harness)
         .cloned()
         .ok_or_else(|| format!("unsupported title generator backend: {harness}"))
 }
 
 fn title_model(
-    harness: &str,
+    harness: Backend,
     catalog: &ConfigurationCatalog,
     active_model: Option<&crate::protocol::Model>,
 ) -> Option<crate::protocol::Model> {
     let override_name = match harness {
-        "pi" => "FARCASTER_PI_TITLE_MODEL",
-        "codex-cli" => "FARCASTER_CODEX_TITLE_MODEL",
+        Backend::Pi => "FARCASTER_PI_TITLE_MODEL",
+        Backend::Codex => "FARCASTER_CODEX_TITLE_MODEL",
         _ => return None,
     };
     if let Some(requested) =
@@ -231,21 +237,22 @@ fn title_model(
         return Some(model.clone());
     }
     let preferences: &[&str] = match harness {
-        "pi" => match active_model.map(|model| model.provider.as_str()) {
+        Backend::Pi => match active_model.map(|model| model.provider.as_str()) {
             Some("openai-codex" | "openai") => &["gpt-5.6-luna", "luna", "nano", "mini"],
             Some("anthropic") => &["haiku"],
             Some("google") => &["flash-lite", "flash"],
             Some(_) => &["nano", "mini", "small", "lite", "flash"],
             None => &[],
         },
-        "codex-cli" => &["gpt-5.6-luna", "luna", "nano", "mini"],
+        Backend::Codex => &["gpt-5.6-luna", "luna", "nano", "mini"],
         _ => &[],
     };
     let selected = catalog
         .models
         .iter()
         .filter(|model| {
-            harness != "pi" || active_model.is_some_and(|active| model.provider == active.provider)
+            harness != Backend::Pi
+                || active_model.is_some_and(|active| model.provider == active.provider)
         })
         .filter(|model| {
             let id = model.id.to_ascii_lowercase();
@@ -262,7 +269,11 @@ fn title_model(
         })
         .min_by_key(|(rank, _)| *rank)
         .map(|(_, model)| model.clone());
-    selected.or_else(|| (harness == "pi").then(|| active_model.cloned()).flatten())
+    selected.or_else(|| {
+        (harness == Backend::Pi)
+            .then(|| active_model.cloned())
+            .flatten()
+    })
 }
 
 fn lowest_effort(

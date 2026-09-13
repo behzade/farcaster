@@ -82,7 +82,11 @@ impl StateStore {
             drafts.push(DraftSession {
                 id: client_key,
                 app_session_id: id,
-                harness,
+                harness: if harness.is_empty() {
+                    None
+                } else {
+                    Some(harness.parse()?)
+                },
                 project: crate::sessions::normalize_session_path(Path::new(&project)),
                 created_ms,
                 submitted,
@@ -198,7 +202,7 @@ fn save_draft(tx: &Transaction<'_>, draft: &DraftSession) -> Result<i64, String>
          ON CONFLICT(id) DO UPDATE SET
            project_id=excluded.project_id, harness=excluded.harness, client_key=excluded.client_key,
            title=COALESCE(NULLIF(excluded.title,''),sessions.title), submitted=excluded.submitted",
-        params![id,project_id,draft.harness,draft.id,draft.title.as_deref().unwrap_or(""),
+        params![id,project_id,draft.harness.map(Backend::as_str).unwrap_or(""),draft.id,draft.title.as_deref().unwrap_or(""),
                 u64_to_i64(draft.created_ms),draft.submitted],
     ).map_err(|error| format!("save draft {}: {error}", draft.id))?;
     let id = id.unwrap_or_else(|| tx.last_insert_rowid());

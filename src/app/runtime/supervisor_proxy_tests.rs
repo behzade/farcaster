@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn supervisor_proxy_changes_reach_later_worker_launches() -> Result<(), String> {
@@ -102,7 +103,7 @@ fn worker_request(project: &std::path::Path, name: &str) -> crate::agents::Start
         project: project.to_owned(),
         name: name.into(),
         prompt: "work".into(),
-        backend: "pi".into(),
+        backend: Backend::Pi,
         parent_session: "parent".into(),
         parent_worker_id: None,
         context: crate::agents::WorkerContext::Fresh,

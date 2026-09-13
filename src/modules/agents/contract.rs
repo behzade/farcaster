@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf, thread, time::SystemTime};
+use std::{path::PathBuf, thread, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMod
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DiscoveredSession {
     pub(crate) id: String,
-    pub(crate) harness: String,
+    pub(crate) harness: Backend,
     pub(crate) path: PathBuf,
     pub(crate) project: PathBuf,
     pub(crate) title: String,
@@ -46,7 +46,7 @@ pub(crate) struct DiscoveredUsage {
 /// Metadata supplied by a live session, never by a global history scan.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SessionMetadata {
-    pub harness: String,
+    pub harness: Backend,
     pub id: String,
     pub path: PathBuf,
     pub project: PathBuf,
@@ -97,7 +97,7 @@ pub(crate) struct QueuedPrompt {
     /// Recovered rows predate the UI process and have no pending composer entry.
     pub(crate) submission_id: Option<String>,
     pub(crate) target: String,
-    pub(crate) harness: String,
+    pub(crate) harness: Backend,
     pub(crate) project: PathBuf,
     pub(crate) session: Option<PathBuf>,
     pub(crate) mode: PromptMode,
@@ -377,41 +377,15 @@ pub(crate) enum SessionStart {
 }
 
 pub(crate) struct SessionLaunch {
-    pub(crate) harness: String,
+    pub(crate) harness: Backend,
     pub(crate) session_id: Option<String>,
     pub(crate) project: PathBuf,
     pub(crate) start: SessionStart,
     pub(crate) wake: Option<thread::Thread>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct AgentBackendId(String);
-
-impl AgentBackendId {
-    pub(crate) fn new(value: impl Into<String>) -> Result<Self, String> {
-        let value = value.into();
-        if value.is_empty()
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        {
-            return Err(format!(
-                "agent backend id must contain only lowercase ASCII letters, digits, or hyphens: {value}"
-            ));
-        }
-        Ok(Self(value))
-    }
-
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for AgentBackendId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
+mod backend;
+pub(crate) use backend::Backend;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CapabilitySupport {
@@ -486,14 +460,14 @@ pub(crate) struct AgentCapabilities {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentBackendDescriptor {
-    pub id: AgentBackendId,
+    pub id: Backend,
     pub name: String,
     pub capabilities: AgentCapabilities,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AgentBackendStatus {
-    pub id: String,
+    pub id: Backend,
     pub name: String,
     pub program: std::path::PathBuf,
     pub available: bool,

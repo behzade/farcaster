@@ -1,35 +1,53 @@
+use crate::agents::Backend;
 use crate::projects::{AppliedTrust, StartupTrust, TrustChoice};
 use std::path::{Path, PathBuf};
 
-pub(crate) fn project_trust_description(backend: &str) -> Option<&'static str> {
-    (backend == "pi").then_some("Trusting allows Pi to load project settings and resources, install missing project packages, and execute project extensions.")
+pub(crate) fn project_trust_description(
+    backend: impl Into<Option<Backend>>,
+) -> Option<&'static str> {
+    let Some(backend) = backend.into() else {
+        return None;
+    };
+    (backend == Backend::Pi).then_some("Trusting allows Pi to load project settings and resources, install missing project packages, and execute project extensions.")
 }
 
-pub(crate) fn project_trust(backend: &str, project: &Path) -> Result<StartupTrust, String> {
+pub(crate) fn project_trust(backend: Backend, project: &Path) -> Result<StartupTrust, String> {
     match backend {
-        "pi" => super::pi::trust::startup_trust(project),
-        _ => Ok(StartupTrust::Ready),
+        Backend::Pi => super::pi::trust::startup_trust(project),
+        Backend::Codex
+        | Backend::Cursor
+        | Backend::OpenCode
+        | Backend::Claude
+        | Backend::Antigravity => Ok(StartupTrust::Ready),
     }
 }
 
 pub(crate) fn apply_project_trust(
-    backend: &str,
+    backend: Backend,
     project: &Path,
     choice: TrustChoice,
 ) -> Result<AppliedTrust, String> {
     match backend {
-        "pi" => super::pi::trust::apply(project, choice),
-        _ => Err(format!("{backend} manages its own project trust")),
+        Backend::Pi => super::pi::trust::apply(project, choice),
+        Backend::Codex
+        | Backend::Cursor
+        | Backend::OpenCode
+        | Backend::Claude
+        | Backend::Antigravity => Err(format!("{backend} manages its own project trust")),
     }
 }
 
 pub(crate) fn saved_project_trust(
-    backend: &str,
+    backend: Backend,
     project: &Path,
 ) -> Result<Option<(PathBuf, bool)>, String> {
     match backend {
-        "pi" => super::pi::trust::saved_decision(project),
-        _ => Ok(None),
+        Backend::Pi => super::pi::trust::saved_decision(project),
+        Backend::Codex
+        | Backend::Cursor
+        | Backend::OpenCode
+        | Backend::Claude
+        | Backend::Antigravity => Ok(None),
     }
 }
 

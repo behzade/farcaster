@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 mod commands;
 mod events;
@@ -57,7 +58,7 @@ impl RuntimeHandle {
     ) -> Self {
         Self::spawn_with_configuration_refresh(
             project.clone(),
-            crate::projects::DraftSession::with_id("pi".into(), draft_id, project),
+            crate::projects::DraftSession::with_id(Some(Backend::Pi), draft_id, project),
             initial_session,
             process_command,
             false,
@@ -157,7 +158,7 @@ impl SessionRuntimeHandle {
         project: PathBuf,
         process_command: AgentLaunchConfig,
         load_catalog: bool,
-        harness: String,
+        harness: Option<Backend>,
         supervisor: thread::Thread,
     ) -> Self {
         let (commands, command_rx) = mpsc::channel();
@@ -223,7 +224,7 @@ pub(super) fn publish_session_status_if_changed(
 pub(super) fn changed_external_documents(
     latest: &HashMap<String, Arc<RuntimeSnapshot>>,
     paths: &[PathBuf],
-) -> Vec<(String, PathBuf, PathBuf, String)> {
+) -> Vec<(String, PathBuf, PathBuf, Option<Backend>)> {
     latest
         .iter()
         .filter_map(|(key, snapshot)| {
@@ -241,7 +242,7 @@ pub(super) fn changed_external_documents(
                     key.clone(),
                     path.clone(),
                     snapshot.project.clone(),
-                    snapshot.harness.clone(),
+                    snapshot.harness,
                 ))
             }
         })
@@ -250,7 +251,7 @@ pub(super) fn changed_external_documents(
 
 fn cache_configuration_catalog(
     entries: &mut Vec<crate::app::infrastructure::persistence::CachedConfigurationCatalog>,
-    harness: String,
+    harness: Backend,
     project: PathBuf,
     catalog: crate::agents::ConfigurationCatalog,
 ) -> bool {
@@ -289,12 +290,12 @@ fn update_selected_configuration(
 ) -> bool {
     match command {
         RuntimeCommand::SetModel(model) => {
-            configurations.set_model(&snapshot.harness, model.clone())
+            configurations.set_model(snapshot.harness, model.clone())
         }
         RuntimeCommand::SetThinking(effort) => {
-            configurations.set_effort(&snapshot.harness, effort.clone())
+            configurations.set_effort(snapshot.harness, effort.clone())
         }
-        RuntimeCommand::ResetThinking => configurations.reset_effort(&snapshot.harness),
+        RuntimeCommand::ResetThinking => configurations.reset_effort(snapshot.harness),
         _ => false,
     }
 }
@@ -313,13 +314,13 @@ fn send_configured_command(
     let selection = match &command {
         RuntimeCommand::NewSession { harness, .. }
         | RuntimeCommand::ResumeDraft { harness, .. } => Some((
-            configurations.model(harness),
-            configurations.effort(harness),
+            configurations.model(*harness),
+            configurations.effort(*harness),
         )),
         _ => None,
     };
     let catalog = command_target(&command)
-        .and_then(|(_, project, harness)| configurations.catalog_command(&harness, &project));
+        .and_then(|(_, project, harness)| configurations.catalog_command(harness, &project));
     // Fork and restart launch inside the command handler, so validate them
     // against the cached catalog before starting the child process.
     if matches!(
@@ -346,7 +347,7 @@ fn send_configured_command(
 }
 
 type ConfigurationUpdate = (
-    String,
+    Backend,
     PathBuf,
     Result<crate::agents::ConfigurationCatalog, String>,
 );
@@ -382,8 +383,8 @@ struct Supervisor {
     configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
     // Coalesce in-flight requests and keep successful loads for this app run.
     // A failed result removes its key so the next selection can retry.
-    configuration_requests: HashSet<(String, PathBuf)>,
-    requested_access_modes: HashMap<String, (String, PathBuf, HarnessAccessMode)>,
+    configuration_requests: HashSet<(Backend, PathBuf)>,
+    requested_access_modes: HashMap<String, (Backend, PathBuf, HarnessAccessMode)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
     recovery: crate::app::runtime::recovery::InterruptedPromptRecovery,
     published_recovery_selection: Option<(u64, String, PathBuf, Option<PathBuf>)>,
@@ -433,7 +434,7 @@ impl Supervisor {
                     project.clone(),
                     process_command.clone(),
                     true,
-                    String::new(),
+                    None,
                     supervisor_thread.clone(),
                 ),
             ),
@@ -459,7 +460,7 @@ impl Supervisor {
                 Arc::new(RuntimeSnapshot {
                     project: initial_project.clone(),
                     selected_session: Some(target.path),
-                    harness: target.harness,
+                    harness: Some(target.harness),
                     history_preview: true,
                     ..RuntimeSnapshot::default()
                 }),
@@ -499,11 +500,7 @@ impl Supervisor {
             .and_then(|state| state.load_configuration_catalogs().ok())
             .unwrap_or_default();
         for entry in &configuration_catalogs {
-            configurations.set_catalog(
-                entry.harness.clone(),
-                entry.project.clone(),
-                entry.catalog.clone(),
-            );
+            configurations.set_catalog(entry.harness, entry.project.clone(), entry.catalog.clone());
         }
         if let Some(state) = catalog_state.as_ref()
             && let Ok(defaults) = state.load_session_control_defaults()
@@ -525,7 +522,7 @@ impl Supervisor {
                         prompt.project.clone(),
                         process_command.clone(),
                         false,
-                        prompt.harness.clone(),
+                        Some(prompt.harness),
                         supervisor_thread.clone(),
                     )
                 });
@@ -641,13 +638,13 @@ pub(super) fn route_session_discovery(
     }
 }
 
-fn session_actor_harness(command: &RuntimeCommand) -> String {
+fn session_actor_harness(command: &RuntimeCommand) -> Option<Backend> {
     command_target(command)
         .map(|(_, _, harness)| harness)
         .expect("session actors spawn from a harnessed command")
 }
 
-fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, String)> {
+fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, Option<Backend>)> {
     match command {
         RuntimeCommand::NewSession {
             id,
@@ -669,7 +666,7 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, String)>
         } => Some((
             format!("fork:{}", path.display()),
             project.clone(),
-            harness.clone(),
+            Some(harness.clone()),
         )),
         RuntimeCommand::SelectSession {
             path,
@@ -685,7 +682,7 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, String)>
         } => Some((
             format!("session:{}", path.display()),
             project.clone(),
-            harness.clone(),
+            Some(harness.clone()),
         )),
         _ => None,
     }
@@ -707,7 +704,7 @@ pub(super) fn target_command_needs_actor_message(
             harness, project, ..
         } => snapshot.harness != *harness || snapshot.project != *project,
         RuntimeCommand::SelectSession { harness, .. } => {
-            snapshot.harness != *harness || (!snapshot.connected && !snapshot.history_preview)
+            snapshot.harness != Some(*harness) || (!snapshot.connected && !snapshot.history_preview)
         }
         _ => true,
     }

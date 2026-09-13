@@ -3,14 +3,14 @@ mod catalog;
 use std::path::Path;
 
 use super::super::contract::{
-    AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
+    AgentBackendDescriptor, AgentCapabilities, Backend, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,
 };
 use super::acp::{AcpProfile, AcpWorkerFactory};
 
 pub(super) const PROFILE: AcpProfile = AcpProfile {
-    backend: "cursor-cli",
+    backend: Backend::Cursor,
     name: "Cursor",
     command: "agent",
     path_environment: "FARCASTER_CURSOR_PATH",
@@ -26,7 +26,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
-        id: AgentBackendId::new(PROFILE.backend).expect("Cursor backend id is valid"),
+        id: PROFILE.backend,
         name: PROFILE.name.into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {
@@ -91,7 +91,7 @@ pub(super) fn spawn_main(
             .ok_or_else(|| "Cursor resume requires a session id".to_owned())?;
         if catalog::inspect(&id)?.1 {
             let fresh = crate::agents::SessionLaunch {
-                harness: launch.harness.clone(),
+                harness: launch.harness,
                 session_id: None,
                 project: launch.project.clone(),
                 start: crate::agents::SessionStart::New,

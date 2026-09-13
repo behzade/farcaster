@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use gpui::AssetSource as _;
 use gpui_component::{IconName, IconNamed as _};
 
@@ -29,16 +30,19 @@ fn bundled_fonts_have_true_type_headers() {
 
 #[test]
 fn harnesses_use_their_brand_icons() {
-    assert_eq!(AppIcon::for_harness("pi"), AppIcon::Pi);
-    assert_eq!(AppIcon::for_harness("codex-cli"), AppIcon::Codex);
-    assert_eq!(AppIcon::for_harness("cursor-cli"), AppIcon::Cursor);
-    assert_eq!(AppIcon::for_harness("opencode"), AppIcon::OpenCode);
-    assert_eq!(AppIcon::for_harness("claude"), AppIcon::Claude);
+    assert_eq!(AppIcon::for_harness(Some(Backend::Pi)), AppIcon::Pi);
+    assert_eq!(AppIcon::for_harness(Some(Backend::Codex)), AppIcon::Codex);
+    assert_eq!(AppIcon::for_harness(Some(Backend::Cursor)), AppIcon::Cursor);
     assert_eq!(
-        AppIcon::for_harness("antigravity-acp"),
+        AppIcon::for_harness(Some(Backend::OpenCode)),
+        AppIcon::OpenCode
+    );
+    assert_eq!(AppIcon::for_harness(Some(Backend::Claude)), AppIcon::Claude);
+    assert_eq!(
+        AppIcon::for_harness(Some(Backend::Antigravity)),
         AppIcon::Antigravity
     );
-    assert_eq!(AppIcon::for_harness("unknown"), AppIcon::Code);
+    assert_eq!(AppIcon::for_harness(None), AppIcon::Code);
 }
 
 #[test]

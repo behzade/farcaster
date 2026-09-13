@@ -104,7 +104,7 @@ impl RuntimeOwner {
 
     pub(super) fn available_access_modes(&self) -> Vec<HarnessAccessMode> {
         crate::agents::available_access_modes(
-            &self.harness,
+            self.harness,
             self.active_snapshot().access_mode_model(),
             self.selected_sandbox_adapter().as_deref(),
         )
@@ -155,7 +155,7 @@ impl RuntimeOwner {
         let mut next_command = self.process_command.clone();
         next_command.access_mode = mode;
         if let Err(error) =
-            crate::agents::validate_launch(&next_command, &self.harness, &self.project)
+            crate::agents::validate_launch(&next_command, self.harness, &self.project)
         {
             let snapshot = self.active_snapshot_mut();
             snapshot.status = "Access mode unchanged".into();
@@ -182,7 +182,7 @@ impl RuntimeOwner {
             return;
         }
         if let Err(error) =
-            crate::agents::validate_launch(&self.process_command, &self.harness, &self.project)
+            crate::agents::validate_launch(&self.process_command, self.harness, &self.project)
         {
             self.process_command.app_proxy = previous;
             let snapshot = self.active_snapshot_mut();

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 #[path = "process_metadata.rs"]
 mod metadata;
 
@@ -255,7 +256,7 @@ impl PiRpcProcess {
         }
         let registry = crate::modules::agents::core::CallerRegistry::shared();
         let profile = crate::modules::agents::core::CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -264,7 +265,7 @@ impl PiRpcProcess {
         let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
         let parent_session = parent
             .as_ref()
-            .and_then(|(id, _)| registry.native_parent_session(id, "pi"));
+            .and_then(|(id, _)| registry.native_parent_session(id, Backend::Pi));
         let caller_identity = if let Some((worker_id, worker_name)) = worker {
             registry.issue_as_with_access(
                 project,

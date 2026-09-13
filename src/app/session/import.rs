@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{collections::HashSet, path::PathBuf};
 
 use gpui::{Context, FocusHandle, Window};
@@ -8,7 +9,7 @@ use crate::{agents, runtime::RuntimeCommand, sessions::SessionSummary};
 pub(in crate::app) struct SessionImportDialog {
     pub(in crate::app) focus: FocusHandle,
     return_focus: Option<FocusHandle>,
-    pub(in crate::app) harness: String,
+    pub(in crate::app) harness: Option<Backend>,
     preview_generation: u64,
     pub(in crate::app) candidates: Vec<SessionSummary>,
     pub(in crate::app) selected: HashSet<PathBuf>,
@@ -26,8 +27,7 @@ impl FarcasterApp {
         let available = import_harnesses();
         let harness = available
             .into_iter()
-            .find(|harness| harness == &self.preferred_harness)
-            .unwrap_or_default();
+            .find(|harness| Some(*harness) == self.preferred_harness);
         let dialog = SessionImportDialog {
             focus: cx.focus_handle(),
             return_focus: window.focused(cx),
@@ -59,17 +59,17 @@ impl FarcasterApp {
 
     pub(in crate::app) fn select_session_import_harness(
         &mut self,
-        harness: String,
+        harness: Backend,
         cx: &mut Context<Self>,
     ) {
         {
             let Some(dialog) = self.session_import.as_mut() else {
                 return;
             };
-            if dialog.harness == harness && (dialog.loading || dialog.error.is_none()) {
+            if dialog.harness == Some(harness) && (dialog.loading || dialog.error.is_none()) {
                 return;
             }
-            dialog.harness = harness;
+            dialog.harness = Some(harness);
         }
         self.preview_session_import(cx);
     }
@@ -131,14 +131,14 @@ impl FarcasterApp {
     pub(in crate::app) fn apply_import_preview(
         &mut self,
         generation: u64,
-        harness: String,
+        harness: Backend,
         sessions: Vec<SessionSummary>,
         cx: &mut Context<Self>,
     ) {
         let Some(dialog) = self.session_import.as_mut() else {
             return;
         };
-        if dialog.preview_generation != generation || dialog.harness != harness {
+        if dialog.preview_generation != generation || dialog.harness != Some(harness) {
             return;
         }
         dialog.loading = false;
@@ -154,14 +154,14 @@ impl FarcasterApp {
     pub(in crate::app) fn apply_import_preview_failed(
         &mut self,
         generation: u64,
-        harness: String,
+        harness: Backend,
         message: String,
         cx: &mut Context<Self>,
     ) {
         let Some(dialog) = self.session_import.as_mut() else {
             return;
         };
-        if dialog.preview_generation != generation || dialog.harness != harness {
+        if dialog.preview_generation != generation || dialog.harness != Some(harness) {
             return;
         }
         dialog.loading = false;
@@ -175,10 +175,10 @@ impl FarcasterApp {
         self.session_import_generation = self.session_import_generation.saturating_add(1);
         let Some((harness, generation)) = self.session_import.as_mut().map(|dialog| {
             dialog.preview_generation = self.session_import_generation;
-            dialog.loading = !dialog.harness.is_empty();
+            dialog.loading = dialog.harness.is_some();
             dialog.error = dialog
                 .harness
-                .is_empty()
+                .is_none()
                 .then(|| "Choose a backend to import sessions.".into());
             dialog.candidates.clear();
             dialog.selected.clear();
@@ -186,9 +186,9 @@ impl FarcasterApp {
         }) else {
             return;
         };
-        if harness.is_empty() {
+        let Some(harness) = harness else {
             return;
-        }
+        };
         self.send(
             RuntimeCommand::PreviewImport {
                 harness,
@@ -200,7 +200,7 @@ impl FarcasterApp {
     }
 }
 
-pub(in crate::app) fn import_harnesses() -> Vec<String> {
+pub(in crate::app) fn import_harnesses() -> Vec<Backend> {
     agents::backend_statuses()
         .into_iter()
         .filter(|backend| backend.available)

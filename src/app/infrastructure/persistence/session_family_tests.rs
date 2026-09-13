@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() -> Result<(), String>
@@ -9,7 +10,7 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
     let make_session = |project: &str, id: &str, parent: Option<&str>| {
         SessionSummary::from_cached_for_harness(
             id.into(),
-            "codex-cli".into(),
+            Backend::Codex,
             temp.path().join(project).join(id),
             temp.path().join(project),
             id.into(),
@@ -48,7 +49,7 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
     store.index_sessions(&imported, false)?;
     assert_parent(&store);
     store.update_session_metadata(&crate::agents::SessionMetadata {
-        harness: child.harness.clone(),
+        harness: child.harness,
         id: child.id.clone(),
         path: child.path.clone(),
         project: child.project.clone(),

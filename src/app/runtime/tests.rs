@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     fs,
     os::unix::fs::symlink,
@@ -90,7 +91,7 @@ pub(super) fn owner_without_process(
     (
         RuntimeOwner {
             project: project.clone(),
-            harness: "pi".into(),
+            harness: Some(Backend::Pi),
             session_id: None,
             process_command: AgentLaunchConfig {
                 program: PathBuf::from("/definitely/missing/farcaster-test-command"),
@@ -351,7 +352,7 @@ fn runtime_failure_releases_the_running_flag() {
 #[test]
 fn access_mode_changes_during_a_response_keep_latest_and_allow_cancel() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-    owner.harness = "claude".into();
+    owner.harness = Some(Backend::Claude);
     conversation_mut(owner.active_snapshot_mut()).running = true;
     let full = HarnessAccessMode::Full;
 
@@ -437,34 +438,37 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
 #[test]
 fn persisted_submitted_draft_selects_its_session() {
     let project = PathBuf::from("/project");
-    let draft =
-        crate::projects::DraftSession::with_id("codex-cli".into(), "draft".into(), project.clone());
+    let draft = crate::projects::DraftSession::with_id(
+        Some(Backend::Codex),
+        "draft".into(),
+        project.clone(),
+    );
     let session = PathBuf::from("/sessions/submitted.jsonl");
     assert!(matches!(
         initial_draft_command(draft.clone(), Some(crate::sessions::SessionTarget {
-            harness: "pi".into(), id: "saved-pi-id".into(), path: session.clone(),
+            harness: Backend::Pi, id: "saved-pi-id".into(), path: session.clone(),
         })),
         RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
             if path == session
-                && harness == "pi"
+                && harness == Backend::Pi
                 && session_id == "saved-pi-id"
                 && selected_project == project
     ));
     let codex = PathBuf::from("/locators/codex-cli/thread-1");
     assert!(matches!(
         initial_draft_command(draft.clone(), Some(crate::sessions::SessionTarget {
-            harness: "codex-cli".into(), id: "thread-1".into(), path: codex.clone(),
+            harness: Backend::Codex, id: "thread-1".into(), path: codex.clone(),
         })),
         RuntimeCommand::SelectSession { path, harness, session_id, project: selected_project }
             if path == codex
-                && harness == "codex-cli"
+                && harness == Backend::Codex
                 && session_id == "thread-1"
                 && selected_project == project
     ));
     assert!(matches!(
         initial_draft_command(draft, None),
         RuntimeCommand::ResumeDraft { id, harness, project: draft_project }
-            if id == "draft" && harness == "codex-cli" && draft_project == project
+            if id == "draft" && harness == Some(Backend::Codex) && draft_project == project
     ));
 }
 
@@ -901,7 +905,7 @@ fn interacted_session_document_hydrates_in_background_and_becomes_resident() -> 
 #[test]
 fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
     let path = PathBuf::from("/sessions/one.jsonl");
-    let select = |harness: &str| RuntimeCommand::SelectSession {
+    let select = |harness: Backend| RuntimeCommand::SelectSession {
         path: path.clone(),
         harness: harness.into(),
         session_id: "one".into(),
@@ -910,27 +914,30 @@ fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
     let history = RuntimeSnapshot {
         connected: false,
         history_preview: true,
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         ..RuntimeSnapshot::default()
     };
 
     assert!(!target_command_needs_actor_message(
-        &select("pi"),
+        &select(Backend::Pi),
         Some(&history)
     ));
     assert!(target_command_needs_actor_message(
-        &select("cursor-cli"),
+        &select(Backend::Cursor),
         Some(&history)
     ));
-    assert!(target_command_needs_actor_message(&select("pi"), None));
     assert!(target_command_needs_actor_message(
-        &select("pi"),
+        &select(Backend::Pi),
+        None
+    ));
+    assert!(target_command_needs_actor_message(
+        &select(Backend::Pi),
         Some(&RuntimeSnapshot::default())
     ));
     assert!(target_command_needs_actor_message(
         &RuntimeCommand::RestartSession {
             path,
-            harness: "pi".into(),
+            harness: Backend::Pi,
             session_id: "one".into(),
             project: PathBuf::from("/project"),
         },
@@ -943,7 +950,7 @@ fn saved_path_reuses_the_actor_that_started_as_a_draft() {
     let path = PathBuf::from("/sessions/one.jsonl");
     let command = RuntimeCommand::SelectSession {
         path: path.clone(),
-        harness: "pi".into(),
+        harness: Backend::Pi,
         session_id: path.to_string_lossy().into_owned(),
         project: PathBuf::from("/project"),
     };
@@ -963,7 +970,7 @@ fn saved_path_reuses_the_actor_that_started_as_a_draft() {
 
     let restart = RuntimeCommand::RestartSession {
         path: path.clone(),
-        harness: "pi".into(),
+        harness: Backend::Pi,
         session_id: path.to_string_lossy().into_owned(),
         project: PathBuf::from("/project"),
     };
@@ -1141,7 +1148,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
     let process = crate::agents::spawn_session(
         &AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
         SessionLaunch {
-            harness: "pi".into(),
+            harness: Backend::Pi,
             session_id: None,
             project: temp.path().to_path_buf(),
             start: SessionStart::New,
@@ -1236,7 +1243,7 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
 
     owner.apply_command(RuntimeCommand::NewSession {
         id: "draft-new".into(),
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         project: new_project.path().to_path_buf(),
     });
 
@@ -1264,8 +1271,8 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
 #[test]
 fn cursor_reasoning_is_deferred_without_starting_the_harness() {
     let (mut owner, _events) = owner_without_process(PathBuf::from("/cursor-project"));
-    owner.harness = "cursor-cli".into();
-    owner.snapshot.harness = "cursor-cli".into();
+    owner.harness = Some(Backend::Cursor);
+    owner.snapshot.harness = Some(Backend::Cursor);
 
     for level in ["off", "high"] {
         owner.set_thinking(level.into());
@@ -1294,7 +1301,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
     };
     owner.apply_command(RuntimeCommand::NewSession {
         id: "draft-cold".into(),
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         project,
     });
 
@@ -1588,7 +1595,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
     };
     let mut controls = HarnessConfigurationStore::default();
     let mut ready = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         session: serde_json::from_value(json!({
             "model": {
                 "id": "model-1",
@@ -1613,7 +1620,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
     controls.reconcile_snapshot(&mut ready, true);
 
     let mut starting = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         ..RuntimeSnapshot::default()
     };
     controls.reconcile_snapshot(&mut starting, true);
@@ -1649,7 +1656,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     };
     let mut defaults = HarnessConfigurationStore::default();
     let mut live_sol = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         session: serde_json::from_value(json!({
             "model": sol,
             "thinkingLevel": "high",
@@ -1669,7 +1676,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     defaults.reconcile_snapshot(&mut live_sol, true);
 
     let mut luna_history = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         prefill_model: Some(luna.clone()),
         prefill_thinking_level: Some("medium".into()),
         history_preview: true,
@@ -1683,7 +1690,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
     assert_eq!(history_identity.effort, Some("medium"));
 
     let mut empty_draft = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         ..RuntimeSnapshot::default()
     };
     defaults.reconcile_snapshot(&mut empty_draft, true);
@@ -1730,7 +1737,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     };
     let mut defaults = HarnessConfigurationStore::default();
     let mut root = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         session: session_state("/sessions/root.jsonl", sol.clone()),
         models: vec![sol.clone(), luna.clone()],
         thinking_levels: vec!["medium".into(), "high".into()],
@@ -1739,7 +1746,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     defaults.reconcile_snapshot(&mut root, true);
 
     let mut subagent = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         live_session: Some(PathBuf::from("/sessions/child.jsonl")),
         session: session_state("/sessions/child.jsonl", luna.clone()),
         models: vec![sol.clone(), luna.clone()],
@@ -1749,7 +1756,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
     defaults.reconcile_snapshot(&mut subagent, false);
 
     let mut new_draft = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         ..RuntimeSnapshot::default()
     };
     defaults.reconcile_snapshot(&mut new_draft, true);
@@ -1772,7 +1779,7 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
     };
     let mut defaults = HarnessConfigurationStore::default();
     let mut pi = RuntimeSnapshot {
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         models: vec![pi_model.clone()],
         thinking_levels: vec!["high".into()],
         ..RuntimeSnapshot::default()
@@ -1780,7 +1787,7 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
     defaults.reconcile_snapshot(&mut pi, true);
 
     let mut codex = RuntimeSnapshot {
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         ..RuntimeSnapshot::default()
     };
     defaults.reconcile_snapshot(&mut codex, true);
@@ -1788,7 +1795,7 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
     assert!(codex.thinking_levels.is_empty());
 
     let mut next_pi = RuntimeSnapshot {
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         ..RuntimeSnapshot::default()
     };
     defaults.reconcile_snapshot(&mut next_pi, true);
@@ -1982,7 +1989,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
     let (history_tx, _history_rx) = mpsc::channel();
     let mut owner = RuntimeOwner {
         project: std::env::temp_dir(),
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         session_id: None,
         process_command: AgentLaunchConfig {
             program: PathBuf::from("/definitely/missing/farcaster-test-command"),
@@ -2166,7 +2173,7 @@ fn prompt_before_history_loads_resumes_the_selected_session() -> Result<(), Stri
 
     owner.apply_command(RuntimeCommand::SelectSession {
         path: session.clone(),
-        harness: "cursor-cli".into(),
+        harness: Backend::Cursor,
         session_id: "cursor-historical".into(),
         project: project.clone(),
     });
@@ -2231,7 +2238,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     let process = crate::agents::spawn_session(
         &process_command,
         SessionLaunch {
-            harness: "pi".into(),
+            harness: Backend::Pi,
             session_id: None,
             project: temp.path().to_path_buf(),
             start: SessionStart::New,
@@ -2247,7 +2254,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     fs::create_dir(&new_project).map_err(|error| error.to_string())?;
     let mut owner = RuntimeOwner {
         project: old_project.clone(),
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         session_id: None,
         process_command,
         process: Some(process),
@@ -2434,7 +2441,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
     let (history_tx, history_rx) = mpsc::channel();
     let mut owner = RuntimeOwner {
         project: temp.path().to_path_buf(),
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         session_id: None,
         process_command: AgentLaunchConfig::default(),
         process: None,
@@ -2634,12 +2641,7 @@ fn external_writes_refresh_only_resident_history_documents() {
 
     assert_eq!(
         changed_external_documents(&latest, &[external.clone(), live]),
-        vec![(
-            "external".into(),
-            external,
-            PathBuf::from("/project"),
-            String::new(),
-        )]
+        vec![("external".into(), external, PathBuf::from("/project"), None,)]
     );
 }
 

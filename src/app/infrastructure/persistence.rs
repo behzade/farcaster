@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
@@ -17,6 +18,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
+mod backend;
 #[cfg(test)]
 #[path = "persistence/catalog_scale_tests.rs"]
 mod catalog_scale_tests;
@@ -63,14 +65,14 @@ pub(crate) enum WindowState {
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CachedConfigurationCatalog {
-    pub harness: String,
+    pub harness: Backend,
     pub project: PathBuf,
     pub catalog: crate::agents::ConfigurationCatalog,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct CachedSessionControlDefaults {
-    pub harness: String,
+    pub harness: Backend,
     pub model: Option<crate::protocol::Model>,
     pub effort: Option<String>,
 }

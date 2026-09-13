@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::protocol::Model;
 
 fn model(id: &str, reasoning: bool) -> Model {
@@ -26,14 +27,8 @@ fn pi_title_command_is_isolated_from_session_transport() {
         program: std::env::current_exe().expect("test executable"),
         ..AgentLaunchConfig::default()
     };
-    let command = pi_title_command(
-        &config,
-        &project,
-        "Fix the transcript",
-        None,
-        Some("low"),
-    )
-    .expect("build isolated Pi title command");
+    let command = pi_title_command(&config, &project, "Fix the transcript", None, Some("low"))
+        .expect("build isolated Pi title command");
     let arguments = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -66,8 +61,8 @@ fn pi_prefers_a_cheap_model_from_the_active_provider() {
         sandbox_adapter: None,
     };
     let active = model_from("anthropic", "claude-opus", true);
-    let selected =
-        title_model("pi", &catalog, Some(&active)).expect("cheap model from active provider");
+    let selected = title_model(Backend::Pi, &catalog, Some(&active))
+        .expect("cheap model from active provider");
     assert_eq!(selected.provider, "anthropic");
     assert_eq!(selected.id, "claude-haiku");
 }
@@ -83,7 +78,7 @@ fn pi_ignores_image_models_with_cheap_display_names() {
     };
     let active = model_from("google", "gemini-2.5-pro", true);
     assert_eq!(
-        title_model("pi", &catalog, Some(&active))
+        title_model(Backend::Pi, &catalog, Some(&active))
             .expect("non-image cheap model")
             .id,
         "gemini-2.5-flash-lite"
@@ -97,14 +92,14 @@ fn pi_without_an_active_model_uses_backend_default() {
         efforts: Vec::new(),
         sandbox_adapter: None,
     };
-    assert_eq!(title_model("pi", &catalog, None), None);
+    assert_eq!(title_model(Backend::Pi, &catalog, None), None);
 }
 
 #[test]
 fn pi_falls_back_to_the_active_model() {
     let active = model_from("custom", "custom-large", true);
     assert_eq!(
-        title_model("pi", &ConfigurationCatalog::default(), Some(&active)),
+        title_model(Backend::Pi, &ConfigurationCatalog::default(), Some(&active)),
         Some(active)
     );
 }
@@ -120,7 +115,7 @@ fn codex_prefers_luna() {
         sandbox_adapter: None,
     };
     assert_eq!(
-        title_model("codex-cli", &catalog, None)
+        title_model(Backend::Codex, &catalog, None)
             .expect("preferred Codex model")
             .id,
         "gpt-5.6-luna"
@@ -134,7 +129,7 @@ fn no_known_cheap_model_uses_backend_default() {
         efforts: Vec::new(),
         sandbox_adapter: None,
     };
-    assert_eq!(title_model("codex-cli", &catalog, None), None);
+    assert_eq!(title_model(Backend::Codex, &catalog, None), None);
 }
 
 #[test]

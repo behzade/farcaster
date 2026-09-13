@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{collections::HashSet, path::Path};
 
 use gpui::{AppContext as _, Context, Entity, Focusable as _, Subscription, Window};
@@ -20,7 +21,7 @@ pub(in crate::app) struct CodeDestination {
     pub target: String,
     pub session: Option<SessionTarget>,
     pub label: String,
-    pub harness: String,
+    pub harness: Option<Backend>,
 }
 
 pub(in crate::app) struct DestinationPicker {
@@ -50,7 +51,7 @@ pub(super) fn choices(
                 target,
                 session: Some(session.target()),
                 label: session.title.clone(),
-                harness: session.harness.clone(),
+                harness: Some(session.harness),
             });
         }
     }
@@ -111,7 +112,7 @@ impl FarcasterApp {
                         index.to_string(),
                         AppIcon::ChatCircle,
                         destination.label.clone(),
-                        Some(crate::agents::backend_display_name(&destination.harness).to_owned()),
+                        Some(crate::agents::backend_display_name(destination.harness).to_owned()),
                         None,
                         "",
                     )

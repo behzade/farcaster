@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn restores_the_latest_opencode_session_identity() {
@@ -65,7 +66,7 @@ fn translates_session_metadata() -> Result<(), String> {
         "tokens": {"input": 100, "output": 20, "reasoning": 5, "cache": {"read": 80, "write": 10}},
     });
     let session = summary(project.as_path(), &value).ok_or("summary")??;
-    assert_eq!(session.harness, "opencode");
+    assert_eq!(session.harness, Backend::OpenCode);
     assert_eq!(session.parent_session.as_deref(), Some("parent-1"));
     assert_eq!(session.title, "Implement feature");
     assert_eq!(session.usage.input, 100);

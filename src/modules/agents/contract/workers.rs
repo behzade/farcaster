@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -46,7 +47,7 @@ pub(crate) struct StartWorker {
     pub(crate) project: PathBuf,
     pub(crate) name: String,
     pub(crate) prompt: String,
-    pub(crate) backend: String,
+    pub(crate) backend: Backend,
     pub(crate) parent_session: String,
     pub(crate) parent_worker_id: Option<String>,
     pub(crate) context: WorkerContext,
@@ -76,7 +77,7 @@ impl WorkerStatus {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WorkerSnapshot {
     pub(crate) id: String,
-    pub(crate) backend: String,
+    pub(crate) backend: Backend,
     pub(crate) project: PathBuf,
     pub(crate) session_locator: Option<String>,
     pub(crate) status: WorkerStatus,

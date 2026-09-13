@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 fn restored_question_request(question: crate::sessions::RestoredQuestion) -> ExtensionUiRequest {
     if question.options.is_empty() {
@@ -48,7 +49,7 @@ impl RuntimeOwner {
 
     pub(super) fn bind_external_session_identity(&mut self, path: &std::path::Path) {
         if let Some((harness, session_id)) = agents::external_session_identity(path) {
-            self.harness = harness.into();
+            self.harness = Some(harness);
             self.session_id = Some(session_id);
         }
     }
@@ -100,7 +101,7 @@ impl RuntimeOwner {
         let wake = thread::current();
         let failed_path = path.clone();
         let failed_project = project.clone();
-        let harness = self.harness.clone();
+        let harness = self.harness;
         if let Err(error) = thread::Builder::new()
             .name("farcaster-history".into())
             .spawn(move || {
@@ -110,7 +111,9 @@ impl RuntimeOwner {
                     crate::app::infrastructure::performance::OperationKind::HistoryLoad,
                     0,
                 );
-                let result = agents::load_session_history(&harness, &path);
+                let result = harness
+                    .ok_or_else(|| "Choose a backend before loading history.".to_owned())
+                    .and_then(|harness| agents::load_session_history(harness, &path));
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
                 }
@@ -151,7 +154,7 @@ impl RuntimeOwner {
         self.pending_document_refresh = None;
     }
 
-    pub(super) fn stage_draft(&mut self, harness: String, project: PathBuf) {
+    pub(super) fn stage_draft(&mut self, harness: Option<Backend>, project: PathBuf) {
         let unchanged = self.process.is_none()
             && self.parked_snapshot.is_none()
             && !self.snapshot.history_preview

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
@@ -306,7 +307,7 @@ impl RenderOnce for SessionRow {
                                                 div()
                                                     .id(format!("move-project-{}", session.id))
                                                     .min_w_0()
-                                                    .when(crate::agents::supports_session_move(&session.harness), |label| {
+                                                    .when(crate::agents::supports_session_move(session.harness), |label| {
                                                         label
                                                             .role(Role::Button)
                                                             .aria_label("Move session to another project")
@@ -347,7 +348,7 @@ impl RenderOnce for SessionRow {
                                             ),
                                     )
                                     .child(session_row_metadata(
-                                        &session.harness,
+                                        session.harness,
                                         target_app_session_id,
                                         &status_text,
                                         age,
@@ -520,7 +521,7 @@ fn session_context_menu(
     let path = session.path.clone();
     let project = session.project.clone();
     let title = session.title.clone();
-    let can_fork = crate::agents::supports_session_fork(&session.harness);
+    let can_fork = crate::agents::supports_session_fork(session.harness);
     let app_session_id = session.app_session_id;
     ContextMenuTrigger::new(format!("session-context-trigger-{}", session.id), row)
         .size_full()
@@ -630,7 +631,7 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
 }
 
 pub(super) fn session_row_metadata(
-    harness: &str,
+    harness: impl Into<Option<Backend>>,
     app_session_id: i64,
     status: &str,
     age: String,

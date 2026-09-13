@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Condvar, Mutex, mpsc},
@@ -80,7 +81,7 @@ impl WorkerSessionFactory for FakeFactory {
                 CallerRegistry::shared().issue_as_with_access(
                     &launch.project,
                     CallerProfile {
-                        backend: "pi".into(),
+                        backend: Backend::Pi,
                         provider: None,
                         model: None,
                         effort: None,
@@ -184,8 +185,8 @@ fn pool(
 ) -> Result<(WorkerPool, async_channel::Receiver<()>), String> {
     let factory: Arc<dyn WorkerSessionFactory> = factory;
     let pool = WorkerPool::new(
-        BTreeMap::from([("pi".into(), factory)]),
-        "pi".into(),
+        BTreeMap::from([(Backend::Pi, factory)]),
+        Backend::Pi,
         project.to_owned(),
         maximum,
     )?;
@@ -198,7 +199,7 @@ fn request(project: &std::path::Path) -> StartWorker {
         project: project.to_owned(),
         name: "implementation".into(),
         prompt: "work".into(),
-        backend: "pi".into(),
+        backend: Backend::Pi,
         parent_session: "backend://parent".into(),
         parent_worker_id: None,
         context: WorkerContext::Fresh,
@@ -213,7 +214,7 @@ fn assignment() -> super::WorkerAssignment {
     super::WorkerAssignment {
         profile: "test-profile".into(),
         execution: super::WorkerExecution {
-            harness: "pi".into(),
+            harness: Backend::Pi,
             provider: "test-provider".into(),
             model: "test-model".into(),
             effort: None,
@@ -228,7 +229,7 @@ fn starts_with_an_initial_prompt_and_enforces_capacity() -> Result<(), String> {
     let (pool, _) = pool(factory.clone(), project.path(), 1)?;
 
     let started = pool.start(request(project.path()))?;
-    assert_eq!(started.backend, "pi");
+    assert_eq!(started.backend, Backend::Pi);
     assert_eq!(
         factory.sends.lock().map_err(|_| "fake sends unavailable")?[0]
             .lock()
@@ -298,7 +299,7 @@ fn child_settlement_sends_one_final_message_per_turn() -> Result<(), String> {
     let parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -348,7 +349,7 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
     let parent = registry.issue(
         project.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -367,7 +368,7 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
     let replacement = registry.issue(
         project.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -400,18 +401,25 @@ fn worker_parent_reports_and_inputs_follow_a_replacement_parent_process() -> Res
         }))
         .map_err(|_| "input")?;
     wait_for_update(&updates)?;
-    let inputs =
-        registry.take_child_inputs(project.path(), "codex-cli", "/sessions/stable-parent.jsonl");
+    let inputs = registry.take_child_inputs(
+        project.path(),
+        Backend::Codex,
+        "/sessions/stable-parent.jsonl",
+    );
     assert_eq!(inputs.len(), 1);
     assert!(
         registry
-            .take_child_inputs(project.path(), "codex-cli", "/sessions/stable-parent.jsonl")
+            .take_child_inputs(
+                project.path(),
+                Backend::Codex,
+                "/sessions/stable-parent.jsonl"
+            )
             .is_empty(),
         "the replacement parent must not receive the same input twice"
     );
     assert!(
         registry
-            .take_child_inputs(project.path(), "pi", "/sessions/stable-parent.jsonl")
+            .take_child_inputs(project.path(), Backend::Pi, "/sessions/stable-parent.jsonl")
             .is_empty()
     );
     registry.respond_to_child_input(WorkerInputResponse {
@@ -521,7 +529,7 @@ fn failure_releases_capacity_and_notifies_parent_without_a_child_registration() 
     let parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -555,7 +563,7 @@ fn child_input_reaches_parent_and_answer_returns_to_worker() -> Result<(), Strin
     let parent = registry.issue(
         project.path(),
         CallerProfile {
-            backend: "parent-backend".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -577,7 +585,7 @@ fn child_input_reaches_parent_and_answer_returns_to_worker() -> Result<(), Strin
         }))
         .map_err(|_| "send event")?;
     wait_for_update(&updates)?;
-    let inputs = registry.take_child_inputs(&context.project, "parent-backend", "input-parent");
+    let inputs = registry.take_child_inputs(&context.project, Backend::Pi, "input-parent");
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].options, ["A", "B"]);
     assert!(
@@ -610,7 +618,7 @@ fn stopping_a_session_family_aborts_closes_and_joins_its_children() -> Result<()
     let parent = registry.issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -654,7 +662,7 @@ fn stopping_a_session_family_aborts_closes_and_joins_its_children() -> Result<()
     let stopped = pool.stop_session_family(
         project.path(),
         &[(
-            "pi".into(),
+            Backend::Pi,
             std::path::PathBuf::from("/sessions/parent.jsonl"),
         )],
     )?;
@@ -699,7 +707,7 @@ fn session_family_stop_reports_close_failure_instead_of_confirming_stop() -> Res
     let parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -721,7 +729,7 @@ fn session_family_stop_reports_close_failure_instead_of_confirming_stop() -> Res
         .stop_session_family(
             project.path(),
             &[(
-                "pi".into(),
+                Backend::Pi,
                 std::path::PathBuf::from("/sessions/parent.jsonl"),
             )],
         )
@@ -739,7 +747,7 @@ fn session_family_stop_reports_close_failure_instead_of_confirming_stop() -> Res
         .stop_session_family(
             project.path(),
             &[(
-                "pi".into(),
+                Backend::Pi,
                 std::path::PathBuf::from("/sessions/parent.jsonl"),
             )],
         )
@@ -839,7 +847,7 @@ fn failed_resume_send_cleanup_keeps_its_process_capacity_owned() -> Result<(), S
     let parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -927,7 +935,7 @@ fn family_stop_fence_blocks_new_children_until_shutdown_finishes() -> Result<(),
     let parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -950,7 +958,7 @@ fn family_stop_fence_blocks_new_children_until_shutdown_finishes() -> Result<(),
         stopping_pool.stop_session_family(
             &stopping_project,
             &[(
-                "pi".into(),
+                Backend::Pi,
                 std::path::PathBuf::from("/sessions/parent.jsonl"),
             )],
         )
@@ -999,7 +1007,7 @@ fn family_stop_waits_for_an_in_flight_child_creation_then_joins_it() -> Result<(
     let parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -1029,7 +1037,7 @@ fn family_stop_waits_for_an_in_flight_child_creation_then_joins_it() -> Result<(
         stopping_pool.stop_session_family(
             &stopping_project,
             &[(
-                "pi".into(),
+                Backend::Pi,
                 std::path::PathBuf::from("/sessions/parent.jsonl"),
             )],
         )
@@ -1062,7 +1070,7 @@ fn stopping_a_family_expires_its_delivered_child_input() -> Result<(), String> {
     let parent = registry.issue(
         project.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -1085,19 +1093,24 @@ fn stopping_a_family_expires_its_delivered_child_input() -> Result<(), String> {
         }))
         .map_err(|_| "input")?;
     wait_for_update(&updates)?;
-    let shown = registry.take_child_inputs(project.path(), "codex-cli", "/sessions/parent.jsonl");
+    let shown =
+        registry.take_child_inputs(project.path(), Backend::Codex, "/sessions/parent.jsonl");
     assert_eq!(shown.len(), 1);
 
     pool.stop_session_family(
         project.path(),
         &[(
-            "codex-cli".into(),
+            Backend::Codex,
             std::path::PathBuf::from("/sessions/parent.jsonl"),
         )],
     )?;
 
     assert_eq!(
-        registry.take_expired_child_inputs(project.path(), "codex-cli", "/sessions/parent.jsonl"),
+        registry.take_expired_child_inputs(
+            project.path(),
+            Backend::Codex,
+            "/sessions/parent.jsonl"
+        ),
         vec![shown[0].id.clone()]
     );
     assert!(
@@ -1120,7 +1133,7 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
     let parent = CallerRegistry::shared().issue_with_access(
         project.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -1160,7 +1173,7 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
     let wrong_parent = CallerRegistry::shared().issue(
         project.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(), String> {
@@ -6,7 +7,7 @@ fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(),
     let identity = registry.issue(
         Path::new("/project"),
         CallerProfile {
-            backend: "parent-backend".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -32,21 +33,21 @@ fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(),
     let second = registry.request_child_input(&child, question.clone(), responses.clone())?;
     assert!(
         registry
-            .take_child_inputs(&parent.project, "other-backend", "parent-session")
+            .take_child_inputs(&parent.project, Backend::Codex, "parent-session")
             .is_empty()
     );
     assert!(
         registry
-            .take_child_inputs(Path::new("/other"), "parent-backend", "parent-session")
+            .take_child_inputs(Path::new("/other"), Backend::Pi, "parent-session")
             .is_empty()
     );
-    let inputs = registry.take_child_inputs(&parent.project, "parent-backend", "parent-session");
+    let inputs = registry.take_child_inputs(&parent.project, Backend::Pi, "parent-session");
     assert_eq!(inputs.len(), 2);
     assert_ne!(inputs[0].id, inputs[1].id);
     assert!(inputs[0].prompt.contains("review"));
     assert!(
         registry
-            .take_child_inputs(&parent.project, "parent-backend", "parent-session")
+            .take_child_inputs(&parent.project, Backend::Pi, "parent-session")
             .is_empty()
     );
     registry.respond_to_child_input(WorkerInputResponse {
@@ -87,12 +88,12 @@ fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(),
     drop(unanswered);
     assert!(
         registry
-            .take_child_inputs(&parent.project, "parent-backend", "parent-session")
+            .take_child_inputs(&parent.project, Backend::Pi, "parent-session")
             .is_empty()
     );
     assert!(
         registry
-            .take_expired_child_inputs(&parent.project, "parent-backend", "parent-session")
+            .take_expired_child_inputs(&parent.project, Backend::Pi, "parent-session")
             .is_empty(),
         "an input that was never shown needs no UI dismissal"
     );
@@ -105,7 +106,7 @@ fn delivered_input_expiry_is_drained_by_stable_parent_session() -> Result<(), St
     let parent = registry.issue(
         Path::new("/project"),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -131,13 +132,13 @@ fn delivered_input_expiry_is_drained_by_stable_parent_session() -> Result<(), St
         },
         responses,
     )?;
-    let shown = registry.take_child_inputs(Path::new("/project"), "codex-cli", "parent-session");
+    let shown = registry.take_child_inputs(Path::new("/project"), Backend::Codex, "parent-session");
     assert_eq!(shown.len(), 1);
     drop(parent);
     let replacement = registry.issue(
         Path::new("/project"),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -149,16 +150,16 @@ fn delivered_input_expiry_is_drained_by_stable_parent_session() -> Result<(), St
 
     assert!(
         registry
-            .take_expired_child_inputs(Path::new("/project"), "other", "parent-session")
+            .take_expired_child_inputs(Path::new("/project"), Backend::Pi, "parent-session")
             .is_empty()
     );
     assert_eq!(
-        registry.take_expired_child_inputs(Path::new("/project"), "codex-cli", "parent-session"),
+        registry.take_expired_child_inputs(Path::new("/project"), Backend::Codex, "parent-session"),
         vec![shown[0].id.clone()]
     );
     assert!(
         registry
-            .take_expired_child_inputs(Path::new("/project"), "codex-cli", "parent-session")
+            .take_expired_child_inputs(Path::new("/project"), Backend::Codex, "parent-session")
             .is_empty()
     );
     Ok(())

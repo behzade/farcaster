@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::agents::{WorkerInput, WorkerInputResponse};
 
 const INPUT_PREFIX: &str = "farcaster-worker-input-";
@@ -62,7 +63,7 @@ impl CallerRegistry {
     pub(crate) fn take_child_inputs(
         &self,
         project: &Path,
-        backend: &str,
+        backend: Backend,
         session: &str,
     ) -> Vec<WorkerInput> {
         let project = canonical_project(project);
@@ -115,7 +116,7 @@ impl CallerRegistry {
     pub(crate) fn take_expired_child_inputs(
         &self,
         project: &Path,
-        backend: &str,
+        backend: Backend,
         session: &str,
     ) -> Vec<String> {
         let parent = CallerSession {

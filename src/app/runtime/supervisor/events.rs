@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use std::path::Path;
 
 impl Supervisor {
@@ -29,13 +30,13 @@ impl Supervisor {
                         .set_catalog_error(harness.clone(), project.clone(), error);
                 }
             }
-            self.publish_configuration_snapshots(&harness, &project);
+            self.publish_configuration_snapshots(harness, &project);
         }
     }
 
-    pub(super) fn publish_configuration_snapshots(&mut self, harness: &str, project: &Path) {
+    pub(super) fn publish_configuration_snapshots(&mut self, harness: Backend, project: &Path) {
         for (key, snapshot) in &mut self.latest {
-            if snapshot.harness == harness && snapshot.project == project {
+            if snapshot.harness == Some(harness) && snapshot.project == project {
                 if let Some(actor) = self.actors.get(key)
                     && let Some(command) = self.configurations.catalog_command(harness, project)
                 {
@@ -119,9 +120,10 @@ impl Supervisor {
                     let _ = self.event_tx.send(RuntimeEvent::SessionTarget(target));
                 }
                 if !snapshot.models.is_empty()
+                    && let Some(harness) = snapshot.harness
                     && cache_configuration_catalog(
                         &mut self.configuration_catalogs,
-                        snapshot.harness.clone(),
+                        harness,
                         snapshot.project.clone(),
                         crate::agents::ConfigurationCatalog {
                             models: snapshot.models.clone(),

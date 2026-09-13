@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn delivered_prompt_completion_rolls_back_acceptance_if_delivery_write_fails()
@@ -9,7 +10,7 @@ fn delivered_prompt_completion_rolls_back_acceptance_if_delivery_write_fails()
     let mut store = StateStore::open_at(&database)?;
     let id = store.enqueue_prompt(
         "draft:atomic",
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         None,
         PromptMode::FollowUp,

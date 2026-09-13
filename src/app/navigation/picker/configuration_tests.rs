@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn runtime_selection_matches_model_identity_and_effort() {
@@ -67,7 +68,7 @@ fn opencode_default_row_is_first_and_matches_only_the_unset_variant() {
     }))
     .unwrap();
     let mut snapshot = crate::runtime::RuntimeSnapshot {
-        harness: "opencode".into(),
+        harness: Some(Backend::OpenCode),
         prefill_model: Some(model.clone()),
         ..Default::default()
     };
@@ -89,7 +90,7 @@ fn opencode_default_row_is_first_and_matches_only_the_unset_variant() {
     let rows = effort_picker_rows(&snapshot, &model, &mut commands);
     assert!(!rows[0].detail.as_deref().unwrap().contains("Current"));
     assert!(rows[3].detail.as_deref().unwrap().contains("Current"));
-    snapshot.harness = "pi".into();
+    snapshot.harness = Some(Backend::Pi);
     assert_eq!(
         effort_picker_rows(&snapshot, &model, &mut commands).len(),
         4

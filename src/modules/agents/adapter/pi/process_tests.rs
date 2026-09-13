@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::agents::HarnessAccessMode;
 use std::{error::Error, fs};
 use tempfile::tempdir;
@@ -820,7 +821,7 @@ fn abort_discards_old_peer_reports_but_accepts_new_ones() -> TestResult {
     let sender = registry.issue(
         project.path(),
         crate::modules::agents::core::CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -1490,7 +1491,7 @@ fn peer_message_steers_a_busy_session_without_waiting_for_settlement() -> TestRe
     let sender = registry.issue(
         temp.path(),
         crate::modules::agents::core::CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -1677,7 +1678,7 @@ fn inherited_child_does_not_stamp_the_parent_before_forking() -> TestResult {
     let parent = registry.issue(
         temp.path(),
         crate::modules::agents::core::CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -1710,7 +1711,7 @@ fn child_parent_stamp_retries_after_pi_reports_an_uncreated_session_file() -> Te
     let parent = registry.issue(
         temp.path(),
         crate::modules::agents::core::CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,

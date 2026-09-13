@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::agents::{
     SessionCommand, SessionEvent, SessionResponsePayload as Payload, SessionTransport,
 };
@@ -131,7 +132,7 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
     command.access_mode = crate::agents::HarnessAccessMode::Sandboxed;
     let result = (|| {
         let launch = crate::agents::SessionLaunch {
-            harness: "opencode".into(),
+            harness: Backend::OpenCode,
             session_id: Some("ses_resume".into()),
             project: project.path().to_owned(),
             start: crate::agents::SessionStart::Resume(project.path().join("session")),
@@ -142,7 +143,7 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
             assert!(metadata.efforts.is_empty());
             main_session::WorkerSessionTransport::new(
                 project.path(),
-                "opencode",
+                Backend::OpenCode,
                 locator,
                 worker,
                 metadata,

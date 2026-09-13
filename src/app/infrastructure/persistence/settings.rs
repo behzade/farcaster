@@ -1,10 +1,11 @@
 use super::*;
+use crate::agents::Backend;
 
 #[cfg(test)]
 fn stored_family_identity(
     locator_root: &Path,
     project: &Path,
-    harness: &str,
+    harness: Backend,
     locator: Option<String>,
     backend_id: Option<String>,
 ) -> String {
@@ -15,9 +16,9 @@ fn stored_family_identity(
         return locator;
     };
     let encoded = url::form_urlencoded::byte_serialize(backend_id.as_bytes()).collect::<String>();
-    let legacy_synthetic = locator_root.join(harness).join(&encoded);
+    let legacy_synthetic = locator_root.join(harness.as_str()).join(&encoded);
     let scoped_synthetic = super::identity::family_locator_root(locator_root, project)
-        .join(harness)
+        .join(harness.as_str())
         .join(encoded);
     let locator = crate::sessions::normalize_session_path(Path::new(&locator));
     if locator == crate::sessions::normalize_session_path(&legacy_synthetic)
@@ -53,7 +54,7 @@ impl StateStore {
             .map_err(|error| format!("save transcript folder setting: {error}"))
     }
 
-    pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<Option<String>, String> {
+    pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<Option<Backend>, String> {
         // Before the first saved choice, infer it from this project's main sessions.
         let normalized_project = crate::sessions::normalize_session_path(project);
         let legacy_project = project.to_string_lossy();
@@ -77,14 +78,12 @@ impl StateStore {
                 Some(harness) if harness.trim().is_empty() => {
                     Err("The saved backend is empty. Choose a backend.".into())
                 }
-                harness => Ok(harness),
+                Some(harness) => harness.parse().map(Some),
+                None => Ok(None),
             })
     }
 
-    pub(crate) fn save_preferred_harness(&self, harness: &str) -> Result<(), String> {
-        if harness.trim().is_empty() {
-            return Err("Choose a backend before saving the preference.".into());
-        }
+    pub(crate) fn save_preferred_harness(&self, harness: Backend) -> Result<(), String> {
         self.connection
             .execute(
                 "INSERT INTO meta(key, value) VALUES('preferred_harness', ?1)
@@ -112,14 +111,14 @@ impl StateStore {
         let locator_root = super::identity::family_locator_root(&locator_root, &link.project);
         let parent_id = ensure_locator_session(
             &transaction,
-            &link.parent_backend,
+            link.parent_backend,
             &link.parent_session,
             project_id,
             &locator_root,
         )?;
         let child_id = ensure_locator_session(
             &transaction,
-            &link.child_backend,
+            link.child_backend,
             &link.child_session,
             project_id,
             &locator_root,
@@ -182,10 +181,10 @@ impl StateStore {
         statement
             .query_map([], |row| {
                 Ok((
-                    row.get::<_, String>(0)?,
+                    row.get::<_, Backend>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Backend>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, String>(6)?,
@@ -214,7 +213,7 @@ impl StateStore {
                     child_session: stored_family_identity(
                         &locator_root,
                         Path::new(&project),
-                        &child_backend,
+                        child_backend,
                         child_locator,
                         child_backend_id,
                     ),
@@ -222,7 +221,7 @@ impl StateStore {
                     parent_session: stored_family_identity(
                         &locator_root,
                         Path::new(&project),
-                        &parent_backend,
+                        parent_backend,
                         parent_locator,
                         parent_backend_id,
                     ),

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 use std::io::Write as _;
 use std::{
@@ -118,10 +119,10 @@ pub(crate) fn select_harnesses(selected: Option<&str>) -> Result<Vec<&'static st
         })
 }
 
-pub(crate) fn descriptor(harness: &str) -> Result<AgentBackendDescriptor, String> {
+pub(crate) fn descriptor(harness: Backend) -> Result<AgentBackendDescriptor, String> {
     known_backend_descriptors()
         .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == harness)
+        .find(|descriptor| descriptor.id == harness)
         .ok_or_else(|| format!("live harness {harness} has no backend descriptor"))
 }
 
@@ -131,6 +132,7 @@ fn live_e2e_session_catalog_model_resume_move_delete() -> Result<(), String> {
     let _mcp = McpGuard::disabled();
     let selected = std::env::var("FARCASTER_E2E_HARNESS").ok();
     for harness in select_harnesses(selected.as_deref())? {
+        let harness = harness.parse::<Backend>()?;
         let descriptor = descriptor(harness)?;
         exercise_live_harness(harness, &descriptor.capabilities)
             .map_err(|error| format!("{harness} live conformance failed: {error}"))?;
@@ -138,7 +140,7 @@ fn live_e2e_session_catalog_model_resume_move_delete() -> Result<(), String> {
     Ok(())
 }
 
-fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Result<(), String> {
+fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> Result<(), String> {
     let coverage = Coverage::from_capabilities(capabilities);
     let case_dir = support::e2e_case_dir()?;
     let project_guard = tempfile::tempdir_in(&case_dir)
@@ -154,7 +156,7 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
         .map_err(|error| error.to_string())?;
     let locator_root = support::isolated_locator_root()?;
     let config = AgentLaunchConfig {
-        program: PathBuf::from(harness),
+        program: PathBuf::from(harness.as_str()),
         prefix_args: Vec::new(),
         access_mode: support::live_access_mode_for_harness(harness)?,
         app_proxy: None,
@@ -195,7 +197,7 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
                 },
             )?;
         }
-        if coverage.history && harness == "pi" {
+        if coverage.history && harness == Backend::Pi {
             require_history_response(&mut *session, &marker)?;
         }
         if coverage.usage {
@@ -231,7 +233,7 @@ fn exercise_live_harness(harness: &str, capabilities: &AgentCapabilities) -> Res
 }
 
 fn exercise_live_move(
-    harness: &str,
+    harness: Backend,
     config: &AgentLaunchConfig,
     source: &Path,
     path: &Path,
@@ -274,7 +276,7 @@ fn exercise_live_move(
             || stored.path != path
             || stored.project != project
             || stored.parent_session != original.parent_session
-            || (harness != "pi" && stored.path != original.path)
+            || (harness != Backend::Pi && stored.path != original.path)
         {
             return Err(format!(
                 "move changed identity or retained the old project: {stored:?}"
@@ -358,7 +360,7 @@ fn exercise_live_move(
 fn cleanup_error(
     error: String,
     close: Result<(), String>,
-    harness: &str,
+    harness: Backend,
     path: &Path,
     coverage: Coverage,
 ) -> String {
@@ -763,8 +765,8 @@ fn compaction_not_needed(error: &str) -> bool {
     .any(|message| error.contains(message))
 }
 
-fn cleanup_failed_fixture(harness: &str, path: &Path, coverage: Coverage) -> Result<(), String> {
-    if harness == "pi" {
+fn cleanup_failed_fixture(harness: Backend, path: &Path, coverage: Coverage) -> Result<(), String> {
+    if harness == Backend::Pi {
         return if path.is_file() {
             fs::remove_file(path)
                 .map_err(|error| format!("delete Pi session {}: {error}", path.display()))
@@ -782,14 +784,14 @@ fn cleanup_failed_fixture(harness: &str, path: &Path, coverage: Coverage) -> Res
 }
 
 fn verify_persistence_and_cleanup(
-    harness: &str,
+    harness: Backend,
     config: &AgentLaunchConfig,
     launch: &impl Fn(SessionStart, Option<String>) -> SessionLaunch,
     path: &Path,
     marker: &str,
     coverage: Coverage,
 ) -> Result<(), String> {
-    if harness == "pi" {
+    if harness == Backend::Pi {
         if coverage.history {
             let contents = fs::read_to_string(path).map_err(|error| {
                 format!("read persisted Pi session {}: {error}", path.display())
@@ -1391,7 +1393,7 @@ pub(crate) mod support {
     /// setting here so a developer cannot accidentally point the live suite at
     /// their normal Farcaster database.
     pub(crate) struct LiveSession {
-        harness: String,
+        harness: Backend,
         capabilities: AgentCapabilities,
         project_guard: tempfile::TempDir,
         locator_guard: tempfile::TempDir,
@@ -1412,7 +1414,7 @@ pub(crate) mod support {
     }
 
     impl LiveSession {
-        pub(crate) fn start(harness: &str) -> Result<Self, String> {
+        pub(crate) fn start(harness: Backend) -> Result<Self, String> {
             let case_dir = e2e_case_dir()?;
             let descriptor = descriptor(harness)?;
             let project_guard = tempfile::tempdir_in(&case_dir)
@@ -1429,7 +1431,7 @@ pub(crate) mod support {
                 .canonicalize()
                 .map_err(|error| format!("canonicalize live project: {error}"))?;
             let config = AgentLaunchConfig {
-                program: PathBuf::from(harness),
+                program: PathBuf::from(harness.as_str()),
                 prefix_args: Vec::new(),
                 access_mode: live_access_mode_for_harness(harness)?,
                 app_proxy: None,
@@ -1490,7 +1492,7 @@ pub(crate) mod support {
         }
 
         pub(crate) fn harness(&self) -> &str {
-            &self.harness
+            self.harness.as_str()
         }
 
         pub(crate) fn capabilities(&self) -> &AgentCapabilities {
@@ -2274,7 +2276,7 @@ pub(crate) mod support {
 
         pub(crate) fn history(&mut self) -> Result<Vec<Value>, String> {
             self.require_available("native history", &self.capabilities.sessions.history)?;
-            if self.harness != "pi" {
+            if self.harness != Backend::Pi {
                 return load_external_history(&self.path)
                     .ok_or_else(|| {
                         format!(
@@ -2306,11 +2308,11 @@ pub(crate) mod support {
 
         pub(crate) fn reopen(&mut self) -> Result<(), String> {
             self.transport.close()?;
-            let session_id = if self.harness == "pi" {
+            let session_id = if self.harness == Backend::Pi {
                 None
             } else {
                 Some(
-                    external_session_locator(&self.harness, &self.path).ok_or_else(|| {
+                    external_session_locator(self.harness, &self.path).ok_or_else(|| {
                         format!("invalid live session locator: {}", self.path.display())
                     })?,
                 )
@@ -2318,7 +2320,7 @@ pub(crate) mod support {
             self.transport = spawn_session(
                 &self.config,
                 SessionLaunch {
-                    harness: self.harness.clone(),
+                    harness: self.harness,
                     session_id,
                     project: self.project().into(),
                     start: SessionStart::Resume(self.path.clone()),
@@ -2392,7 +2394,7 @@ pub(crate) mod support {
             }
             let close = self.transport.close();
             let evidence = self.write_evidence();
-            let identity = external_session_locator(&self.harness, &self.path)
+            let identity = external_session_locator(self.harness, &self.path)
                 .unwrap_or_else(|| self.path.display().to_string());
             eprintln!(
                 "E2E_LIMIT: {} LoadState-only model probe retained no-turn native locator {identity}; skipping deletion because no persisted rollout was established",
@@ -2463,7 +2465,7 @@ pub(crate) mod support {
         }
 
         fn cleanup_locator(&self) -> Result<(), String> {
-            if self.harness == "pi" {
+            if self.harness == Backend::Pi {
                 return if self.path.is_file() {
                     fs::remove_file(&self.path).map_err(|error| {
                         format!("delete Pi live session {}: {error}", self.path.display())
@@ -2473,7 +2475,7 @@ pub(crate) mod support {
                 };
             }
             if self.capabilities.sessions.delete != CapabilitySupport::Available {
-                let identity = external_session_locator(&self.harness, &self.path)
+                let identity = external_session_locator(self.harness, &self.path)
                     .unwrap_or_else(|| self.path.display().to_string());
                 eprintln!(
                     "E2E_LIMIT: {} does not support native session deletion; retaining isolated native session {identity}",
@@ -2530,7 +2532,7 @@ pub(crate) mod support {
     /// this helper never asks for a catalog or changes a model.  The probe
     /// always closes before its caller can launch MCP-backed child workers,
     /// which restores the scoped MCP guard.
-    pub(crate) fn selected_live_worker_model(harness: &str) -> Result<LiveWorkerModel, String> {
+    pub(crate) fn selected_live_worker_model(harness: Backend) -> Result<LiveWorkerModel, String> {
         let mut probe = LiveSession::start(harness)?;
         let outcome = (|| {
             let state = probe.load_state()?;
@@ -2611,8 +2613,10 @@ pub(crate) mod support {
         }
     }
 
-    pub(crate) fn live_access_mode_for_harness(harness: &str) -> Result<HarnessAccessMode, String> {
-        if harness == "pi" {
+    pub(crate) fn live_access_mode_for_harness(
+        harness: Backend,
+    ) -> Result<HarnessAccessMode, String> {
+        if harness == Backend::Pi {
             return match std::env::var("FARCASTER_E2E_ACCESS_MODE").ok().as_deref() {
                 None | Some("sandboxed") => Ok(HarnessAccessMode::Sandboxed),
                 Some("full") => Ok(HarnessAccessMode::Full),
@@ -2624,21 +2628,21 @@ pub(crate) mod support {
         live_access_mode(&descriptor(harness)?.capabilities)
     }
 
-    pub(crate) fn native_questions_available(harness: &str) -> Result<bool, String> {
+    pub(crate) fn native_questions_available(harness: Backend) -> Result<bool, String> {
         Ok(
             descriptor(harness)?.capabilities.interactions.questions
                 == CapabilitySupport::Available,
         )
     }
 
-    pub(crate) fn native_approvals_available(harness: &str) -> Result<bool, String> {
+    pub(crate) fn native_approvals_available(harness: Backend) -> Result<bool, String> {
         Ok(
             descriptor(harness)?.capabilities.interactions.approvals
                 == CapabilitySupport::Available,
         )
     }
 
-    pub(crate) fn require_native_input_support(harness: &str) -> Result<(), String> {
+    pub(crate) fn require_native_input_support(harness: Backend) -> Result<(), String> {
         let capabilities = descriptor(harness)?.capabilities;
         if capabilities.interactions.questions == CapabilitySupport::Available
             || capabilities.interactions.approvals == CapabilitySupport::Available
@@ -2655,6 +2659,7 @@ pub(crate) mod support {
         mut exercise: impl FnMut(&mut LiveSession) -> Result<(), String>,
     ) -> Result<(), String> {
         for harness in selected_live_harnesses()? {
+            let harness = harness.parse::<Backend>()?;
             let mut session = LiveSession::start(harness)
                 .map_err(|error| format!("{harness}: start live session: {error}"))?;
             let outcome = exercise(&mut session).map_err(|error| format!("{harness}: {error}"));

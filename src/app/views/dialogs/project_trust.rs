@@ -20,7 +20,7 @@ pub(in crate::app::views) fn render(
         .project_trust_project
         .as_deref()
         .unwrap_or(app.project.as_path());
-    let backend = app.project_trust_backend.as_deref();
+    let backend = app.project_trust_backend;
     let title = backend.map_or_else(
         || "Farcaster project trust".to_owned(),
         |backend| {
@@ -35,8 +35,9 @@ pub(in crate::app::views) fn render(
         .unwrap_or(projects::TRUST_DESCRIPTION);
     let editable_backend = (backend.is_none()
         && app.pending_project_trust_command.is_none()
-        && crate::agents::project_trust_description(&app.snapshot.harness).is_some())
-    .then_some(app.snapshot.harness.clone());
+        && crate::agents::project_trust_description(app.snapshot.harness).is_some())
+    .then_some(app.snapshot.harness)
+    .flatten();
     let decision = match backend {
         Some(backend) => crate::agents::saved_project_trust(backend, project),
         None => crate::app::project::trust::saved_decision(project),
@@ -120,7 +121,7 @@ pub(in crate::app::views) fn render(
                     })
                     .child(choices)
                     .when_some(editable_backend, |content, backend| {
-                        let label = format!("{} project trust…", crate::agents::backend_display_name(&backend));
+                        let label = format!("{} project trust…", crate::agents::backend_display_name(backend));
                         let project = project.to_path_buf();
                         let entity = entity.clone();
                         content.child(button("backend-project-trust", label, ButtonTone::Quiet, true, move |window, cx| {

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use crate::{
     app::composer::{sessions::ComposerSnapshot, user_invocations},
     protocol::SlashCommand,
@@ -24,7 +25,7 @@ pub(in crate::app) fn resolve(
         project_files,
         suggestion_selection,
         commands,
-        "pi",
+        Some(Backend::Pi),
     )
 }
 
@@ -34,7 +35,7 @@ pub(in crate::app) fn resolve_for_harness(
     project_files: &[String],
     suggestion_selection: usize,
     commands: &[SlashCommand],
-    harness: &str,
+    harness: Option<Backend>,
 ) -> Option<ComposerCompletion> {
     if let Some(query) = file_mentions::query_at_cursor(text, cursor) {
         let matches = file_mentions::matches(project_files, &query.text);

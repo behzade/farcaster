@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -25,7 +26,7 @@ pub(crate) struct WorkerPool {
 }
 
 struct PoolInner {
-    factories: BTreeMap<String, Arc<dyn WorkerSessionFactory>>,
+    factories: BTreeMap<Backend, Arc<dyn WorkerSessionFactory>>,
     allowed_projects: Mutex<BTreeSet<std::path::PathBuf>>,
     app_proxy: Mutex<Option<String>>,
     concurrency: WorkerConcurrency,
@@ -39,7 +40,7 @@ struct PoolInner {
 struct PoolState {
     sequence: u64,
     records: BTreeMap<String, WorkerRecord>,
-    stopping_families: BTreeSet<(std::path::PathBuf, String, String)>,
+    stopping_families: BTreeSet<(std::path::PathBuf, Backend, String)>,
 }
 
 struct WorkerRecord {
@@ -49,14 +50,14 @@ struct WorkerRecord {
     factory: Arc<dyn WorkerSessionFactory>,
     launch: WorkerLaunch,
     assignment: Option<super::WorkerAssignment>,
-    parent_backend: Option<String>,
+    parent_backend: Option<Backend>,
     cleanup_confirmed: Arc<AtomicBool>,
 }
 
 impl WorkerPool {
     pub(crate) fn new(
-        factories: BTreeMap<String, Arc<dyn WorkerSessionFactory>>,
-        default_backend: String,
+        factories: BTreeMap<Backend, Arc<dyn WorkerSessionFactory>>,
+        default_backend: Backend,
         allowed_project: std::path::PathBuf,
         maximum: usize,
     ) -> Result<Self, String> {
@@ -167,7 +168,7 @@ impl WorkerPool {
                 request.parent_session.clone(),
             )
         });
-        let parent_backend = parent.as_ref().and_then(|parent| parent.backend.clone());
+        let parent_backend = parent.as_ref().and_then(|parent| parent.backend);
 
         let mut state = self
             .inner
@@ -222,7 +223,7 @@ impl WorkerPool {
                 retain_failed_setup(
                     &mut state,
                     &id,
-                    &request.backend,
+                    request.backend,
                     &project,
                     factory,
                     launch,
@@ -250,7 +251,7 @@ impl WorkerPool {
                 retain_failed_setup(
                     &mut state,
                     &id,
-                    &request.backend,
+                    request.backend,
                     &project,
                     factory,
                     launch,
@@ -312,7 +313,7 @@ impl WorkerPool {
     pub(crate) fn stop_session_family(
         &self,
         project: &Path,
-        sessions: &[(String, std::path::PathBuf)],
+        sessions: &[(crate::agents::Backend, std::path::PathBuf)],
     ) -> Result<usize, String> {
         let project = canonical_directory(project)?;
         let mut sessions = sessions
@@ -391,7 +392,7 @@ impl WorkerPool {
     pub(crate) fn finish_session_family_stop(
         &self,
         project: &Path,
-        sessions: &[(String, std::path::PathBuf)],
+        sessions: &[(crate::agents::Backend, std::path::PathBuf)],
     ) -> Result<(), String> {
         let project = canonical_directory(project)?;
         let mut state = self
@@ -426,7 +427,7 @@ impl WorkerPool {
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
         if state.stopping_families.contains(&(
             parent.project.clone(),
-            parent.backend.clone(),
+            parent.backend,
             parent.session.clone(),
         )) {
             return Err("worker session family is stopping".into());
@@ -434,7 +435,7 @@ impl WorkerPool {
         let Some(id) = state.records.iter().find_map(|(id, record)| {
             (record.launch.project == parent.project
                 && record.launch.parent_session == parent.session
-                && record.parent_backend.as_deref() == Some(parent.backend.as_str())
+                && record.parent_backend == Some(parent.backend)
                 && record.launch.worker_name.eq_ignore_ascii_case(name)
                 && record.thread.is_none()
                 && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Idle))
@@ -557,7 +558,7 @@ impl WorkerPool {
 fn expand_family_sessions(
     state: &PoolState,
     project: &Path,
-    sessions: &mut BTreeSet<(String, String)>,
+    sessions: &mut BTreeSet<(Backend, String)>,
 ) {
     loop {
         let descendants = state
@@ -749,12 +750,12 @@ fn close_setup_session(session: &mut dyn WorkerSession, mut error: String) -> (S
 fn retain_failed_setup(
     state: &mut PoolState,
     id: &str,
-    backend: &str,
+    backend: Backend,
     project: &Path,
     factory: Arc<dyn WorkerSessionFactory>,
     launch: WorkerLaunch,
     assignment: Option<super::WorkerAssignment>,
-    parent_backend: Option<String>,
+    parent_backend: Option<Backend>,
     error: String,
 ) {
     state.records.insert(

@@ -1,12 +1,13 @@
 use super::*;
+use crate::agents::Backend;
 use crate::runtime::tests::owner_without_process;
 
 #[test]
 fn access_modes_reject_unsupported_and_recheck_queued_changes() {
     use HarnessAccessMode::{Auto, Full, Sandboxed};
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-    owner.harness = "claude".into();
-    owner.snapshot.harness = "claude".into();
+    owner.harness = Some(Backend::Claude);
+    owner.snapshot.harness = Some(Backend::Claude);
     owner.process_command.access_mode = Sandboxed;
     owner.set_access_mode(Auto);
     assert_eq!(owner.process_command.access_mode, Sandboxed);
@@ -46,7 +47,7 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
         }
     }
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-    owner.harness = "claude".into();
+    owner.harness = Some(Backend::Claude);
     owner.process_command.access_mode = HarnessAccessMode::Auto;
     owner.process = Some(Box::new(NoCommands));
     let model: Model = serde_json::from_value(json!({
@@ -72,12 +73,12 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
 fn unsupported_harness_never_promotes_auto_to_full() {
     use HarnessAccessMode::{Auto, Sandboxed};
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-    owner.harness = "custom".into();
+    owner.harness = None;
     owner.process_command.access_mode = Auto;
     owner.publish();
     assert_eq!(owner.process_command.access_mode, Auto);
     assert!(owner.snapshot.available_access_modes().is_empty());
-    owner.stage_draft("codex-cli".into(), std::env::temp_dir());
+    owner.stage_draft(Some(Backend::Codex), std::env::temp_dir());
     assert_eq!(owner.snapshot.access_mode, Auto);
     assert_eq!(owner.process_command.access_mode, Auto);
     owner.set_access_mode(Sandboxed);

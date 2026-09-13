@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
@@ -7,7 +8,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
         crate::app::persistence::StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let unrelated_parent = SessionSummary::from_cached_for_harness(
         "not-imported-parent".into(),
-        "pi".into(),
+        Backend::Pi,
         temp.path().join("session-locators/pi/not-imported-parent"),
         temp.path().to_path_buf(),
         "Same native ID, other backend".into(),
@@ -24,7 +25,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
     store.index_sessions(&[unrelated_parent], false)?;
     let child = SessionSummary::from_cached_for_harness(
         "child".into(),
-        "codex-cli".into(),
+        Backend::Codex,
         temp.path().join("session-locators/codex-cli/child"),
         temp.path().to_path_buf(),
         "Imported child".into(),
@@ -48,7 +49,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
 
     let parent = SessionSummary::from_cached_for_harness(
         "not-imported-parent".into(),
-        "codex-cli".into(),
+        Backend::Codex,
         temp.path()
             .join("session-locators/codex-cli/not-imported-parent"),
         temp.path().to_path_buf(),
@@ -74,7 +75,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
     }));
     let imported_parent = roots
         .iter()
-        .find(|session| session.harness == "codex-cli")
+        .find(|session| session.harness == Backend::Codex)
         .ok_or("missing same-backend parent")?;
     assert_eq!(
         descendant_sessions_for_root(&cached, imported_parent).len(),
@@ -88,9 +89,9 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
     );
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: temp.path().to_path_buf(),
-        parent_backend: "codex-cli".into(),
+        parent_backend: Backend::Codex,
         parent_session: "not-imported-parent".into(),
-        child_backend: "opencode".into(),
+        child_backend: Backend::OpenCode,
         child_session: "cross-backend-child".into(),
         execution: None,
     })?;
@@ -100,7 +101,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
         .find(|session| session.id == "cross-backend-child")
         .ok_or("missing explicit cross-backend child")?;
     assert_eq!(
-        cross_backend_child.parent_harness.as_deref(),
+        cross_backend_child.parent_harness.map(Backend::as_str),
         Some("codex-cli")
     );
     assert!(

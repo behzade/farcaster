@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 use crate::agents::{
     CallerProfile, CallerRegistry, WorkerEvent, WorkerLaunch, WorkerSendMode, WorkerSession,
@@ -61,7 +62,7 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
     let parent = registry.issue(
         temp.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -75,8 +76,8 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
     let factory: Arc<dyn WorkerSessionFactory> =
         Arc::new(InputWorkerFactory(Mutex::new(Some(receiver))));
     let pool = agents::WorkerPool::new(
-        std::collections::BTreeMap::from([("pi".into(), factory)]),
-        "pi".into(),
+        std::collections::BTreeMap::from([(Backend::Pi, factory)]),
+        Backend::Pi,
         temp.path().into(),
         1,
     )?;
@@ -85,7 +86,7 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
         project: temp.path().into(),
         name: "approval-child".into(),
         prompt: "work".into(),
-        backend: "pi".into(),
+        backend: Backend::Pi,
         parent_session: caller.session,
         parent_worker_id: Some(caller.worker_id),
         context: agents::WorkerContext::Fresh,

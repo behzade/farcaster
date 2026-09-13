@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[derive(Default)]
 pub(super) struct PendingSessionControls {
@@ -83,7 +84,10 @@ enum SessionControl {
 }
 
 impl SessionControl {
-    fn supported_by(&self, harness: &str) -> bool {
+    fn supported_by(&self, harness: impl Into<Option<Backend>>) -> bool {
+        let Some(harness) = harness.into() else {
+            return false;
+        };
         match self {
             Self::Thinking(None) => crate::agents::supports_reasoning_reset(harness),
             Self::Thinking(Some(_)) => crate::agents::supports_reasoning_effort(harness),
@@ -112,7 +116,7 @@ impl SessionControl {
 impl RuntimeOwner {
     pub(super) fn set_model(&mut self, model: Model) {
         let available = crate::agents::available_access_modes(
-            &self.harness,
+            self.harness,
             Some(self.snapshot.catalog_model(&model)),
             self.selected_sandbox_adapter().as_deref(),
         );
@@ -186,7 +190,7 @@ impl RuntimeOwner {
     }
 
     fn send_session_control(&mut self, control: SessionControl) {
-        if !control.supported_by(&self.harness) {
+        if !control.supported_by(self.harness) {
             return;
         }
         if !self.snapshot.history_preview && self.process.is_some() {
@@ -243,7 +247,7 @@ impl RuntimeOwner {
             if self.process.is_none() {
                 break;
             }
-            if control.supported_by(&self.harness) {
+            if control.supported_by(self.harness) {
                 self.send(control.into_request());
             }
         }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 pub(super) fn run(
     project: PathBuf,
@@ -6,7 +7,7 @@ pub(super) fn run(
     command_rx: mpsc::Receiver<RuntimeCommand>,
     event_tx: SessionEventSender,
     load_catalog: bool,
-    harness: String,
+    harness: Option<Backend>,
 ) -> Result<(), String> {
     let (history_tx, history_rx) = mpsc::channel();
     let (state, state_error) = match StateStore::open() {

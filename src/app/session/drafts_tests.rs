@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn empty_startup_draft_stays_deleted_after_late_composer_save()
@@ -9,7 +10,7 @@ fn empty_startup_draft_stays_deleted_after_late_composer_save()
     let database = temp.path().join("state.sqlite3");
     let project = temp.path().canonicalize()?;
     let mut store = StateStore::open_at(&database)?;
-    let draft = DraftSession::with_id("pi".into(), "startup".into(), project.clone());
+    let draft = DraftSession::with_id(Some(Backend::Pi), "startup".into(), project.clone());
     let id = store.allocate_app_session_id(&draft)?;
     let mut registry = store.load_registry()?;
     assert!(sync_materialized_draft(
@@ -17,7 +18,7 @@ fn empty_startup_draft_stays_deleted_after_late_composer_save()
         "startup",
         id,
         &project,
-        "pi",
+        Some(Backend::Pi),
         false,
     ));
     store.save_registry(&registry)?;
@@ -81,7 +82,7 @@ fn drafts_materialize_only_when_leaving_a_composer_with_content() {
         "ephemeral",
         42,
         &project,
-        "codex-cli",
+        Some(Backend::Codex),
         false,
     ));
     assert!(drafts.is_empty());
@@ -90,19 +91,19 @@ fn drafts_materialize_only_when_leaving_a_composer_with_content() {
         "ephemeral",
         42,
         &project,
-        "codex-cli",
+        Some(Backend::Codex),
         true,
     ));
     assert_eq!(drafts.len(), 1);
     assert_eq!(drafts[0].id, "ephemeral");
     assert_eq!(drafts[0].app_session_id, 42);
-    assert_eq!(drafts[0].harness, "codex-cli");
+    assert_eq!(drafts[0].harness, Some(Backend::Codex));
     assert!(!sync_materialized_draft(
         &mut drafts,
         "ephemeral",
         42,
         &project,
-        "codex-cli",
+        Some(Backend::Codex),
         true,
     ));
     assert!(sync_materialized_draft(
@@ -110,7 +111,7 @@ fn drafts_materialize_only_when_leaving_a_composer_with_content() {
         "ephemeral",
         42,
         &project,
-        "codex-cli",
+        Some(Backend::Codex),
         false,
     ));
     assert!(drafts.is_empty());
@@ -136,7 +137,7 @@ fn submitted_pathless_drafts_keep_their_pending_identity() {
     let draft = DraftSession {
         id: "pending".into(),
         app_session_id: 1,
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         project: PathBuf::from("/project"),
         created_ms: 1,
         submitted: true,
@@ -233,7 +234,7 @@ fn accepted_draft_with_exact_path_reconciles_after_store_reopen()
     let mut drafts = vec![DraftSession {
         id: "a".into(),
         app_session_id: 1,
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         project: project.clone(),
         created_ms: 1,
         submitted: false,
@@ -293,7 +294,7 @@ fn accepted_draft_without_a_path_is_never_durable() {
     let mut drafts = vec![DraftSession {
         id: "a".into(),
         app_session_id: 1,
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         project: PathBuf::from("/project"),
         created_ms: 1,
         submitted: false,
@@ -370,13 +371,20 @@ fn materialized_codex_draft_can_enqueue_without_a_duplicate_client_key()
     let temp = tempfile::tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let draft = DraftSession::with_id(
-        "codex-cli".into(),
+        Some(Backend::Codex),
         "codex-draft".into(),
         temp.path().to_owned(),
     );
     let id = store.allocate_app_session_id(&draft)?;
     let mut drafts = Vec::new();
-    sync_materialized_draft(&mut drafts, &draft.id, id, temp.path(), "codex-cli", true);
+    sync_materialized_draft(
+        &mut drafts,
+        &draft.id,
+        id,
+        temp.path(),
+        Some(Backend::Codex),
+        true,
+    );
     store.save_registry(&projects::Registry {
         projects: vec![temp.path().to_owned()],
         drafts,
@@ -384,7 +392,7 @@ fn materialized_codex_draft_can_enqueue_without_a_duplicate_client_key()
     })?;
     store.enqueue_prompt(
         &draft_target(&draft.id),
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         None,
         crate::protocol::PromptMode::Normal,
@@ -392,6 +400,9 @@ fn materialized_codex_draft_can_enqueue_without_a_duplicate_client_key()
         &[],
     )?;
     assert_eq!(store.queued_prompts()?.len(), 1);
-    assert_eq!(store.load_registry()?.drafts[0].harness, "codex-cli");
+    assert_eq!(
+        store.load_registry()?.drafts[0].harness,
+        Some(Backend::Codex)
+    );
     Ok(())
 }

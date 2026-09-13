@@ -1,5 +1,6 @@
 //! Native title metadata travels through real HTTP/SSE and ACP adapters.
 use super::*;
+use crate::agents::Backend;
 use std::{
     io::Read,
     net::{Shutdown, TcpListener},
@@ -124,7 +125,7 @@ fn opencode_resume_preserves_backend_title() {
     isolated_title(
         "title_native_tests::opencode_resume_preserves_backend_title",
         || {
-            let s = Scenario::new("opencode", Some("Saved OpenCode title"), true);
+            let s = Scenario::new(Backend::OpenCode, Some("Saved OpenCode title"), true);
             assert_eq!(
                 s.name(),
                 Some("Saved OpenCode title"),
@@ -139,7 +140,7 @@ fn opencode_title_event_reaches_runtime_and_cache() {
     isolated_title(
         "title_native_tests::opencode_title_event_reaches_runtime_and_cache",
         || {
-            let mut s = Scenario::new("opencode", None, false);
+            let mut s = Scenario::new(Backend::OpenCode, None, false);
             s.until(|s| s.backend.state.lock().unwrap().event_stream.is_some());
             let event = json!({"type":"session.renamed","data":{"sessionID":"main-thread","title":"Native OpenCode title"}});
             writeln!(
@@ -164,7 +165,7 @@ fn acp_and_cursor_title_events_reach_runtime_and_cache() {
     isolated_title(
         "title_native_tests::acp_and_cursor_title_events_reach_runtime_and_cache",
         || {
-            for harness in ["antigravity-acp", "cursor-cli"] {
+            for harness in [Backend::Antigravity, Backend::Cursor] {
                 let mut s = Scenario::new(harness, None, false);
                 write(
                     s.backend.state.lock().unwrap().main.as_mut().unwrap(),

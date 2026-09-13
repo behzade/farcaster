@@ -95,7 +95,7 @@ pub(in crate::app::views) fn render(
                             .text_color(THEME.colors.subtle)
                             .child(format!(
                                 "{} · {}",
-                                crate::agents::backend_display_name(&settings.harness),
+                                crate::agents::backend_display_name(settings.harness),
                                 settings
                                     .model
                                     .as_ref()

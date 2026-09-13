@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{io::Cursor, path::PathBuf, time::SystemTime};
 
 use super::*;
@@ -8,7 +9,7 @@ fn family() -> Vec<SessionSummary> {
         .map(|id| {
             SessionSummary::from_cached_for_harness(
                 id.into(),
-                "codex-cli".into(),
+                Backend::Codex,
                 PathBuf::from(format!("/locators/codex-cli/{id}")),
                 "/source".into(),
                 String::new(),

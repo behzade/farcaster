@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 mod responses;
 use responses::CatalogQuery;
 
@@ -71,7 +72,7 @@ impl PromptDelivery {
 }
 
 pub(super) struct WorkerSessionTransport {
-    harness: String,
+    harness: Backend,
     locator: String,
     path: PathBuf,
     worker: Box<dyn WorkerSession>,
@@ -97,7 +98,7 @@ pub(super) struct WorkerSessionTransport {
 impl WorkerSessionTransport {
     pub(super) fn new(
         locator_root: &std::path::Path,
-        harness: &str,
+        harness: Backend,
         locator: String,
         worker: Box<dyn WorkerSession>,
         metadata: MainSessionMetadata,
@@ -523,7 +524,7 @@ impl WorkerSessionTransport {
                     .path
                     .parent()
                     .and_then(|path| path.parent())
-                    .map(|root| external_session_path(root, &self.harness, &id));
+                    .map(|root| external_session_path(root, self.harness, &id));
                 json!({"type": "child_sessions_changed", "child": {
                     "id": id, "path": path, "title": title,
                     "parent_session": self.locator, "is_running": is_running,
@@ -800,8 +801,7 @@ impl SessionTransport for WorkerSessionTransport {
             } => {
                 let requested_mode = mode;
                 // Backends without live steering still admit Enter as a follow-up.
-                let mode = if mode == PromptMode::Steer && !super::supports_steering(&self.harness)
-                {
+                let mode = if mode == PromptMode::Steer && !super::supports_steering(self.harness) {
                     PromptMode::FollowUp
                 } else {
                     mode
@@ -1050,18 +1050,18 @@ fn interaction(input: WorkerInput) -> ExtensionUiRequest {
 
 pub(in crate::modules::agents::adapter) fn external_session_path(
     locator_root: &std::path::Path,
-    harness: &str,
+    harness: Backend,
     locator: &str,
 ) -> PathBuf {
     let encoded = url::form_urlencoded::byte_serialize(locator.as_bytes()).collect::<String>();
-    locator_root.join(harness).join(encoded)
+    locator_root.join(harness.as_str()).join(encoded)
 }
 
 pub(in crate::modules::agents::adapter) fn external_session_locator(
-    harness: &str,
+    harness: Backend,
     path: &std::path::Path,
 ) -> Option<String> {
-    (path.parent()?.file_name()?.to_str()? == harness)
+    (path.parent()?.file_name()?.to_str()? == harness.as_str())
         .then(|| percent_decode(path.file_name()?.to_str()?))
         .flatten()
 }
@@ -1072,7 +1072,7 @@ pub(in crate::modules::agents::adapter) fn launch_session_locator(
     match &launch.start {
         crate::agents::SessionStart::New => launch.session_id.clone(),
         crate::agents::SessionStart::Resume(path) | crate::agents::SessionStart::Fork(path) => {
-            external_session_locator(&launch.harness, path).or_else(|| launch.session_id.clone())
+            external_session_locator(launch.harness, path).or_else(|| launch.session_id.clone())
         }
     }
 }

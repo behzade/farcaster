@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     path::PathBuf,
     thread,
@@ -12,7 +13,7 @@ fn session_actor_publishes_the_harness_it_was_born_with() {
         PathBuf::from("/project"),
         AgentLaunchConfig::default(),
         false,
-        "cursor-cli".into(),
+        Some(Backend::Cursor),
         thread::current(),
     );
     let deadline = Instant::now() + Duration::from_secs(1);
@@ -20,7 +21,7 @@ fn session_actor_publishes_the_harness_it_was_born_with() {
     while Instant::now() < deadline {
         while let Ok(event) = actor.events.try_recv() {
             if let RuntimeEvent::Snapshot { snapshot, .. } = event {
-                harness = Some(snapshot.harness.clone());
+                harness = Some(snapshot.harness);
             }
         }
         if harness.is_some() {
@@ -29,5 +30,5 @@ fn session_actor_publishes_the_harness_it_was_born_with() {
         thread::sleep(Duration::from_millis(5));
     }
     actor.send(RuntimeCommand::Shutdown);
-    assert_eq!(harness.as_deref(), Some("cursor-cli"));
+    assert_eq!(harness.flatten(), Some(Backend::Cursor));
 }

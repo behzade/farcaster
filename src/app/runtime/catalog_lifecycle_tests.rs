@@ -1,5 +1,6 @@
 //! Isolated integration tests: supervisor -> real adapter -> fixture process -> snapshot.
 use super::*;
+use crate::agents::Backend;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -144,7 +145,11 @@ impl Harness {
         // Unlike RuntimeHandle::spawn_with, do not disable catalog discovery.
         let runtime = RuntimeHandle::spawn_with_configuration_refresh(
             project.clone(),
-            crate::projects::DraftSession::with_id("pi".into(), "initial".into(), project.clone()),
+            crate::projects::DraftSession::with_id(
+                Some(Backend::Pi),
+                "initial".into(),
+                project.clone(),
+            ),
             None,
             AgentLaunchConfig {
                 session_locator_root: Some(project.join("session-locators")),
@@ -159,7 +164,7 @@ impl Harness {
         }
     }
 
-    fn select(&self, backend: &str, id: &str) {
+    fn select(&self, backend: Backend, id: &str) {
         self.runtime
             .send(RuntimeCommand::ResumeDraft {
                 id: id.into(),
@@ -186,7 +191,7 @@ impl Harness {
 
     fn snapshot(
         &self,
-        backend: &str,
+        backend: Backend,
         matches: impl Fn(&RuntimeSnapshot) -> bool,
     ) -> Arc<RuntimeSnapshot> {
         let deadline = Instant::now() + WAIT;
@@ -194,7 +199,7 @@ impl Harness {
         loop {
             while let Ok(event) = self.runtime.try_recv() {
                 if let RuntimeEvent::Snapshot { snapshot, .. } = event
-                    && snapshot.harness == backend
+                    && snapshot.harness == Some(backend)
                 {
                     if matches(&snapshot) {
                         return snapshot;
@@ -213,7 +218,7 @@ impl Harness {
 
 struct Peer {
     reader: BufReader<UnixStream>,
-    backend: String,
+    backend: Backend,
 }
 
 impl Peer {
@@ -237,7 +242,11 @@ impl Peer {
         );
         Self {
             reader,
-            backend: backend.trim().into(),
+            backend: match backend.trim() {
+                // The fixture reports the executable name, not the stored backend ID.
+                "codex" => Backend::Codex,
+                name => name.parse().expect("fixture backend"),
+            },
         }
     }
 
@@ -252,7 +261,7 @@ impl Peer {
             self.backend
         );
         let value: Value = serde_json::from_str(&line).expect("test operation should succeed");
-        let actual = if self.backend == "claude" {
+        let actual = if self.backend == Backend::Claude {
             &value["request"]["subtype"]
         } else {
             &value["method"]
@@ -270,7 +279,7 @@ impl Peer {
     }
 
     fn reply(&mut self, request: &Value, result: Value) {
-        self.write(if self.backend == "claude" {
+        self.write(if self.backend == Backend::Claude {
             json!({"type":"control_response", "response":{
                 "subtype":"success", "request_id":request["request_id"], "response":result
             }})
@@ -282,7 +291,7 @@ impl Peer {
     fn complete_catalog(&mut self, fail: bool) {
         let request = self.request("initialize");
         if fail {
-            self.write(if self.backend == "claude" {
+            self.write(if self.backend == Backend::Claude {
                 json!({"type":"control_response", "response":{
                     "subtype":"error", "request_id":request["request_id"], "error":"fixture unavailable"
                 }})
@@ -293,7 +302,7 @@ impl Peer {
             });
             return;
         }
-        if self.backend == "claude" {
+        if self.backend == Backend::Claude {
             self.reply(&request, json!({
                 "commands":[], "agents":[], "output_style":"default", "available_output_styles":[],
                 "account":{}, "models":[{"value":"fixture-model", "displayName":"Fixture model", "description":"Test"}]
@@ -308,7 +317,7 @@ impl Peer {
         self.reply(&request, json!({"sessionId":"fixture-session", "models":{
             "currentModelId":"fixture-model", "availableModels":[{"modelId":"fixture-model", "name":"Fixture model"}]
         }}));
-        if self.backend == "cursor-cli" {
+        if self.backend == Backend::Cursor {
             let request = self.request("cursor/list_available_models");
             self.reply(&request, json!({"models":[]}));
         }
@@ -323,7 +332,7 @@ impl Drop for Peer {
     }
 }
 
-fn round_trip(backend: &str) {
+fn round_trip(backend: Backend) {
     let harness = Harness::start();
     harness.select(backend, "selected");
     let mut peer = harness
@@ -347,7 +356,7 @@ fn antigravity_catalog_reaches_runtime_snapshot() {
     isolated(
         "antigravity_catalog_reaches_runtime_snapshot",
         &["antigravity-acp"],
-        || round_trip("antigravity-acp"),
+        || round_trip(Backend::Antigravity),
     );
 }
 
@@ -357,7 +366,7 @@ fn claude_cached_models_survive_failed_refresh_after_restart() {
         "claude_cached_models_survive_failed_refresh_after_restart",
         &["claude"],
         || {
-            round_trip("claude");
+            round_trip(Backend::Claude);
             // Keep the same on-disk application state but replace the supervisor.
             fs::remove_file(
                 std::env::current_dir()
@@ -366,15 +375,15 @@ fn claude_cached_models_survive_failed_refresh_after_restart() {
             )
             .expect("test operation should succeed");
             let harness = Harness::start();
-            harness.select("claude", "restored");
+            harness.select(Backend::Claude, "restored");
             let mut peer = harness.accept(WAIT).expect("refresh did not start");
-            assert_eq!(peer.backend, "claude");
+            assert_eq!(peer.backend, Backend::Claude);
             // The refreshed response is still held: these models must come from disk.
-            let cached = harness.snapshot("claude", |s| {
+            let cached = harness.snapshot(Backend::Claude, |s| {
                 s.models.iter().any(|model| model.id == "fixture-model")
             });
             peer.complete_catalog(true);
-            let failed = harness.snapshot("claude", |s| {
+            let failed = harness.snapshot(Backend::Claude, |s| {
                 matches!(&s.configuration_status, ConfigurationStatus::Failed(error) if error.contains("fixture unavailable"))
             });
             assert_eq!(failed.models, cached.models);
@@ -389,20 +398,20 @@ fn stalled_acp_catalog_does_not_block_native_claude() {
         &["antigravity-acp", "claude"],
         || {
             let harness = Harness::start();
-            harness.select("antigravity-acp", "stalled");
-            harness.select("claude", "healthy");
+            harness.select(Backend::Antigravity, "stalled");
+            harness.select(Backend::Claude, "healthy");
             let first = harness.accept(WAIT).expect("first backend did not start");
             let second = harness.accept(WAIT).expect("second backend did not start");
-            let (mut stalled, mut healthy) = if first.backend == "antigravity-acp" {
+            let (mut stalled, mut healthy) = if first.backend == Backend::Antigravity {
                 (first, second)
             } else {
                 (second, first)
             };
-            assert_eq!(stalled.backend, "antigravity-acp");
-            assert_eq!(healthy.backend, "claude");
+            assert_eq!(stalled.backend, Backend::Antigravity);
+            assert_eq!(healthy.backend, Backend::Claude);
             stalled.request("initialize");
             healthy.complete_catalog(false);
-            harness.snapshot("claude", |s| {
+            harness.snapshot(Backend::Claude, |s| {
                 s.configuration_status == ConfigurationStatus::Loaded
             });
             drop(stalled);
@@ -426,7 +435,7 @@ fn startup_does_not_launch_unselected_catalogs() {
     );
 }
 
-fn recovers_after_reselection(backend: &str) {
+fn recovers_after_reselection(backend: Backend) {
     let harness = Harness::start();
     harness.select(backend, "first");
     let mut peer = harness.accept(WAIT).expect("first catalog did not start");
@@ -454,7 +463,7 @@ fn recovers_after_reselection(backend: &str) {
 #[test]
 fn claude_recovers_after_reselection() {
     isolated("claude_recovers_after_reselection", &["claude"], || {
-        recovers_after_reselection("claude")
+        recovers_after_reselection(Backend::Claude)
     });
 }
 
@@ -463,7 +472,7 @@ fn antigravity_recovers_after_reselection() {
     isolated(
         "antigravity_recovers_after_reselection",
         &["antigravity-acp"],
-        || recovers_after_reselection("antigravity-acp"),
+        || recovers_after_reselection(Backend::Antigravity),
     );
 }
 
@@ -474,10 +483,10 @@ fn picker_request_retries_failed_catalog_and_coalesces_repeated_requests() {
         &["claude"],
         || {
             let harness = Harness::start();
-            harness.select("claude", "selected");
+            harness.select(Backend::Claude, "selected");
             let mut peer = harness.accept(WAIT).expect("initial catalog did not start");
             peer.complete_catalog(true);
-            harness.snapshot("claude", |s| {
+            harness.snapshot(Backend::Claude, |s| {
                 matches!(s.configuration_status, ConfigurationStatus::Failed(_))
             });
             drop(peer);
@@ -485,17 +494,17 @@ fn picker_request_retries_failed_catalog_and_coalesces_repeated_requests() {
                 harness
                     .runtime
                     .send(RuntimeCommand::LoadConfiguration {
-                        harness: "claude".into(),
+                        harness: Backend::Claude,
                         project: harness.project.clone(),
                     })
                     .expect("test operation should succeed");
             }
             let mut retry = harness.accept(WAIT).expect("picker request did not retry");
-            harness.snapshot("claude", |s| {
+            harness.snapshot(Backend::Claude, |s| {
                 s.configuration_status == ConfigurationStatus::Loading
             });
             retry.complete_catalog(false);
-            harness.snapshot("claude", |s| {
+            harness.snapshot(Backend::Claude, |s| {
                 s.configuration_status == ConfigurationStatus::Loaded
             });
             assert!(
@@ -513,17 +522,17 @@ fn stalled_acp_catalog_does_not_block_another_backend() {
         &["antigravity-acp", "cursor-cli"],
         || {
             let harness = Harness::start();
-            harness.select("antigravity-acp", "stalled");
+            harness.select(Backend::Antigravity, "stalled");
             let mut stalled = harness
                 .accept(WAIT)
                 .expect("first ACP backend did not start");
             // Receiving initialize proves this process is inside the catalog exchange.
             // Hold its response until the other backend has published models.
             stalled.request("initialize");
-            let healthy = if stalled.backend == "cursor-cli" {
-                "antigravity-acp"
+            let healthy = if stalled.backend == Backend::Cursor {
+                Backend::Antigravity
             } else {
-                "cursor-cli"
+                Backend::Cursor
             };
             harness.select(healthy, "healthy");
             let mut peer = harness

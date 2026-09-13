@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::path::Path;
 use std::{
     collections::BTreeMap,
@@ -46,7 +47,7 @@ fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
     child.parent_session = Some(parent.id.clone());
     let snapshot = agents::WorkerSnapshot {
         id: "worker-1".into(),
-        backend: child.harness.clone(),
+        backend: child.harness,
         project: child.project.clone(),
         session_locator: Some(child.path.to_string_lossy().into_owned()),
         status: agents::WorkerStatus::NeedsInput,
@@ -72,11 +73,11 @@ fn pool_snapshot_maps_to_persisted_child_and_projects_needs_input() {
 fn pool_snapshot_native_id_can_match_a_synthetic_child_locator() {
     let mut child = summary(Path::new("/locators/codex-cli/native-child"));
     child.id = "native-child".into();
-    child.harness = "codex-cli".into();
+    child.harness = Backend::Codex;
     child.parent_session = Some("parent".into());
     let snapshot = agents::WorkerSnapshot {
         id: "worker-1".into(),
-        backend: "codex-cli".into(),
+        backend: Backend::Codex,
         project: child.project.clone(),
         session_locator: Some("native-child".into()),
         status: agents::WorkerStatus::Idle,
@@ -101,18 +102,18 @@ fn pool_snapshot_native_id_can_match_a_synthetic_child_locator() {
 fn pool_snapshot_native_id_is_scoped_by_backend_and_project() {
     let mut wrong_project = summary(Path::new("/other/child"));
     wrong_project.id = "shared-child".into();
-    wrong_project.harness = "codex-cli".into();
+    wrong_project.harness = Backend::Codex;
     wrong_project.parent_session = Some("other-parent".into());
     let mut wrong_backend = summary(Path::new("/project/pi-child"));
     wrong_backend.id = "shared-child".into();
     wrong_backend.parent_session = Some("pi-parent".into());
     let mut expected = summary(Path::new("/project/codex-child"));
     expected.id = "shared-child".into();
-    expected.harness = "codex-cli".into();
+    expected.harness = Backend::Codex;
     expected.parent_session = Some("codex-parent".into());
     let snapshot = agents::WorkerSnapshot {
         id: "worker-1".into(),
-        backend: "codex-cli".into(),
+        backend: Backend::Codex,
         project: expected.project.clone(),
         session_locator: Some("shared-child".into()),
         status: agents::WorkerStatus::Running,
@@ -136,7 +137,7 @@ fn idle_pool_snapshot_without_a_settled_output_stays_unknown() {
     child.parent_session = Some("parent".into());
     let snapshot = agents::WorkerSnapshot {
         id: "worker-1".into(),
-        backend: child.harness.clone(),
+        backend: child.harness,
         project: child.project.clone(),
         session_locator: Some(child.path.to_string_lossy().into_owned()),
         status: agents::WorkerStatus::Idle,
@@ -249,10 +250,10 @@ fn pool_run_status_projects_through_catalog_matching_into_child_activity() {
     let factory = Arc::new(CatalogWorkerFactory::default());
     let pool = agents::WorkerPool::new(
         BTreeMap::from([(
-            "pi".into(),
+            Backend::Pi,
             factory.clone() as Arc<dyn agents::WorkerSessionFactory>,
         )]),
-        "pi".into(),
+        Backend::Pi,
         project.path().to_owned(),
         1,
     )
@@ -261,7 +262,7 @@ fn pool_run_status_projects_through_catalog_matching_into_child_activity() {
         project: project.path().to_owned(),
         name: "child".into(),
         prompt: "work".into(),
-        backend: "pi".into(),
+        backend: Backend::Pi,
         parent_session: "/sessions/parent.jsonl".into(),
         parent_worker_id: None,
         context: agents::WorkerContext::Fresh,

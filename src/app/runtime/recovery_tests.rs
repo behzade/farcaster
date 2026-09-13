@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::app::{extensions::ExtensionUiState, persistence::ComposerRecord};
 
 fn interrupted_prompt(
@@ -10,7 +11,7 @@ fn interrupted_prompt(
     let target = format!("session:{}", session.display());
     let id = store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         project,
         Some(session),
         PromptMode::Normal,

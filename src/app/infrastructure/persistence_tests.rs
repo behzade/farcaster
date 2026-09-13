@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::BTreeMap,
     fs,
@@ -33,7 +34,7 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     assert_eq!(store.load_preferred_harness(temp.path())?, None);
 
     let mut draft = DraftSession::new(
-        "codex-cli".into(),
+        Some(Backend::Codex),
         "main".into(),
         0,
         temp.path().to_path_buf(),
@@ -42,11 +43,17 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     draft.submitted = true;
     store.allocate_app_session_id(&draft)?;
     // An unused startup draft must not reset the inferred preference.
-    let empty = DraftSession::new("pi".into(), "empty".into(), 0, temp.path().to_path_buf(), 2);
+    let empty = DraftSession::new(
+        Some(Backend::Pi),
+        "empty".into(),
+        0,
+        temp.path().to_path_buf(),
+        2,
+    );
     store.allocate_app_session_id(&empty)?;
     assert_eq!(
         store.load_preferred_harness(temp.path())?,
-        Some("codex-cli".into())
+        Some(Backend::Codex)
     );
     drop(store);
 
@@ -58,10 +65,10 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
     drop(connection);
     assert_eq!(
         StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
-        Some("codex-cli".into())
+        Some(Backend::Codex)
     );
 
-    for harness in ["opencode", "codex-cli"] {
+    for harness in [Backend::OpenCode, Backend::Codex] {
         StateStore::open_at(&database)?.save_preferred_harness(harness)?;
         assert_eq!(
             StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
@@ -76,7 +83,7 @@ fn empty_backend_preference_is_an_error() -> Result<(), Box<dyn std::error::Erro
     let temp = tempdir()?;
     let database = temp.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
-    assert!(store.save_preferred_harness("").is_err());
+    assert!("".parse::<Backend>().is_err());
     Connection::open(&database)?.execute(
         "INSERT INTO meta(key, value) VALUES('preferred_harness', '')",
         [],
@@ -105,7 +112,7 @@ fn startup_draft_text_survives_quit_without_switching() -> Result<(), Box<dyn st
         registry.projects.push(project.clone());
 
         // Match startup: register the allocated draft before saving the registry.
-        let mut draft = DraftSession::new("pi".into(), "startup".into(), 0, project, 1);
+        let mut draft = DraftSession::new(Some(Backend::Pi), "startup".into(), 0, project, 1);
         draft.app_session_id = store.allocate_app_session_id(&draft)?;
         registry.drafts.push(draft);
         store.save_registry(&registry)?;
@@ -145,7 +152,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");
     let cached = CachedConfigurationCatalog {
-        harness: "codex-cli".into(),
+        harness: Backend::Codex,
         project: temp.path().to_path_buf(),
         catalog: ConfigurationCatalog {
             models: vec![Model {
@@ -212,12 +219,12 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
     };
     let legacy = vec![
         CachedConfigurationCatalog {
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             project: alias,
             catalog: catalog("old"),
         },
         CachedConfigurationCatalog {
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             project: project.clone(),
             catalog: catalog("new"),
         },
@@ -233,7 +240,7 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
     assert_eq!(
         StateStore::open_at(&database)?.load_configuration_catalogs()?,
         vec![CachedConfigurationCatalog {
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             project: project.canonicalize()?,
             catalog: catalog("new"),
         }]
@@ -246,7 +253,7 @@ fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::E
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");
     let cached = CachedSessionControlDefaults {
-        harness: "codex-cli".into(),
+        harness: Backend::Codex,
         model: Some(Model {
             id: "model".into(),
             name: "Model".into(),
@@ -468,7 +475,7 @@ fn legacy_queued_prompt_project_alias_is_normalized_on_read()
     let store = StateStore::open_at(&database)?;
     store.enqueue_prompt(
         &format!("session:{}", session.display()),
-        "codex-cli",
+        Backend::Codex,
         &project,
         Some(&session),
         PromptMode::Normal,
@@ -602,7 +609,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     let draft = DraftSession {
         id: "draft-one".into(),
         app_session_id: 1,
-        harness: "pi".into(),
+        harness: Some(Backend::Pi),
         project: project.clone(),
         created_ms: 7,
         submitted: true,
@@ -619,7 +626,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         store.save_app_session_order(&[7, 3, 1])?;
         store.enqueue_prompt_with_presentation(
             "draft:draft-one",
-            "pi",
+            Backend::Pi,
             &project,
             None,
             PromptMode::Normal,
@@ -672,7 +679,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     assert_eq!(store.load_app_session_order()?, vec![7, 3, 1]);
     let queued = store.queued_prompts()?;
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].harness, "pi");
+    assert_eq!(queued[0].harness, Backend::Pi);
     assert_eq!(queued[0].message, "expanded prompt");
     assert_eq!(queued[0].display_message.as_deref(), Some("$commit hello"));
     assert_eq!(queued[0].invocation.as_deref(), Some("expanded prompt"));
@@ -729,7 +736,7 @@ fn application_session_ids_are_incremental_i64_values() -> Result<(), Box<dyn st
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
     let mut draft = DraftSession::new(
-        "codex-cli".into(),
+        Some(Backend::Codex),
         "first".into(),
         0,
         temp.path().to_path_buf(),
@@ -747,7 +754,7 @@ fn application_session_ids_are_incremental_i64_values() -> Result<(), Box<dyn st
         registry
             .drafts
             .iter()
-            .all(|draft| draft.harness == "codex-cli")
+            .all(|draft| draft.harness == Some(Backend::Codex))
     );
     Ok(())
 }
@@ -895,7 +902,7 @@ fn synthetic_session_targets_keep_lexical_identity() -> Result<(), Box<dyn std::
 
     store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         &project,
         None,
         PromptMode::Normal,
@@ -960,7 +967,7 @@ fn legacy_synthetic_session_locator_keeps_one_composer_and_queue_identity()
     })?;
     store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         &project,
         None,
         PromptMode::Normal,
@@ -969,7 +976,7 @@ fn legacy_synthetic_session_locator_keeps_one_composer_and_queue_identity()
     )?;
     store.replace_sessions(&[SessionSummary::from_cached_for_harness(
         "legacy".into(),
-        "codex-cli".into(),
+        Backend::Codex,
         locator.clone(),
         project,
         "Session".into(),
@@ -1012,12 +1019,12 @@ fn session_harness_survives_the_cache() -> Result<(), Box<dyn std::error::Error>
         false,
         String::new(),
     );
-    session.harness = "codex-cli".into();
+    session.harness = Backend::Codex;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
     store.replace_sessions(&[session])?;
 
-    assert_eq!(store.cached_sessions("")?[0].harness, "codex-cli");
+    assert_eq!(store.cached_sessions("")?[0].harness, Backend::Codex);
     Ok(())
 }
 
@@ -1113,8 +1120,8 @@ fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
-    let mut draft = DraftSession::new("pi".into(), "draft".into(), 1, project.clone(), 1);
-    assert!(draft.change_harness("opencode".into()));
+    let mut draft = DraftSession::new(Some(Backend::Pi), "draft".into(), 1, project.clone(), 1);
+    assert!(draft.change_harness(Some(Backend::OpenCode)));
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
     projects::save_registry(
@@ -1128,7 +1135,7 @@ fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error
 
     assert_eq!(
         projects::load_registry(&store)?.drafts[0].harness,
-        "opencode"
+        Some(Backend::OpenCode)
     );
     Ok(())
 }
@@ -1148,7 +1155,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
         drafts: vec![DraftSession {
             id: "pending".into(),
             app_session_id: 1,
-            harness: "pi".into(),
+            harness: Some(Backend::Pi),
             project: project.clone(),
             created_ms: 1,
             submitted: false,
@@ -1190,7 +1197,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
     )?;
     let outbox = store.enqueue_prompt(
         "draft:pending",
-        "pi",
+        Backend::Pi,
         &project,
         None,
         PromptMode::Normal,
@@ -1267,7 +1274,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
         vec![DraftSession {
             id: "legacy-draft".into(),
             app_session_id: 1,
-            harness: "pi".into(),
+            harness: Some(Backend::Pi),
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -1302,7 +1309,7 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
         vec![DraftSession {
             id: "legacy-draft".into(),
             app_session_id: 1,
-            harness: "pi".into(),
+            harness: Some(Backend::Pi),
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -1402,7 +1409,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(draft.app_session_id > 0);
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
-    assert_eq!(session.harness, "pi");
+    assert_eq!(session.harness, Backend::Pi);
     assert_eq!(database_schema_version(&database)?, 16);
     Ok(())
 }
@@ -1537,7 +1544,7 @@ fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn 
         drafts: vec![DraftSession {
             id: "pending".into(),
             app_session_id: 1,
-            harness: "pi".into(),
+            harness: Some(Backend::Pi),
             project,
             created_ms: 1,
             submitted: true,
@@ -1567,7 +1574,7 @@ fn parent_identity_survives_child_first_and_partial_indexing()
     let root = persistence_summary(temp.path(), "root");
     let mut unrelated = persistence_summary(temp.path(), "other");
     unrelated.id = root.id.clone();
-    unrelated.harness = "codex".into();
+    unrelated.harness = Backend::Codex;
     store.index_sessions(&[child.clone(), unrelated], false)?;
     store.index_sessions(std::slice::from_ref(&root), false)?;
     drop(store);
@@ -1633,7 +1640,7 @@ fn discovery_prunes_only_disposable_catalog_rows() -> Result<(), Box<dyn std::er
     })?;
     store.enqueue_prompt(
         &format!("session:{}", sessions[2].path.display()),
-        "pi",
+        Backend::Pi,
         temp.path(),
         Some(&sessions[2].path),
         PromptMode::Normal,
@@ -1642,12 +1649,12 @@ fn discovery_prunes_only_disposable_catalog_rows() -> Result<(), Box<dyn std::er
     )?;
     store.set_session_archived(&sessions[3].path, true)?;
     let mut foreign = sessions[3].clone();
-    foreign.harness = "codex-cli".into();
+    foreign.harness = Backend::Codex;
     foreign.id = "foreign-archive".into();
     store.index_sessions(&[foreign], false)?;
     let presentation = store.enqueue_prompt_with_presentation(
         &format!("session:{}", sessions[4].path.display()),
-        "pi",
+        Backend::Pi,
         temp.path(),
         Some(&sessions[4].path),
         PromptMode::Normal,
@@ -1684,7 +1691,7 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
     let temp = tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
     let draft = DraftSession::new(
-        "pi".into(),
+        Some(Backend::Pi),
         "pending".into(),
         0,
         temp.path().to_path_buf(),
@@ -1693,7 +1700,7 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
     store.allocate_app_session_id(&draft)?;
     let first = store.enqueue_prompt_with_presentation(
         "draft:pending",
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -1719,7 +1726,7 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
     );
     let second = store.enqueue_prompt(
         "draft:pending",
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -1740,14 +1747,14 @@ fn worker_identity_binds_a_discovered_locator_without_creating_a_second_session(
     let mut store = StateStore::open_at(&database)?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: temp.path().to_path_buf(),
-        parent_backend: "pi".into(),
+        parent_backend: Backend::Pi,
         parent_session: "parent".into(),
-        child_backend: "codex-cli".into(),
+        child_backend: Backend::Codex,
         child_session: "child".into(),
         execution: None,
     })?;
     let mut child = persistence_summary(temp.path(), "child");
-    child.harness = "codex-cli".into();
+    child.harness = Backend::Codex;
     store.index_sessions(
         &[persistence_summary(temp.path(), "parent"), child.clone()],
         false,
@@ -1920,7 +1927,7 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
     tasks.profiles[0].name = "audit".into();
     tasks.profiles[0].description = "Review security-sensitive changes.".into();
     tasks.profiles[0].models.swap(0, 1);
-    tasks.profiles[0].models[0].harness = "codex-cli".into();
+    tasks.profiles[0].models[0].harness = Backend::Codex;
     tasks.profiles[0].models[0].provider = "openai".into();
     tasks.profiles.remove(1);
     store.save_worker_profiles(&tasks)?;
@@ -1977,12 +1984,12 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     let database = temp.path().join("settings.sqlite3");
     let link = crate::agents::WorkerFamilyLink {
         project: temp.path().to_owned(),
-        child_backend: "opencode".into(),
+        child_backend: Backend::OpenCode,
         child_session: "child-session".into(),
-        parent_backend: "pi".into(),
+        parent_backend: Backend::Pi,
         parent_session: "/sessions/parent.jsonl".into(),
         execution: Some(crate::agents::WorkerExecution {
-            harness: "opencode".into(),
+            harness: Backend::OpenCode,
             provider: "opencode-go".into(),
             model: "glm-5.3-flash".into(),
             effort: None,
@@ -2049,9 +2056,9 @@ fn legacy_worker_family_project_alias_is_normalized_on_read() -> Result<(), Stri
     let project = project.canonicalize().map_err(|error| error.to_string())?;
     let link = crate::agents::WorkerFamilyLink {
         project: project.clone(),
-        child_backend: "codex-cli".into(),
+        child_backend: Backend::Codex,
         child_session: "child".into(),
-        parent_backend: "pi".into(),
+        parent_backend: Backend::Pi,
         parent_session: "parent".into(),
         execution: None,
     };
@@ -2071,5 +2078,71 @@ fn legacy_worker_family_project_alias_is_normalized_on_read() -> Result<(), Stri
         StateStore::open_at(&database)?.load_worker_families()?,
         vec![link]
     );
+    Ok(())
+}
+
+#[test]
+fn typed_backend_persistence_preserves_unselected_drafts_and_rejects_unknown_names()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    let mut drafts = vec![DraftSession::new(
+        None,
+        "unselected".into(),
+        0,
+        temp.path().into(),
+        1,
+    )];
+    drafts.extend(Backend::ALL.into_iter().map(|backend| {
+        DraftSession::new(Some(backend), backend.to_string(), 0, temp.path().into(), 2)
+    }));
+    store.save_registry(&Registry {
+        projects: vec![temp.path().into()],
+        excluded_projects: vec![],
+        drafts,
+    })?;
+    let saved = store.load_registry()?;
+    assert_eq!(
+        saved
+            .drafts
+            .iter()
+            .find(|d| d.id == "unselected")
+            .unwrap()
+            .harness,
+        None
+    );
+    for backend in Backend::ALL {
+        assert_eq!(
+            saved
+                .drafts
+                .iter()
+                .find(|d| d.id == backend.as_str())
+                .unwrap()
+                .harness,
+            Some(backend)
+        );
+    }
+    let connection = Connection::open(&database)?;
+    let stored: String = connection.query_row(
+        "SELECT harness FROM sessions WHERE client_key='unselected'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored, "");
+    for backend in Backend::ALL {
+        let restored: Backend = connection.query_row("SELECT ?1", [backend], |row| row.get(0))?;
+        assert_eq!(restored, backend);
+    }
+    assert!(
+        connection
+            .query_row("SELECT 'unknown'", [], |row| row.get::<_, Backend>(0))
+            .is_err()
+    );
+    connection.execute(
+        "UPDATE sessions SET harness='unknown' WHERE client_key='unselected'",
+        [],
+    )?;
+    assert!(store.load_registry().is_err());
     Ok(())
 }

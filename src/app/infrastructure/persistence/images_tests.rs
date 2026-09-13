@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::protocol::PromptMode;
 
 #[test]
@@ -10,7 +11,7 @@ fn queued_images_use_portable_deduplicated_files() -> Result<(), Box<dyn std::er
     let image = PromptImage::new("aGVsbG8=".into(), "image/png".into());
     store.enqueue_prompt(
         "draft:images",
-        "pi",
+        Backend::Pi,
         directory.path(),
         None,
         PromptMode::Normal,

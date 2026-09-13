@@ -76,7 +76,7 @@ impl StateStore {
         drop(statement);
         if let Some(legacy) = super::identity::legacy_session_id_for_locator(
             &tx,
-            &update.harness,
+            update.harness,
             &path,
             &update.project,
         )? && !candidates.contains(&legacy)
@@ -179,7 +179,7 @@ impl StateStore {
             .iter()
             .map(|session| {
                 (
-                    session.harness.clone(),
+                    session.harness,
                     crate::sessions::normalize_session_path(&session.path)
                         .to_string_lossy()
                         .into_owned(),
@@ -225,7 +225,7 @@ impl StateStore {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| format!("decode indexed locators: {error}"))?;
             for (id, harness, locator) in candidates {
-                if known.contains(&(harness, locator)) {
+                if known.contains(&(harness.parse()?, locator)) {
                     continue;
                 }
                 transaction
@@ -455,7 +455,7 @@ fn upsert_bound_session(
         legacy_session_id_from_index(
             legacy_locators,
             &locator,
-            Some(&session.harness),
+            Some(session.harness),
             Some(project_id),
         )?
     };
@@ -590,7 +590,7 @@ fn legacy_session_locator_index(connection: &Connection) -> Result<LegacyLocator
 fn legacy_session_id_from_index(
     index: &LegacyLocatorIndex,
     locator: &Path,
-    harness: Option<&str>,
+    harness: Option<Backend>,
     project_id: Option<i64>,
 ) -> Result<Option<i64>, String> {
     let Some(harnesses) = index.get(locator) else {
@@ -600,7 +600,7 @@ fn legacy_session_id_from_index(
         harnesses
             .iter()
             .filter(|((candidate_harness, candidate_project), _)| {
-                harness.is_none_or(|harness| harness == candidate_harness)
+                harness.is_none_or(|harness| harness.as_str() == candidate_harness)
                     && project_id.is_none_or(|project_id| project_id == *candidate_project)
             })
             .flat_map(|(_, ids)| ids.iter().copied()),
@@ -612,7 +612,7 @@ fn legacy_session_id_from_index(
 fn legacy_session_id(
     mut ids: impl Iterator<Item = i64>,
     locator: &Path,
-    harness: Option<&str>,
+    harness: Option<Backend>,
 ) -> Result<Option<i64>, String> {
     let Some(id) = ids.next() else {
         return Ok(None);
@@ -662,12 +662,9 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     .with_app_session_id(id);
     session.parent_session = row.get(6)?;
     session.parent_app_session_id = row.get(23)?;
-    session.parent_harness = row.get::<_, Option<String>>(22)?.or_else(|| {
-        session
-            .parent_session
-            .as_ref()
-            .map(|_| session.harness.clone())
-    });
+    session.parent_harness = row
+        .get::<_, Option<Backend>>(22)?
+        .or_else(|| session.parent_session.as_ref().map(|_| session.harness));
     if let (Some(provider), Some(model)) = (provider, model) {
         session.model = Some((provider, model));
         session.thinking_level = effort;

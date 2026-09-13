@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 fn caller(id: &str, name: &str) -> CallerContext {
     CallerContext {
@@ -6,7 +7,7 @@ fn caller(id: &str, name: &str) -> CallerContext {
         worker_name: name.into(),
         project: "/project".into(),
         session: format!("session-{id}"),
-        backend: "pi".into(),
+        backend: Backend::Pi,
         provider: None,
         model: None,
         effort: None,

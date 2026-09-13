@@ -20,7 +20,7 @@ pub(in crate::app::views) fn render(
     let dialog = app.session_import.as_ref().expect("visible import");
     let dismiss = entity.clone();
     let harness = dialog.harness.clone();
-    let harness_name = agents::backend_display_name(&harness);
+    let harness_name = agents::backend_display_name(harness);
     let loading = dialog.loading;
     let error = dialog.error.clone();
     let candidates = dialog.candidates.clone();
@@ -56,7 +56,7 @@ pub(in crate::app::views) fn render(
                                 "Choose one harness, review what is on disk, then import the sessions you want. Farcaster does not watch session files.",
                             ),
                     )
-                    .child(harness_picker(entity.clone(), &harness))
+                    .child(harness_picker(entity.clone(), harness))
                     .when_some(error, |this, message| {
                         this.child(feedback("import-error", message, FeedbackTone::Error))
                     })
@@ -109,16 +109,19 @@ pub(in crate::app::views) fn render(
     .into_any_element()
 }
 
-fn harness_picker(entity: WeakEntity<FarcasterApp>, selected: &str) -> gpui::Div {
+fn harness_picker(
+    entity: WeakEntity<FarcasterApp>,
+    selected: Option<crate::agents::Backend>,
+) -> gpui::Div {
     div()
         .flex()
         .flex_wrap()
         .gap(THEME.space.xs)
         .children(import_harnesses().into_iter().map(|harness| {
-            let active = harness == selected;
+            let active = Some(harness) == selected;
             let entity = entity.clone();
             let id = format!("import-harness-{harness}");
-            let label = agents::backend_display_name(&harness);
+            let label = agents::backend_display_name(harness);
             button(
                 id,
                 label,

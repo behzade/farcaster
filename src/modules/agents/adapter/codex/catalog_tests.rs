@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn discovers_previewless_descendants_across_pages_without_duplicates() -> Result<(), String> {
@@ -117,7 +118,7 @@ fn translates_thread_metadata() -> Result<(), String> {
         "tokenUsage": {"total": {"inputTokens": 100, "outputTokens": 20, "cachedInputTokens": 80}},
     });
     let session = summary(project.as_path(), &value, false)?.ok_or("summary")?;
-    assert_eq!(session.harness, "codex-cli");
+    assert_eq!(session.harness, Backend::Codex);
     assert!(session.is_running);
     assert_eq!(session.title, "Fix tests");
     assert_eq!(session.usage.input, 20);

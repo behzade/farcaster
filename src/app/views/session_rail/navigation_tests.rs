@@ -1,11 +1,12 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn navigation_can_leave_and_return_to_an_unsubmitted_draft() {
     use crate::app::views::session_rail::folders;
     let drafts = [(30, false), (20, true), (10, false)].map(|(id, submitted)| {
         let mut draft = crate::projects::DraftSession::with_id(
-            "pi".into(),
+            Some(Backend::Pi),
             format!("draft-{id}"),
             "/project".into(),
         );

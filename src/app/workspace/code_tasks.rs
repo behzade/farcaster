@@ -76,7 +76,10 @@ impl FarcasterApp {
             );
             return;
         }
-        if !self.ensure_backend_trust(&destination.harness, &project, window, cx) {
+        if destination
+            .harness
+            .is_some_and(|harness| !self.ensure_backend_trust(harness, &project, window, cx))
+        {
             return;
         }
         let chat = TaskChat {
@@ -119,10 +122,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.ensure_backend_trust(&settings.harness, &settings.project, window, cx) {
+        if settings.harness.is_some_and(|harness| {
+            !self.ensure_backend_trust(harness, &settings.project, window, cx)
+        }) {
             return;
         }
-        let draft = project_registry::new_draft(settings.project.clone(), &settings.harness)
+        let draft = project_registry::new_draft(settings.project.clone(), settings.harness)
             .and_then(|draft| {
                 let mut registry = crate::projects::Registry {
                     projects: self.projects.clone(),

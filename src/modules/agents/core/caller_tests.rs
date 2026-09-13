@@ -1,6 +1,7 @@
 use super::*;
+use crate::agents::Backend;
 
-fn identity(registry: &CallerRegistry, project: &Path, backend: &str) -> CallerIdentity {
+fn identity(registry: &CallerRegistry, project: &Path, backend: Backend) -> CallerIdentity {
     registry.issue(
         project,
         CallerProfile {
@@ -16,7 +17,7 @@ fn identity(registry: &CallerRegistry, project: &Path, backend: &str) -> CallerI
 #[test]
 fn process_metadata_identity_is_available_before_session_binding() {
     let registry = CallerRegistry::default();
-    let caller = identity(&registry, Path::new("/project"), "pi");
+    let caller = identity(&registry, Path::new("/project"), Backend::Pi);
     let (id, name) = caller.worker_identity().expect("launch identity");
     assert!(id.starts_with("worker-"));
     assert_ne!(id, caller.token());
@@ -40,7 +41,7 @@ fn child(
     registry.issue_as(
         &parent.project,
         CallerProfile {
-            backend: parent.backend.clone(),
+            backend: parent.backend,
             provider: None,
             model: None,
             effort: None,
@@ -55,8 +56,8 @@ fn child(
 #[test]
 fn top_level_workers_receive_distinct_human_names() {
     let registry = CallerRegistry::default();
-    let first = identity(&registry, Path::new("/project"), "pi");
-    let second = identity(&registry, Path::new("/project"), "pi");
+    let first = identity(&registry, Path::new("/project"), Backend::Pi);
+    let second = identity(&registry, Path::new("/project"), Backend::Pi);
     first.bind("session-1");
     second.bind("session-2");
 
@@ -70,7 +71,7 @@ fn top_level_workers_receive_distinct_human_names() {
 #[test]
 fn resolves_session_with_the_project_and_profile_that_launched_it() {
     let registry = CallerRegistry::default();
-    let identity = identity(&registry, Path::new("/project/two"), "pi");
+    let identity = identity(&registry, Path::new("/project/two"), Backend::Pi);
     identity.bind("session-2");
     identity.select_model("anthropic", "sonnet");
     identity.select_effort("high");
@@ -78,25 +79,25 @@ fn resolves_session_with_the_project_and_profile_that_launched_it() {
     let resolved = registry.resolve(identity.token()).expect("context");
     assert_eq!(resolved.project, PathBuf::from("/project/two"));
     assert_eq!(resolved.session, "session-2");
-    assert_eq!(resolved.backend, "pi");
+    assert_eq!(resolved.backend, Backend::Pi);
     assert_eq!(resolved.provider.as_deref(), Some("anthropic"));
     assert_eq!(resolved.model.as_deref(), Some("sonnet"));
     assert_eq!(resolved.effort.as_deref(), Some("high"));
     assert_eq!(resolved.parent_worker_id, None);
     let profile = registry
-        .session_profile(Path::new("/project/two"), "pi", "session-2")
+        .session_profile(Path::new("/project/two"), Backend::Pi, "session-2")
         .expect("bound profile");
     assert_eq!(profile.provider, resolved.provider);
     assert_eq!(profile.model, resolved.model);
     assert_eq!(profile.effort, resolved.effort);
     assert!(
         registry
-            .session_profile(Path::new("/other"), "pi", "session-2")
+            .session_profile(Path::new("/other"), Backend::Pi, "session-2")
             .is_none()
     );
     assert!(
         registry
-            .session_profile(Path::new("/project/two"), "codex-cli", "session-2")
+            .session_profile(Path::new("/project/two"), Backend::Codex, "session-2")
             .is_none()
     );
 }
@@ -104,8 +105,8 @@ fn resolves_session_with_the_project_and_profile_that_launched_it() {
 #[test]
 fn top_level_workers_only_message_their_named_children() -> Result<(), String> {
     let registry = CallerRegistry::default();
-    let parent = identity(&registry, Path::new("/project"), "pi");
-    let unrelated = identity(&registry, Path::new("/project"), "codex-cli");
+    let parent = identity(&registry, Path::new("/project"), Backend::Pi);
+    let unrelated = identity(&registry, Path::new("/project"), Backend::Codex);
     parent.bind("parent-session");
     unrelated.bind("unrelated-session");
     let parent_context = context(&registry, &parent);
@@ -137,7 +138,7 @@ fn top_level_workers_only_message_their_named_children() -> Result<(), String> {
 #[test]
 fn children_only_report_to_their_parent() -> Result<(), String> {
     let registry = CallerRegistry::default();
-    let parent = identity(&registry, Path::new("/project"), "pi");
+    let parent = identity(&registry, Path::new("/project"), Backend::Pi);
     parent.bind("parent-session");
     let parent_context = context(&registry, &parent);
     let child = child(&registry, &parent_context, "review")?;
@@ -155,7 +156,9 @@ fn children_only_report_to_their_parent() -> Result<(), String> {
         })
     );
     assert_eq!(
-        registry.session_parent("pi", "child-session").as_deref(),
+        registry
+            .session_parent(Backend::Pi, "child-session")
+            .as_deref(),
         Some("parent-session")
     );
     Ok(())
@@ -164,18 +167,18 @@ fn children_only_report_to_their_parent() -> Result<(), String> {
 #[test]
 fn children_route_to_the_same_parent_session_after_process_replacement() -> Result<(), String> {
     let registry = CallerRegistry::default();
-    let parent = identity(&registry, Path::new("/project"), "codex-cli");
+    let parent = identity(&registry, Path::new("/project"), Backend::Codex);
     parent.bind("same-native-parent");
     let child = child(&registry, &context(&registry, &parent), "review")?;
     child.bind("child-session");
     drop(parent);
 
-    let wrong_backend = identity(&registry, Path::new("/project"), "pi");
+    let wrong_backend = identity(&registry, Path::new("/project"), Backend::Pi);
     wrong_backend.bind("same-native-parent");
-    let wrong_project = identity(&registry, Path::new("/other"), "codex-cli");
+    let wrong_project = identity(&registry, Path::new("/other"), Backend::Codex);
     wrong_project.bind("same-native-parent");
 
-    let replacement = identity(&registry, Path::new("/project"), "codex-cli");
+    let replacement = identity(&registry, Path::new("/project"), Backend::Codex);
     replacement.bind("same-native-parent");
     assert_eq!(
         registry.send(child.token(), "", "finished".into())?,
@@ -201,8 +204,8 @@ fn children_route_to_the_same_parent_session_after_process_replacement() -> Resu
 #[test]
 fn child_names_are_valid_and_unique_within_the_parent() -> Result<(), String> {
     let registry = CallerRegistry::default();
-    let first_parent = identity(&registry, Path::new("/project"), "pi");
-    let second_parent = identity(&registry, Path::new("/project"), "pi");
+    let first_parent = identity(&registry, Path::new("/project"), Backend::Pi);
+    let second_parent = identity(&registry, Path::new("/project"), Backend::Pi);
     first_parent.bind("first-parent");
     second_parent.bind("second-parent");
     let first = context(&registry, &first_parent);
@@ -227,13 +230,13 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
             .push(link.clone());
         Ok(())
     })));
-    let parent = identity(&registry, Path::new("/project"), "pi");
+    let parent = identity(&registry, Path::new("/project"), Backend::Pi);
     parent.bind("/sessions/parent.jsonl");
     let context = context(&registry, &parent);
     let child = registry.issue_as(
         &context.project,
         CallerProfile {
-            backend: "opencode".into(),
+            backend: Backend::OpenCode,
             provider: None,
             model: None,
             effort: None,
@@ -247,18 +250,18 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
     child.bind("opencode-child");
     assert_eq!(
         registry
-            .native_parent_session(&context.worker_id, "pi")
+            .native_parent_session(&context.worker_id, Backend::Pi)
             .as_deref(),
         Some("/sessions/parent.jsonl")
     );
     assert!(
         registry
-            .native_parent_session(&context.worker_id, "opencode")
+            .native_parent_session(&context.worker_id, Backend::OpenCode)
             .is_none()
     );
     assert!(
         registry
-            .session_parent("opencode", "opencode-child")
+            .session_parent(Backend::OpenCode, "opencode-child")
             .is_none()
     );
     assert_eq!(
@@ -267,7 +270,7 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
     );
     assert_eq!(
         links.lock().expect("test operation should succeed")[0].parent_backend,
-        "pi"
+        Backend::Pi
     );
     child.select_model("opencode-go", "glm-5.3-flash");
     child.select_effort("high");
@@ -303,7 +306,7 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
 #[test]
 fn queued_child_message_waits_for_capacity_without_being_lost() -> Result<(), String> {
     let registry = CallerRegistry::default();
-    let parent = identity(&registry, Path::new("/project"), "pi");
+    let parent = identity(&registry, Path::new("/project"), Backend::Pi);
     parent.bind("parent");
     let concurrency = super::super::concurrency::WorkerConcurrency::new(1);
     let slot = concurrency.reserve()?;

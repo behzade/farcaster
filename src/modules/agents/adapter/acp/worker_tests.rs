@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::agents::WorkerContext;
 use std::io::Write as _;
 
@@ -232,6 +233,7 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
   case "$line" in
     *'"method":"initialize"'*) reply '{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}}}' ;;
+    *'"method":"cursor/list_available_models"'*) reply '{"models":[]}' ;;
     *'"method":"session/new"'*) reply '{"sessionId":"one"}' ;;
     *'"method":"session/prompt"'*'reject before execution'*) reject ;;
     *'"method":"session/prompt"'*'cancel before evidence'*) prompt_id=$id ;;
@@ -696,7 +698,7 @@ done
 }
 
 const PROFILE: AcpProfile = AcpProfile {
-    backend: "test-acp",
+    backend: Backend::Cursor,
     name: "Test ACP",
     command: "test-acp",
     path_environment: "FARCASTER_TEST_ACP_PATH",

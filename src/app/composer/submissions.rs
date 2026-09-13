@@ -42,8 +42,7 @@ impl FarcasterApp {
         if !self.can_submit() || self.pending_project_trust_command.is_some() {
             return;
         }
-        let backend = self.snapshot.harness.clone();
-        if backend.is_empty() {
+        let Some(backend) = self.snapshot.harness else {
             let snapshot = Arc::make_mut(&mut self.snapshot);
             let index = snapshot.conversation.items.len();
             Arc::make_mut(&mut snapshot.conversation).push_local_error(
@@ -53,9 +52,9 @@ impl FarcasterApp {
             self.mark_transcript_changed(index, index == 0, cx);
             cx.notify();
             return;
-        }
+        };
         let project = self.project.clone();
-        if !self.ensure_backend_trust(&backend, &project, window, cx) {
+        if !self.ensure_backend_trust(backend, &project, window, cx) {
             return;
         }
         self.capture_composer_session(cx);

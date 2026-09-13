@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{collections::HashMap, path::PathBuf};
 
 use gpui::{Context, Window};
@@ -41,11 +42,11 @@ impl FarcasterApp {
         )
     }
 
-    pub(in crate::app) fn active_harness(&self) -> &str {
+    pub(in crate::app) fn active_harness(&self) -> Option<Backend> {
         if let Some(id) = self.selected_draft.as_deref()
             && let Some(draft) = self.drafts.iter().find(|draft| draft.id == id)
         {
-            return &draft.harness;
+            return draft.harness;
         }
         self.snapshot
             .selected_session
@@ -55,11 +56,11 @@ impl FarcasterApp {
                     .iter()
                     .find(|session| session.path == path)
             })
-            .map(|session| session.harness.as_str())
-            .unwrap_or(&self.snapshot.harness)
+            .map(|session| session.harness)
+            .or(self.snapshot.harness)
     }
 
-    pub(in crate::app) fn editable_draft_harness(&self) -> Option<String> {
+    pub(in crate::app) fn editable_draft_harness(&self) -> Option<Option<Backend>> {
         let id = self.selected_draft.as_deref()?;
         let target = draft_target(id);
         if self.composer_sessions.current_target() != target
@@ -68,15 +69,17 @@ impl FarcasterApp {
         {
             return None;
         }
-        Some(self.drafts.iter().find(|draft| draft.id == id).map_or_else(
-            || self.snapshot.harness.clone(),
-            |draft| draft.harness.clone(),
-        ))
+        Some(
+            self.drafts
+                .iter()
+                .find(|draft| draft.id == id)
+                .map_or_else(|| self.snapshot.harness, |draft| draft.harness),
+        )
     }
 
     pub(in crate::app) fn change_draft_harness(
         &mut self,
-        harness: String,
+        harness: Backend,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -87,7 +90,7 @@ impl FarcasterApp {
             return;
         }
         if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
-            .and_then(|store| store.save_preferred_harness(&harness))
+            .and_then(|store| store.save_preferred_harness(harness))
         {
             self.sessions_error = Some(error);
             self.notify_session_rail(cx);
@@ -95,11 +98,8 @@ impl FarcasterApp {
             return;
         }
         if !self.drafts.iter().any(|draft| draft.id == id) {
-            let mut draft = DraftSession::with_id(
-                self.snapshot.harness.clone(),
-                id.clone(),
-                self.project.clone(),
-            );
+            let mut draft =
+                DraftSession::with_id(self.snapshot.harness, id.clone(), self.project.clone());
             draft.app_session_id = self.draft_session_ids.get(&id).copied().unwrap_or_default();
             self.drafts.insert(0, draft);
         }
@@ -108,8 +108,8 @@ impl FarcasterApp {
             .iter_mut()
             .find(|draft| draft.id == id)
             .expect("selected draft was materialized");
-        self.preferred_harness.clone_from(&harness);
-        if !draft.change_harness(harness.clone()) {
+        self.preferred_harness = Some(harness);
+        if !draft.change_harness(Some(harness.clone())) {
             return;
         }
         let project = draft.project.clone();
@@ -118,7 +118,7 @@ impl FarcasterApp {
             &project,
             RuntimeCommand::NewSession {
                 id,
-                harness,
+                harness: Some(harness),
                 project: project.clone(),
             },
             window,
@@ -164,7 +164,7 @@ impl FarcasterApp {
                     .drafts
                     .iter()
                     .find(|draft| draft.id == self.selected_draft.as_deref().unwrap_or_default())
-                    .map(|draft| draft.harness.clone())
+                    .map(|draft| draft.harness)
                     .unwrap_or_else(|| self.active_harness().to_owned()),
                 project: project.clone(),
             },
@@ -231,7 +231,7 @@ impl FarcasterApp {
             id,
             app_session_id,
             &self.project,
-            &self.snapshot.harness,
+            self.snapshot.harness,
             retain,
         );
         if changed {
@@ -253,11 +253,8 @@ impl FarcasterApp {
             .insert(target.to_owned(), "Working".into());
         if !self.drafts.iter().any(|draft| draft.id == id) {
             let app_session_id = self.draft_session_ids.get(id).copied().unwrap_or_default();
-            let mut draft = DraftSession::with_id(
-                self.snapshot.harness.clone(),
-                id.to_owned(),
-                self.project.clone(),
-            );
+            let mut draft =
+                DraftSession::with_id(self.snapshot.harness, id.to_owned(), self.project.clone());
             draft.app_session_id = app_session_id;
             self.drafts.insert(0, draft);
         }
@@ -466,7 +463,7 @@ fn sync_materialized_draft(
     id: &str,
     app_session_id: i64,
     project: &std::path::Path,
-    harness: &str,
+    harness: Option<Backend>,
     retain: bool,
 ) -> bool {
     let existing = drafts.iter().position(|draft| draft.id == id);

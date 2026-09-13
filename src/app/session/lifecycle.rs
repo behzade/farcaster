@@ -182,7 +182,7 @@ impl FarcasterApp {
         let Some(target) = self.backend_target_for_path(&path, cx) else {
             return;
         };
-        if !crate::agents::supports_session_fork(&target.harness) {
+        if !crate::agents::supports_session_fork(target.harness) {
             self.sessions_error = Some(format!(
                 "Forking {} sessions is not supported",
                 target.harness
@@ -244,7 +244,7 @@ impl FarcasterApp {
             return;
         }
         self.reset_run_panel_scroll(cx);
-        let draft = match project_registry::new_draft(project.clone(), &self.preferred_harness) {
+        let draft = match project_registry::new_draft(project.clone(), self.preferred_harness) {
             Ok(draft) => draft,
             Err(error) => {
                 self.sessions_error = Some(error);
@@ -344,7 +344,7 @@ impl FarcasterApp {
                 .drafts
                 .iter()
                 .find(|draft| draft.id == id)
-                .map(|draft| draft.harness.clone())
+                .map(|draft| draft.harness)
             else {
                 self.sessions_error = Some("The draft's harness identity is unavailable".into());
                 self.notify_session_rail(cx);
@@ -453,7 +453,7 @@ impl FarcasterApp {
         if session.project == target_project {
             return;
         }
-        if !crate::agents::supports_session_move(&session.harness) {
+        if !crate::agents::supports_session_move(session.harness) {
             self.sessions_error = Some(format!(
                 "Moving {} sessions between projects is not supported",
                 session.harness

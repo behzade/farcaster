@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -113,7 +114,7 @@ enum PickerCommand {
     },
     OpenScope(PickerScope),
     SetSandbox(crate::runtime::HarnessAccessMode),
-    SetHarness(String),
+    SetHarness(Backend),
     SetRuntime {
         model: crate::protocol::Model,
         effort: Option<String>,
@@ -198,7 +199,9 @@ impl FarcasterApp {
             &rows,
             &commands,
             &self.snapshot,
-            (scope == PickerScope::Harnesses).then(|| self.active_harness()),
+            (scope == PickerScope::Harnesses)
+                .then(|| self.active_harness())
+                .flatten(),
         )
         .map(|row| IndexPath {
             row,
@@ -446,7 +449,7 @@ impl FarcasterApp {
                 self.close_picker(window, cx);
                 self.select_model(&model, cx);
                 if effort.is_some()
-                    || crate::agents::supports_reasoning_reset(&self.snapshot.harness)
+                    || crate::agents::supports_reasoning_reset(self.snapshot.harness)
                 {
                     self.set_thinking_level(effort, cx);
                 }

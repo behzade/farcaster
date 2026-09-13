@@ -3,6 +3,7 @@
 //! `scripts/e2e.sh` creates `FARCASTER_DATA_DIR`; this file refuses to use a
 //! normal user state directory. It sends real model requests and is ignored by
 //! ordinary test runs.
+use crate::agents::Backend;
 
 use std::{
     fs,
@@ -56,7 +57,7 @@ impl Drop for ReleaseGate {
 
 #[derive(Clone, Debug)]
 struct LiveUiConfig {
-    harness: String,
+    harness: Backend,
     model: Option<String>,
     access_mode: HarnessAccessMode,
 }
@@ -74,8 +75,8 @@ fn live_config() -> Result<LiveUiConfig, String> {
     // ignored test invoked by hand from touching the user's normal database.
     live_e2e_support::e2e_case_dir()?;
     Ok(LiveUiConfig {
-        access_mode: live_e2e_support::live_access_mode_for_harness(&harness)?,
-        harness,
+        access_mode: live_e2e_support::live_access_mode_for_harness(harness.parse()?)?,
+        harness: harness.parse()?,
         model: std::env::var("FARCASTER_E2E_MODEL")
             .ok()
             .filter(|model| !model.trim().is_empty()),
@@ -122,7 +123,7 @@ fn wait_for_with_timeout(
         "timed out after {} seconds waiting for {description}; status={} harness={} transcript={}",
         timeout.as_secs(),
         snapshot.status,
-        snapshot.harness,
+        snapshot.harness.map(Backend::as_str).unwrap_or(""),
         transcript_summary(&snapshot.conversation),
     ))
 }
@@ -766,7 +767,7 @@ fn with_live_app(
         .canonicalize()
         .map_err(|error| format!("canonicalize isolated E2E project: {error}"))?;
     StateStore::open()
-        .and_then(|store| store.save_preferred_harness(&config.harness))
+        .and_then(|store| store.save_preferred_harness(config.harness))
         .map_err(|error| format!("save selected live harness in isolated state: {error}"))?;
     phase("state-store-seeded");
 
@@ -813,7 +814,7 @@ fn with_live_app(
     // prompt owns session startup. Waiting for `connected` here deadlocks a
     // correct lazy-start app before it can send that prompt.
     wait_for(cx, &app, "the selected disconnected draft", |app| {
-        app.snapshot.harness == config.harness
+        app.snapshot.harness == Some(config.harness)
             && app.snapshot.project == project_path
             && !app.snapshot.connected
             && app.snapshot.session.is_none()

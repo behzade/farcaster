@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -45,7 +46,7 @@ pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> R
 pub(in crate::modules::agents::adapter) fn load_history(
     path: &Path,
 ) -> Result<DiscoveredHistory, String> {
-    let locator = external_session_locator("opencode", path)
+    let locator = external_session_locator(Backend::OpenCode, path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
     with_server(|server| {
         let response = server.client().session_messages(&locator)?;
@@ -141,11 +142,11 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "running" | "active"));
-    let path = external_session_path(locator_root, "opencode", id);
+    let path = external_session_path(locator_root, Backend::OpenCode, id);
     let search = format!("{title} {first_user_message} {directory} opencode");
     Some(Ok(DiscoveredSession {
         id: id.to_owned(),
-        harness: "opencode".into(),
+        harness: Backend::OpenCode,
         path,
         project,
         title,

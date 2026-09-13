@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 mod acp;
 mod antigravity;
 mod auxiliary;
@@ -34,27 +35,27 @@ pub(crate) use shell_environment::{
     app_shell_environment, default_login_shell, project_shell_environment,
 };
 
-fn external_acp_profile(harness: &str) -> Option<&'static acp::AcpProfile> {
+fn external_acp_profile(harness: Backend) -> Option<&'static acp::AcpProfile> {
     match harness {
-        "antigravity-acp" => Some(&antigravity::PROFILE),
-        _ => None,
+        Backend::Antigravity => Some(&antigravity::PROFILE),
+        Backend::Pi | Backend::Codex | Backend::Cursor | Backend::OpenCode | Backend::Claude => {
+            None
+        }
     }
 }
 
 pub(crate) fn available_access_modes(
-    harness: &str,
+    harness: impl Into<Option<Backend>>,
     model: Option<&crate::protocol::Model>,
     sandbox_adapter: Option<&str>,
 ) -> Vec<crate::agents::HarnessAccessMode> {
-    if harness == "pi" {
-        return pi::sandbox::access_modes(sandbox_adapter).to_vec();
-    }
-    let Some(descriptor) = known_backend_descriptors()
-        .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == harness)
-    else {
+    let Some(harness) = harness.into() else {
         return Vec::new();
     };
+    if harness == Backend::Pi {
+        return pi::sandbox::access_modes(sandbox_adapter).to_vec();
+    }
+    let descriptor = harness.descriptor();
     let capabilities = descriptor.capabilities.configuration;
     let declared = model.and_then(|model| model.access_modes.as_deref());
     capabilities
@@ -70,55 +71,66 @@ pub(crate) fn available_access_modes(
         .collect()
 }
 
-pub(crate) fn supports_sandbox_discovery(harness: &str) -> bool {
-    harness == "pi"
+pub(crate) fn supports_sandbox_discovery(harness: impl Into<Option<Backend>>) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
+    harness == Backend::Pi
 }
 
-pub(crate) fn supports_steering(harness: &str) -> bool {
-    known_backend_descriptors().into_iter().any(|descriptor| {
-        descriptor.id.as_str() == harness
-            && descriptor.capabilities.turns.steer == super::contract::CapabilitySupport::Available
-    })
+pub(crate) fn supports_steering(harness: impl Into<Option<Backend>>) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
+    harness.descriptor().capabilities.turns.steer == super::contract::CapabilitySupport::Available
 }
 
-pub(crate) fn supports_reasoning_effort(harness: &str) -> bool {
-    known_backend_descriptors().into_iter().any(|descriptor| {
-        descriptor.id.as_str() == harness
-            && descriptor.capabilities.configuration.reasoning_effort
-                == super::contract::CapabilitySupport::Available
-    })
+pub(crate) fn supports_reasoning_effort(harness: impl Into<Option<Backend>>) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
+    harness
+        .descriptor()
+        .capabilities
+        .configuration
+        .reasoning_effort
+        == super::contract::CapabilitySupport::Available
 }
 
-pub(crate) fn supports_reasoning_reset(harness: &str) -> bool {
-    known_backend_descriptors().into_iter().any(|descriptor| {
-        descriptor.id.as_str() == harness
-            && descriptor.capabilities.configuration.reset_reasoning_effort
-                == super::contract::CapabilitySupport::Available
-    })
+pub(crate) fn supports_reasoning_reset(harness: impl Into<Option<Backend>>) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
+    harness
+        .descriptor()
+        .capabilities
+        .configuration
+        .reset_reasoning_effort
+        == super::contract::CapabilitySupport::Available
 }
 
-pub(crate) fn effort_label(harness: &str) -> &'static str {
-    known_backend_descriptors()
-        .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == harness)
-        .map_or("Effort", |descriptor| {
-            descriptor.capabilities.configuration.effort_label
-        })
+pub(crate) fn effort_label(harness: impl Into<Option<Backend>>) -> &'static str {
+    let Some(harness) = harness.into() else {
+        return "Effort";
+    };
+    harness.descriptor().capabilities.configuration.effort_label
 }
 
-pub(crate) fn supports_session_fork(harness: &str) -> bool {
-    known_backend_descriptors().into_iter().any(|descriptor| {
-        descriptor.id.as_str() == harness
-            && descriptor.capabilities.sessions.fork
-                == super::contract::CapabilitySupport::Available
-    })
+pub(crate) fn supports_session_fork(harness: impl Into<Option<Backend>>) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
+    harness.descriptor().capabilities.sessions.fork == super::contract::CapabilitySupport::Available
 }
 
 pub(crate) fn validate_launch(
     config: &crate::agents::AgentLaunchConfig,
-    harness: &str,
+    harness: impl Into<Option<Backend>>,
     project: &std::path::Path,
 ) -> Result<(), String> {
+    let Some(harness) = harness.into() else {
+        return Err("Choose a backend before launching a session.".into());
+    };
     launch_configuration(config, harness)?
         .command(project)
         .map(|_| ())
@@ -126,20 +138,18 @@ pub(crate) fn validate_launch(
 
 fn launch_configuration(
     config: &crate::agents::AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
 ) -> Result<crate::agents::AgentLaunchConfig, String> {
     let mut config = config.clone();
     config.program = match harness {
-        "pi" => return Ok(pi::launch_configuration(&config)),
-        "codex-cli" => std::env::var_os("FARCASTER_CODEX_PATH")
+        Backend::Pi => return Ok(pi::launch_configuration(&config)),
+        Backend::Codex => std::env::var_os("FARCASTER_CODEX_PATH")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| "codex".into()),
-        "cursor-cli" => cursor::PROFILE.program(),
-        "claude" => claude::program(),
-        "opencode" => opencode::program(),
-        _ => external_acp_profile(harness)
-            .ok_or_else(|| format!("unsupported session harness: {harness}"))?
-            .program(),
+        Backend::Cursor => cursor::PROFILE.program(),
+        Backend::Claude => claude::program(),
+        Backend::OpenCode => opencode::program(),
+        Backend::Antigravity => antigravity::PROFILE.program(),
     };
     Ok(config)
 }
@@ -147,76 +157,68 @@ fn launch_configuration(
 pub(crate) fn worker_factories(
     config: crate::agents::AgentLaunchConfig,
 ) -> (
-    std::collections::BTreeMap<String, std::sync::Arc<dyn crate::agents::WorkerSessionFactory>>,
-    String,
+    std::collections::BTreeMap<Backend, std::sync::Arc<dyn crate::agents::WorkerSessionFactory>>,
+    Backend,
 ) {
-    let mut codex_config = config.clone();
-    codex_config.program = std::env::var_os("FARCASTER_CODEX_PATH")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "codex".into());
-    let cursor_config = config.clone();
-    let mut opencode_config = config.clone();
-    opencode_config.access_mode = crate::agents::HarnessAccessMode::Sandboxed;
-    opencode_config.program = opencode::program();
-    let [pi, codex, cursor, opencode, _, _] = known_backend_descriptors();
-    let default_backend = pi.id.as_str().to_owned();
-    let mut factories = std::collections::BTreeMap::from([
-        (
-            pi.id.as_str().to_owned(),
-            std::sync::Arc::new(pi::PiWorkerFactory::new(config.clone())) as _,
-        ),
-        (
-            codex.id.as_str().to_owned(),
-            std::sync::Arc::new(codex::CodexWorkerFactory::new(codex_config)) as _,
-        ),
-        (
-            cursor.id.as_str().to_owned(),
-            std::sync::Arc::new(cursor::worker_factory(cursor_config)) as _,
-        ),
-        (
-            opencode.id.as_str().to_owned(),
-            std::sync::Arc::new(opencode::OpenCodeWorkerFactory::new(opencode_config)) as _,
-        ),
-    ]);
-    let mut claude_config = config.clone();
-    claude_config.program = claude::program();
-    factories.insert(
-        claude::BACKEND.into(),
-        std::sync::Arc::new(claude::ClaudeWorkerFactory::new(claude_config)) as _,
-    );
-    let profile = &antigravity::PROFILE;
-    let mut command = config;
-    command.program = profile.program();
-    factories.insert(
-        profile.backend.into(),
-        std::sync::Arc::new(acp::AcpWorkerFactory::new(command, profile.clone())) as _,
-    );
-    (factories, default_backend)
+    use std::sync::Arc;
+    let factories = Backend::ALL
+        .into_iter()
+        .map(|backend| {
+            let mut command = config.clone();
+            let factory: Arc<dyn crate::agents::WorkerSessionFactory> = match backend {
+                Backend::Pi => Arc::new(pi::PiWorkerFactory::new(command)),
+                Backend::Codex => {
+                    command.program = std::env::var_os("FARCASTER_CODEX_PATH")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| "codex".into());
+                    Arc::new(codex::CodexWorkerFactory::new(command))
+                }
+                Backend::Cursor => Arc::new(cursor::worker_factory(command)),
+                Backend::OpenCode => {
+                    command.access_mode = crate::agents::HarnessAccessMode::Sandboxed;
+                    command.program = opencode::program();
+                    Arc::new(opencode::OpenCodeWorkerFactory::new(command))
+                }
+                Backend::Claude => {
+                    command.program = claude::program();
+                    Arc::new(claude::ClaudeWorkerFactory::new(command))
+                }
+                Backend::Antigravity => {
+                    command.program = antigravity::PROFILE.program();
+                    Arc::new(acp::AcpWorkerFactory::new(
+                        command,
+                        antigravity::PROFILE.clone(),
+                    ))
+                }
+            };
+            (backend, factory)
+        })
+        .collect();
+    (factories, Backend::Pi)
 }
 
 pub(crate) fn load_configuration_catalog(
     config: &crate::agents::AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
     project: &std::path::Path,
 ) -> Result<crate::agents::ConfigurationCatalog, String> {
     match harness {
-        "codex-cli" => {
+        Backend::Codex => {
             let command = configuration_launch(config, harness)?;
             codex::load_configuration(&command, project).and_then(configuration_catalog)
         }
-        "cursor-cli" => cursor::load_configuration(project).and_then(configuration_catalog),
-        "opencode" => {
+        Backend::Cursor => cursor::load_configuration(project).and_then(configuration_catalog),
+        Backend::OpenCode => {
             let command = configuration_launch(config, harness)?;
             opencode::load_configuration(&command, project).and_then(configuration_catalog)
         }
-        "claude" => {
+        Backend::Claude => {
             let command = configuration_launch(config, harness)?;
             claude::load_configuration(&command, project).and_then(configuration_catalog)
         }
-        "pi" => load_pi_configuration(config, project),
-        _ => {
-            let profile = external_acp_profile(harness)
-                .ok_or_else(|| format!("unsupported main-session harness: {harness}"))?;
+        Backend::Pi => load_pi_configuration(config, project),
+        Backend::Antigravity => {
+            let profile = &antigravity::PROFILE;
             let (metadata, _) = acp::load_configuration(profile, project)?;
             configuration_catalog(metadata)
         }
@@ -225,7 +227,7 @@ pub(crate) fn load_configuration_catalog(
 
 fn configuration_launch(
     config: &crate::agents::AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
 ) -> Result<crate::agents::AgentLaunchConfig, String> {
     let mut command = launch_configuration(config, harness)?;
     command.access_mode = configuration_access_mode(harness, config.access_mode)?;
@@ -233,7 +235,7 @@ fn configuration_launch(
 }
 
 fn configuration_access_mode(
-    harness: &str,
+    harness: Backend,
     requested: crate::agents::HarnessAccessMode,
 ) -> Result<crate::agents::HarnessAccessMode, String> {
     use crate::agents::HarnessAccessMode::{Auto, Sandboxed};
@@ -243,10 +245,7 @@ fn configuration_access_mode(
     if supports_sandbox_discovery(harness) {
         return Ok(requested);
     }
-    let descriptor = known_backend_descriptors()
-        .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == harness)
-        .ok_or_else(|| format!("unsupported session harness: {harness}"))?;
+    let descriptor = harness.descriptor();
     let supported = descriptor.capabilities.configuration.access_modes;
     if supported.contains(&requested) {
         return Ok(requested);
@@ -334,120 +333,121 @@ pub(crate) fn spawn_session(
     config: &crate::agents::AgentLaunchConfig,
     launch: crate::agents::SessionLaunch,
 ) -> Result<Box<dyn crate::agents::SessionTransport>, String> {
-    if launch.harness != "pi"
+    if launch.harness != Backend::Pi
         && let crate::agents::SessionStart::Resume(path) | crate::agents::SessionStart::Fork(path) =
             &launch.start
     {
-        session_storage::validate_session_locator(&launch.harness, path)?;
+        session_storage::validate_session_locator(launch.harness, path)?;
     }
-    if launch.harness == "codex-cli" {
-        let history = launch_history(&launch, codex::load_history)?;
-        let command = launch_configuration(config, &launch.harness)?;
-        let (worker, locator, metadata) = codex::spawn_main(&command, &launch)?;
-        let locator_root = config
-            .session_locator_root
-            .as_deref()
-            .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
-        return main_session::WorkerSessionTransport::new(
-            locator_root,
-            "codex-cli",
-            locator,
-            worker,
-            metadata,
-            history,
-        )
-        .map(|transport| Box::new(transport) as _);
-    }
-    if launch.harness == "cursor-cli" || external_acp_profile(&launch.harness).is_some() {
-        if matches!(&launch.start, crate::agents::SessionStart::Fork(_)) {
-            return Err(format!(
-                "{} ACP session fork is not supported",
-                launch.harness
-            ));
+    match launch.harness {
+        Backend::Codex => {
+            let history = launch_history(&launch, codex::load_history)?;
+            let command = launch_configuration(config, launch.harness)?;
+            let (worker, locator, metadata) = codex::spawn_main(&command, &launch)?;
+            let locator_root = config
+                .session_locator_root
+                .as_deref()
+                .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
+            return main_session::WorkerSessionTransport::new(
+                locator_root,
+                Backend::Codex,
+                locator,
+                worker,
+                metadata,
+                history,
+            )
+            .map(|transport| Box::new(transport) as _);
         }
-        let command = launch_configuration(config, &launch.harness)?;
-        let (worker, locator, metadata, history) =
-            if let Some(profile) = external_acp_profile(&launch.harness) {
-                acp::spawn_main(&command, profile, &launch)?
+        Backend::Cursor | Backend::Antigravity => {
+            if matches!(&launch.start, crate::agents::SessionStart::Fork(_)) {
+                return Err(format!(
+                    "{} ACP session fork is not supported",
+                    launch.harness
+                ));
+            }
+            let command = launch_configuration(config, launch.harness)?;
+            let (worker, locator, metadata, history) =
+                if let Some(profile) = external_acp_profile(launch.harness) {
+                    acp::spawn_main(&command, profile, &launch)?
+                } else {
+                    cursor::spawn_main(&command, &launch)?
+                };
+            let locator_root = config
+                .session_locator_root
+                .as_deref()
+                .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
+            return main_session::WorkerSessionTransport::new(
+                locator_root,
+                launch.harness,
+                locator,
+                worker,
+                metadata,
+                history,
+            )
+            .map(|transport| Box::new(transport) as _);
+        }
+        Backend::OpenCode | Backend::Claude => {
+            let history = launch_history(
+                &launch,
+                if launch.harness == Backend::Claude {
+                    claude::load_history
+                } else {
+                    opencode::load_history
+                },
+            )?;
+            let command = launch_configuration(config, launch.harness)?;
+            let (worker, locator, metadata) = if launch.harness == Backend::Claude {
+                claude::spawn_main(&command, &launch)?
             } else {
-                cursor::spawn_main(&command, &launch)?
+                opencode::spawn_main(&command, &launch)?
             };
-        let locator_root = config
-            .session_locator_root
-            .as_deref()
-            .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
-        return main_session::WorkerSessionTransport::new(
-            locator_root,
-            &launch.harness,
-            locator,
-            worker,
-            metadata,
-            history,
-        )
-        .map(|transport| Box::new(transport) as _);
-    }
-    if matches!(launch.harness.as_str(), "opencode" | "claude") {
-        let history = launch_history(
-            &launch,
-            if launch.harness == "claude" {
-                claude::load_history
-            } else {
-                opencode::load_history
-            },
-        )?;
-        let command = launch_configuration(config, &launch.harness)?;
-        let (worker, locator, metadata) = if launch.harness == "claude" {
-            claude::spawn_main(&command, &launch)?
-        } else {
-            opencode::spawn_main(&command, &launch)?
-        };
-        let locator_root = config
-            .session_locator_root
-            .as_deref()
-            .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
-        return main_session::WorkerSessionTransport::new(
-            locator_root,
-            &launch.harness,
-            locator,
-            worker,
-            metadata,
-            history,
-        )
-        .map(|transport| Box::new(transport) as _);
-    }
-    if launch.harness != "pi" {
-        return Err(format!(
-            "unsupported main-session harness: {}",
-            launch.harness
-        ));
-    }
-    let process = match &launch.start {
-        crate::agents::SessionStart::New => {
-            pi::PiRpcProcess::spawn_with_optional_waker(config, &launch.project, None, launch.wake)
-        }
-        crate::agents::SessionStart::Resume(session) => {
-            pi::PiRpcProcess::spawn_with_optional_waker(
-                config,
-                &launch.project,
-                Some(session),
-                launch.wake,
+            let locator_root = config
+                .session_locator_root
+                .as_deref()
+                .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
+            return main_session::WorkerSessionTransport::new(
+                locator_root,
+                launch.harness,
+                locator,
+                worker,
+                metadata,
+                history,
             )
+            .map(|transport| Box::new(transport) as _);
         }
-        crate::agents::SessionStart::Fork(source) => {
-            pi::PiRpcProcess::spawn_fork_with_optional_waker(
-                config,
-                &launch.project,
-                source,
-                launch.wake,
-            )
+        Backend::Pi => {
+            let process = match &launch.start {
+                crate::agents::SessionStart::New => pi::PiRpcProcess::spawn_with_optional_waker(
+                    config,
+                    &launch.project,
+                    None,
+                    launch.wake,
+                ),
+                crate::agents::SessionStart::Resume(session) => {
+                    pi::PiRpcProcess::spawn_with_optional_waker(
+                        config,
+                        &launch.project,
+                        Some(session),
+                        launch.wake,
+                    )
+                }
+                crate::agents::SessionStart::Fork(source) => {
+                    pi::PiRpcProcess::spawn_fork_with_optional_waker(
+                        config,
+                        &launch.project,
+                        source,
+                        launch.wake,
+                    )
+                }
+            }?;
+            Ok(Box::new(process) as _)
         }
-    }?;
-    Ok(Box::new(process))
+    }
 }
 
 pub(crate) fn rename_session(
     config: &crate::agents::AgentLaunchConfig,
-    harness: &str,
+    harness: Backend,
     project: &std::path::Path,
     session: &std::path::Path,
     session_id: &str,
@@ -459,41 +459,46 @@ pub(crate) fn rename_session(
         path: session.into(),
     })?;
     match harness {
-        "pi" => pi::PiRpcProcess::rename_session(config, project, session, name),
-        "codex-cli" => codex::rename_session(session_id, name),
-        "cursor-cli" => cursor::rename_session(session_id, name),
-        "opencode" => opencode::rename_session(session_id, name),
-        _ => Err(format!("unsupported session harness: {harness}")),
+        Backend::Pi => pi::PiRpcProcess::rename_session(config, project, session, name),
+        Backend::Codex => codex::rename_session(session_id, name),
+        Backend::Cursor => cursor::rename_session(session_id, name),
+        Backend::OpenCode => opencode::rename_session(session_id, name),
+        Backend::Claude | Backend::Antigravity => {
+            Err(format!("unsupported session harness: {harness}"))
+        }
     }
 }
 
-pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(&'static str, String)> {
+pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(Backend, String)> {
     for backend in [claude::BACKEND, antigravity::PROFILE.backend] {
         if let Some(locator) = main_session::external_session_locator(backend, path) {
             return Some((backend, locator));
         }
     }
-    if let Some(locator) = main_session::external_session_locator("codex-cli", path) {
-        return Some(("codex-cli", locator));
+    if let Some(locator) = main_session::external_session_locator(Backend::Codex, path) {
+        return Some((Backend::Codex, locator));
     }
-    if let Some(locator) = main_session::external_session_locator("cursor-cli", path) {
-        return Some(("cursor-cli", locator));
+    if let Some(locator) = main_session::external_session_locator(Backend::Cursor, path) {
+        return Some((Backend::Cursor, locator));
     }
-    main_session::external_session_locator("opencode", path).map(|locator| ("opencode", locator))
+    main_session::external_session_locator(Backend::OpenCode, path)
+        .map(|locator| (Backend::OpenCode, locator))
 }
 
 #[cfg(test)]
 pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
     external_session_identity(path).map(|(harness, locator)| match harness {
-        "codex-cli" => codex::delete_session(&locator),
-        "cursor-cli" => cursor::delete_session(&locator),
-        "opencode" => opencode::delete_session(&locator),
-        _ => Err(format!("Session deletion is not supported for {harness}")),
+        Backend::Codex => codex::delete_session(&locator),
+        Backend::Cursor => cursor::delete_session(&locator),
+        Backend::OpenCode => opencode::delete_session(&locator),
+        Backend::Pi | Backend::Claude | Backend::Antigravity => {
+            Err(format!("Session deletion is not supported for {harness}"))
+        }
     })
 }
 
 pub(crate) fn discover_external_sessions_for(
-    harness: &str,
+    harness: Backend,
     locator_root: Option<&std::path::Path>,
     query: &str,
 ) -> Result<Vec<crate::agents::DiscoveredSession>, String> {
@@ -501,17 +506,17 @@ pub(crate) fn discover_external_sessions_for(
         return Err("session locator root is unavailable".to_owned());
     };
     match harness {
-        "codex-cli" => codex::discover(locator_root, query),
-        "cursor-cli" => cursor::discover(locator_root, query),
-        "opencode" => opencode::discover(locator_root, query),
-        "antigravity-acp" => Ok(Vec::new()),
-        "claude" => claude::discover(locator_root, query),
-        _ => Err(format!("unsupported session harness: {harness}")),
+        Backend::Codex => codex::discover(locator_root, query),
+        Backend::Cursor => cursor::discover(locator_root, query),
+        Backend::OpenCode => opencode::discover(locator_root, query),
+        Backend::Antigravity => Ok(Vec::new()),
+        Backend::Claude => claude::discover(locator_root, query),
+        Backend::Pi => Err(format!("unsupported session harness: {harness}")),
     }
 }
 
-pub(crate) fn annotate_history_message(harness: &str, message: &mut serde_json::Value) {
-    if harness == "pi" {
+pub(crate) fn annotate_history_message(harness: Backend, message: &mut serde_json::Value) {
+    if harness == Backend::Pi {
         pi::annotate_history_message(message);
     }
 }
@@ -521,31 +526,28 @@ pub(crate) fn load_external_history(
     path: &std::path::Path,
 ) -> Option<Result<crate::agents::DiscoveredHistory, String>> {
     external_session_identity(path).map(|(harness, _)| match harness {
-        "codex-cli" => codex::load_history(path),
-        "cursor-cli" => cursor::load_history(path),
-        "opencode" => opencode::load_history(path),
-        "antigravity-acp" => {
+        Backend::Codex => codex::load_history(path),
+        Backend::Cursor => cursor::load_history(path),
+        Backend::OpenCode => opencode::load_history(path),
+        Backend::Antigravity => {
             Err("Antigravity ACP does not expose history replay through this adapter".into())
         }
-        "claude" => claude::load_history(path),
-        _ => unreachable!("external session identity returned an unknown backend"),
+        Backend::Claude => claude::load_history(path),
+        Backend::Pi => unreachable!("Pi does not have an external session locator"),
     })
 }
 
 pub(crate) fn supports_startup_command(
-    harness: &str,
+    harness: impl Into<Option<Backend>>,
     command: &crate::agents::SessionCommand,
 ) -> bool {
+    let Some(harness) = harness.into() else {
+        return false;
+    };
     use super::contract::CapabilitySupport::Available;
     use crate::agents::SessionCommand;
 
-    let Some(configuration) = known_backend_descriptors()
-        .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == harness)
-        .map(|descriptor| descriptor.capabilities.configuration)
-    else {
-        return true;
-    };
+    let configuration = harness.descriptor().capabilities.configuration;
     match command {
         SessionCommand::ListModels => configuration.models == Available,
         SessionCommand::ListReasoningLevels => configuration.reasoning_effort == Available,
@@ -555,39 +557,37 @@ pub(crate) fn supports_startup_command(
     }
 }
 
-pub(crate) fn backend_display_name(harness: &str) -> String {
-    known_backend_descriptors()
-        .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == harness)
-        .map_or_else(|| harness.to_owned(), |descriptor| descriptor.name)
+pub(crate) fn backend_display_name(harness: impl Into<Option<Backend>>) -> String {
+    let Some(harness) = harness.into() else {
+        return "Choose a backend".into();
+    };
+    harness.descriptor().name
 }
 
 pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
-    let pi_program = pi::launch_configuration(&crate::agents::AgentLaunchConfig::default()).program;
-    let codex_program = std::env::var_os("FARCASTER_CODEX_PATH")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "codex".into());
-    let cursor_program = cursor::PROFILE.program();
-    let opencode_program = opencode::program();
     known_backend_descriptors()
         .into_iter()
-        .zip([
-            pi_program,
-            codex_program,
-            cursor_program,
-            opencode_program,
-            claude::program(),
-            antigravity::PROFILE.program(),
-        ])
-        .map(
-            |(descriptor, program)| super::contract::AgentBackendStatus {
-                id: descriptor.id.as_str().to_owned(),
+        .map(|descriptor| {
+            let program = match descriptor.id {
+                Backend::Pi => {
+                    pi::launch_configuration(&crate::agents::AgentLaunchConfig::default()).program
+                }
+                Backend::Codex => std::env::var_os("FARCASTER_CODEX_PATH")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| "codex".into()),
+                Backend::Cursor => cursor::PROFILE.program(),
+                Backend::OpenCode => opencode::program(),
+                Backend::Claude => claude::program(),
+                Backend::Antigravity => antigravity::PROFILE.program(),
+            };
+            super::contract::AgentBackendStatus {
+                id: descriptor.id,
                 name: descriptor.name,
                 available: program_available(&program),
                 program,
                 capabilities: descriptor.capabilities,
-            },
-        )
+            }
+        })
         .collect()
 }
 
@@ -606,15 +606,21 @@ fn program_available(program: &std::path::Path) -> bool {
     })
 }
 
+impl Backend {
+    pub(super) fn descriptor(self) -> super::contract::AgentBackendDescriptor {
+        match self {
+            Self::Pi => pi::descriptor(),
+            Self::Codex => codex::descriptor(),
+            Self::Cursor => cursor::descriptor(),
+            Self::OpenCode => opencode::descriptor(),
+            Self::Claude => claude::descriptor(),
+            Self::Antigravity => antigravity::descriptor(),
+        }
+    }
+}
+
 pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescriptor; 6] {
-    [
-        pi::descriptor(),
-        codex::descriptor(),
-        cursor::descriptor(),
-        opencode::descriptor(),
-        claude::descriptor(),
-        antigravity::descriptor(),
-    ]
+    Backend::ALL.map(Backend::descriptor)
 }
 
 #[cfg(test)]

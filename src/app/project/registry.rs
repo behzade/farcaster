@@ -1,10 +1,11 @@
+use crate::agents::Backend;
 use std::path::PathBuf;
 
 use crate::{app::infrastructure::persistence::StateStore, projects};
 
 pub(in crate::app) fn new_draft(
     project: PathBuf,
-    harness: &str,
+    harness: Option<Backend>,
 ) -> Result<projects::DraftSession, String> {
     let elapsed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::borrow::Cow;
 
 use gpui::{App, AssetSource, Result, SharedString};
@@ -340,15 +341,17 @@ pub(crate) enum AppIcon {
 }
 
 impl AppIcon {
-    pub(crate) fn for_harness(harness: &str) -> Self {
+    pub(crate) fn for_harness(harness: impl Into<Option<Backend>>) -> Self {
+        let Some(harness) = harness.into() else {
+            return Self::Code;
+        };
         match harness {
-            "pi" => Self::Pi,
-            "codex-cli" => Self::Codex,
-            "cursor-cli" => Self::Cursor,
-            "opencode" => Self::OpenCode,
-            "claude" => Self::Claude,
-            "antigravity-acp" => Self::Antigravity,
-            _ => Self::Code,
+            Backend::Pi => Self::Pi,
+            Backend::Codex => Self::Codex,
+            Backend::Cursor => Self::Cursor,
+            Backend::OpenCode => Self::OpenCode,
+            Backend::Claude => Self::Claude,
+            Backend::Antigravity => Self::Antigravity,
         }
     }
 }

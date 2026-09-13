@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::io::Write as _;
 use std::time::Instant;
 
@@ -21,7 +22,7 @@ fn cached_catalog_decodes_1535_large_rows() -> Result<(), String> {
         .map(|index| {
             SessionSummary::from_cached_for_harness(
                 format!("session-{index}"),
-                "codex-cli".into(),
+                Backend::Codex,
                 temp.path().join(format!("session-{index}")),
                 PathBuf::from("/synthetic/project"),
                 "Synthetic title".into(),

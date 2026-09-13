@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::path::{Path, PathBuf};
 
 use super::*;
@@ -214,7 +215,7 @@ fn replay_ignores_updates_from_other_sessions() {
 #[test]
 fn resume_history_uses_the_session_load_replay() {
     let profile = AcpProfile {
-        backend: "cursor-cli",
+        backend: Backend::Cursor,
         name: "Cursor",
         command: "agent",
         path_environment: "FARCASTER_CURSOR_PATH",

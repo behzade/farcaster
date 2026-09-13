@@ -55,14 +55,14 @@ impl RuntimeOwner {
         images: Vec<PromptImage>,
         allow_while_running: bool,
     ) {
-        if self.harness.is_empty() {
+        let Some(harness) = self.harness else {
             self.reject_prompt(
                 &submission_id,
                 &target,
                 "Choose a backend before sending a message.".into(),
             );
             return;
-        }
+        };
         if let Some(error) = self.pending_session_controls.model_error() {
             self.reject_prompt(
                 &submission_id,
@@ -102,7 +102,7 @@ impl RuntimeOwner {
                 let id = agents::enqueue_prompt_with_presentation(
                     state,
                     &target,
-                    &self.harness,
+                    harness,
                     &self.project,
                     self.snapshot.selected_session.as_deref(),
                     mode,
@@ -172,7 +172,7 @@ impl RuntimeOwner {
                 id: outbox_id,
                 submission_id: Some(submission_id),
                 target,
-                harness: self.harness.clone(),
+                harness,
                 project: self.project.clone(),
                 session: self.snapshot.selected_session.clone(),
                 mode,
@@ -457,7 +457,7 @@ impl RuntimeOwner {
                 .as_ref()
                 .is_some_and(|state| state.message_count == 0 && state.session_name.is_none())
             && !self.title_generation.in_flight
-            && agents::supports_auto_title_generation(&self.harness)
+            && agents::supports_auto_title_generation(self.harness)
     }
 
     pub(super) fn reject_prompt(&mut self, submission_id: &str, target: &str, message: String) {

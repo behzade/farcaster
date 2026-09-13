@@ -1,6 +1,7 @@
 //! Exercise native adapters and replay their results through the UI's real
 //! submission reducer and close guards.
 use super::*;
+use crate::agents::Backend;
 use crate::app::{
     composer::{
         sessions::session_target,
@@ -98,7 +99,7 @@ fn completed_send_to_chat_releases_close_guard() {
     isolated_title(
         "close_lifecycle_tests::completed_send_to_chat_releases_close_guard",
         || {
-            let mut scenario = Scenario::new("cursor-cli", Some("Existing chat"), false);
+            let mut scenario = Scenario::new(Backend::Cursor, Some("Existing chat"), false);
             let path = scenario.owner.active_session.clone().unwrap();
             let target = session_target(&path);
             let pending =
@@ -128,7 +129,7 @@ fn completed_cold_prompt_and_follow_up_release_close_guard() {
     isolated_title(
         "close_lifecycle_tests::completed_cold_prompt_and_follow_up_release_close_guard",
         || {
-            let mut scenario = Scenario::new("codex-cli", Some("Existing chat"), true);
+            let mut scenario = Scenario::new(Backend::Codex, Some("Existing chat"), true);
             scenario.owner.process.take().unwrap().close().unwrap();
             let target = session_target(scenario.owner.active_session.as_ref().unwrap());
             let pending = HashMap::from([

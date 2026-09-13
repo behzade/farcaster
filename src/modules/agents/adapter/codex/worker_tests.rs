@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn worker_factory_resumes_the_saved_thread_and_accepts_a_new_prompt() -> Result<(), String> {
@@ -324,7 +325,7 @@ fn test_session() -> CodexWorkerSession {
     let caller_identity = registry.issue(
         std::path::Path::new("/project"),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -1214,7 +1215,7 @@ fn correlated_codex_control_rejection_reaches_the_session_caller() {
     session.current_turn = Some("active".into());
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(session),
         MainSessionMetadata::default(),
@@ -1287,7 +1288,7 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
         }
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
-            "codex-cli",
+            Backend::Codex,
             "thread-1".into(),
             Box::new(session),
             MainSessionMetadata::default(),
@@ -1858,7 +1859,7 @@ fn native_queue_stays_visible_across_turn_completion_until_delivery() {
     session.current_turn = Some("turn-1".into());
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(session),
         MainSessionMetadata::default(),
@@ -2742,7 +2743,7 @@ fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
     });
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(session),
         MainSessionMetadata::default(),

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn pending_controls_coalesce_and_apply_model_before_effort() {
@@ -66,15 +67,15 @@ fn pending_reset_survives_coalescing_and_is_not_an_empty_queue() {
             level: "low".into()
         }]
     );
-    assert!(SessionControl::Thinking(None).supported_by("opencode"));
-    assert!(!SessionControl::Thinking(None).supported_by("pi"));
+    assert!(SessionControl::Thinking(None).supported_by(Some(Backend::OpenCode)));
+    assert!(!SessionControl::Thinking(None).supported_by(Some(Backend::Pi)));
 }
 
 #[test]
 fn resetting_a_draft_clears_prefill_and_queues_an_explicit_reset() {
     let (mut owner, _) =
         super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
-    owner.harness = "opencode".into();
+    owner.harness = Some(Backend::OpenCode);
     owner.set_thinking("high".into());
     assert_eq!(owner.snapshot.session_identity().effort, Some("high"));
     owner.reset_thinking();

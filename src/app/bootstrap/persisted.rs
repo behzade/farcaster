@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 pub(super) struct PersistedState {
     pub(super) registry: projects::Registry,
@@ -6,7 +7,7 @@ pub(super) struct PersistedState {
     pub(super) session_order: Vec<i64>,
     pub(super) session_folders: crate::app::session_folders::SessionFolders,
     pub(super) selected_draft: String,
-    pub(super) preferred_harness: String,
+    pub(super) preferred_harness: Option<Backend>,
     pub(super) draft_session_ids: HashMap<String, i64>,
     pub(super) composer_sessions: ComposerSessions,
     pub(super) submitted_drafts: HashMap<String, Option<PathBuf>>,
@@ -52,15 +53,15 @@ pub(super) fn load(project: &Path) -> PersistedState {
     let preferred_harness = match crate::app::infrastructure::persistence::StateStore::open()
         .and_then(|store| store.load_preferred_harness(project))
     {
-        Ok(harness) => harness.unwrap_or_default(),
+        Ok(harness) => harness,
         Err(load_error) => {
             error.get_or_insert(load_error);
-            String::new()
+            None
         }
     };
     let draft_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
-    let initial_draft = match project_registry::new_draft(project.to_path_buf(), &preferred_harness)
+    let initial_draft = match project_registry::new_draft(project.to_path_buf(), preferred_harness)
     {
         Ok(draft) => draft,
         Err(load_error) => {

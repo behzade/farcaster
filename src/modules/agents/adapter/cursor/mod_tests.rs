@@ -9,12 +9,9 @@ fn live_cursor_configuration_catalog() -> Result<(), String> {
         &project,
     )?;
     assert!(!catalog.models.is_empty(), "Cursor returned no models");
-    assert!(
-        catalog
-            .models
-            .iter()
-            .all(|model| { model.provider == super::PROFILE.backend && !model.id.is_empty() })
-    );
+    assert!(catalog.models.iter().all(|model| {
+        model.provider == super::PROFILE.backend.as_str() && !model.id.is_empty()
+    }));
     writeln!(
         std::io::stderr().lock(),
         "Cursor catalog loaded {} models",

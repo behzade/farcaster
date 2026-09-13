@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use serde_json::json;
 
 #[test]
@@ -9,7 +10,7 @@ fn submission_uses_caller_project_and_returns_validated_artifact() {
         worker_name: "Worker".into(),
         project: project.path().into(),
         session: "session".into(),
-        backend: "test".into(),
+        backend: Backend::Pi,
         provider: None,
         model: None,
         effort: None,

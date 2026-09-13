@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -35,8 +36,9 @@ pub(crate) struct DraftSession {
     pub id: String,
     #[serde(default)]
     pub app_session_id: i64,
-    // Empty only while a draft is waiting for the user to choose a backend.
-    pub harness: String,
+    // No selection while a draft waits for the user to choose a backend.
+    #[serde(with = "draft_backend")]
+    pub harness: Option<Backend>,
     pub project: PathBuf,
     pub created_ms: u64,
     #[serde(default)]
@@ -49,7 +51,7 @@ pub(crate) struct DraftSession {
 
 impl DraftSession {
     pub(crate) fn new(
-        harness: String,
+        harness: Option<Backend>,
         id: String,
         app_session_id: i64,
         project: PathBuf,
@@ -67,7 +69,7 @@ impl DraftSession {
         }
     }
 
-    pub(crate) fn with_id(harness: String, id: String, project: PathBuf) -> Self {
+    pub(crate) fn with_id(harness: Option<Backend>, id: String, project: PathBuf) -> Self {
         Self::new(harness, id, 0, project, current_time_ms())
     }
 
@@ -83,7 +85,7 @@ impl DraftSession {
         true
     }
 
-    pub(crate) fn change_harness(&mut self, harness: String) -> bool {
+    pub(crate) fn change_harness(&mut self, harness: Option<Backend>) -> bool {
         if !self.can_change_project() || self.harness == harness {
             return false;
         }
@@ -107,4 +109,28 @@ pub(crate) struct Registry {
     #[serde(default, skip_serializing)]
     pub excluded_projects: Vec<PathBuf>,
     pub drafts: Vec<DraftSession>,
+}
+
+mod draft_backend {
+    use crate::agents::Backend;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        backend: &Option<Backend>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(backend.map(Backend::as_str).unwrap_or(""))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Backend>, D::Error> {
+        let value = Option::<String>::deserialize(deserializer)?;
+        match value.as_deref() {
+            None | Some("") => Ok(None),
+            Some(value) => serde_json::from_value(serde_json::Value::String(value.to_owned()))
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+        }
+    }
 }

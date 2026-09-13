@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::path::{Path, PathBuf};
 
 use crate::sessions::{
@@ -6,24 +7,25 @@ use crate::sessions::{
 
 use super::{codex, cursor, main_session::external_session_locator, opencode, pi};
 
-pub(super) fn validate_session_locator(harness: &str, path: &Path) -> Result<(), String> {
+pub(super) fn validate_session_locator(harness: Backend, path: &Path) -> Result<(), String> {
     validated_locator(harness, path).map(|_| ())
 }
 
-fn validated_locator(harness: &str, path: &Path) -> Result<Option<String>, String> {
+fn validated_locator(harness: Backend, path: &Path) -> Result<Option<String>, String> {
     match harness {
-        "pi" => pi::session_files::validate_session_file(path).map(|_| None),
-        "codex-cli" | "cursor-cli" | "opencode" | "claude" | "antigravity-acp" => {
-            external_session_locator(harness, path)
-                .map(Some)
-                .ok_or_else(|| format!("session locator does not belong to {harness}"))
-        }
-        _ => Err(format!("unsupported session harness: {harness}")),
+        Backend::Pi => pi::session_files::validate_session_file(path).map(|_| None),
+        Backend::Codex
+        | Backend::Cursor
+        | Backend::OpenCode
+        | Backend::Claude
+        | Backend::Antigravity => external_session_locator(harness, path)
+            .map(Some)
+            .ok_or_else(|| format!("session locator does not belong to {harness}")),
     }
 }
 
 pub(crate) fn validate_session_target(target: &SessionTarget) -> Result<(), String> {
-    if validated_locator(&target.harness, &target.path)?.is_some_and(|id| id != target.id) {
+    if validated_locator(target.harness, &target.path)?.is_some_and(|id| id != target.id) {
         return Err(format!(
             "session locator does not match its {} identity",
             target.harness
@@ -32,11 +34,11 @@ pub(crate) fn validate_session_target(target: &SessionTarget) -> Result<(), Stri
     Ok(())
 }
 
-pub(crate) fn supports_session_move(harness: &str) -> bool {
+pub(crate) fn supports_session_move(harness: Backend) -> bool {
     super::known_backend_descriptors()
         .into_iter()
         .any(|backend| {
-            backend.id.as_str() == harness
+            backend.id == harness
                 && backend.capabilities.sessions.move_project
                     == crate::agents::contract::CapabilitySupport::Available
         })
@@ -44,7 +46,7 @@ pub(crate) fn supports_session_move(harness: &str) -> bool {
 
 pub(crate) fn validate_session_move(family: &[SessionSummary]) -> Result<(), String> {
     let root = family.first().ok_or("session family is empty")?;
-    if !supports_session_move(&root.harness) {
+    if !supports_session_move(root.harness) {
         return Err(format!(
             "Moving {} sessions between projects is not supported",
             root.harness
@@ -65,8 +67,8 @@ pub(crate) fn move_session_family(
 ) -> Result<SessionTransfer, String> {
     validate_session_move(family)?;
     let root = &family[0];
-    match root.harness.as_str() {
-        "pi" => {
+    match root.harness {
+        Backend::Pi => {
             let members = family
                 .iter()
                 .map(|session| TransferMember {
@@ -77,9 +79,9 @@ pub(crate) fn move_session_family(
                 .collect::<Vec<_>>();
             pi::transfer::move_to_project(&members, &root.id, target_project, &root.path)
         }
-        "opencode" => opencode::move_family(family, target_project),
-        "codex-cli" => codex::move_family(family, target_project),
-        _ => Err(format!(
+        Backend::OpenCode => opencode::move_family(family, target_project),
+        Backend::Codex => codex::move_family(family, target_project),
+        Backend::Cursor | Backend::Claude | Backend::Antigravity => Err(format!(
             "unsupported session move harness: {}",
             root.harness
         )),
@@ -94,7 +96,9 @@ pub(crate) fn delete_session_family(
     }
     for target in targets {
         validate_session_target(target)?;
-        if target.harness == "claude" || super::external_acp_profile(&target.harness).is_some() {
+        if target.harness == Backend::Claude
+            || super::external_acp_profile(target.harness).is_some()
+        {
             return Err(format!(
                 "Session deletion is not supported for {}",
                 target.harness
@@ -103,12 +107,14 @@ pub(crate) fn delete_session_family(
     }
     let mut pi_paths = Vec::new();
     for target in targets.iter().rev() {
-        match target.harness.as_str() {
-            "pi" => pi_paths.push(target.path.clone()),
-            "codex-cli" => codex::delete_session(&target.id)?,
-            "cursor-cli" => cursor::delete_session(&target.id)?,
-            "opencode" => opencode::delete_session(&target.id)?,
-            _ => unreachable!("all session targets were validated"),
+        match target.harness {
+            Backend::Pi => pi_paths.push(target.path.clone()),
+            Backend::Codex => codex::delete_session(&target.id)?,
+            Backend::Cursor => cursor::delete_session(&target.id)?,
+            Backend::OpenCode => opencode::delete_session(&target.id)?,
+            Backend::Claude | Backend::Antigravity => {
+                unreachable!("all session targets were validated")
+            }
         }
     }
     if pi_paths.is_empty() {
@@ -118,20 +124,19 @@ pub(crate) fn delete_session_family(
     }
 }
 
-pub(crate) fn load_session_history(harness: &str, path: &Path) -> Result<LoadedHistory, String> {
+pub(crate) fn load_session_history(harness: Backend, path: &Path) -> Result<LoadedHistory, String> {
     validate_session_locator(harness, path)?;
     let history = match harness {
-        "pi" => return pi::session_files::load_history(path),
-        "codex-cli" => codex::load_history(path)?,
-        "cursor-cli" => cursor::load_history(path)?,
-        "opencode" => opencode::load_history(path)?,
-        "antigravity-acp" => {
+        Backend::Pi => return pi::session_files::load_history(path),
+        Backend::Codex => codex::load_history(path)?,
+        Backend::Cursor => cursor::load_history(path)?,
+        Backend::OpenCode => opencode::load_history(path)?,
+        Backend::Antigravity => {
             return Err(
                 "Antigravity ACP does not expose history replay through this adapter".into(),
             );
         }
-        "claude" => super::claude::load_history(path)?,
-        _ => return Err(format!("unsupported session harness: {harness}")),
+        Backend::Claude => super::claude::load_history(path)?,
     };
     Ok(LoadedHistory {
         messages: history.messages,
@@ -142,11 +147,11 @@ pub(crate) fn load_session_history(harness: &str, path: &Path) -> Result<LoadedH
 }
 
 pub(crate) fn discover_sessions_for(
-    harness: &str,
+    harness: Backend,
     locator_root: Option<&Path>,
     query: &str,
 ) -> Result<Vec<SessionSummary>, String> {
-    if harness == "pi" {
+    if harness == Backend::Pi {
         return Ok(pi::session_files::discover(query)?.sessions);
     }
     super::discover_external_sessions_for(harness, locator_root, query)

@@ -167,7 +167,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         );
         for (index, model) in profile.models.iter().enumerate() {
             let select = entity.clone();
-            let catalog = editor.catalog(&model.harness, &app.project);
+            let catalog = editor.catalog(model.harness, &app.project);
             let name = catalog
                 .models
                 .iter()
@@ -179,7 +179,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
             let label = format!(
                 "{}. {} · {}",
                 index + 1,
-                crate::agents::backend_display_name(&model.harness),
+                crate::agents::backend_display_name(model.harness),
                 name
             );
             detail = detail.child(
@@ -292,7 +292,7 @@ fn route(
     let editor = &app.worker_profile_editor;
     let profile = &editor.profiles[target.profile];
     let route = &profile.models[target.model];
-    let catalog = editor.catalog(&route.harness, &app.project);
+    let catalog = editor.catalog(route.harness, &app.project);
     let enabled = editor.edit.is_none();
     let harnesses = crate::agents::backend_statuses()
         .into_iter()
@@ -416,7 +416,7 @@ fn route(
                 [
                     (
                         "worker-harness",
-                        crate::agents::backend_display_name(&route.harness),
+                        crate::agents::backend_display_name(route.harness),
                         harnesses,
                         enabled,
                     ),

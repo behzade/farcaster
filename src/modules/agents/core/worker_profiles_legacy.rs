@@ -1,4 +1,5 @@
 use super::{WorkerExecution, WorkerProfile, WorkerProfiles};
+use crate::agents::Backend;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -39,7 +40,7 @@ pub(super) fn migrate(value: serde_json::Value) -> Result<WorkerProfiles, String
             ("independent", task.independent, "gpt-6-astra", "medium"),
         ] {
             execution.validate()?;
-            let old_default = execution.harness == "pi"
+            let old_default = execution.harness == Backend::Pi
                 && execution.provider == "openai-codex"
                 && execution.model == old_model
                 && execution.effort.as_deref() == Some(old_effort);

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 mod access_mode;
 pub(in crate::app) mod catalog;
 mod command_queue;
@@ -99,7 +100,7 @@ enum SnapshotChange {
 
 struct RuntimeOwner {
     project: PathBuf,
-    harness: String,
+    harness: Option<Backend>,
     session_id: Option<String>,
     process_command: AgentLaunchConfig,
     process: Option<Box<dyn SessionTransport>>,

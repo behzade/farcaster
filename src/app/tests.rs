@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::time::SystemTime;
 
 use super::*;
@@ -205,7 +206,7 @@ fn status_events_invalidate_only_visible_active_rows() {
         session_summary("archived", None, true),
     ];
     let drafts = [projects::DraftSession::with_id(
-        "pi".into(),
+        Some(Backend::Pi),
         "draft".into(),
         PathBuf::from("/project"),
     )];

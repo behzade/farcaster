@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use crate::{
     app::composer::user_invocations::{ComposerSuggestion, fuzzy_suggestions},
     protocol::SlashCommand,
@@ -14,7 +15,7 @@ pub(in crate::app) fn exact<'a>(
 pub(in crate::app) fn is_exact_for_harness(
     input: &str,
     commands: &[SlashCommand],
-    _harness: &str,
+    _harness: Option<Backend>,
 ) -> bool {
     exact(input, commands).is_some()
 }
@@ -22,7 +23,7 @@ pub(in crate::app) fn is_exact_for_harness(
 pub(in crate::app) fn suggestions_for_harness(
     input: &str,
     commands: &[SlashCommand],
-    _harness: &str,
+    _harness: Option<Backend>,
 ) -> Vec<ComposerSuggestion> {
     suggestions(input, commands)
 }

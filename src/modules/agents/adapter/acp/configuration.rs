@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::collections::HashMap;
 
 use serde_json::{Value, json};
@@ -38,7 +39,7 @@ pub(super) fn metadata(
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
-    if profile.backend == "cursor-cli"
+    if profile.backend == Backend::Cursor
         && let Some(fast) = current_options
             .iter()
             .find(|option| option.get("id").and_then(Value::as_str) == Some("fast"))
@@ -88,7 +89,7 @@ pub(super) fn metadata(
         let efforts = parameters_metadata.efforts;
         let mut combinations: Vec<Vec<(String, String)>> = vec![Vec::new()];
         for option in options {
-            if profile.backend == "cursor-cli"
+            if profile.backend == Backend::Cursor
                 && option.get("id").and_then(Value::as_str) == Some("fast")
             {
                 continue;

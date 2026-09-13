@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::HashMap,
     io::BufReader,
@@ -178,7 +179,7 @@ pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> R
 pub(in crate::modules::agents::adapter) fn load_history(
     path: &Path,
 ) -> Result<DiscoveredHistory, String> {
-    let locator = external_session_locator("codex-cli", path)
+    let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
     with_connection_and_home(|connection, codex_home| {
         let id = connection.send_request(
@@ -344,18 +345,19 @@ fn summary(
     let parent_session = string(thread, &["parentThreadId", "parent_thread_id"])
         .map(str::to_owned)
         .or_else(|| {
-            crate::modules::agents::core::CallerRegistry::shared().session_parent("codex-cli", id)
+            crate::modules::agents::core::CallerRegistry::shared()
+                .session_parent(Backend::Codex, id)
         });
     let is_running = super::subagents::is_running(id).unwrap_or_else(|| {
         status(thread).is_some_and(|status| {
             matches!(status, "active" | "running" | "inProgress" | "in_progress")
         })
     });
-    let path = external_session_path(locator_root, "codex-cli", id);
+    let path = external_session_path(locator_root, Backend::Codex, id);
     let search = format!("{title} {first_user_message} {cwd} codex");
     Ok(Some(DiscoveredSession {
         id: id.to_owned(),
-        harness: "codex-cli".into(),
+        harness: Backend::Codex,
         path,
         project,
         title,

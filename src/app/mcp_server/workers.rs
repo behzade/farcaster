@@ -94,7 +94,7 @@ pub(super) fn send(
 pub(super) fn model_available(
     model: &crate::agents::WorkerExecution,
     project: &std::path::Path,
-    backends: &[String],
+    backends: &[crate::agents::Backend],
     catalogs: &[crate::app::persistence::CachedConfigurationCatalog],
 ) -> bool {
     if !backends.contains(&model.harness) {
@@ -140,7 +140,7 @@ fn new_worker(
             "Task delegated by Farcaster parent {} to child {name}:\n\n{message}",
             caller.worker_name
         ),
-        backend: assignment.execution.harness.clone(),
+        backend: assignment.execution.harness,
         parent_session: caller.session,
         parent_worker_id: Some(caller.worker_id),
         context: WorkerContext::Fresh,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn claude_protocol_can_initialize_and_list_tools_before_session_binding() {
@@ -21,7 +22,7 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
     let caller = crate::agents::CallerRegistry::shared().issue(
         project.path(),
         crate::agents::CallerProfile {
-            backend: "claude".into(),
+            backend: Backend::Claude,
             provider: None,
             model: None,
             effort: None,

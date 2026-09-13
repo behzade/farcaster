@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -17,9 +18,9 @@ pub(crate) use inputs::is_child_input_id;
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct WorkerFamilyLink {
     pub(crate) project: PathBuf,
-    pub(crate) child_backend: String,
+    pub(crate) child_backend: Backend,
     pub(crate) child_session: String,
-    pub(crate) parent_backend: String,
+    pub(crate) parent_backend: Backend,
     pub(crate) parent_session: String,
     #[serde(default)]
     pub(crate) execution: Option<super::WorkerExecution>,
@@ -38,7 +39,7 @@ pub(crate) struct CallerRegistry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CallerProfile {
-    pub(crate) backend: String,
+    pub(crate) backend: Backend,
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
@@ -50,7 +51,7 @@ pub(crate) struct CallerContext {
     pub(crate) worker_name: String,
     pub(crate) project: PathBuf,
     pub(crate) session: String,
-    pub(crate) backend: String,
+    pub(crate) backend: Backend,
     pub(crate) provider: Option<String>,
     pub(crate) model: Option<String>,
     pub(crate) effort: Option<String>,
@@ -63,7 +64,7 @@ struct RegisteredCaller {
     worker_name: String,
     project: PathBuf,
     session: Option<String>,
-    backend: String,
+    backend: Backend,
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
@@ -79,7 +80,7 @@ struct RegisteredCaller {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CallerSession {
     project: PathBuf,
-    backend: String,
+    backend: Backend,
     session: String,
 }
 
@@ -110,13 +111,13 @@ impl CallerRegistry {
             let parent = child.parent_session.as_ref()?;
             Some(WorkerFamilyLink {
                 project: child.project.clone(),
-                child_backend: child.backend.clone(),
+                child_backend: child.backend,
                 child_session: child.session.clone()?,
-                parent_backend: parent.backend.clone(),
+                parent_backend: parent.backend,
                 parent_session: parent.session.clone(),
                 execution: child.provider.as_ref().zip(child.model.as_ref()).map(
                     |(provider, model)| super::WorkerExecution {
-                        harness: child.backend.clone(),
+                        harness: child.backend,
                         provider: provider.clone(),
                         model: model.clone(),
                         effort: child.effort.clone(),
@@ -295,7 +296,7 @@ impl CallerRegistry {
                         worker_name: caller.worker_name.clone(),
                         project: caller.project.clone(),
                         session: caller.session.clone()?,
-                        backend: caller.backend.clone(),
+                        backend: caller.backend,
                         provider: caller.provider.clone(),
                         model: caller.model.clone(),
                         effort: caller.effort.clone(),
@@ -325,7 +326,7 @@ impl CallerRegistry {
     pub(crate) fn session_profile(
         &self,
         project: &Path,
-        backend: &str,
+        backend: Backend,
         session: &str,
     ) -> Option<CallerProfile> {
         let callers = self.callers.lock().ok()?;
@@ -335,14 +336,14 @@ impl CallerRegistry {
                 && caller.session.as_deref() == Some(session)
         })?;
         Some(CallerProfile {
-            backend: caller.backend.clone(),
+            backend: caller.backend,
             provider: caller.provider.clone(),
             model: caller.model.clone(),
             effort: caller.effort.clone(),
         })
     }
 
-    pub(crate) fn session_parent(&self, backend: &str, session: &str) -> Option<String> {
+    pub(crate) fn session_parent(&self, backend: Backend, session: &str) -> Option<String> {
         let callers = self.callers.lock().ok()?;
         let child = callers.values().find(|caller| {
             caller.backend == backend && caller.session.as_deref() == Some(session)
@@ -383,7 +384,11 @@ impl CallerRegistry {
             .and_then(|child| child.assignment.clone()))
     }
 
-    pub(crate) fn native_parent_session(&self, worker_id: &str, backend: &str) -> Option<String> {
+    pub(crate) fn native_parent_session(
+        &self,
+        worker_id: &str,
+        backend: Backend,
+    ) -> Option<String> {
         self.callers
             .lock()
             .ok()?
@@ -445,7 +450,7 @@ impl RegisteredCaller {
     fn session_key(&self) -> Option<CallerSession> {
         Some(CallerSession {
             project: self.project.clone(),
-            backend: self.backend.clone(),
+            backend: self.backend,
             session: self.session.clone()?,
         })
     }
@@ -604,7 +609,7 @@ pub(super) struct WorkerParent {
     pub(super) id: String,
     pub(super) project: PathBuf,
     pub(super) child_name: String,
-    pub(super) backend: Option<String>,
+    pub(super) backend: Option<Backend>,
     session: String,
 }
 
@@ -618,7 +623,7 @@ impl WorkerParent {
                 callers
                     .values()
                     .find(|caller| caller.worker_id == id && caller.project == project)
-                    .map(|caller| caller.backend.clone())
+                    .map(|caller| caller.backend)
             });
         Self {
             id,

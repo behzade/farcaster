@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn frames_are_bounded_individually_before_parsing() {
@@ -64,7 +65,7 @@ mod exchange {
     };
 
     const PROFILE: AcpProfile = AcpProfile {
-        backend: "example-acp",
+        backend: Backend::Cursor,
         name: "Example ACP",
         command: "example",
         path_environment: "EXAMPLE_ACP_PATH",

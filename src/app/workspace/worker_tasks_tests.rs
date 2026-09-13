@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn model_list_edits_preserve_order_and_keep_at_least_one_choice() {
@@ -89,7 +90,7 @@ fn worker_route_changes_clear_only_downstream_choices() {
     assert_eq!(route.harness, original.harness);
     assert!(route.model.is_empty());
     assert_eq!(route.effort, None);
-    apply_choice(&mut route, WorkerRouteChoice::Harness("codex-cli".into()));
+    apply_choice(&mut route, WorkerRouteChoice::Harness(Backend::Codex));
     assert!(route.provider.is_empty());
 }
 
@@ -131,7 +132,7 @@ fn worker_task_edits_validate_before_mutating() {
 
 #[test]
 fn worker_catalogs_preserve_effort_order_and_project_scope() {
-    let entry = |harness: &str, project: &str, efforts: &[&str]| {
+    let entry = |harness: Backend, project: &str, efforts: &[&str]| {
         crate::app::persistence::CachedConfigurationCatalog {
             harness: harness.into(),
             project: project.into(),
@@ -144,15 +145,15 @@ fn worker_catalogs_preserve_effort_order_and_project_scope() {
     };
     let editor = WorkerProfileEditor {
         catalogs: vec![
-            entry("pi", "/project", &["low", "medium", "high"]),
-            entry("pi", "/other", &["wrong"]),
-            entry("codex-cli", "/project", &["wrong"]),
-            entry("pi", "/project", &["high"]),
+            entry(Backend::Pi, "/project", &["low", "medium", "high"]),
+            entry(Backend::Pi, "/other", &["wrong"]),
+            entry(Backend::Codex, "/project", &["wrong"]),
+            entry(Backend::Pi, "/project", &["high"]),
         ],
         ..WorkerProfileEditor::default()
     };
     assert_eq!(
-        editor.catalog("pi", Path::new("/project")).efforts,
+        editor.catalog(Backend::Pi, Path::new("/project")).efforts,
         ["low", "medium", "high"]
     );
 }

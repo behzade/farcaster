@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::agents::{ConfigurationCatalog, WorkerExecution, WorkerProfile, WorkerProfiles};
 
 #[derive(Default)]
@@ -42,7 +43,7 @@ pub(in crate::app) enum WorkerProfileEdit {
 
 #[derive(Clone)]
 pub(in crate::app) enum WorkerRouteChoice {
-    Harness(String),
+    Harness(Backend),
     Provider(String),
     Model { provider: String, id: String },
     Effort(String),
@@ -101,7 +102,7 @@ impl WorkerProfileEditor {
         Ok(saved)
     }
 
-    pub(in crate::app) fn catalog(&self, harness: &str, project: &Path) -> ConfigurationCatalog {
+    pub(in crate::app) fn catalog(&self, harness: Backend, project: &Path) -> ConfigurationCatalog {
         let mut result = ConfigurationCatalog::default();
         for entry in &self.catalogs {
             if entry.harness == harness && entry.project == project {

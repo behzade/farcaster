@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use serde_json::json;
 
 #[test]
@@ -63,7 +64,7 @@ fn discovery_samples_large_transcripts_and_uses_the_direct_backend_identity() {
     let sessions = discover_in(directory.path(), directory.path(), "named")
         .expect("test operation should succeed");
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].harness, "claude");
+    assert_eq!(sessions[0].harness, Backend::Claude);
     assert_eq!(sessions[0].first_user_message, "find this session");
     assert_eq!(
         external_session_locator(BACKEND, &sessions[0].path),

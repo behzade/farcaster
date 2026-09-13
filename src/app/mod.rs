@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 mod bootstrap;
 mod change_detection;
 mod composer;
@@ -197,7 +198,7 @@ pub(crate) struct FarcasterApp {
     drafts: Vec<projects::DraftSession>,
     draft_session_ids: HashMap<String, i64>,
     selected_draft: Option<String>,
-    preferred_harness: String,
+    preferred_harness: Option<Backend>,
     submitted_drafts: HashMap<String, Option<PathBuf>>,
     sessions_error: Option<String>,
     session_project_filter: Option<PathBuf>,
@@ -287,7 +288,7 @@ pub(crate) struct FarcasterApp {
     archived_sessions_expanded: bool,
     project_trust_error: Option<String>,
     project_trust_project: Option<PathBuf>,
-    project_trust_backend: Option<String>,
+    project_trust_backend: Option<Backend>,
     pending_project_trust_command: Option<RuntimeCommand>,
     _composer_subscription: Subscription,
     _search_subscription: Subscription,

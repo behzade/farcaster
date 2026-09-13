@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn dismissing_trust_cancels_the_pending_project_command() {
@@ -15,7 +16,7 @@ fn selecting_after_a_new_trust_decision_restarts_the_project_process() {
         restart_session_after_trust(RuntimeCommand::SelectSession {
             session_id: path.to_string_lossy().into_owned(),
             path,
-            harness: "pi".into(),
+            harness: Backend::Pi,
             project,
         }),
         RuntimeCommand::RestartSession { .. }

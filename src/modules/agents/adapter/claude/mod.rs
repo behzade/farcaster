@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 mod catalog;
 mod events;
 mod process;
@@ -9,7 +10,7 @@ mod live_tests;
 pub(super) use catalog::{discover, load_history};
 pub(super) use worker::{ClaudeWorkerFactory, load_configuration, spawn_main};
 
-pub(super) const BACKEND: &str = "claude";
+pub(super) const BACKEND: Backend = Backend::Claude;
 
 pub(super) fn program() -> std::path::PathBuf {
     std::env::var_os("FARCASTER_CLAUDE_PATH")
@@ -22,7 +23,7 @@ pub(super) fn descriptor() -> crate::agents::contract::AgentBackendDescriptor {
     use crate::agents::contract::*;
     use CapabilitySupport::{Available, Unsupported};
     AgentBackendDescriptor {
-        id: AgentBackendId::new(BACKEND).expect("valid Claude backend id"),
+        id: Backend::Claude,
         name: "Claude Code".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {

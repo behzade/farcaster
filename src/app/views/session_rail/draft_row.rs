@@ -225,7 +225,7 @@ impl RenderOnce for DraftRow {
                                                 .child(project_badge(&draft.project)),
                                         )
                                         .child(session_row_metadata(
-                                            &draft.harness,
+                                            draft.harness,
                                             target_app_session_id,
                                             if is_draft { "" } else { status },
                                             age,

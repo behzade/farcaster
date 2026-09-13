@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 impl crate::access::NetworkSettingsStore for StateStore {
     fn load_proxy(&self) -> Result<Option<String>, String> {
@@ -14,7 +15,7 @@ impl crate::agents::PromptStore for StateStore {
     fn enqueue(
         &self,
         target: &str,
-        harness: &str,
+        harness: Backend,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,
@@ -27,7 +28,7 @@ impl crate::agents::PromptStore for StateStore {
     fn enqueue_with_presentation(
         &self,
         target: &str,
-        harness: &str,
+        harness: Backend,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,

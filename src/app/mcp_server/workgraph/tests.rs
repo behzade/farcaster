@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::{
     app::persistence::StateStore,
     sessions::{SessionSummary, UsageSummary},
@@ -13,7 +14,7 @@ fn caller(project: &Path, id: &str) -> CallerContext {
         worker_name: id.into(),
         project: project.to_owned(),
         session: format!("backend://{id}"),
-        backend: "test-backend".into(),
+        backend: Backend::Pi,
         provider: None,
         model: None,
         effort: None,
@@ -28,7 +29,7 @@ fn index(database: &Path, callers: &[CallerContext]) -> Result<(), String> {
         .map(|caller| {
             SessionSummary::from_cached_for_harness(
                 caller.worker_name.clone(),
-                caller.backend.clone(),
+                caller.backend,
                 caller.session.clone().into(),
                 caller.project.clone(),
                 caller.worker_name.clone(),
@@ -201,7 +202,7 @@ fn duplicate_backend_ids_cannot_share_task_ownership() -> Result<(), String> {
     let mut bob = caller(temp.path(), "bob");
     alice.worker_name = "same-id".into();
     bob.worker_name = "same-id".into();
-    bob.backend = "another-backend".into();
+    bob.backend = Backend::Codex;
     index(&database, &[alice.clone(), bob.clone()])?;
     assert!(
         session_identity(&database, &alice)

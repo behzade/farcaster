@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -276,7 +277,7 @@ fn cli_round_trip_streams_once_preserves_arguments_and_queues_turns() {
     let (directory, command) = setup();
     let mut session = session(&command, directory.path());
     session
-        .select_model(BACKEND, "fixture")
+        .select_model(BACKEND.as_str(), "fixture")
         .expect("test operation should succeed");
     session
         .select_effort("high")
@@ -421,8 +422,8 @@ fn cli_launch_and_image_envelopes_are_source_typed() {
         .is_err()
     );
     let (factories, _) = super::super::super::worker_factories(AgentLaunchConfig::default());
-    assert!(factories.contains_key("claude"));
-    assert!(!factories.contains_key("claude-acp"));
+    assert!(factories.contains_key(&Backend::Claude));
+    assert!("claude-acp".parse::<crate::agents::Backend>().is_err());
 }
 
 #[test]

@@ -33,17 +33,17 @@ impl FarcasterApp {
                             backend.program.display()
                         ))
                     } else {
-                        (backend.id == self.active_harness()).then(|| "Current".into())
+                        (Some(backend.id) == self.active_harness()).then(|| "Current".into())
                     };
                     picker_row(
                         commands,
                         &format!("harness:{}", backend.id),
                         PickerCommand::SetHarness(backend.id.clone()),
-                        AppIcon::for_harness(&backend.id),
+                        AppIcon::for_harness(backend.id),
                         &backend.name,
                         detail,
                         None,
-                        &backend.id,
+                        backend.id.as_str(),
                     )
                     .disabled(!backend.available)
                 })
@@ -238,11 +238,11 @@ pub(super) fn selected_row(
     rows: &[PickerRow],
     commands: &HashMap<String, PickerCommand>,
     snapshot: &crate::runtime::RuntimeSnapshot,
-    harness: Option<&str>,
+    harness: Option<Backend>,
 ) -> Option<usize> {
     if let Some(harness) = harness {
         return rows.iter().position(|row| {
-            matches!(commands.get(&row.id), Some(PickerCommand::SetHarness(id)) if id == harness)
+            matches!(commands.get(&row.id), Some(PickerCommand::SetHarness(id)) if *id == harness)
         });
     }
 

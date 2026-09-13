@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::agents::{CallerIdentity, CallerProfile};
 use crate::agents::{WorkerEvent, WorkerLaunch, WorkerSession, WorkerSessionFactory};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,7 +15,7 @@ impl WorkerSessionFactory for Factory {
         let identity = CallerRegistry::shared().issue_as_with_access(
             &launch.project,
             CallerProfile {
-                backend: "codex-cli".into(),
+                backend: Backend::Codex,
                 provider: launch.provider.clone(),
                 model: launch.model.clone(),
                 effort: launch.effort.clone(),
@@ -60,8 +61,8 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
         launches: launches.clone(),
     });
     let pool = WorkerPool::new(
-        std::collections::BTreeMap::from([("codex-cli".into(), factory)]),
-        "codex-cli".into(),
+        std::collections::BTreeMap::from([(Backend::Codex, factory)]),
+        Backend::Codex,
         temp.path().to_owned(),
         1,
     )?;
@@ -69,7 +70,7 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
     let parent = registry.issue_with_access(
         temp.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: Some("parent-provider".into()),
             model: Some("expensive-parent".into()),
             effort: Some("max".into()),
@@ -81,7 +82,7 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
     let token = Some(parent.token().to_owned());
     let send = |pool, params, token, profiles: &crate::agents::WorkerProfiles| {
         super::send(pool, params, token, profiles, |model, _| {
-            model.harness == "codex-cli"
+            model.harness == Backend::Codex
         })
     };
     let mut tasks = crate::agents::WorkerProfiles::default();
@@ -172,8 +173,8 @@ fn nested_parent_policy_reaches_the_grandchild_factory_launch() -> Result<(), St
         launches: launches.clone(),
     });
     let pool = WorkerPool::new(
-        std::collections::BTreeMap::from([("codex-cli".into(), factory)]),
-        "codex-cli".into(),
+        std::collections::BTreeMap::from([(Backend::Codex, factory)]),
+        Backend::Codex,
         temp.path().to_owned(),
         1,
     )?;
@@ -181,7 +182,7 @@ fn nested_parent_policy_reaches_the_grandchild_factory_launch() -> Result<(), St
     let parent = registry.issue_with_access(
         temp.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -194,7 +195,7 @@ fn nested_parent_policy_reaches_the_grandchild_factory_launch() -> Result<(), St
     let child = registry.issue_as_with_access(
         temp.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -210,7 +211,7 @@ fn nested_parent_policy_reaches_the_grandchild_factory_launch() -> Result<(), St
     let assignment = crate::agents::WorkerAssignment {
         profile: "nested".into(),
         execution: crate::agents::WorkerExecution {
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             provider: "openai".into(),
             model: "test-model".into(),
             effort: None,
@@ -237,17 +238,17 @@ fn restrictive_cross_backend_launch_errors_instead_of_using_auto() -> Result<(),
         .map_err(|error| error.to_string())?;
     let command = crate::agents::AgentLaunchConfig::test_script(&script, vec!["normal".into()]);
     let (mut factories, _) = crate::agents::worker_factories(command);
-    let pi = factories.remove("pi").ok_or("Pi factory missing")?;
+    let pi = factories.remove(&Backend::Pi).ok_or("Pi factory missing")?;
     let pool = WorkerPool::new(
-        std::collections::BTreeMap::from([("pi".into(), pi)]),
-        "pi".into(),
+        std::collections::BTreeMap::from([(Backend::Pi, pi)]),
+        Backend::Pi,
         temp.path().to_owned(),
         1,
     )?;
     let parent = CallerRegistry::shared().issue_with_access(
         temp.path(),
         CallerProfile {
-            backend: "codex-cli".into(),
+            backend: Backend::Codex,
             provider: None,
             model: None,
             effort: None,
@@ -265,7 +266,7 @@ fn restrictive_cross_backend_launch_errors_instead_of_using_auto() -> Result<(),
         },
         Some(parent.token().into()),
         &crate::agents::WorkerProfiles::default(),
-        |model, _| model.harness == "pi",
+        |model, _| model.harness == Backend::Pi,
     )
     .expect_err("unsupported restrictive launch must fail");
     assert!(
@@ -294,7 +295,7 @@ impl WorkerSessionFactory for RetiringFactory {
         let identity = CallerRegistry::shared().issue_as_with_access(
             &launch.project,
             CallerProfile {
-                backend: "codex-cli".into(),
+                backend: Backend::Codex,
                 provider: launch.provider.clone(),
                 model: launch.model.clone(),
                 effort: launch.effort.clone(),
@@ -363,8 +364,8 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
         drops: drops.clone(),
     });
     let pool = WorkerPool::new(
-        std::collections::BTreeMap::from([("codex-cli".into(), factory)]),
-        "codex-cli".into(),
+        std::collections::BTreeMap::from([(Backend::Codex, factory)]),
+        Backend::Codex,
         temp.path().to_owned(),
         1,
     )?;
@@ -373,7 +374,7 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
     let parent = registry.issue(
         temp.path(),
         CallerProfile {
-            backend: "pi".into(),
+            backend: Backend::Pi,
             provider: None,
             model: None,
             effort: None,
@@ -394,7 +395,7 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
             },
             token.clone(),
             &tasks,
-            |model, _| model.harness == "codex-cli",
+            |model, _| model.harness == Backend::Codex,
         )?;
         assert_eq!(result["created"], true);
         wait_worker_update(&updates)?;
@@ -423,7 +424,7 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
         },
         token,
         &tasks,
-        |model, _| model.harness == "codex-cli",
+        |model, _| model.harness == Backend::Codex,
     )?;
     assert_eq!(result["created"], false);
     assert!(matches!(
@@ -468,9 +469,9 @@ fn wait_worker_idle(pool: &WorkerPool) -> Result<(), String> {
 fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
     let profiles = crate::agents::WorkerProfiles::default();
     let project = std::path::Path::new("/project");
-    let backends = vec!["pi".to_owned()];
+    let backends = vec![Backend::Pi];
     let catalog = crate::app::persistence::CachedConfigurationCatalog {
-        harness: "pi".into(),
+        harness: Backend::Pi,
         project: project.into(),
         catalog: crate::agents::ConfigurationCatalog {
             models: vec![crate::protocol::Model {

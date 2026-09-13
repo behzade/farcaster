@@ -103,7 +103,7 @@ pub(crate) fn set_worker_app_proxy(proxy: Option<String>) -> Result<(), String> 
 
 pub(crate) fn stop_session_family_workers(
     project: &std::path::Path,
-    sessions: &[(String, PathBuf)],
+    sessions: &[(crate::agents::Backend, PathBuf)],
 ) -> Result<usize, String> {
     #[cfg(test)]
     if let Some(workers) = TEST_WORKER_POOL
@@ -128,7 +128,7 @@ pub(crate) fn stop_session_family_workers(
 
 pub(crate) fn finish_session_family_worker_stop(
     project: &std::path::Path,
-    sessions: &[(String, PathBuf)],
+    sessions: &[(crate::agents::Backend, PathBuf)],
 ) -> Result<(), String> {
     #[cfg(test)]
     if let Some(workers) = TEST_WORKER_POOL

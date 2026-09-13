@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 impl RuntimeOwner {
     pub(super) fn publish_child_session_metadata(&self, event: &Value) {
@@ -20,6 +21,9 @@ impl RuntimeOwner {
     }
 
     pub(super) fn publish_session_metadata(&self) {
+        let Some(harness) = self.harness else {
+            return;
+        };
         let snapshot = self.active_snapshot();
         let (Some(path), Some(session)) = (&self.active_session, &snapshot.session) else {
             return;
@@ -35,7 +39,7 @@ impl RuntimeOwner {
         let _ = self
             .event_tx
             .send(RuntimeEvent::SessionMetadata(agents::SessionMetadata {
-                harness: self.harness.clone(),
+                harness,
                 id: session.session_id.clone(),
                 path: path.clone(),
                 project: self.project.clone(),
@@ -118,7 +122,7 @@ impl RuntimeOwner {
         self.refresh_sessions();
     }
 
-    pub(super) fn preview_import(&mut self, harness: String, generation: u64) {
+    pub(super) fn preview_import(&mut self, harness: Backend, generation: u64) {
         if !self.owns_session_catalog {
             let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
             return;
@@ -148,7 +152,7 @@ impl RuntimeOwner {
         if let Err(error) = thread::Builder::new()
             .name("farcaster-import".into())
             .spawn(move || {
-                let result = agents::discover_sessions_for(&harness, locator_root.as_deref(), "")
+                let result = agents::discover_sessions_for(harness, locator_root.as_deref(), "")
                     .map(|sessions| unknown_import_candidates(sessions, &known));
                 let event = match result {
                     Ok(sessions) => RuntimeEvent::ImportPreview {

@@ -1,9 +1,11 @@
 use super::*;
+use crate::agents::Backend;
 use crate::{app::session_folders::SessionFolder, projects::DraftSession};
 use gpui::{AppContext as _, StatefulInteractiveElement as _};
 
 fn draft(id: i64) -> ActiveSessionItem {
-    let mut draft = DraftSession::with_id("pi".into(), format!("draft-{id}"), "/project".into());
+    let mut draft =
+        DraftSession::with_id(Some(Backend::Pi), format!("draft-{id}"), "/project".into());
     draft.app_session_id = id;
     ActiveSessionItem::Draft(draft)
 }

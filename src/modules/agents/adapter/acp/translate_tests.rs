@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[test]
 fn grouped_and_legacy_models_preserve_the_selected_model() {
@@ -25,7 +26,7 @@ fn grouped_and_legacy_models_preserve_the_selected_model() {
 }
 
 const PROFILE: AcpProfile = AcpProfile {
-    backend: "test-acp",
+    backend: Backend::Cursor,
     name: "Test ACP",
     command: "test-acp",
     path_environment: "FARCASTER_TEST_ACP_PATH",
@@ -48,7 +49,7 @@ fn session_config_options_become_neutral_catalogs() {
         }),
     );
     assert_eq!(metadata.models[0]["id"], "fast");
-    assert_eq!(metadata.models[0]["provider"], "test-acp");
+    assert_eq!(metadata.models[0]["provider"], "cursor-cli");
     assert_eq!(metadata.modes[0]["id"], "agent");
     assert_eq!(ids.model.as_deref(), Some("model"));
 }

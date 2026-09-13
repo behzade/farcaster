@@ -153,7 +153,7 @@ fn catalog_is_reusable(existing_project: &Path, project: &Path, running: bool) -
     running && existing_project == project
 }
 
-type CatalogKey = (&'static str, &'static str);
+type CatalogKey = (crate::agents::Backend, &'static str);
 type CatalogSlot = Arc<Mutex<Option<CatalogProcess>>>;
 
 fn catalog_processes() -> &'static Mutex<HashMap<CatalogKey, CatalogSlot>> {

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -5,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkerExecution {
-    pub(crate) harness: String,
+    pub(crate) harness: Backend,
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) effort: Option<String>,

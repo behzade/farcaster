@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{collections::VecDeque, path::PathBuf, time::SystemTime};
 
 use serde_json::{Value, json};
@@ -40,7 +41,7 @@ fn family() -> Vec<SessionSummary> {
         .map(|id| {
             SessionSummary::from_cached_for_harness(
                 id.into(),
-                "opencode".into(),
+                Backend::OpenCode,
                 PathBuf::from(format!("/locators/opencode/{id}")),
                 "/source".into(),
                 String::new(),

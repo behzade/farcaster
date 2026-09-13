@@ -1,9 +1,8 @@
 //! Externally installed ACP agents. No runtime installation or credential storage.
 use super::AcpProfile;
 use crate::agents::contract::{
-    AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
-    ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
-    SessionCapabilities, TurnCapabilities,
+    AgentBackendDescriptor, AgentCapabilities, CapabilitySupport, ConfigurationCapabilities,
+    InteractionCapabilities, ObservationCapabilities, SessionCapabilities, TurnCapabilities,
 };
 
 pub(in crate::modules::agents::adapter) fn descriptor(
@@ -18,7 +17,7 @@ pub(in crate::modules::agents::adapter) fn descriptor(
         Unsupported
     };
     AgentBackendDescriptor {
-        id: AgentBackendId::new(profile.backend).expect("valid ACP backend id"),
+        id: profile.backend,
         name: profile.name.into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {

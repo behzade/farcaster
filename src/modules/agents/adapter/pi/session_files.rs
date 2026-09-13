@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
@@ -311,7 +312,7 @@ fn entry_message(entry: &Value) -> Option<Value> {
     match entry.get("type").and_then(Value::as_str)? {
         "message" => {
             let mut message = entry.get("message").cloned()?;
-            crate::agents::annotate_history_message("pi", &mut message);
+            crate::agents::annotate_history_message(Backend::Pi, &mut message);
             Some(message)
         }
         "custom_message" => Some(json_object([
@@ -688,13 +689,13 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
         SessionSummary {
             id,
             app_session_id: 0,
-            harness: "pi".into(),
+            harness: Backend::Pi,
             path: session_path,
             project,
             title,
             first_user_message,
             timestamp,
-            parent_harness: parent_session.as_ref().map(|_| "pi".into()),
+            parent_harness: parent_session.as_ref().map(|_| Backend::Pi),
             parent_app_session_id: None,
             parent_session,
             modified,

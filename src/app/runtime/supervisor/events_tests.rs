@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 struct SupervisorFixture {
     supervisor: Supervisor,
@@ -121,7 +122,7 @@ fn capability_only_catalog_reaches_draft_once_without_snapshot_loop() {
     let project = PathBuf::from("/project");
     let mut fixture = SupervisorFixture::new("draft:pi", project.clone(), None, Default::default());
     fixture.supervisor.configurations.set_catalog(
-        "pi".into(),
+        Backend::Pi,
         project.clone(),
         crate::agents::ConfigurationCatalog {
             models: vec![],
@@ -136,7 +137,7 @@ fn capability_only_catalog_reaches_draft_once_without_snapshot_loop() {
         RuntimeEvent::Snapshot {
             generation: 0,
             snapshot: Arc::new(RuntimeSnapshot {
-                harness: "pi".into(),
+                harness: Some(Backend::Pi),
                 project: project.clone(),
                 ..RuntimeSnapshot::default()
             }),
@@ -190,7 +191,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     fixture.supervisor.latest.insert(
         "draft:open".into(),
         Arc::new(RuntimeSnapshot {
-            harness: "opencode".into(),
+            harness: Some(Backend::OpenCode),
             project: project.clone(),
             access_mode: Full,
             ..RuntimeSnapshot::default()
@@ -211,7 +212,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     fixture
         .commands
         .send(RuntimeCommand::LoadConfiguration {
-            harness: "opencode".into(),
+            harness: Backend::OpenCode,
             project: project.clone(),
         })
         .expect("queue catalog load");
@@ -219,7 +220,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     assert_eq!(
         fixture
             .supervisor
-            .configuration_process_command("opencode", &project, "draft:open")
+            .configuration_process_command(Backend::OpenCode, &project, "draft:open")
             .access_mode,
         Sandboxed
     );
@@ -227,7 +228,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
         fixture
             .supervisor
             .configuration_process_command(
-                "opencode",
+                Backend::OpenCode,
                 std::path::Path::new("/other"),
                 "draft:open",
             )
@@ -338,7 +339,7 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
         .commands
         .send(RuntimeCommand::SelectSession {
             path,
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             session_id: "background".into(),
             project,
         })
@@ -364,7 +365,7 @@ fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String>
     let store = StateStore::open_at(&database)?;
     let id = store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         Some(&session),
         PromptMode::Normal,
@@ -382,7 +383,7 @@ fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String>
         .commands
         .send(RuntimeCommand::SelectSession {
             path: session.clone(),
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             session_id: "selected".into(),
             project: temp.path().into(),
         })
@@ -402,7 +403,7 @@ fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String>
             generation: 44,
             snapshot: Arc::new(RuntimeSnapshot {
                 project: temp.path().into(),
-                harness: "codex-cli".into(),
+                harness: Some(Backend::Codex),
                 selected_session: Some(session.clone()),
                 history_preview: true,
                 ..RuntimeSnapshot::default()
@@ -439,7 +440,7 @@ fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String>
             generation: 45,
             snapshot: Arc::new(RuntimeSnapshot {
                 project: temp.path().into(),
-                harness: "codex-cli".into(),
+                harness: Some(Backend::Codex),
                 selected_session: Some(session.clone()),
                 history_preview: true,
                 ..RuntimeSnapshot::default()
@@ -469,7 +470,7 @@ fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String>
         .commands
         .send(RuntimeCommand::SelectSession {
             path: session,
-            harness: "codex-cli".into(),
+            harness: Backend::Codex,
             session_id: "selected".into(),
             project: temp.path().into(),
         })
@@ -495,7 +496,7 @@ fn draft_actor_locator_snapshot_reveals_its_interrupted_prompt() -> Result<(), S
     let store = StateStore::open_at(&database)?;
     let id = store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         Some(&session),
         PromptMode::Normal,
@@ -516,7 +517,7 @@ fn draft_actor_locator_snapshot_reveals_its_interrupted_prompt() -> Result<(), S
             generation: 0,
             snapshot: Arc::new(RuntimeSnapshot {
                 project: temp.path().into(),
-                harness: "codex-cli".into(),
+                harness: Some(Backend::Codex),
                 live_session: Some(session),
                 ..RuntimeSnapshot::default()
             }),
@@ -554,7 +555,7 @@ fn last_child_dismissal_keeps_unknown_recovery_visible() -> Result<(), String> {
     let store = StateStore::open_at(&database)?;
     let id = store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         Some(&session),
         PromptMode::Normal,
@@ -571,7 +572,7 @@ fn last_child_dismissal_keeps_unknown_recovery_visible() -> Result<(), String> {
         target.clone(),
         Arc::new(RuntimeSnapshot {
             project: temp.path().into(),
-            harness: "codex-cli".into(),
+            harness: Some(Backend::Codex),
             selected_session: Some(session),
             ..RuntimeSnapshot::default()
         }),
@@ -610,7 +611,7 @@ fn selected_reset_allows_recovery_to_publish_after_the_next_snapshot() -> Result
     let store = StateStore::open_at(&database)?;
     let id = store.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         Some(&session),
         PromptMode::Normal,
@@ -625,7 +626,7 @@ fn selected_reset_allows_recovery_to_publish_after_the_next_snapshot() -> Result
     fixture.drain();
     let snapshot = Arc::new(RuntimeSnapshot {
         project: temp.path().into(),
-        harness: "codex-cli".into(),
+        harness: Some(Backend::Codex),
         selected_session: Some(session),
         ..RuntimeSnapshot::default()
     });
@@ -682,7 +683,7 @@ fn recovered_prompts_do_not_block_app_quit_without_live_agents() -> Result<(), S
     let state = StateStore::open_at(&database)?;
     let id = state.enqueue_prompt(
         &target,
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         Some(&session),
         PromptMode::Normal,

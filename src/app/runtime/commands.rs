@@ -39,7 +39,7 @@ impl RuntimeOwner {
                 ..
             } => {
                 let mode = if self.active_snapshot().conversation.running {
-                    if agents::supports_steering(&self.harness) {
+                    if agents::supports_steering(self.harness) {
                         PromptMode::Steer
                     } else {
                         PromptMode::FollowUp
@@ -91,7 +91,7 @@ impl RuntimeOwner {
                 project,
                 catalog,
             } => {
-                if self.harness == harness && self.project == project {
+                if self.harness == Some(harness) && self.project == project {
                     let mut changed = false;
                     for snapshot in
                         std::iter::once(&mut self.snapshot).chain(self.parked_snapshot.iter_mut())
@@ -153,7 +153,7 @@ impl RuntimeOwner {
             } => {
                 match crate::agents::rename_session(
                     &self.process_command,
-                    &harness,
+                    harness,
                     &project,
                     &path,
                     &session_id,
@@ -195,7 +195,7 @@ impl RuntimeOwner {
                 project,
             } => {
                 self.project = project;
-                self.harness = harness;
+                self.harness = Some(harness);
                 self.session_id = Some(session_id);
                 self.start_fork_process(path);
             }
@@ -208,7 +208,7 @@ impl RuntimeOwner {
                 session_id,
                 project,
             } => {
-                self.harness = harness;
+                self.harness = Some(harness);
                 self.session_id = Some(session_id);
                 self.select_history(path, project);
             }
@@ -219,7 +219,7 @@ impl RuntimeOwner {
                 project,
             } => {
                 self.project = project;
-                self.harness = harness;
+                self.harness = Some(harness);
                 self.session_id = Some(session_id);
                 self.start_process(Some(path));
             }
@@ -228,7 +228,7 @@ impl RuntimeOwner {
                 project,
                 harness,
             } => {
-                if !harness.is_empty() {
+                if !harness.is_none() {
                     self.harness = harness;
                 }
                 self.bind_external_session_identity(&path);

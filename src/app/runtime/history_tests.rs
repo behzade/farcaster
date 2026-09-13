@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -13,7 +14,7 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
     let mut store = StateStore::open_at(&database)?;
     let id = store.enqueue_prompt(
         "draft:image",
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         crate::protocol::PromptMode::Normal,
@@ -66,7 +67,7 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
     let mut store = StateStore::open_at(&database)?;
     let first = store.enqueue_prompt(
         "draft:first",
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         None,
         crate::protocol::PromptMode::Normal,
@@ -75,7 +76,7 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
     )?;
     let second = store.enqueue_prompt(
         "draft:second",
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         None,
         crate::protocol::PromptMode::Normal,
@@ -101,7 +102,7 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
     )?;
     let delivered = store.enqueue_prompt(
         "draft:delivered",
-        "codex-cli",
+        Backend::Codex,
         temp.path(),
         None,
         crate::protocol::PromptMode::Normal,
@@ -160,7 +161,7 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
     ] {
         let row = store.enqueue_prompt(
             "draft:pending",
-            "codex-cli",
+            Backend::Codex,
             temp.path(),
             None,
             mode,

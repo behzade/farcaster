@@ -20,6 +20,7 @@
 //! malformed request. Production controls cannot make either race both safe
 //! and repeatable across installed harnesses. Adapter process tests own those
 //! receipt states; these tests prove the real accepted/restart/navigation path.
+use crate::agents::Backend;
 
 use std::{
     collections::HashMap,
@@ -97,7 +98,7 @@ impl RuntimeTrace {
                 self.snapshot_count += 1;
                 self.record(format!(
                     "snapshot generation={generation} harness={} session={:?} running={} items={}",
-                    snapshot.harness,
+                    snapshot.harness.map(Backend::as_str).unwrap_or(""),
                     snapshot.live_session,
                     snapshot.conversation.running,
                     snapshot.conversation.items.len(),
@@ -263,7 +264,7 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
                 trace.outcomes.get(&target) == Some(&PromptOutcome::Accepted)
                     && trace.snapshot.as_ref().is_some_and(|snapshot| {
-                        snapshot.harness == harness
+                        snapshot.harness == Some(harness)
                             && snapshot.conversation.running
                             && contains_tool_gate(snapshot, &message)
                             && snapshot.session_target().is_some()
@@ -300,7 +301,7 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                 })?;
                 wait_for(&resumed, &mut after_restart, TURN_TIMEOUT, |trace| {
                     trace.snapshot.as_ref().is_some_and(|snapshot| {
-                        snapshot.harness == harness
+                        snapshot.harness == Some(harness)
                             && snapshot.live_session.as_deref() == Some(first.path.as_path())
                             && snapshot.session_target().as_ref() == Some(&first)
                     })
@@ -459,7 +460,7 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
                 trace.outcomes.get(&second_target) == Some(&PromptOutcome::Accepted)
                     && trace.snapshot.as_ref().is_some_and(|snapshot| {
-                        snapshot.harness == harness && snapshot.session_target().is_some()
+                        snapshot.harness == Some(harness) && snapshot.session_target().is_some()
                     })
             })?;
             let second = trace
@@ -564,7 +565,7 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
                 trace.outcomes.get(&initial_target) == Some(&PromptOutcome::Accepted)
                     && trace.snapshot.as_ref().is_some_and(|snapshot| {
-                        snapshot.harness == harness
+                        snapshot.harness == Some(harness)
                             && snapshot.conversation.running
                             && contains_tool_gate(snapshot, &gate_message)
                             && snapshot.session_target().is_some()
@@ -706,10 +707,10 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
     })
 }
 
-fn selected_harness() -> Result<&'static str, String> {
+fn selected_harness() -> Result<Backend, String> {
     let selected = selected_live_harnesses()?;
     match selected.as_slice() {
-        [harness] => Ok(*harness),
+        [harness] => harness.parse(),
         _ => Err(
             "live runtime E2E requires exactly one FARCASTER_E2E_HARNESS; run each harness separately"
                 .into(),
@@ -793,9 +794,9 @@ fn live_project(label: &str) -> Result<PathBuf, String> {
     Ok(project)
 }
 
-fn live_config(harness: &str) -> Result<AgentLaunchConfig, String> {
+fn live_config(harness: Backend) -> Result<AgentLaunchConfig, String> {
     Ok(AgentLaunchConfig {
-        program: PathBuf::from(harness),
+        program: PathBuf::from(harness.as_str()),
         prefix_args: Vec::new(),
         // Sandboxed is the default. A caller must explicitly opt into Full
         // through FARCASTER_E2E_ACCESS_MODE; we never fall back to it.
@@ -806,7 +807,7 @@ fn live_config(harness: &str) -> Result<AgentLaunchConfig, String> {
 }
 
 fn start_runtime(
-    harness: &str,
+    harness: Backend,
     project: &Path,
     draft_id: &str,
     config: AgentLaunchConfig,

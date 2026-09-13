@@ -1,13 +1,14 @@
 use super::*;
+use crate::agents::Backend;
 
 const PROMPT: &str = "Fix this\n\nCode context: unsaved.rs:2:1\n```\nunsaved code\n```";
 
 fn ready_original() -> Harness {
     let harness = Harness::start();
-    harness.select("claude", "original");
+    harness.select(Backend::Claude, "original");
     let mut catalog = harness.accept(WAIT).expect("catalog starts");
     catalog.complete_catalog(false);
-    harness.snapshot("claude", |s| {
+    harness.snapshot(Backend::Claude, |s| {
         s.configuration_status == ConfigurationStatus::Loaded
     });
     while harness.runtime.try_recv().is_ok() {}
@@ -20,7 +21,7 @@ fn task(harness: &Harness, id: &str, model: Option<Model>) -> RuntimeCommand {
         id: id.into(),
         settings: TaskSettings {
             project: harness.project.clone(),
-            harness: "claude".into(),
+            harness: Some(Backend::Claude),
             model,
             effort: None,
             access_mode: HarnessAccessMode::Sandboxed,
@@ -100,7 +101,7 @@ fn comment_reuses_running_background_session_and_queues_when_steering_is_unavail
                     target: target.clone(),
                     session: Some(crate::sessions::SessionTarget {
                         path: path.clone(),
-                        harness: "claude".into(),
+                        harness: Backend::Claude,
                         id: String::new(),
                     }),
                     project: harness.project.clone(),
@@ -170,7 +171,7 @@ fn comment_resumes_an_unopened_session_without_selecting_it() {
                     target: target.clone(),
                     session: Some(crate::sessions::SessionTarget {
                         path: path.clone(),
-                        harness: "claude".into(),
+                        harness: Backend::Claude,
                         id: id.into(),
                     }),
                     project: harness.project.clone(),
@@ -220,12 +221,12 @@ fn starts_without_selecting_its_chat() {
                 .runtime
                 .send(RuntimeCommand::SelectSession {
                     path: session.expect("accepted task has a session"),
-                    harness: "claude".into(),
+                    harness: Backend::Claude,
                     session_id: String::new(),
                     project: harness.project.clone(),
                 })
                 .expect("open task chat");
-            harness.snapshot("claude", |s| !s.conversation.items.is_empty());
+            harness.snapshot(Backend::Claude, |s| !s.conversation.items.is_empty());
         },
     );
 }
@@ -262,7 +263,7 @@ fn opening_during_startup_does_not_restart_task() {
                 .send(task(&harness, "early", None))
                 .expect("start task");
             // Select before the actor can finish startup or publish a locator.
-            harness.select("claude", "early");
+            harness.select(Backend::Claude, "early");
             let mut peer = harness.accept(WAIT).expect("task starts");
             // Selecting also loads a catalog; either process may connect first.
             let mut catalog = harness.accept(WAIT).expect("catalog starts");

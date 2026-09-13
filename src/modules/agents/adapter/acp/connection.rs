@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::{HashMap, VecDeque},
     io,
@@ -142,7 +143,7 @@ impl AcpConnection {
         let initialized = self.request_blocking("initialize", json!({
             "protocolVersion": 1,
             "clientCapabilities": {
-                "_meta": {"parameterizedModelPicker": profile.backend == "cursor-cli"},
+                "_meta": {"parameterizedModelPicker": profile.backend == Backend::Cursor},
                 "fs": {"readTextFile": false, "writeTextFile": false},
                 "terminal": false,
             },
@@ -191,7 +192,7 @@ impl AcpConnection {
     }
 
     pub(super) fn model_catalog(&self, profile: &AcpProfile) -> Result<Vec<Value>, String> {
-        if profile.backend != "cursor-cli" {
+        if profile.backend != Backend::Cursor {
             return Ok(Vec::new());
         }
         let result = self.request_blocking("cursor/list_available_models", json!({}))?;

@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -107,8 +108,8 @@ fn summary(project: &Path, id: &str, parent: Option<&str>) -> SessionSummary {
 fn lifecycle_pool(project: &Path, factory: Arc<LifecycleFactory>) -> Result<WorkerPool, String> {
     let factory: Arc<dyn WorkerSessionFactory> = factory;
     WorkerPool::new(
-        BTreeMap::from([("pi".into(), factory)]),
-        "pi".into(),
+        BTreeMap::from([(Backend::Pi, factory)]),
+        Backend::Pi,
         project.to_owned(),
         4,
     )
@@ -125,7 +126,7 @@ fn start_worker(
             project: project.to_owned(),
             name: name.into(),
             prompt: "stay alive".into(),
-            backend: "pi".into(),
+            backend: Backend::Pi,
             parent_session: parent.to_string_lossy().into_owned(),
             parent_worker_id: None,
             context: WorkerContext::Fresh,
@@ -288,7 +289,7 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
                 .is_some_and(|session| session.archived)
         );
 
-        pool.stop_session_family(temp.path(), &[("pi".into(), unrelated.path.clone())])?;
+        pool.stop_session_family(temp.path(), &[(Backend::Pi, unrelated.path.clone())])?;
         Ok(())
     })
 }

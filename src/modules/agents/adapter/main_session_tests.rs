@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::VecDeque,
     sync::{
@@ -140,7 +141,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
         let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
-            "codex-cli",
+            Backend::Codex,
             "request-local-unknown".into(),
             Box::new(ControlledPromptWorker(backend.clone())),
             MainSessionMetadata::default(),
@@ -396,7 +397,7 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
         let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
-            "codex-cli",
+            Backend::Codex,
             "race".into(),
             Box::new(ControlledPromptWorker(backend.clone())),
             MainSessionMetadata::default(),
@@ -474,7 +475,7 @@ fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
         let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
-            "codex-cli",
+            Backend::Codex,
             "failure".into(),
             Box::new(ControlledPromptWorker(backend.clone())),
             MainSessionMetadata::default(),
@@ -540,7 +541,7 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "same".into(),
         Box::new(ControlledPromptWorker(backend.clone())),
         MainSessionMetadata::default(),
@@ -619,7 +620,7 @@ fn replacement_transports_do_not_reuse_persisted_submission_ids() {
     let submit = || {
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
-            "codex-cli",
+            Backend::Codex,
             "same".into(),
             Box::new(IdleWorker),
             MainSessionMetadata::default(),
@@ -643,7 +644,7 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "normal".into(),
         Box::new(ControlledPromptWorker(backend.clone())),
         MainSessionMetadata::default(),
@@ -703,7 +704,7 @@ fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-abort".into(),
         Box::new(ControlledPromptWorker(backend.clone())),
         MainSessionMetadata::default(),
@@ -781,7 +782,7 @@ fn delivered_image_only_prompt_survives_transcript_finalization() {
     );
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "claude",
+        Backend::Claude,
         "one".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -853,7 +854,7 @@ fn prompt_response_does_not_precede_worker_rejection() {
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(ControlledPromptWorker(backend.clone())),
         MainSessionMetadata::default(),
@@ -904,7 +905,7 @@ fn prompt_response_does_not_precede_worker_rejection() {
 fn fatal_worker_failure_marks_the_prompt_unknown_and_fails_the_transport() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(FatalAfterWriteWorker {
             events: VecDeque::new(),
@@ -959,7 +960,7 @@ fn fatal_worker_failure_marks_the_prompt_unknown_and_fails_the_transport() {
 fn neutral_metadata_events_refresh_session_state_and_modes() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "example",
+        Backend::Codex,
         "session".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -979,11 +980,11 @@ fn neutral_metadata_events_refresh_session_state_and_modes() {
         matches!(transport.poll(), Some(SessionEvent::Response(response)) if matches!(&response.result, Ok(Payload::ListModes { selected: Some(selected), .. }) if selected == "plan"))
     );
     transport.enqueue_activity(WorkerActivity::ConfigurationChanged {
-        models: vec![json!({"id":"model-fast","name":"Fast","provider":"example"})],
+        models: vec![json!({"id":"model-fast","name":"Fast","provider":Backend::Codex})],
         efforts: vec!["high".into()],
         modes: Vec::new(),
         selected_model: Some(
-            json!({"id":"model-fast","provider":"example","contextWindow":1000000}),
+            json!({"id":"model-fast","provider":Backend::Codex,"contextWindow":1000000}),
         ),
         selected_effort: Some("high".into()),
     });
@@ -1036,7 +1037,7 @@ fn two_choice_questions_preserve_their_options() {
 fn native_child_activity_carries_a_backend_locator_without_discovery() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "parent".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1126,7 +1127,7 @@ fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
         let applied = Arc::new(AtomicBool::new(false));
         let mut transport = WorkerSessionTransport::new(
             std::path::Path::new("/locators"),
-            harness,
+            harness.parse().expect("fixture backend"),
             "session-1".into(),
             Box::new(SteeringWorker(mode, applied.clone())),
             MainSessionMetadata::default(),
@@ -1227,7 +1228,7 @@ impl WorkerSession for DeliveryBeforeAckWorker {
 fn delivery_before_ack_does_not_restore_a_completed_follow_up() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "claude",
+        Backend::Claude,
         "session-1".into(),
         Box::new(DeliveryBeforeAckWorker {
             polls: 0,
@@ -1255,7 +1256,7 @@ fn delivery_before_ack_does_not_restore_a_completed_follow_up() {
 fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "claude",
+        Backend::Claude,
         "session-1".into(),
         Box::new(DeliveryBeforeAckWorker {
             polls: usize::MAX,
@@ -1319,7 +1320,7 @@ fn request_local_failure_is_visible_without_failing_the_transport() {
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1347,7 +1348,7 @@ fn request_local_failure_is_visible_without_failing_the_transport() {
 fn settlement_preserves_an_undelivered_follow_up() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1374,7 +1375,7 @@ fn repeated_started_during_a_stream_does_not_duplicate_visible_text() {
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode",
+        Backend::OpenCode,
         "session-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1416,7 +1417,7 @@ fn started_after_settlement_begins_a_real_new_assistant_turn() {
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1498,9 +1499,13 @@ impl WorkerSession for IdleWorker {
 
 #[test]
 fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_id() {
-    let path = external_session_path(std::path::Path::new("/locators"), "opencode", "session/one");
+    let path = external_session_path(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "session/one",
+    );
     let launch = crate::agents::SessionLaunch {
-        harness: "opencode".into(),
+        harness: Backend::OpenCode,
         session_id: None,
         project: "/project".into(),
         start: crate::agents::SessionStart::Resume(path),
@@ -1517,7 +1522,7 @@ fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_i
 fn text_around_tools_is_emitted_as_chronological_messages() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1583,7 +1588,7 @@ fn text_around_tools_is_emitted_as_chronological_messages() {
 fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1626,7 +1631,7 @@ fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
 fn peer_delivery_is_a_first_class_activity_instead_of_a_user_message() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1654,7 +1659,7 @@ fn peer_delivery_is_a_first_class_activity_instead_of_a_user_message() {
 fn worker_session_state_retains_titles_and_counts_new_messages() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "session-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1711,7 +1716,7 @@ fn resumed_transport_returns_persisted_history() {
     };
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "codex-cli",
+        Backend::Codex,
         "thread-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1764,7 +1769,7 @@ fn a_new_transport_without_a_picked_effort_reports_no_level() {
     };
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode",
+        Backend::OpenCode,
         "thread-1".into(),
         Box::new(IdleWorker),
         metadata,
@@ -1811,12 +1816,12 @@ fn state_of(payload: Payload) -> SessionState {
 fn malformed_worker_catalogs_fail_without_dropping_invalid_entries() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "example",
+        Backend::Codex,
         "session".into(),
         Box::new(IdleWorker),
         MainSessionMetadata {
             models: vec![
-                json!({"id":"valid","name":"Valid","provider":"example"}),
+                json!({"id":"valid","name":"Valid","provider":Backend::Codex}),
                 json!({"id":"bad"}),
             ],
             modes: vec![json!({"id":"plan"})],

@@ -1,6 +1,7 @@
 //! Runtime -> real Pi/Codex adapter -> isolated subprocess -> runtime metadata.
 //! Only protocol peers are scripted; title requests and rename requests run normally.
 use super::*;
+use crate::agents::Backend;
 use crate::app::runtime::tests::owner_without_process;
 use std::sync::{
     Mutex,
@@ -37,13 +38,13 @@ struct BackendState {
     event_stream: Option<std::net::TcpStream>,
 }
 
-struct Backend {
+struct ProtocolPeer {
     state: Arc<Mutex<BackendState>>,
     stop: Arc<AtomicBool>,
     server: Option<thread::JoinHandle<()>>,
 }
 
-impl Backend {
+impl ProtocolPeer {
     fn start() -> Self {
         let project = std::env::current_dir().unwrap();
         let socket = project.join("control.sock");
@@ -101,7 +102,7 @@ impl Backend {
     }
 }
 
-impl Drop for Backend {
+impl Drop for ProtocolPeer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         let result = self.server.take().unwrap().join();
@@ -167,7 +168,7 @@ fn serve(
     let mut peer = Peer::new(stream);
     let mut mode = String::new();
     peer.reader.read_line(&mut mode).unwrap();
-    if peer.backend == "opencode" {
+    if peer.backend == Backend::OpenCode {
         title_native_tests::serve_opencode(peer, state, stop, project);
         return;
     }
@@ -246,7 +247,7 @@ fn serve(
             "set_steering_mode" | "get_session_stats" | "prompt" | "abort" => json!({}),
             _ => panic!("unhandled fixture request: {request}"),
         };
-        if peer.backend == "pi" {
+        if peer.backend == Backend::Pi {
             write(
                 peer.reader.get_mut(),
                 json!({"type":"response", "id":request["id"], "command":method,
@@ -319,12 +320,12 @@ struct Scenario {
     owner: RuntimeOwner,
     incoming_events: mpsc::Receiver<RuntimeEvent>,
     events: Vec<RuntimeEvent>,
-    backend: Backend,
+    backend: ProtocolPeer,
 }
 
 impl Scenario {
-    fn new(harness: &str, name: Option<&str>, resume: bool) -> Self {
-        let backend = Backend::start();
+    fn new(harness: Backend, name: Option<&str>, resume: bool) -> Self {
+        let backend = ProtocolPeer::start();
         backend.state.lock().unwrap().name = name.map(str::to_owned);
         let project = std::env::current_dir().unwrap();
         fs::write(project.join("main.jsonl"), "").unwrap();
@@ -336,10 +337,13 @@ impl Scenario {
             session_locator_root: Some(project.join("locators")),
             ..AgentLaunchConfig::default()
         };
-        let path = if harness == "pi" {
+        let path = if harness == Backend::Pi {
             project.join("main.jsonl")
         } else {
-            project.join("locators").join(harness).join("main-thread")
+            project
+                .join("locators")
+                .join(harness.as_str())
+                .join("main-thread")
         };
         owner.start_process(resume.then_some(path));
         let mut scenario = Self {
@@ -369,7 +373,7 @@ impl Scenario {
             assert!(
                 Instant::now() < deadline,
                 "{} runtime did not reach expected state: {}; transcript: {:?}",
-                self.owner.harness,
+                self.owner.harness.map(Backend::as_str).unwrap_or(""),
                 self.owner.snapshot.status,
                 self.owner
                     .snapshot
@@ -409,7 +413,7 @@ impl Scenario {
                 }
             )),
             "{} fixture prompt was rejected: {}",
-            self.owner.harness,
+            self.owner.harness.map(Backend::as_str).unwrap_or(""),
             self.owner.snapshot.status
         );
         self.until(|s| !s.owner.normal_prompt_in_flight && !s.owner.snapshot.conversation.running);
@@ -478,7 +482,7 @@ impl Drop for Scenario {
 #[test]
 fn fresh_sessions_generate_and_persist_one_title() {
     isolated_title("fresh_sessions_generate_and_persist_one_title", || {
-        for harness in ["pi", "codex-cli"] {
+        for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, false);
             s.generate();
             s.finish_title();
@@ -502,7 +506,7 @@ fn fresh_sessions_generate_and_persist_one_title() {
 #[test]
 fn waking_existing_sessions_does_not_generate_titles() {
     isolated_title("waking_existing_sessions_does_not_generate_titles", || {
-        for harness in ["pi", "codex-cli"] {
+        for harness in [Backend::Pi, Backend::Codex] {
             for name in [None, Some("Keep existing title")] {
                 let mut s = Scenario::new(harness, name, true);
                 s.prompt();
@@ -520,7 +524,7 @@ fn waking_existing_sessions_does_not_generate_titles() {
 #[test]
 fn codex_resume_preserves_backend_title() {
     isolated_title("codex_resume_preserves_backend_title", || {
-        let s = Scenario::new("codex-cli", Some("Keep existing title"), true);
+        let s = Scenario::new(Backend::Codex, Some("Keep existing title"), true);
         assert_eq!(
             s.name(),
             Some("Keep existing title"),
@@ -532,7 +536,7 @@ fn codex_resume_preserves_backend_title() {
 #[test]
 fn codex_native_title_wins_over_pending_generation() {
     isolated_title("codex_native_title_wins_over_pending_generation", || {
-        let mut s = Scenario::new("codex-cli", None, false);
+        let mut s = Scenario::new(Backend::Codex, None, false);
         s.generate();
         {
             let mut backend = s.backend.state.lock().unwrap();
@@ -558,7 +562,7 @@ fn codex_native_title_wins_over_pending_generation() {
     });
 }
 
-fn rejected_rename(harness: &str) {
+fn rejected_rename(harness: Backend) {
     let mut s = Scenario::new(harness, None, false);
     s.generate();
     s.backend.state.lock().unwrap().reject_rename = true;
@@ -584,7 +588,7 @@ fn rejected_rename(harness: &str) {
 #[test]
 fn pi_failed_rename_does_not_publish_generated_title() {
     isolated_title("pi_failed_rename_does_not_publish_generated_title", || {
-        rejected_rename("pi")
+        rejected_rename(Backend::Pi)
     });
 }
 
@@ -592,14 +596,14 @@ fn pi_failed_rename_does_not_publish_generated_title() {
 fn codex_failed_rename_does_not_publish_generated_title() {
     isolated_title(
         "codex_failed_rename_does_not_publish_generated_title",
-        || rejected_rename("codex-cli"),
+        || rejected_rename(Backend::Codex),
     );
 }
 
 #[test]
 fn manual_rename_wins_over_pending_generation() {
     isolated_title("manual_rename_wins_over_pending_generation", || {
-        for harness in ["pi", "codex-cli"] {
+        for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, false);
             s.generate();
             s.owner
@@ -614,7 +618,7 @@ fn manual_rename_wins_over_pending_generation() {
 #[test]
 fn replaced_process_rejects_late_generated_title() {
     isolated_title("replaced_process_rejects_late_generated_title", || {
-        for harness in ["pi", "codex-cli"] {
+        for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, false);
             s.generate();
             s.owner.reset_process_runtime();
@@ -627,7 +631,7 @@ fn replaced_process_rejects_late_generated_title() {
 #[test]
 fn empty_generator_output_does_not_rename_session() {
     isolated_title("empty_generator_output_does_not_rename_session", || {
-        for harness in ["pi", "codex-cli"] {
+        for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, false);
             s.backend.state.lock().unwrap().empty_title = true;
             s.generate();
@@ -645,7 +649,7 @@ fn backend_named_new_codex_session_does_not_start_another_title() {
     isolated_title(
         "backend_named_new_codex_session_does_not_start_another_title",
         || {
-            let mut s = Scenario::new("codex-cli", Some("Backend supplied title"), false);
+            let mut s = Scenario::new(Backend::Codex, Some("Backend supplied title"), false);
             s.prompt();
             assert!(
                 !s.owner.title_generation.in_flight,
@@ -659,7 +663,7 @@ fn backend_named_new_codex_session_does_not_start_another_title() {
 #[test]
 fn pi_backend_title_wins_over_pending_generation() {
     isolated_title("pi_backend_title_wins_over_pending_generation", || {
-        let mut s = Scenario::new("pi", None, false);
+        let mut s = Scenario::new(Backend::Pi, None, false);
         s.generate();
         s.backend.state.lock().unwrap().name = Some("Backend title".into());
         s.owner.send(SessionCommand::LoadState);
@@ -673,7 +677,7 @@ fn pi_backend_title_wins_over_pending_generation() {
 #[test]
 fn forks_do_not_generate_replacement_titles() {
     isolated_title("forks_do_not_generate_replacement_titles", || {
-        for harness in ["pi", "codex-cli"] {
+        for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, true);
             let source = s.owner.active_session.clone().unwrap();
             s.owner.start_process_from(None, Some(source), false);

@@ -318,6 +318,18 @@ fn copy_ui_state(tx: &Transaction<'_>) -> Result<(), String> {
     Ok(())
 }
 
+// Keep legacy names intact until the later backend-ID migration runs.
+#[derive(serde::Deserialize)]
+struct LegacyWorkerFamily {
+    project: std::path::PathBuf,
+    child_backend: String,
+    child_session: String,
+    parent_backend: String,
+    parent_session: String,
+    #[serde(default)]
+    execution: Option<serde_json::Value>,
+}
+
 fn copy_worker_families(tx: &Transaction<'_>) -> Result<(), String> {
     let mut statement = tx
         .prepare("SELECT key, value FROM meta WHERE key GLOB 'worker_family:*'")
@@ -331,7 +343,7 @@ fn copy_worker_families(tx: &Transaction<'_>) -> Result<(), String> {
         .map_err(|error| format!("decode worker families: {error}"))?;
     drop(statement);
     for (key, value) in rows {
-        let Ok(link) = serde_json::from_str::<crate::agents::WorkerFamilyLink>(&value) else {
+        let Ok(link) = serde_json::from_str::<LegacyWorkerFamily>(&value) else {
             continue;
         };
         let Some(child_id) =
@@ -495,3 +507,7 @@ pub(super) fn import_legacy_pi_gpui(tx: &Transaction<'_>) -> Result<(), String> 
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "migrate_v12_tests.rs"]
+mod tests;

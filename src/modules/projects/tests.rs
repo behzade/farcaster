@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use tempfile::tempdir;
 
 use super::*;
@@ -19,7 +20,7 @@ fn registry_round_trips_unique_existing_projects() -> Result<(), Box<dyn std::er
             drafts: vec![DraftSession {
                 id: "draft-one".into(),
                 app_session_id: 7,
-                harness: "pi".into(),
+                harness: Some(Backend::Pi),
                 project: first.clone(),
                 created_ms: 1,
                 submitted: true,
@@ -37,7 +38,7 @@ fn registry_round_trips_unique_existing_projects() -> Result<(), Box<dyn std::er
             drafts: vec![DraftSession {
                 id: "draft-one".into(),
                 app_session_id: 7,
-                harness: "pi".into(),
+                harness: Some(Backend::Pi),
                 project: first.canonicalize()?,
                 created_ms: 1,
                 submitted: true,
@@ -61,7 +62,7 @@ fn registry_ignores_projects_that_no_longer_exist() -> Result<(), Box<dyn std::e
             drafts: vec![DraftSession {
                 id: "gone".into(),
                 app_session_id: 8,
-                harness: "pi".into(),
+                harness: Some(Backend::Pi),
                 project: temp.path().join("gone"),
                 created_ms: 1,
                 submitted: false,
@@ -146,7 +147,13 @@ fn removing_a_project_only_changes_registered_matches() {
 
 #[test]
 fn only_unsubmitted_drafts_can_change_project() {
-    let mut draft = DraftSession::new("pi".into(), "draft".into(), 1, PathBuf::from("/first"), 1);
+    let mut draft = DraftSession::new(
+        Some(Backend::Pi),
+        "draft".into(),
+        1,
+        PathBuf::from("/first"),
+        1,
+    );
     assert!(draft.change_project(PathBuf::from("/second")));
     assert_eq!(draft.project, PathBuf::from("/second"));
     assert!(!draft.change_project(PathBuf::from("/second")));
@@ -182,4 +189,29 @@ fn old_registry_drafts_decode_as_unsubmitted() -> Result<(), Box<dyn std::error:
 fn drafts_without_a_backend_do_not_decode_as_pi() {
     let draft = serde_json::json!({"id": "missing", "project": "/project", "created_ms": 3});
     assert!(serde_json::from_value::<DraftSession>(draft).is_err());
+}
+
+#[test]
+fn draft_backend_serialization_preserves_empty_and_legacy_names() {
+    for (name, expected) in [
+        ("", None),
+        ("pi", Some(Backend::Pi)),
+        ("opencode2", Some(Backend::OpenCode)),
+    ] {
+        let draft: DraftSession = serde_json::from_value(serde_json::json!({
+            "id": "draft", "harness": name, "project": "/project", "created_ms": 1
+        }))
+        .unwrap();
+        assert_eq!(draft.harness, expected);
+        assert_eq!(
+            serde_json::to_value(draft).unwrap()["harness"],
+            expected.map(Backend::as_str).unwrap_or("")
+        );
+    }
+    assert!(
+        serde_json::from_value::<DraftSession>(serde_json::json!({
+            "id": "draft", "harness": "unknown", "project": "/project", "created_ms": 1
+        }))
+        .is_err()
+    );
 }

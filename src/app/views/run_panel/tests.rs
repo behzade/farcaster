@@ -3,6 +3,7 @@ use super::{
     resize::clamped_run_panel_width,
     run_panel_agent_rows,
 };
+use crate::agents::Backend;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::{assets::AppIcon, theme::THEME},
@@ -163,7 +164,7 @@ fn production_rows_include_restored_children_from_an_empty_activity_map() {
         false,
         String::new(),
     );
-    child.harness = "codex-cli".into();
+    child.harness = Backend::Codex;
     let sessions = [root, child.clone()];
 
     let rows = run_panel_agent_rows(
@@ -188,7 +189,7 @@ fn production_rows_resolve_same_native_id_by_scoped_session_path() {
                 root
             }
             .into(),
-            "codex-cli".into(),
+            Backend::Codex,
             PathBuf::from(path),
             PathBuf::from(format!("/{root}")),
             root.into(),
@@ -236,7 +237,7 @@ fn worker_subtitle_uses_live_profile_then_catalog_identity() {
 
     let cached_model = ("cached-provider".into(), "cached-model".into());
     let profile = crate::agents::CallerProfile {
-        backend: "codex-cli".into(),
+        backend: Backend::Codex,
         provider: Some("openai".into()),
         model: Some("gpt-5.6-luna".into()),
         effort: Some("high".into()),

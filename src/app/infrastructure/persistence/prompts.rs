@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 #[cfg(test)]
 #[path = "prompts_tests.rs"]
@@ -9,7 +10,7 @@ impl StateStore {
     pub(crate) fn enqueue_prompt(
         &self,
         target: &str,
-        harness: &str,
+        harness: Backend,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,
@@ -25,7 +26,7 @@ impl StateStore {
     pub(crate) fn enqueue_prompt_with_presentation(
         &self,
         target: &str,
-        harness: &str,
+        harness: Backend,
         project: &Path,
         session: Option<&Path>,
         mode: PromptMode,

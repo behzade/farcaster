@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::app::runtime::{RuntimeCommand, tests::owner_without_process};
 use serde_json::json;
 
@@ -67,7 +68,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     owner.state = Some(crate::app::persistence::StateStore::open_at(
         &temp.path().join("state.sqlite3"),
     )?);
-    owner.harness = "claude".into();
+    owner.harness = Some(Backend::Claude);
     owner.active_session = Some(temp.path().join("session"));
     owner.snapshot.selected_session = owner.active_session.clone();
     owner.snapshot.session = Some(empty_session());
@@ -283,7 +284,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     failure_owner.state = Some(crate::app::persistence::StateStore::open_at(
         &failure_temp.path().join("state.sqlite3"),
     )?);
-    failure_owner.harness = "claude".into();
+    failure_owner.harness = Some(Backend::Claude);
     failure_owner.active_session = Some(failure_temp.path().join("session"));
     failure_owner.snapshot.selected_session = failure_owner.active_session.clone();
     failure_owner.snapshot.session = Some(empty_session());
@@ -390,7 +391,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
         }));
         let database = temp.path().join("state.sqlite3");
         owner.state = Some(crate::app::persistence::StateStore::open_at(&database)?);
-        owner.harness = "claude".into();
+        owner.harness = Some(Backend::Claude);
         owner.active_session = Some(temp.path().join("session"));
         let mut state = empty_session();
         state.is_streaming = running;
@@ -504,7 +505,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
 fn automatic_title_does_not_treat_unloaded_resume_as_new() {
     for harness in HARNESSES {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-        owner.harness = harness.into();
+        owner.harness = Some(harness.parse().expect("fixture backend"));
         owner.snapshot.selected_session = Some(std::env::temp_dir().join("existing-session"));
         owner.snapshot.history_preview = true;
         assert!(owner.snapshot.session.is_none());
@@ -520,7 +521,7 @@ fn automatic_title_does_not_treat_unloaded_resume_as_new() {
 fn automatic_title_requires_a_loaded_new_unnamed_session() {
     for harness in HARNESSES {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-        owner.harness = harness.into();
+        owner.harness = Some(harness.parse().expect("fixture backend"));
         owner.title_generation.new_session = true;
         owner.snapshot.session = Some(empty_session());
         assert!(!owner.should_generate_automatic_title(PromptMode::Normal, false));
@@ -594,7 +595,7 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
         })
     }) {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());
-        owner.harness = harness.into();
+        owner.harness = Some(harness.parse().expect("fixture backend"));
         let commands = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         owner.process = Some(Box::new(Recorder(commands.clone())));
         owner.active_session = Some(std::env::temp_dir().join("existing-session"));
@@ -673,7 +674,7 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
 #[test]
 fn unselected_backend_rejects_prompt_before_enqueuing() {
     let (mut owner, events) = owner_without_process(std::env::temp_dir());
-    owner.harness.clear();
+    owner.harness = None;
     owner.send_prompt(
         "draft:unselected".into(),
         PromptMode::Normal,

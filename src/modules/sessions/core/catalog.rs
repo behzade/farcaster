@@ -66,7 +66,7 @@ pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary>
 mod tests;
 
 pub(crate) struct SessionRootIndex<'a> {
-    by_id: HashMap<(&'a Path, &'a str, &'a str), &'a SessionSummary>,
+    by_id: HashMap<(&'a Path, crate::agents::Backend, &'a str), &'a SessionSummary>,
     by_path: HashMap<&'a Path, &'a SessionSummary>,
     by_app_id: HashMap<i64, &'a SessionSummary>,
 }
@@ -85,7 +85,7 @@ impl<'a> SessionRootIndex<'a> {
                     (
                         (
                             session.project.as_path(),
-                            session.harness.as_str(),
+                            session.harness,
                             session.id.as_str(),
                         ),
                         session,
@@ -105,10 +105,7 @@ impl<'a> SessionRootIndex<'a> {
             return self.by_app_id.get(&id).copied();
         }
         let parent = session.parent_session.as_deref()?;
-        let harness = session
-            .parent_harness
-            .as_deref()
-            .unwrap_or(&session.harness);
+        let harness = session.parent_harness.unwrap_or(session.harness);
         self.by_id
             .get(&(session.project.as_path(), harness, parent))
             .copied()

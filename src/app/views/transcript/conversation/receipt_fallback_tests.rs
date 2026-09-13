@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use serde_json::json;
 
 const PNG: &str =
@@ -101,7 +102,7 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
     ] {
         let row = store.enqueue_prompt(
             "draft:queue",
-            "codex-cli",
+            Backend::Codex,
             temp.path(),
             None,
             mode,

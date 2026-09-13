@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use gpui::{IntoElement, Styled as _, WeakEntity};
 
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -11,17 +12,17 @@ use crate::app::{
 };
 
 pub(super) fn harness_selector(
-    harness: &str,
+    harness: Option<Backend>,
     entity: WeakEntity<FarcasterApp>,
 ) -> impl IntoElement {
     let backends = crate::agents::backend_statuses();
     let selected = harness.to_owned();
     let label = backends
         .iter()
-        .find(|backend| backend.id == harness)
+        .find(|backend| Some(backend.id) == harness)
         .map_or_else(
             || {
-                if harness.is_empty() {
+                if harness.is_none() {
                     "Choose a backend".to_owned()
                 } else {
                     "Unavailable backend".to_owned()
@@ -52,7 +53,7 @@ pub(super) fn harness_selector(
                 };
                 menu = menu.item(
                     PopupMenuItem::new(label)
-                        .checked(backend.id == selected)
+                        .checked(Some(backend.id) == selected)
                         .disabled(!backend.available)
                         .on_click(move |_, window, cx| {
                             let _ = entity.update(cx, |this, cx| {

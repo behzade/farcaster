@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 pub(super) fn bind_locator(
     transaction: &Transaction<'_>,
@@ -156,7 +157,7 @@ pub(super) fn family_locator_root(locator_root: &Path, project: &Path) -> PathBu
 }
 pub(super) fn ensure_locator_session(
     transaction: &Transaction<'_>,
-    harness: &str,
+    harness: Backend,
     identity: &str,
     project_id: i64,
     locator_root: &Path,
@@ -167,7 +168,7 @@ pub(super) fn ensure_locator_session(
         crate::sessions::normalize_session_path(supplied_path)
     } else {
         let encoded = url::form_urlencoded::byte_serialize(identity.as_bytes()).collect::<String>();
-        locator_root.join(harness).join(encoded)
+        locator_root.join(harness.as_str()).join(encoded)
     };
     let locator_text = locator.to_string_lossy();
     let mut statement = transaction
@@ -277,7 +278,7 @@ fn target_locator(target: &str, session_path: Option<&Path>) -> Option<PathBuf> 
 pub(super) fn create_target_session(
     tx: &Transaction<'_>,
     target: &str,
-    harness: &str,
+    harness: Backend,
     project: &Path,
     session_path: Option<&Path>,
 ) -> Result<i64, String> {
@@ -308,7 +309,7 @@ impl StateStore {
         &self,
         target: &str,
         session_path: Option<&Path>,
-        harness: Option<&str>,
+        harness: Option<Backend>,
     ) -> Result<Option<i64>, String> {
         if let Some(key) = target.strip_prefix("draft:") {
             let id = self
@@ -360,7 +361,7 @@ impl StateStore {
 fn legacy_session_ids_for_locator(
     connection: &Connection,
     locator: &Path,
-    harness: Option<&str>,
+    harness: Option<Backend>,
     project: Option<&Path>,
 ) -> Result<Vec<i64>, String> {
     let mut statement = connection
@@ -398,7 +399,7 @@ fn legacy_session_ids_for_locator(
 
 pub(super) fn legacy_session_id_for_locator(
     transaction: &Transaction<'_>,
-    harness: &str,
+    harness: Backend,
     locator: &Path,
     project: &Path,
 ) -> Result<Option<i64>, String> {

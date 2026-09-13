@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{
     collections::{HashMap, VecDeque},
     process::{Child, Stdio},
@@ -57,7 +58,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
         if launch
             .provider
             .as_deref()
-            .is_some_and(|provider| provider != self.profile.backend)
+            .is_some_and(|provider| provider != self.profile.backend.as_str())
         {
             return Err(format!(
                 "{} worker model must use provider {}",
@@ -370,7 +371,7 @@ pub(in crate::modules::agents::adapter) fn configure_command(
     profile: &AcpProfile,
     access_mode: HarnessAccessMode,
 ) -> Result<(), String> {
-    if profile.backend == "antigravity-acp" {
+    if profile.backend == Backend::Antigravity {
         super::super::antigravity::configure(command)?;
     }
     if access_mode == HarnessAccessMode::Full
@@ -795,7 +796,7 @@ impl AcpWorkerSession {
         method: &str,
         params: &Value,
     ) -> Option<WorkerEvent> {
-        if self.profile.backend != "cursor-cli" {
+        if self.profile.backend != Backend::Cursor {
             return None;
         }
         let (input, kind) = match super::cursor_extension::request(method, params)? {
@@ -830,7 +831,7 @@ impl AcpWorkerSession {
     }
 
     fn cursor_notification(&mut self, method: &str, params: &Value) -> Option<WorkerEvent> {
-        if self.profile.backend != "cursor-cli" {
+        if self.profile.backend != Backend::Cursor {
             return None;
         }
         let (started, finished) = super::cursor_extension::notification(method, params)?;
@@ -1234,7 +1235,7 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn rename(&mut self, name: &str) -> Result<(), String> {
-        if self.profile.backend == "cursor-cli" {
+        if self.profile.backend == Backend::Cursor {
             crate::modules::agents::adapter::cursor::rename_session(&self.session_id, name)
         } else {
             Err(format!(

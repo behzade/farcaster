@@ -40,11 +40,11 @@ impl FarcasterApp {
         let marker = role_icon(&role);
         let registry = crate::agents::CallerRegistry::shared();
         let profile = registry
-            .session_profile(&session.project, &session.harness, &session.id)
+            .session_profile(&session.project, session.harness, &session.id)
             .or_else(|| {
                 registry.session_profile(
                     &session.project,
-                    &session.harness,
+                    session.harness,
                     &session.path.to_string_lossy(),
                 )
             });
@@ -127,7 +127,7 @@ impl FarcasterApp {
                                 .text_size(THEME.type_scale.caption)
                                 .text_color(THEME.colors.muted)
                                 .child(app_icon(
-                                    AppIcon::for_harness(&session.harness),
+                                    AppIcon::for_harness(session.harness),
                                     AppIconSize::Inline,
                                 ))
                                 .child(

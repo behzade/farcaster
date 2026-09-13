@@ -16,7 +16,7 @@ pub(crate) use worker::OpenCodeWorkerFactory;
 pub(super) use worker::{load_configuration, spawn_main};
 
 use super::super::contract::{
-    AgentBackendDescriptor, AgentBackendId, AgentCapabilities, CapabilitySupport,
+    AgentBackendDescriptor, AgentCapabilities, Backend, CapabilitySupport,
     ConfigurationCapabilities, InteractionCapabilities, ObservationCapabilities,
     SessionCapabilities, TurnCapabilities,
 };
@@ -37,7 +37,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
     use CapabilitySupport::Available;
 
     AgentBackendDescriptor {
-        id: AgentBackendId::new("opencode").expect("OpenCode backend id is valid"),
+        id: Backend::OpenCode,
         name: "OpenCode".into(),
         capabilities: AgentCapabilities {
             sessions: SessionCapabilities {

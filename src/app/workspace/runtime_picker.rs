@@ -32,13 +32,15 @@ impl FarcasterApp {
     ) {
         self.runtime_picker.open = open;
         if open {
-            self.send(
-                RuntimeCommand::LoadConfiguration {
-                    harness: self.snapshot.harness.clone(),
-                    project: self.snapshot.project.clone(),
-                },
-                cx,
-            );
+            if let Some(harness) = self.snapshot.harness {
+                self.send(
+                    RuntimeCommand::LoadConfiguration {
+                        harness,
+                        project: self.snapshot.project.clone(),
+                    },
+                    cx,
+                );
+            }
             self.runtime_picker.highlighted = 0;
             self.runtime_picker.scroll = gpui::UniformListScrollHandle::new();
             self.runtime_picker.provider =
@@ -320,7 +322,7 @@ impl FarcasterApp {
                         .child(
                             div()
                                 .text_color(THEME.colors.muted)
-                                .child(crate::agents::effort_label(&self.snapshot.harness)),
+                                .child(crate::agents::effort_label(self.snapshot.harness)),
                         )
                         .child(div().flex().flex_wrap().gap(THEME.space.xs).children(
                             levels.iter().cloned().enumerate().map(|(index, level)| {

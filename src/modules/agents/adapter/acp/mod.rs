@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 pub(super) mod backend;
 mod catalog;
 mod configuration;
@@ -23,7 +24,7 @@ pub(in crate::modules::agents::adapter) use worker::{AcpWorkerFactory, spawn_mai
 
 #[derive(Clone, Debug)]
 pub(in crate::modules::agents::adapter) struct AcpProfile {
-    pub backend: &'static str,
+    pub backend: Backend,
     pub name: &'static str,
     pub command: &'static str,
     pub path_environment: &'static str,

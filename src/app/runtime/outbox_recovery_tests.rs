@@ -1,3 +1,4 @@
+use crate::agents::Backend;
 use std::{cell::RefCell, rc::Rc};
 
 use sha2::{Digest as _, Sha256};
@@ -76,7 +77,7 @@ fn startup_held_follow_up_stays_in_queue_until_native_delivery() -> Result<(), S
     let sent = Rc::new(RefCell::new(Vec::new()));
     owner.process = Some(Box::new(Recorder(sent.clone())));
     owner.state = Some(StateStore::open_at(&database)?);
-    owner.harness = "claude".into();
+    owner.harness = Some(Backend::Claude);
     owner.active_session = Some(temp.path().join("session.jsonl"));
     owner.snapshot.selected_session = owner.active_session.clone();
     owner.snapshot.session = Some(empty_session());
@@ -111,7 +112,7 @@ fn direct_recovered_steer_and_follow_up_never_create_optimistic_users() -> Resul
         let store = StateStore::open_at(&database)?;
         store.enqueue_prompt(
             "session:recovered",
-            "claude",
+            Backend::Claude,
             temp.path(),
             Some(&temp.path().join("session.jsonl")),
             mode,
@@ -123,7 +124,7 @@ fn direct_recovered_steer_and_follow_up_never_create_optimistic_users() -> Resul
         let sent = Rc::new(RefCell::new(Vec::new()));
         owner.process = Some(Box::new(Recorder(sent.clone())));
         owner.state = Some(store);
-        owner.harness = "claude".into();
+        owner.harness = Some(Backend::Claude);
         owner.active_session = Some(temp.path().join("session.jsonl"));
         owner.snapshot.session = Some(empty_session());
         owner.startup_state_loaded = true;
@@ -148,7 +149,7 @@ fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), St
     for message in ["active task", "next task", "last task"] {
         store.enqueue_prompt(
             "draft:abort-replay",
-            "pi",
+            Backend::Pi,
             temp.path(),
             None,
             PromptMode::Normal,
@@ -159,7 +160,7 @@ fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), St
     let recovered = store.queued_prompts()?;
     let unrelated_id = store.enqueue_prompt(
         "draft:unrelated",
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -236,7 +237,7 @@ fn abort_reports_failed_durable_cancellation_and_still_stops_this_run() -> Resul
     let store = StateStore::open_at(&database)?;
     store.enqueue_prompt(
         "draft:failed-cancel",
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -350,7 +351,7 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
     let target = "draft:replay";
     let first = store.enqueue_prompt(
         target,
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -359,7 +360,7 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
     )?;
     let second = store.enqueue_prompt(
         target,
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -368,7 +369,7 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
     )?;
     let third = store.enqueue_prompt(
         target,
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -487,7 +488,7 @@ fn rejected_replay_prompt_does_not_starve_later_prompts() -> Result<(), String> 
     let target = "draft:replay";
     store.enqueue_prompt(
         target,
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -496,7 +497,7 @@ fn rejected_replay_prompt_does_not_starve_later_prompts() -> Result<(), String> 
     )?;
     store.enqueue_prompt(
         target,
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,
@@ -544,7 +545,7 @@ fn normal_replay_waits_for_compaction_retry_or_pending_input() -> Result<(), Str
         let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
         store.enqueue_prompt(
             "draft:replay",
-            "pi",
+            Backend::Pi,
             temp.path(),
             None,
             PromptMode::Normal,
@@ -1104,7 +1105,7 @@ fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
     let path = temp.path().join("session.jsonl");
     let id = store.enqueue_prompt(
         &format!("session:{}", path.display()),
-        "pi",
+        Backend::Pi,
         temp.path(),
         Some(&path),
         PromptMode::Normal,
@@ -1128,7 +1129,7 @@ fn failed_acknowledgement_commit_keeps_accepted_prompt_visible_and_recovers_unkn
     let store = StateStore::open_at(&database)?;
     store.enqueue_prompt(
         "draft:ack",
-        "pi",
+        Backend::Pi,
         temp.path(),
         None,
         PromptMode::Normal,

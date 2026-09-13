@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 use crate::{
     app::infrastructure::persistence::{ComposerRecord, StateStore},
     protocol::{PromptImage, PromptMode},
@@ -16,7 +17,7 @@ fn unsent_images_and_text_files_survive_database_reopen() -> Result<(), Box<dyn 
         let store = StateStore::open_at(&database)?;
         store.enqueue_prompt(
             target,
-            "pi",
+            Backend::Pi,
             temp.path(),
             None,
             PromptMode::Normal,

@@ -1,4 +1,5 @@
 use super::*;
+use crate::agents::Backend;
 
 impl Supervisor {
     fn send_to_session(&mut self, command: RuntimeCommand) {
@@ -15,7 +16,7 @@ impl Supervisor {
         let key = if let Some(session) = session {
             let select = RuntimeCommand::SelectSession {
                 path: session.path.clone(),
-                harness: session.harness.clone(),
+                harness: session.harness,
                 session_id: session.id.clone(),
                 project: project.clone(),
             };
@@ -30,7 +31,7 @@ impl Supervisor {
                     project.clone(),
                     self.process_command.clone(),
                     false,
-                    session.harness.clone(),
+                    Some(session.harness),
                     self.supervisor_thread.clone(),
                 )
             });
@@ -76,12 +77,12 @@ impl Supervisor {
             settings.project.clone(),
             process_command,
             false,
-            settings.harness.clone(),
+            settings.harness,
             self.supervisor_thread.clone(),
         );
         if let Some(catalog) = self
             .configurations
-            .catalog_command(&settings.harness, &settings.project)
+            .catalog_command(settings.harness, &settings.project)
         {
             actor.send(catalog);
         }
@@ -116,14 +117,13 @@ impl Supervisor {
         self.actors.insert(key, actor);
     }
 
-    fn request_configuration(&mut self, harness: String, project: PathBuf, target: &str) {
+    fn request_configuration(&mut self, harness: Backend, project: PathBuf, target: &str) {
         let Some(sender) = &self.configuration_tx else {
             return;
         };
-        if harness.is_empty()
-            || !self
-                .configuration_requests
-                .insert((harness.clone(), project.clone()))
+        if !self
+            .configuration_requests
+            .insert((harness.clone(), project.clone()))
         {
             return;
         }
@@ -131,7 +131,7 @@ impl Supervisor {
             .set_catalog_loading(harness.clone(), project.clone());
         let request_harness = harness.clone();
         let request_project = project.clone();
-        let process_command = self.configuration_process_command(&harness, &project, target);
+        let process_command = self.configuration_process_command(harness, &project, target);
         let supervisor = self.supervisor_thread.clone();
         let updates = sender.clone();
         if let Err(error) = thread::Builder::new()
@@ -139,7 +139,7 @@ impl Supervisor {
             .spawn(move || {
                 let result = agents::load_configuration_catalog(
                     &process_command,
-                    &request_harness,
+                    request_harness,
                     &request_project,
                 );
                 let _ = updates.send((request_harness, request_project, result));
@@ -152,29 +152,27 @@ impl Supervisor {
                 Err(format!("start catalog request: {error}")),
             ));
         }
-        self.publish_configuration_snapshots(&harness, &project);
+        self.publish_configuration_snapshots(harness, &project);
     }
 
     pub(super) fn configuration_process_command(
         &self,
-        harness: &str,
+        harness: Backend,
         project: &std::path::Path,
         target: &str,
     ) -> AgentLaunchConfig {
         let mut command = self.process_command.clone();
         if let Some((requested_harness, requested_project, requested_mode)) =
             self.requested_access_modes.get(target)
-            && requested_harness == harness
+            && *requested_harness == harness
             && requested_project.as_path() == project
         {
             command.access_mode = *requested_mode;
             return command;
         }
-        if let Some(snapshot) = self
-            .latest
-            .get(target)
-            .filter(|snapshot| snapshot.harness == harness && snapshot.project.as_path() == project)
-        {
+        if let Some(snapshot) = self.latest.get(target).filter(|snapshot| {
+            snapshot.harness == Some(harness) && snapshot.project.as_path() == project
+        }) {
             command.access_mode = snapshot.access_mode;
         }
         command
@@ -261,10 +259,11 @@ impl Supervisor {
                 }
                 if let RuntimeCommand::SetAccessMode(mode) = &command
                     && let Some(snapshot) = self.latest.get(&self.selected)
+                    && let Some(harness) = snapshot.harness
                 {
                     self.requested_access_modes.insert(
                         self.selected.clone(),
-                        (snapshot.harness.clone(), snapshot.project.clone(), *mode),
+                        (harness, snapshot.project.clone(), *mode),
                     );
                 }
                 let identity_changed = self.latest.get(&self.selected).is_some_and(|snapshot| {
@@ -305,7 +304,9 @@ impl Supervisor {
                         }
                         _ => requested_key,
                     };
-                    self.request_configuration(harness.clone(), project.clone(), &key);
+                    if let Some(harness) = harness {
+                        self.request_configuration(harness, project.clone(), &key);
+                    }
                     self.clock = self.clock.saturating_add(1);
                     self.last_touch.insert(key.clone(), self.clock);
                     self.interacted.insert(key.clone());

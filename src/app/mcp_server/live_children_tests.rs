@@ -1,5 +1,6 @@
 //! Opt-in, billable child-worker checks. These tests deliberately use the real
 //! backend executable and model selected by `FARCASTER_E2E_HARNESS`.
+use crate::agents::Backend;
 
 use std::{
     collections::HashSet,
@@ -272,7 +273,7 @@ fn live_e2e_child_family_abort_stops_only_its_family_and_fences_restart() -> Res
 }
 
 struct LiveChildFixture {
-    harness: &'static str,
+    harness: Backend,
     model_identity: String,
     pool: WorkerPool,
     profiles: WorkerProfiles,
@@ -292,7 +293,7 @@ struct LiveParent {
 #[derive(Debug, Eq, PartialEq)]
 struct ChildIdentity {
     worker_id: String,
-    backend: String,
+    backend: Backend,
     session_locator: String,
     session_path: PathBuf,
 }
@@ -484,7 +485,7 @@ impl Drop for ShellGate {
 }
 
 impl LiveChildFixture {
-    fn new(harness: &'static str) -> Result<Self, String> {
+    fn new(harness: Backend) -> Result<Self, String> {
         let access_mode = crate::agents::live_e2e_support::live_access_mode_for_harness(harness)?;
         let project_guard = tempfile::tempdir_in(crate::agents::live_e2e_support::e2e_case_dir()?)
             .map_err(|error| format!("create live child project: {error}"))?;
@@ -493,7 +494,7 @@ impl LiveChildFixture {
             .canonicalize()
             .map_err(|error| format!("canonicalize live child project: {error}"))?;
         let config = AgentLaunchConfig {
-            program: PathBuf::from(harness),
+            program: PathBuf::from(harness.as_str()),
             prefix_args: Vec::new(),
             access_mode,
             app_proxy: None,
@@ -924,7 +925,7 @@ impl LiveChildFixture {
         }
         Ok(ChildIdentity {
             worker_id: snapshot.id.clone(),
-            backend: snapshot.backend.clone(),
+            backend: snapshot.backend,
             session_locator: locator.to_owned(),
             session_path: child.path.clone(),
         })
@@ -937,7 +938,7 @@ impl LiveChildFixture {
 // same registry used by a live parent turn.
 fn new_parent(
     project: &Path,
-    harness: &str,
+    harness: Backend,
     label: &str,
     access_mode: HarnessAccessMode,
 ) -> Result<LiveParent, String> {
@@ -957,9 +958,9 @@ fn new_parent(
     Ok(LiveParent { identity, session })
 }
 
-fn selected_harness() -> Result<&'static str, String> {
+fn selected_harness() -> Result<Backend, String> {
     match crate::agents::live_e2e_support::selected_live_harnesses()?.as_slice() {
-        [harness] => Ok(*harness),
+        [harness] => harness.parse(),
         harnesses => Err(format!(
             "set FARCASTER_E2E_HARNESS to one harness for child E2E; selected {}",
             harnesses.join(", ")

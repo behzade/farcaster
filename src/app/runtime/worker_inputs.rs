@@ -8,8 +8,12 @@ impl RuntimeOwner {
         let Some(path) = self.active_session.as_deref() else {
             return;
         };
-        let (backend, locator) = agents::external_session_identity(path)
-            .unwrap_or_else(|| (self.harness.as_str(), path.to_string_lossy().into_owned()));
+        let Some((backend, locator)) = agents::external_session_identity(path).or_else(|| {
+            self.harness
+                .map(|harness| (harness, path.to_string_lossy().into_owned()))
+        }) else {
+            return;
+        };
         for id in agents::CallerRegistry::shared().take_expired_child_inputs(
             &self.project,
             backend,

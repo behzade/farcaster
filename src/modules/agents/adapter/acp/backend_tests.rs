@@ -6,10 +6,10 @@ use std::path::Path;
 fn external_agents_have_registered_workers_and_valid_session_identities() {
     let (workers, _) = adapter::worker_factories(crate::agents::AgentLaunchConfig::default());
     let profile = &ANTIGRAVITY;
-    assert!(workers.contains_key(profile.backend));
+    assert!(workers.contains_key(&profile.backend));
     let descriptor = adapter::known_backend_descriptors()
         .into_iter()
-        .find(|descriptor| descriptor.id.as_str() == profile.backend)
+        .find(|descriptor| descriptor.id == profile.backend)
         .expect("expected test entry");
     assert_eq!(descriptor.name, profile.name);
     assert_eq!(

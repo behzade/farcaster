@@ -417,7 +417,7 @@ impl FarcasterApp {
         if selected_was_deleted && generation >= self.runtime_generation {
             let current_target = self.composer_sessions.current_target().to_owned();
             let (next_target, next_draft) =
-                match project_registry::new_draft(self.project.clone(), &self.preferred_harness) {
+                match project_registry::new_draft(self.project.clone(), self.preferred_harness) {
                     Ok(draft) => (draft_target(&draft.id), Some(draft)),
                     Err(error) => {
                         self.sessions_error = Some(error);
