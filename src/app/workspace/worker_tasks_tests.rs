@@ -138,6 +138,7 @@ fn worker_catalogs_preserve_effort_order_and_project_scope() {
             catalog: ConfigurationCatalog {
                 models: vec![],
                 efforts: efforts.iter().map(|value| (*value).into()).collect(),
+                sandbox_adapter: None,
             },
         }
     };
@@ -171,6 +172,7 @@ fn worker_efforts_follow_the_selected_model_not_the_harness_alone() {
             efforts: Some(vec!["high".into()]),
         }],
         efforts: vec!["low".into(), "high".into()],
+        sandbox_adapter: None,
     };
     assert_eq!(model_efforts(&catalog, catalog.models.first()), ["high"]);
     catalog.models[0].efforts = Some(vec![]);

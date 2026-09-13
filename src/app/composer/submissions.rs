@@ -19,8 +19,11 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::app) struct PendingSubmission {
+    pub(in crate::app) id: String,
+    pub(in crate::app) submitted_at: Instant,
     // Runtime replies keep this target even after the draft is promoted.
     pub(in crate::app) submitted_target: String,
+    pub(in crate::app) mode: PromptMode,
     pub(in crate::app) text: String,
     pub(in crate::app) images: Vec<ComposerImage>,
     pub(in crate::app) pastes: Vec<ComposerPaste>,
@@ -89,7 +92,9 @@ impl FarcasterApp {
             self.snapshot.selected_session.as_deref(),
             &self.sessions,
         );
+        let submission_id = uuid::Uuid::new_v4().to_string();
         match self.runtime.send(RuntimeCommand::Prompt {
+            submission_id: submission_id.clone(),
             target: target.clone(),
             mode,
             message: message.clone(),
@@ -114,9 +119,12 @@ impl FarcasterApp {
                         .collect(),
                 );
                 self.pending_submissions.insert(
-                    target.clone(),
+                    submission_id.clone(),
                     PendingSubmission {
+                        id: submission_id,
+                        submitted_at: Instant::now(),
                         submitted_target: target.clone(),
+                        mode,
                         text: editor_text.clone(),
                         images: pending_images,
                         pastes: pending_pastes,
@@ -173,10 +181,7 @@ impl FarcasterApp {
     }
 
     pub(crate) fn can_submit(&self) -> bool {
-        can_submit_to(
-            &self.pending_submissions,
-            self.composer_sessions.current_target(),
-        )
+        true
     }
 
     pub(crate) fn handle_composer_escape(&mut self, cx: &mut Context<Self>) {
@@ -185,7 +190,7 @@ impl FarcasterApp {
             self.snapshot.conversation.running,
             !self.snapshot.conversation.queue.steering.is_empty(),
             !self.snapshot.conversation.queue.follow_up.is_empty(),
-            self.pending_submissions.contains_key(target),
+            has_pending_submission(&self.pending_submissions, target),
             target,
             self.composer_escape_armed.as_ref(),
             Instant::now(),
@@ -297,28 +302,65 @@ pub(in crate::app) fn take_resolved_pending_submissions(
 )> {
     let completed = pending
         .iter()
-        .filter_map(|(target, pending)| {
-            pending
-                .result
-                .clone()
-                .map(|result| (target.clone(), result))
-        })
+        .filter_map(|(id, pending)| pending.result.clone().map(|result| (id.clone(), result)))
         .collect::<Vec<_>>();
     completed
         .into_iter()
-        .filter_map(|(target, (outcome, session))| {
-            pending
-                .remove(&target)
-                .map(|submission| (target, submission, outcome, session))
+        .filter_map(|(id, (outcome, session))| {
+            pending.remove(&id).map(|submission| {
+                let target = submission.submitted_target.clone();
+                (target, submission, outcome, session)
+            })
         })
         .collect()
 }
 
-fn can_submit_to(
+pub(in crate::app) fn has_pending_submission(
     pending: &std::collections::HashMap<String, PendingSubmission>,
     target: &str,
 ) -> bool {
-    !pending.contains_key(target)
+    pending
+        .values()
+        .any(|submission| submission.submitted_target == target)
+}
+
+pub(in crate::app) fn pending_prompt_queue(
+    pending: &std::collections::HashMap<String, PendingSubmission>,
+    target: &str,
+) -> crate::app::views::transcript::conversation::QueueState {
+    let mut queue = crate::app::views::transcript::conversation::QueueState::default();
+    let mut submissions = pending
+        .values()
+        .filter(|submission| submission.submitted_target == target && submission.result.is_none())
+        .collect::<Vec<_>>();
+    submissions.sort_by(|left, right| {
+        left.submitted_at
+            .cmp(&right.submitted_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    for submission in submissions {
+        match submission.mode {
+            PromptMode::Steer => queue.steering.push(submission.text.clone()),
+            PromptMode::FollowUp => queue.follow_up.push(submission.text.clone()),
+            PromptMode::Normal => {}
+        }
+    }
+    queue
+}
+
+/// The queue shown by the production composer. Native queue state and local
+/// submissions are separate evidence, so keep every entry and its order within
+/// each source instead of matching or deduplicating by text.
+pub(in crate::app) fn visible_prompt_queue(
+    native: &crate::app::views::transcript::conversation::QueueState,
+    pending: &std::collections::HashMap<String, PendingSubmission>,
+    target: &str,
+) -> crate::app::views::transcript::conversation::QueueState {
+    let mut visible = native.clone();
+    let local = pending_prompt_queue(pending, target);
+    visible.steering.extend(local.steering);
+    visible.follow_up.extend(local.follow_up);
+    visible
 }
 
 pub(in crate::app) fn inactive_session_for_target(

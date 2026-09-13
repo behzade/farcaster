@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(test)]
+#[path = "prompts_tests.rs"]
+mod tests;
+
 impl StateStore {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_prompt(
@@ -155,6 +159,7 @@ impl StateStore {
                 let target = target_for_session(client_key.as_deref(), locator.as_deref())?;
                 Ok(QueuedPrompt {
                     id: row.get(0)?,
+                    submission_id: None,
                     target,
                     harness: row.get(3)?,
                     project: crate::sessions::normalize_session_path(Path::new(&project)),
@@ -341,6 +346,7 @@ impl StateStore {
                     .into();
             }
             if let Some(prompt_mode) = prompt.prompt_mode {
+                history["queued"] = (prompt_mode != "normal").into();
                 history["promptMode"] = prompt_mode.into();
             }
             history["deliveryTracked"] = prompt.delivery_tracked.into();
@@ -361,10 +367,33 @@ impl StateStore {
     pub(crate) fn complete_prompt_with_receipt(
         &mut self,
         id: i64,
+        target: &str,
+        session: Option<&Path>,
+        receipt_id: &str,
+        delivery_tracked: bool,
+    ) -> Result<(), String> {
+        self.complete_prompt_receipt(id, target, session, receipt_id, delivery_tracked, false)
+    }
+
+    pub(crate) fn complete_delivered_prompt(
+        &mut self,
+        id: i64,
+        target: &str,
+        session: Option<&Path>,
+        receipt_id: &str,
+        delivery_tracked: bool,
+    ) -> Result<(), String> {
+        self.complete_prompt_receipt(id, target, session, receipt_id, delivery_tracked, true)
+    }
+
+    fn complete_prompt_receipt(
+        &mut self,
+        id: i64,
         _target: &str,
         session: Option<&Path>,
         receipt_id: &str,
         delivery_tracked: bool,
+        delivered: bool,
     ) -> Result<(), String> {
         let transaction = self
             .connection
@@ -417,6 +446,24 @@ impl StateStore {
                FROM outbox o WHERE o.id=?1",
             rusqlite::params![id, receipt_id, delivery_tracked],
         ).map_err(|error| format!("save accepted prompt {id}: {error}"))?;
+        if delivered {
+            // Acceptance and consumption must commit together. A crash between
+            // separate transactions would restore delivered input as pending.
+            transaction.execute(
+                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+                 SELECT o.session_id,
+                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                        ?3, 1,
+                        json_object('type','prompt_delivery_receipt','submissionId',?2)
+                   FROM outbox o WHERE o.id=?1
+                    AND NOT EXISTS (
+                        SELECT 1 FROM session_events e WHERE e.session_id=o.session_id
+                         AND json_extract(e.body,'$.type')='prompt_delivery_receipt'
+                         AND json_extract(e.body,'$.submissionId')=?2
+                    )",
+                rusqlite::params![id, receipt_id, now_ms()],
+            ).map_err(|error| format!("save delivered prompt {id}: {error}"))?;
+        }
         transaction
             .execute("DELETE FROM outbox WHERE id=?1", [id])
             .map_err(|error| format!("complete queued prompt {id}: {error}"))?;

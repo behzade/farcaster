@@ -4,7 +4,10 @@ use gpui::{Context, Window};
 
 use super::FarcasterApp;
 use crate::{
-    app::composer::sessions::{draft_target, session_target},
+    app::composer::{
+        sessions::{draft_target, session_target},
+        submissions::has_pending_submission,
+    },
     projects::{self, DraftSession},
     runtime::RuntimeCommand,
     sessions::normalize_session_path,
@@ -28,7 +31,7 @@ impl FarcasterApp {
         let target = draft_target(id);
         if self.composer_sessions.current_target() != target
             || self.submitted_drafts.contains_key(id)
-            || self.pending_submissions.contains_key(&target)
+            || has_pending_submission(&self.pending_submissions, &target)
         {
             return None;
         }
@@ -61,7 +64,7 @@ impl FarcasterApp {
         let target = draft_target(id);
         if self.composer_sessions.current_target() != target
             || self.submitted_drafts.contains_key(id)
-            || self.pending_submissions.contains_key(&target)
+            || has_pending_submission(&self.pending_submissions, &target)
         {
             return None;
         }
@@ -139,7 +142,8 @@ impl FarcasterApp {
             return;
         };
         let target = draft_target(&id);
-        if self.submitted_drafts.contains_key(&id) || self.pending_submissions.contains_key(&target)
+        if self.submitted_drafts.contains_key(&id)
+            || has_pending_submission(&self.pending_submissions, &target)
         {
             return;
         }
@@ -197,7 +201,7 @@ impl FarcasterApp {
         };
         if target != draft_target(id)
             || self.submitted_drafts.contains_key(id)
-            || self.pending_submissions.contains_key(target)
+            || has_pending_submission(&self.pending_submissions, target)
         {
             return false;
         }
@@ -304,7 +308,7 @@ impl FarcasterApp {
             return;
         }
         let session = session.map(|path| normalize_session_path(&path));
-        if status == "Working" && self.pending_submissions.contains_key(&target) {
+        if status == "Working" && has_pending_submission(&self.pending_submissions, &target) {
             establish_submission(&mut self.submitted_drafts, &target, true, session.clone());
         }
         let associated_path =
@@ -356,9 +360,10 @@ impl FarcasterApp {
         self.promote_center_surface(&draft_key, &session_key);
         self.promote_composer_images(&draft_key, &session_key);
         self.promote_composer_pastes(&draft_key, &session_key);
-        if let Some(pending) = self.pending_submissions.remove(&draft_key) {
-            self.pending_submissions
-                .insert(session_key.clone(), pending);
+        for pending in self.pending_submissions.values_mut() {
+            if pending.submitted_target == draft_key {
+                pending.submitted_target.clone_from(&session_key);
+            }
         }
         self.canonicalize_draft_status(id, path);
         self.submitted_drafts.remove(id);

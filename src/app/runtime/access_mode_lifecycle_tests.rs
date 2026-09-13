@@ -43,6 +43,7 @@ fn saved_model_refresh_and_launch_use_auto() {
             harness
                 .runtime
                 .send(RuntimeCommand::Prompt {
+                    submission_id: "access-mode-prompt".into(),
                     target: "draft:auto".into(),
                     mode: PromptMode::Normal,
                     message: "test".into(),

@@ -10,12 +10,18 @@ fn delivery(id: &str, text: &str, status: &str) -> Value {
 fn receipt_and_cancel_orders_keep_one_row_per_submission_not_per_text() {
     let mut state = ConversationState::default();
     state.reduce(&delivery("one", "same text", "unknown"));
-    assert_eq!(state.items[0].label, "Delivery unknown");
+    assert!(
+        state.items.is_empty(),
+        "unknown queue input is not delivered"
+    );
     state.reduce(&delivery("two", "same text", "accepted"));
+    assert!(state.items.is_empty(), "receipt is not model delivery");
     state.reduce(&delivery("one", "same text", "delivered"));
     state.reduce(&delivery("one", "same text", "accepted"));
     state.reduce(&delivery("two", "same text", "unknown"));
     state.reduce(&delivery("two", "same text", "rejected"));
+    assert_eq!(state.items.len(), 1);
+    state.reduce(&delivery("two", "same text", "delivered"));
     assert_eq!(state.items.len(), 2);
     assert!(
         state
@@ -108,7 +114,9 @@ fn ordinary_user_echo_reconciles_a_bound_row_after_receipt_changes() {
 #[test]
 fn rejection_before_active_mixed_content_keeps_projection_offsets_valid() {
     let mut state = ConversationState::default();
-    state.reduce(&delivery("reject", "unsent", "unknown"));
+    let mut normal = delivery("reject", "unsent", "unknown");
+    normal["message"]["queued"] = false.into();
+    state.reduce(&normal);
     state.reduce(&json!({"type":"agent_start"}));
     state.reduce(&json!({"type":"message_start", "message":{"role":"assistant", "content":[]}}));
     state.reduce_deferred(&json!({"type":"message_update", "assistantMessageEvent":{"type":"thinking_delta", "contentIndex":0, "delta":"think "}}));
@@ -166,23 +174,119 @@ fn history_refresh_retains_unresolved_receipts_and_reconciles_exact_identity() {
     state.replace_history(&[
         json!({"role":"assistant", "content":[{"type":"text", "text":"old reply"}]}),
     ]);
-    assert_eq!(state.items.len(), 3);
-    assert_eq!(state.items[1].label, "Delivery unknown");
+    assert_eq!(
+        state.items.len(),
+        1,
+        "neither queued receipt proves delivery"
+    );
+    assert_eq!(
+        state.submitted_users.len(),
+        2,
+        "retain both payload identities"
+    );
     state.replace_history(&[
         json!({"role":"assistant", "content":[{"type":"text", "text":"old reply"}]}),
         json!({"role":"user", "content":"same text", "submissionId":"accepted"}),
     ]);
-    assert_eq!(state.items.len(), 3);
+    assert_eq!(state.items.len(), 2);
     assert_eq!(
         state
             .items
             .iter()
             .filter(|item| item.label == "Delivery unknown")
             .count(),
-        1
+        0
     );
     state.reduce(&delivery("accepted", "same text", "accepted"));
-    assert_eq!(state.items.len(), 3);
+    assert_eq!(state.items.len(), 2);
+    state.reduce(&delivery("unknown", "same text", "delivered"));
+    assert_eq!(
+        state.items.len(),
+        3,
+        "late delivery reveals the other input once"
+    );
+}
+
+#[test]
+fn admitted_queue_retains_exact_images_off_transcript_across_history_refresh() {
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    let mut state = ConversationState::default();
+    let mut receipt = delivery("queued-image", "", "accepted");
+    receipt["message"]["content"] = json!([
+        {"type":"image", "data":PNG, "mimeType":"image/png"}
+    ]);
+    state.reduce(&receipt);
+    assert!(state.items.is_empty());
+    for history in [
+        vec![],
+        vec![json!({"role":"assistant", "content":[{"type":"text", "text":"old answer"}]})],
+    ] {
+        let expected = history.len();
+        state.replace_history(&history);
+        assert_eq!(state.items.len(), expected);
+        assert_eq!(state.submitted_users["queued-image"].item.images.len(), 1);
+    }
+    receipt["status"] = "delivered".into();
+    state.reduce(&receipt);
+    state.reduce(&receipt);
+    let users = state
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User)
+        .collect::<Vec<_>>();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].images.len(), 1);
+    assert!(users[0].text.is_empty());
+}
+
+#[test]
+fn native_history_delivery_by_id_keeps_the_submitted_attachment() {
+    let mut state = ConversationState::default();
+    let mut accepted = delivery("image-id", "look", "accepted");
+    accepted["message"]["content"] = json!([
+        {"type":"text", "text":"look"},
+        {"type":"image", "data":"AQID", "mimeType":"image/png"}
+    ]);
+    state.reduce(&accepted);
+    assert!(state.items.is_empty());
+    state.replace_history(&[json!({"role":"user", "submissionId":"image-id", "content":"look"})]);
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].images.len(), 1);
+    state.reduce(&delivery("image-id", "look", "delivered"));
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].images.len(), 1);
+    state.replace_history(&[json!({"role":"user", "submissionId":"image-id", "content":"look"})]);
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(
+        state.items[0].images.len(),
+        1,
+        "repeated refresh must retain exact-ID attachments"
+    );
+    state.replace_history(&[]);
+    assert!(
+        state.items.is_empty(),
+        "delivered input absent from history is not appended"
+    );
+}
+
+#[test]
+fn unknown_image_only_queue_keeps_a_recovery_presentation_without_a_user_row() {
+    let mut state = ConversationState::default();
+    let mut unknown = delivery("unknown-image", "", "unknown");
+    unknown["message"]["promptMode"] = "follow_up".into();
+    unknown["message"]["content"] =
+        json!([{ "type":"image", "data":"AQID", "mimeType":"image/png" }]);
+    state.reduce(&unknown);
+    state.replace_history(&[]);
+    assert!(state.items.is_empty());
+    let pending = state.pending_receipts();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, "unknown-image");
+    assert_eq!(pending[0].mode, Some(crate::protocol::PromptMode::FollowUp));
+    assert!(pending[0].unknown);
+    assert_eq!(pending[0].images.len(), 1);
+    assert!(pending[0].text.is_empty());
+    assert!(state.queue.follow_up.is_empty());
 }
 
 #[test]

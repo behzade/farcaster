@@ -1,10 +1,13 @@
 use gpui::{
-    AnyElement, FontWeight, IntoElement as _, ParentElement as _, Styled as _, div,
-    prelude::FluentBuilder as _,
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    Styled as _, div, prelude::FluentBuilder as _,
 };
 
 use crate::{
-    agents::PeerMessage, app::ui::theme::THEME, app::views::transcript::conversation::QueueState,
+    agents::PeerMessage,
+    app::ui::theme::THEME,
+    app::views::transcript::conversation::{PendingReceipt, QueueState},
+    protocol::PromptMode,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +128,74 @@ pub(super) fn render(queue: &QueueState) -> Option<AnyElement> {
                         queued_message_group(kind, &messages, index > 0)
                     }),
             )
+            .into_any_element(),
+    )
+}
+
+pub(super) fn pending_receipt_label(receipt: &PendingReceipt) -> String {
+    let mode = match receipt.mode {
+        Some(PromptMode::Steer) => "Steer",
+        Some(PromptMode::FollowUp) => "Follow-up",
+        Some(PromptMode::Normal) | None => "Message",
+    };
+    let status = if receipt.unknown {
+        "Delivery unknown"
+    } else {
+        "Awaiting delivery"
+    };
+    match receipt.images.len() {
+        0 => format!("{mode} · {status}"),
+        1 => format!("{mode} · {status} · 1 image"),
+        count => format!("{mode} · {status} · {count} images"),
+    }
+}
+
+pub(super) fn render_pending_receipts(receipts: &[PendingReceipt]) -> Option<AnyElement> {
+    if receipts.is_empty() {
+        return None;
+    }
+    Some(
+        div()
+            .mb(THEME.space.sm)
+            .border(THEME.border)
+            .border_color(THEME.colors.border)
+            .rounded(THEME.radius)
+            .overflow_hidden()
+            .bg(THEME.colors.surface)
+            .child(
+                div()
+                    .px(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .bg(THEME.colors.hover)
+                    .text_size(THEME.type_scale.caption)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(THEME.colors.subtle)
+                    .child("Saved pending messages"),
+            )
+            .children(receipts.iter().map(|receipt| {
+                div()
+                    .id(gpui::SharedString::from(format!(
+                        "pending-receipt-{}",
+                        receipt.id
+                    )))
+                    .border_t(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .px(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .child(
+                        div()
+                            .line_clamp(1)
+                            .text_size(THEME.type_scale.body)
+                            .text_color(THEME.colors.text)
+                            .child(queued_message_preview(&receipt.text)),
+                    )
+                    .child(
+                        div()
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.subtle)
+                            .child(pending_receipt_label(receipt)),
+                    )
+            }))
             .into_any_element(),
     )
 }

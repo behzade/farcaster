@@ -25,7 +25,9 @@ use dialogs::{
     choice_copy, dialog_copy, dialog_number_selection, numbered_dialog_choice, plain_text_html,
 };
 #[cfg(test)]
-use queue::{QueuedMessageKind, queued_message_groups, queued_message_preview};
+use queue::{
+    QueuedMessageKind, pending_receipt_label, queued_message_groups, queued_message_preview,
+};
 
 impl FarcasterApp {
     #[allow(clippy::too_many_arguments)]
@@ -78,6 +80,16 @@ impl FarcasterApp {
             exact_command,
             self.snapshot.conversation.running,
         );
+        let visible_queue = crate::app::composer::submissions::visible_prompt_queue(
+            &self.snapshot.conversation.queue,
+            &self.pending_submissions,
+            self.composer_sessions.current_target(),
+        );
+        let restored_receipts = if self.snapshot.history_preview {
+            self.snapshot.conversation.pending_receipts()
+        } else {
+            Vec::new()
+        };
         let mention_query = file_mentions::query_at_cursor(
             &self.composer.read(cx).value(),
             self.composer.read(cx).cursor(),
@@ -130,9 +142,12 @@ impl FarcasterApp {
                     .flex_col()
                     .p(THEME.space.sm)
                     .when_some(widgets_above, |composer, widgets| composer.child(widgets))
+                    .when_some(queue::render(&visible_queue), |composer, queue| {
+                        composer.child(queue)
+                    })
                     .when_some(
-                        queue::render(&self.snapshot.conversation.queue),
-                        |composer, queue| composer.child(queue),
+                        queue::render_pending_receipts(&restored_receipts),
+                        |composer, receipts| composer.child(receipts),
                     )
                     .when_some(
                         attachments::render(self, entity.clone()),

@@ -103,6 +103,8 @@ impl RuntimeOwner {
     }
 
     pub(super) fn reset_process_runtime(&mut self) {
+        self.complete_current_delivered_prompt();
+        self.fail_pending_queued_prompts("Runtime reset before acknowledgement");
         self.pending_session_controls.reset_transport();
         self.invalidate_history_loads();
         self.process_generation = self.process_generation.saturating_add(1);
@@ -114,6 +116,8 @@ impl RuntimeOwner {
         self.startup_state_loaded = false;
         self.startup_history_loaded = false;
         self.pending_prompt_id = None;
+        self.pending_submission_id = None;
+        self.pending_prompt_result_emitted = false;
         self.pending_prompt_item = None;
         self.pending_prompt_delivery_unknown = false;
         self.pending_prompt_delivery_tracked = false;
@@ -331,14 +335,76 @@ impl RuntimeOwner {
                     && let Some(receipt_id) =
                         event.value().get("submissionId").and_then(Value::as_str)
                 {
-                    let outbox_id = (self.pending_prompt_id.as_deref() == Some(receipt_id))
-                        .then_some(self.pending_outbox_id)
-                        .flatten();
-                    if let Some(state) = self.state.as_mut()
-                        && let Err(error) =
-                            state.record_prompt_receipt_delivered(receipt_id, outbox_id)
+                    let current = self.pending_prompt_id.as_deref() == Some(receipt_id);
+                    let queued = self.pending_queued_prompts.get(receipt_id).cloned();
+                    let outbox_id = if current {
+                        self.pending_outbox_id
+                    } else {
+                        queued.as_ref().map(|pending| pending.outbox_id)
+                    };
+                    let prompt = if current {
+                        self.pending_prompt_target.as_ref().map(|target| {
+                            (
+                                target.clone(),
+                                self.active_session.clone(),
+                                self.pending_prompt_delivery_tracked,
+                            )
+                        })
+                    } else {
+                        queued.as_ref().map(|pending| {
+                            (
+                                pending.target.clone(),
+                                pending.session.clone(),
+                                pending.delivery_tracked,
+                            )
+                        })
+                    };
+                    let mut saved = false;
+                    if let Some(state) = self.state.as_mut() {
+                        let result = match (outbox_id, prompt) {
+                            (Some(outbox_id), Some((target, session, delivery_tracked))) => state
+                                .complete_delivered_prompt(
+                                    outbox_id,
+                                    &target,
+                                    session.as_deref(),
+                                    receipt_id,
+                                    delivery_tracked,
+                                ),
+                            _ => state.record_prompt_receipt_delivered(receipt_id, outbox_id),
+                        };
+                        match result {
+                            Ok(()) => saved = true,
+                            Err(error) => {
+                                zlog::error!("Record prompt delivery receipt: {error}");
+                            }
+                        }
+                    }
+                    if current && saved {
+                        self.pending_outbox_id = None;
+                    }
+                    if current && !self.pending_prompt_result_emitted {
+                        if let (Some(submission_id), Some(target)) = (
+                            self.pending_submission_id.clone(),
+                            self.pending_prompt_target.clone(),
+                        ) {
+                            self.emit_prompt_result(
+                                Some(&submission_id),
+                                &target,
+                                crate::agents::PromptOutcome::Accepted,
+                            );
+                            self.pending_prompt_result_emitted = true;
+                        }
+                    } else if let Some(pending) = queued
+                        && !pending.result_emitted
                     {
-                        zlog::error!("Record prompt delivery receipt: {error}");
+                        self.emit_prompt_result(
+                            Some(&pending.submission_id),
+                            &pending.target,
+                            crate::agents::PromptOutcome::Accepted,
+                        );
+                        if let Some(pending) = self.pending_queued_prompts.get_mut(receipt_id) {
+                            pending.result_emitted = true;
+                        }
                     }
                 }
                 let settled = event.kind() == &SessionActivityKind::AgentSettled;
@@ -470,9 +536,12 @@ impl RuntimeOwner {
             && self.snapshot.history_preview
             && self.parked_snapshot.is_some();
         zlog::error!("agent runtime failed: {details}");
+        self.complete_current_delivered_prompt();
+        self.fail_pending_queued_prompts(&details);
+        let prompt_was_delivered = self.pending_prompt_result_emitted;
         let delivery_unknown_was_reported = self.pending_prompt_delivery_unknown;
-        let prompt_delivery_unknown =
-            delivery_unknown_was_reported || self.pending_prompt_id.is_some();
+        let prompt_delivery_unknown = !prompt_was_delivered
+            && (delivery_unknown_was_reported || self.pending_prompt_id.is_some());
         if prompt_delivery_unknown {
             if !delivery_unknown_was_reported {
                 self.mark_outbox_delivery_unknown(&details);
@@ -489,7 +558,7 @@ impl RuntimeOwner {
                     "unknown",
                 );
             }
-        } else {
+        } else if !prompt_was_delivered {
             self.mark_outbox_failed(&details);
         }
         self.pending_prompt_id = None;
@@ -500,21 +569,30 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        if !prompt_delivery_unknown {
+        if !prompt_delivery_unknown && !prompt_was_delivered {
             self.rollback_pending_prompt();
         }
         if let Some(target) = self.pending_prompt_target.take() {
-            if prompt_delivery_unknown {
+            if prompt_was_delivered {
+                // Native delivery is stronger than a missing acknowledgement.
+            } else if prompt_delivery_unknown {
                 if !delivery_unknown_was_reported {
-                    self.emit_prompt_result(&target, crate::agents::PromptOutcome::DeliveryUnknown);
+                    self.emit_prompt_result(
+                        self.pending_submission_id.as_deref(),
+                        &target,
+                        crate::agents::PromptOutcome::DeliveryUnknown,
+                    );
                 }
             } else {
                 self.emit_prompt_result(
+                    self.pending_submission_id.as_deref(),
                     &target,
                     crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 );
             }
         }
+        self.pending_submission_id = None;
+        self.pending_prompt_result_emitted = false;
         self.pending_prompt_delivery_unknown = false;
         self.pending_prompt_delivery_tracked = false;
         if preserve_history {
@@ -550,6 +628,74 @@ impl RuntimeOwner {
             && let Err(database_error) = agents::fail_prompt(state, id, error)
         {
             zlog::error!("Failed to mark queued prompt {id} as failed: {database_error}");
+        }
+    }
+
+    fn fail_pending_queued_prompts(&mut self, error: &str) {
+        let pending = std::mem::take(&mut self.pending_queued_prompts);
+        for (receipt_id, queued) in pending {
+            if queued.result_emitted {
+                if let Some(state) = self.state.as_mut()
+                    && let Err(database_error) = state.complete_delivered_prompt(
+                        queued.outbox_id,
+                        &queued.target,
+                        queued.session.as_deref(),
+                        &receipt_id,
+                        queued.delivery_tracked,
+                    )
+                {
+                    zlog::error!(
+                        "Save proven queued delivery {}: {database_error}",
+                        queued.outbox_id
+                    );
+                }
+                continue;
+            }
+            if let Some(state) = &self.state
+                && let Err(database_error) =
+                    agents::mark_prompt_delivery_unknown(state, queued.outbox_id, error)
+            {
+                zlog::error!(
+                    "Mark pending queued prompt {} unknown: {database_error}",
+                    queued.outbox_id
+                );
+            }
+            self.emit_prompt_result(
+                Some(&queued.submission_id),
+                &queued.target,
+                crate::agents::PromptOutcome::DeliveryUnknown,
+            );
+        }
+    }
+
+    fn complete_current_delivered_prompt(&mut self) {
+        if !self.pending_prompt_result_emitted {
+            return;
+        }
+        let Some((outbox_id, receipt_id, target)) = self
+            .pending_outbox_id
+            .zip(self.pending_prompt_id.clone())
+            .zip(self.pending_prompt_target.clone())
+            .map(|((outbox_id, receipt_id), target)| (outbox_id, receipt_id, target))
+        else {
+            return;
+        };
+        let session = self.active_session.clone();
+        let delivery_tracked = self.pending_prompt_delivery_tracked;
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+        match state.complete_delivered_prompt(
+            outbox_id,
+            &target,
+            session.as_deref(),
+            &receipt_id,
+            delivery_tracked,
+        ) {
+            Ok(()) => self.pending_outbox_id = None,
+            Err(error) => {
+                zlog::error!("Save proven prompt delivery {outbox_id}: {error}");
+            }
         }
     }
 

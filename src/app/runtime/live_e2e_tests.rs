@@ -108,6 +108,7 @@ impl RuntimeTrace {
                 target,
                 outcome,
                 session,
+                ..
             } => {
                 self.record(format!(
                     "prompt result {target}={outcome:?} session={session:?}"
@@ -524,6 +525,9 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
 
 #[test]
 #[ignore = "uses one selected installed harness and a real model; requires FARCASTER_E2E_HARNESS"]
+/// This starts below `FarcasterApp`, so it proves runtime transport, native
+/// delivery, and model effects. The GPUI live test owns immediate composer
+/// queue presentation before acknowledgement.
 fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Result<(), String> {
     isolated_live_runtime("accepted_steer_and_follow_up_queue_until_delivery", || {
         let _mcp = McpGuard::disabled();
@@ -579,8 +583,9 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
             sessions.track(&target);
             wait_for_gate_started(&runtime, &mut trace, &project, &gate_message, TURN_TIMEOUT)?;
 
-            // A running-input acknowledgement is not a user transcript row. The app must first
-            // show it in the visible queue, then create the row only when native delivery occurs.
+            // Send both runtime commands while the real turn remains held. This
+            // layer has no local composer queue; native queue snapshots can only
+            // appear after the adapter responds, so UI timing is tested above it.
             let target = bound_target(&target);
             trace.phase("submit steer while actual shell remains held")?;
             runtime.send(prompt_with_mode(
@@ -589,50 +594,14 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
                 steer_message.clone(),
                 steer_image.clone(),
             ))?;
-            wait_for(&runtime, &mut trace, Duration::from_secs(5), |trace| {
-                trace.snapshot.as_ref().is_some_and(|snapshot| {
-                    snapshot.conversation.running
-                        && contains_tool_gate(snapshot, &gate_message)
-                        && snapshot
-                            .conversation
-                            .queue
-                            .steering
-                            .iter()
-                            .any(|queued| queued == &steer_message)
-                })
-            })
-            .map_err(|error| {
-                format!(
-                    "missing visible steer queue before the gate released; do not wait for acknowledgement here: {error}"
-                )
-            })?;
-
-            trace.phase("submit follow-up after steer becomes visibly queued")?;
+            trace.phase("submit follow-up before waiting for the steer response")?;
             runtime.send(prompt_with_mode(
                 target.clone(),
                 PromptMode::FollowUp,
                 follow_up_message.clone(),
                 follow_up_image.clone(),
             ))?;
-            wait_for(&runtime, &mut trace, Duration::from_secs(5), |trace| {
-                trace.snapshot.as_ref().is_some_and(|snapshot| {
-                    snapshot.conversation.running
-                        && contains_tool_gate(snapshot, &gate_message)
-                        && snapshot
-                            .conversation
-                            .queue
-                            .steering
-                            .iter()
-                            .any(|queued| queued == &steer_message)
-                        && contains_follow_up_queue(snapshot, &follow_up_message)
-                })
-            })
-            .map_err(|error| {
-                format!(
-                    "missing visible follow-up queue before the gate released; do not wait for acknowledgement here: {error}"
-                )
-            })?;
-            trace.phase("require queued inputs stay out of transcript before native delivery")?;
+            trace.phase("check the last observed snapshot before native delivery")?;
             let snapshot = trace.snapshot.as_ref().ok_or_else(|| {
                 format!(
                     "runtime omitted the pre-delivery snapshot: {}",
@@ -862,6 +831,7 @@ fn prompt_with_mode(
     image: PromptImage,
 ) -> RuntimeCommand {
     RuntimeCommand::Prompt {
+        submission_id: uuid::Uuid::new_v4().to_string(),
         target,
         mode,
         message,

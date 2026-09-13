@@ -51,6 +51,7 @@ fn result_for(harness: &Harness, expected: &str, background: bool) -> (bool, Opt
                 target,
                 outcome,
                 session,
+                ..
             }) => {
                 assert_eq!(target, expected);
                 return (outcome == crate::agents::PromptOutcome::Accepted, session);

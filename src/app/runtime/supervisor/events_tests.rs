@@ -56,6 +56,7 @@ impl SupervisorFixture {
                 configuration_rx,
                 configuration_tx: None,
                 configuration_requests: HashSet::new(),
+                requested_access_modes: HashMap::new(),
                 published_statuses: HashMap::new(),
                 recovery,
                 published_recovery_selection: None,
@@ -87,9 +88,153 @@ impl SupervisorFixture {
         self.supervisor.actors.insert(key.into(), actor);
     }
 
+    fn add_recording_actor(&mut self, key: &str) -> mpsc::Receiver<RuntimeCommand> {
+        let (commands, command_rx) = mpsc::channel();
+        let (observed_tx, observed) = mpsc::channel();
+        let (_events_tx, events) = mpsc::channel();
+        let join = thread::spawn(move || {
+            while let Ok(command) = command_rx.recv() {
+                if matches!(command, RuntimeCommand::Shutdown) {
+                    break;
+                }
+                let _ = observed_tx.send(command);
+            }
+            Ok(())
+        });
+        let actor = SessionRuntimeHandle {
+            commands,
+            events,
+            thread: join.thread().clone(),
+            join,
+        };
+        self.supervisor.actors.insert(key.into(), actor);
+        observed
+    }
+
     fn drain(&self) -> Vec<RuntimeEvent> {
         self.events.try_iter().collect()
     }
+}
+
+#[test]
+fn capability_only_catalog_reaches_draft_once_without_snapshot_loop() {
+    let project = PathBuf::from("/project");
+    let mut fixture = SupervisorFixture::new("draft:pi", project.clone(), None, Default::default());
+    fixture.supervisor.configurations.set_catalog(
+        "pi".into(),
+        project.clone(),
+        crate::agents::ConfigurationCatalog {
+            models: vec![],
+            efforts: vec!["off".into()],
+            sandbox_adapter: Some("pi-nono".into()),
+        },
+    );
+    let commands = fixture.add_recording_actor("draft:pi");
+
+    fixture.supervisor.handle_actor_event(
+        "draft:pi".into(),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: Arc::new(RuntimeSnapshot {
+                harness: "pi".into(),
+                project: project.clone(),
+                ..RuntimeSnapshot::default()
+            }),
+        },
+    );
+    let command = commands
+        .recv_timeout(Duration::from_secs(1))
+        .expect("supervisor sends the missing capability catalog");
+    assert!(matches!(
+        &command,
+        RuntimeCommand::UpdateConfigurationCatalog { catalog, .. }
+            if catalog.models.is_empty()
+                && catalog.sandbox_adapter.as_deref() == Some("pi-nono")
+    ));
+
+    let (mut actor, actor_events) =
+        super::super::super::tests::owner_without_process(project.clone());
+    actor.snapshot.connected = false;
+    actor.apply_command(command);
+    let snapshot = actor_events
+        .try_iter()
+        .find_map(|event| match event {
+            RuntimeEvent::Snapshot { snapshot, .. }
+                if snapshot.sandbox_adapter.as_deref() == Some("pi-nono") =>
+            {
+                Some(snapshot)
+            }
+            _ => None,
+        })
+        .expect("actor publishes the applied capability catalog");
+    fixture.supervisor.handle_actor_event(
+        "draft:pi".into(),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot,
+        },
+    );
+    assert!(
+        commands.recv_timeout(Duration::from_millis(50)).is_err(),
+        "a current capability-only catalog must not be sent back to the actor"
+    );
+}
+
+#[test]
+fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+
+    let project = PathBuf::from("/project");
+    let mut fixture =
+        SupervisorFixture::new("draft:open", project.clone(), None, Default::default());
+    fixture.supervisor.latest.insert(
+        "draft:open".into(),
+        Arc::new(RuntimeSnapshot {
+            harness: "opencode2".into(),
+            project: project.clone(),
+            access_mode: Full,
+            ..RuntimeSnapshot::default()
+        }),
+    );
+    let actor_commands = fixture.add_recording_actor("draft:open");
+    fixture
+        .commands
+        .send(RuntimeCommand::SetAccessMode(Sandboxed))
+        .expect("queue selected access mode");
+    assert!(fixture.supervisor.process_next_command());
+    assert!(matches!(
+        actor_commands.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::SetAccessMode(Sandboxed))
+    ));
+    assert_eq!(fixture.supervisor.latest["draft:open"].access_mode, Full);
+
+    fixture
+        .commands
+        .send(RuntimeCommand::LoadConfiguration {
+            harness: "opencode2".into(),
+            project: project.clone(),
+        })
+        .expect("queue catalog load");
+    assert!(fixture.supervisor.process_next_command());
+    assert_eq!(
+        fixture
+            .supervisor
+            .configuration_process_command("opencode2", &project, "draft:open")
+            .access_mode,
+        Sandboxed
+    );
+    assert_eq!(
+        fixture
+            .supervisor
+            .configuration_process_command(
+                "opencode2",
+                std::path::Path::new("/other"),
+                "draft:open",
+            )
+            .access_mode,
+        Auto,
+        "an unrelated project must not inherit the selected actor policy"
+    );
 }
 
 impl Drop for SupervisorFixture {

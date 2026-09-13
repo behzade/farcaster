@@ -145,3 +145,82 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
     assert_eq!(conversation.items[1].images.len(), 1);
     Ok(())
 }
+
+#[test]
+fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::{PromptImage, PromptMode};
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    for (id, mode, tracked) in [
+        ("queued-steer", PromptMode::Steer, true),
+        ("queued-follow", PromptMode::FollowUp, false),
+    ] {
+        let row = store.enqueue_prompt(
+            "draft:pending",
+            "codex-cli",
+            temp.path(),
+            None,
+            mode,
+            "same text",
+            &[PromptImage::new(ONE_PIXEL_PNG.into(), "image/png".into())],
+        )?;
+        store.complete_prompt_with_receipt(row, "draft:pending", Some(&session), id, tracked)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    let mut history =
+        vec![json!({"role":"assistant", "content":[{"type":"text", "text":"older answer"}]})];
+    annotate_history_presentations(Some(&store), &session, &mut history);
+    assert_eq!(
+        history.len(),
+        3,
+        "both tracked and untracked queued receipts survive annotation"
+    );
+    let mut conversation = ConversationState::default();
+    conversation.replace_history(&history);
+    assert_eq!(
+        conversation.items.len(),
+        1,
+        "only the older answer reached the model"
+    );
+    let pending = conversation.pending_receipts();
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0].id, "queued-steer");
+    assert_eq!(pending[0].mode, Some(PromptMode::Steer));
+    assert_eq!(pending[1].id, "queued-follow");
+    assert_eq!(pending[1].mode, Some(PromptMode::FollowUp));
+    assert!(
+        pending
+            .iter()
+            .all(|receipt| receipt.images.len() == 1 && !receipt.unknown)
+    );
+    assert!(
+        conversation.queue.steering.is_empty() && conversation.queue.follow_up.is_empty(),
+        "saved receipts are presentation, not executable input"
+    );
+    assert!(
+        store.queued_prompts()?.is_empty(),
+        "native acceptance forbids automatic replay"
+    );
+    for receipt in &history[1..] {
+        assert_eq!(receipt["content"][1]["data"], ONE_PIXEL_PNG);
+        conversation.record_prompt_delivery(
+            receipt["submissionId"].as_str().unwrap(),
+            receipt,
+            "delivered",
+        );
+    }
+    assert_eq!(conversation.items.len(), 3);
+    assert!(conversation.pending_receipts().is_empty());
+    assert!(
+        conversation
+            .items
+            .iter()
+            .skip(1)
+            .all(|item| item.text == "same text" && item.images.len() == 1)
+    );
+    Ok(())
+}

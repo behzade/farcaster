@@ -23,7 +23,10 @@ fn session(path: &str, archived: bool) -> SessionSummary {
 
 fn pending() -> PendingSubmission {
     PendingSubmission {
+        id: "pending-submission".into(),
+        submitted_at: Instant::now(),
         submitted_target: "session:compacting".into(),
+        mode: PromptMode::Steer,
         text: "submitted".into(),
         images: Vec::new(),
         pastes: Vec::new(),
@@ -69,12 +72,50 @@ fn rejected_attachment_only_submission_moves_to_its_real_session_after_navigatio
 }
 
 #[test]
-fn pending_submission_only_blocks_its_own_composer() {
+fn pending_submission_is_scoped_to_its_own_composer() {
     let pending = std::collections::HashMap::from([("session:compacting".into(), pending())]);
 
-    assert!(!can_submit_to(&pending, "session:compacting"));
-    assert!(can_submit_to(&pending, "session:other"));
-    assert!(can_submit_to(&pending, "draft:new"));
+    assert!(has_pending_submission(&pending, "session:compacting"));
+    assert!(!has_pending_submission(&pending, "session:other"));
+    assert!(!has_pending_submission(&pending, "draft:new"));
+}
+
+#[test]
+fn unresolved_queue_keeps_submission_order_and_equal_text() {
+    let first_at = Instant::now();
+    let mut first = pending();
+    first.id = "first".into();
+    first.submitted_at = first_at;
+    first.text = "same text".into();
+    first.mode = PromptMode::Steer;
+    let mut second = pending();
+    second.id = "second".into();
+    second.submitted_at = first_at + Duration::from_millis(1);
+    second.text = "same text".into();
+    second.mode = PromptMode::FollowUp;
+    let pending =
+        std::collections::HashMap::from([(second.id.clone(), second), (first.id.clone(), first)]);
+
+    let queue = pending_prompt_queue(&pending, "session:compacting");
+    assert_eq!(queue.steering, ["same text"]);
+    assert_eq!(queue.follow_up, ["same text"]);
+}
+
+#[test]
+fn visible_queue_is_the_native_queue_plus_each_local_submission() {
+    let mut local = pending();
+    local.id = "local-steer".into();
+    local.text = "same text".into();
+    let pending = std::collections::HashMap::from([(local.id.clone(), local)]);
+    let native = crate::app::views::transcript::conversation::QueueState {
+        steering: vec!["same text".into()],
+        follow_up: vec!["native follow-up".into()],
+    };
+
+    let visible = visible_prompt_queue(&native, &pending, "session:compacting");
+
+    assert_eq!(visible.steering, ["same text", "same text"]);
+    assert_eq!(visible.follow_up, ["native follow-up"]);
 }
 
 #[test]

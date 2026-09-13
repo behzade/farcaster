@@ -21,6 +21,7 @@ mod notices_tests;
 mod attachments;
 #[path = "conversation/delivery.rs"]
 mod delivery;
+pub(crate) use delivery::PendingReceipt;
 #[cfg(test)]
 #[path = "conversation/delivery_tests.rs"]
 mod delivery_tests;
@@ -219,6 +220,7 @@ pub(crate) struct ConversationState {
     tools: HashMap<String, usize>,
     optimistic_user: Option<Arc<TranscriptItem>>,
     submitted_users: HashMap<String, delivery::SubmittedUser>,
+    next_submission_order: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

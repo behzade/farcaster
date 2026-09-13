@@ -484,6 +484,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
                 efforts: Some(vec!["high".into()]),
             }],
             efforts: vec![],
+            sandbox_adapter: None,
         },
     };
     let catalogs = [catalog];

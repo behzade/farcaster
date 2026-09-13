@@ -60,6 +60,8 @@ pub(super) fn serve_opencode(
         }
         let data = if path.starts_with("/api/model?") {
             json!([{"id":"fixture-model","providerID":"fixture","name":"Fixture"}])
+        } else if path.starts_with("/api/model/default?") {
+            json!({"id":"fixture-model","providerID":"fixture"})
         } else if path.starts_with("/api/agent?")
             || path.starts_with("/api/command?")
             || path.contains("/message?")

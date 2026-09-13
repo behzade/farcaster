@@ -107,6 +107,11 @@ impl WorkerProfileEditor {
             if entry.harness == harness && entry.project == project {
                 result.models.extend(entry.catalog.models.clone());
                 result.efforts.extend(entry.catalog.efforts.clone());
+                if result.sandbox_adapter.is_none() {
+                    result
+                        .sandbox_adapter
+                        .clone_from(&entry.catalog.sandbox_adapter);
+                }
             }
         }
         result

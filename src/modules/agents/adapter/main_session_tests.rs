@@ -202,9 +202,16 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
         );
         assert_eq!(error.operation, SessionOperation::Prompt(prompt_mode));
         assert_eq!(error.message, "request channel closed before receipt");
-        assert_eq!(conversation.items.len(), 1);
-        assert_eq!(conversation.items[0].label, "Delivery unknown");
-        assert_eq!(conversation.items[0].images.len(), 1);
+        if prompt_mode == PromptMode::Normal {
+            assert_eq!(conversation.items.len(), 1);
+            assert_eq!(conversation.items[0].label, "Delivery unknown");
+            assert_eq!(conversation.items[0].images.len(), 1);
+        } else {
+            assert!(
+                conversation.items.is_empty(),
+                "queued Unknown is not delivered"
+            );
+        }
         assert_eq!(backend.lock().unwrap().closes, 0);
 
         let new_id = transport
@@ -307,7 +314,11 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
                 .iter()
                 .filter(|item| item.kind == TranscriptKind::User)
                 .count(),
-            2
+            if prompt_mode == PromptMode::Normal {
+                2
+            } else {
+                1
+            }
         );
         assert_eq!(
             conversation
@@ -315,7 +326,11 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
                 .iter()
                 .map(|item| item.images.len())
                 .sum::<usize>(),
-            2
+            if prompt_mode == PromptMode::Normal {
+                2
+            } else {
+                1
+            }
         );
 
         backend
@@ -354,6 +369,22 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             ])
         );
         assert!(new_delivery.responses.is_empty());
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .count(),
+            2
+        );
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .map(|item| item.images.len())
+                .sum::<usize>(),
+            2
+        );
         assert_eq!(backend.lock().unwrap().closes, 0);
     }
 }
@@ -384,8 +415,10 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
         let mut responses = project_transport(&mut transport, &mut conversation);
         assert_eq!(backend.lock().unwrap().aborts, 1);
         assert_eq!(backend.lock().unwrap().requests.len(), 1);
-        assert_eq!(conversation.items.len(), 1);
-        assert_eq!(conversation.items[0].label, "Delivery unknown");
+        assert!(
+            conversation.items.is_empty(),
+            "Abort cannot prove queued input was delivered"
+        );
         assert!(
             !responses
                 .iter()
@@ -485,9 +518,18 @@ fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
                 crate::agents::SessionResponseErrorKind::DeliveryUnknown
             }
         );
-        assert_eq!(conversation.items.len(), usize::from(!rejected));
+        assert!(
+            conversation.items.is_empty(),
+            "queued input is not delivered"
+        );
         if !rejected {
-            assert_eq!(conversation.items[0].label, "Delivery unknown");
+            let pending = conversation.pending_receipts();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].id, id);
+            assert_eq!(pending[0].text, "preserve me");
+            assert!(pending[0].unknown);
+        } else {
+            assert!(conversation.pending_receipts().is_empty());
         }
     }
 }
@@ -656,7 +698,7 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
 }
 
 #[test]
-fn acknowledged_queue_survives_abort_in_transcript_with_attachments() {
+fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
     use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
@@ -692,21 +734,17 @@ fn acknowledged_queue_survives_abort_in_transcript_with_attachments() {
         .collect::<Vec<_>>();
     assert_eq!(
         users.len(),
-        1,
-        "backend acknowledgement must leave a transcript row even if Abort precedes item delivery"
+        0,
+        "backend acknowledgement alone must not create a transcript row"
     );
-    assert_eq!(users[0].text, "keep this accepted instruction");
-    assert_eq!(users[0].images.len(), 1);
     conversation.replace_history(&[
         json!({"role":"assistant", "content":[{"type":"text", "text":"old response"}]}),
     ]);
     assert_eq!(
         conversation.items.len(),
-        2,
-        "tracked receipt survives history refresh"
+        1,
+        "history refresh must not expose undelivered input"
     );
-    assert_eq!(conversation.items[1].text, "keep this accepted instruction");
-    assert_eq!(conversation.items[1].images.len(), 1);
     transport.enqueue_activity(WorkerActivity::SubmittedInputDeliveredWithImages {
         submission_id: id,
         mode: WorkerSendMode::Steer,
@@ -725,8 +763,10 @@ fn acknowledged_queue_survives_abort_in_transcript_with_attachments() {
             .filter(|item| item.kind == TranscriptKind::User)
             .count(),
         1,
-        "late delivery must update the acknowledged row, not duplicate it"
+        "late delivery must reveal exactly one row"
     );
+    assert_eq!(conversation.items[1].text, "keep this accepted instruction");
+    assert_eq!(conversation.items[1].images.len(), 1);
 }
 
 #[test]

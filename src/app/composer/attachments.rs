@@ -6,14 +6,16 @@ use crate::app::infrastructure::persistence::ComposerAttachment;
 impl FarcasterApp {
     pub(in crate::app) fn save_composer_attachments(&mut self, target: &str) {
         // Keep in-flight attachments recoverable until the runtime accepts the submission.
-        let pending = self.pending_submissions.get(target);
+        let pending = self
+            .pending_submissions
+            .values()
+            .filter(|pending| pending.submitted_target == target);
         let images = pending
-            .into_iter()
+            .clone()
             .flat_map(|pending| pending.images.iter())
             .chain(self.composer_images.get(target).into_iter().flatten())
             .map(|image| ComposerAttachment::Image(image.prompt.clone()));
         let files = pending
-            .into_iter()
             .flat_map(|pending| pending.pastes.iter())
             .chain(self.composer_pastes.get(target).into_iter().flatten())
             .map(|paste| ComposerAttachment::TextFile {

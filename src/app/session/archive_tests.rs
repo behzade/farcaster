@@ -65,7 +65,10 @@ fn active_work_includes_recursive_descendants() {
     let pending = std::collections::HashMap::from([(
         session_target(&sessions[1].path),
         PendingSubmission {
+            id: "pending-child".into(),
+            submitted_at: std::time::Instant::now(),
             submitted_target: session_target(&sessions[1].path),
+            mode: crate::protocol::PromptMode::Steer,
             text: "pending child prompt".into(),
             images: Vec::new(),
             pastes: Vec::new(),

@@ -134,6 +134,82 @@ impl RuntimeOwner {
         }
         let operation = response.operation();
         let success = response.result.is_ok();
+        if matches!(operation, SessionOperation::Prompt(_))
+            && let Some(request_id) = response.id.as_deref()
+            && let Some(pending) = self.pending_queued_prompts.remove(request_id)
+        {
+            let outcome = if pending.result_emitted {
+                crate::agents::PromptOutcome::Accepted
+            } else {
+                match &response.result {
+                    Ok(_) => crate::agents::PromptOutcome::Accepted,
+                    Err(error)
+                        if error.kind
+                            == crate::agents::SessionResponseErrorKind::DeliveryUnknown =>
+                    {
+                        crate::agents::PromptOutcome::DeliveryUnknown
+                    }
+                    Err(_) => crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                }
+            };
+            if let Some(state) = self.state.as_mut() {
+                let saved = if pending.result_emitted {
+                    state.complete_delivered_prompt(
+                        pending.outbox_id,
+                        &pending.target,
+                        pending.session.as_deref(),
+                        request_id,
+                        pending.delivery_tracked,
+                    )
+                } else {
+                    match &response.result {
+                        Ok(_) => agents::complete_prompt_with_receipt(
+                            state,
+                            pending.outbox_id,
+                            &pending.target,
+                            pending.session.as_deref(),
+                            request_id,
+                            pending.delivery_tracked,
+                        ),
+                        Err(error)
+                            if error.kind
+                                == crate::agents::SessionResponseErrorKind::DeliveryUnknown =>
+                        {
+                            agents::mark_prompt_delivery_unknown(
+                                state,
+                                pending.outbox_id,
+                                &error.message,
+                            )
+                        }
+                        Err(error) => agents::fail_prompt(state, pending.outbox_id, &error.message),
+                    }
+                };
+                if let Err(error) = saved {
+                    zlog::error!("Save queued prompt response {request_id}: {error}");
+                }
+            }
+            if outcome != crate::agents::PromptOutcome::RejectedBeforeAcceptance {
+                conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
+                    request_id,
+                    &serde_json::Value::Null,
+                    if outcome == crate::agents::PromptOutcome::Accepted {
+                        "accepted"
+                    } else {
+                        "unknown"
+                    },
+                );
+            }
+            if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
+                self.retire_queued_unknown_prompt(request_id, &pending);
+            }
+            if !pending.result_emitted {
+                self.emit_prompt_result(Some(&pending.submission_id), &pending.target, outcome);
+            }
+            if self.parked_snapshot.is_none() {
+                self.publish();
+            }
+            return;
+        }
         if operation == SessionOperation::SelectModel {
             self.pending_session_controls.model_response(&response);
             if !success {
@@ -141,6 +217,7 @@ impl RuntimeOwner {
                     self.rollback_failed_prompt("The selected model could not be applied");
                     if let Some(target) = self.pending_prompt_target.take() {
                         self.emit_prompt_result(
+                            self.pending_submission_id.as_deref(),
                             &target,
                             crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                         );
@@ -151,15 +228,21 @@ impl RuntimeOwner {
         }
         let is_prompt_response = matches!(operation, SessionOperation::Prompt(_))
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
+        let prompt_was_delivered = is_prompt_response && self.pending_prompt_result_emitted;
         if is_prompt_response {
-            let outcome = match &response.result {
-                Ok(_) => crate::agents::PromptOutcome::Accepted,
-                Err(error)
-                    if error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown =>
-                {
-                    crate::agents::PromptOutcome::DeliveryUnknown
+            let outcome = if prompt_was_delivered {
+                crate::agents::PromptOutcome::Accepted
+            } else {
+                match &response.result {
+                    Ok(_) => crate::agents::PromptOutcome::Accepted,
+                    Err(error)
+                        if error.kind
+                            == crate::agents::SessionResponseErrorKind::DeliveryUnknown =>
+                    {
+                        crate::agents::PromptOutcome::DeliveryUnknown
+                    }
+                    Err(_) => crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 }
-                Err(_) => crate::agents::PromptOutcome::RejectedBeforeAcceptance,
             };
             if outcome != crate::agents::PromptOutcome::DeliveryUnknown {
                 self.pending_prompt_id = None;
@@ -177,19 +260,41 @@ impl RuntimeOwner {
                     && let Some(state) = self.state.as_mut()
                 {
                     let receipt_id = response.id.as_deref().unwrap_or_default();
-                    if let Err(error) = agents::complete_prompt_with_receipt(
-                        state,
-                        id,
-                        &target,
-                        session.as_deref(),
-                        receipt_id,
-                        delivery_tracked,
-                    ) {
+                    let saved = if prompt_was_delivered {
+                        state.complete_delivered_prompt(
+                            id,
+                            &target,
+                            session.as_deref(),
+                            receipt_id,
+                            delivery_tracked,
+                        )
+                    } else {
+                        agents::complete_prompt_with_receipt(
+                            state,
+                            id,
+                            &target,
+                            session.as_deref(),
+                            receipt_id,
+                            delivery_tracked,
+                        )
+                    };
+                    if let Err(error) = saved {
+                        if prompt_was_delivered {
+                            self.pending_prompt_item = None;
+                            self.fail(format!(
+                                "Backend delivered the prompt, but saving its receipt failed: {error}"
+                            ));
+                            return;
+                        }
                         self.pending_prompt_item = None;
                         self.mark_outbox_delivery_unknown(&error);
                         self.pending_prompt_delivery_unknown = true;
                         self.pending_prompt_target.take();
-                        self.emit_prompt_result(&target, crate::agents::PromptOutcome::Accepted);
+                        self.emit_prompt_result(
+                            self.pending_submission_id.as_deref(),
+                            &target,
+                            crate::agents::PromptOutcome::Accepted,
+                        );
                         self.fail(format!("Backend accepted the prompt, but saving its acknowledgement failed: {error}"));
                         return;
                     }
@@ -239,9 +344,19 @@ impl RuntimeOwner {
                 }
             }
             let target = self.pending_prompt_target.take();
-            if let Some(target) = target {
-                self.emit_prompt_result(&target, outcome);
+            if let Some(target) = target
+                && !prompt_was_delivered
+            {
+                self.emit_prompt_result(self.pending_submission_id.as_deref(), &target, outcome);
             }
+            self.pending_submission_id = None;
+            self.pending_prompt_result_emitted = false;
+        }
+        if prompt_was_delivered && response.result.is_err() {
+            if self.parked_snapshot.is_none() {
+                self.publish();
+            }
+            return;
         }
         if let Err(error) = &response.result {
             if is_prompt_response
@@ -289,6 +404,7 @@ impl RuntimeOwner {
                 self.deferred_prompt = None;
                 if let Some(target) = self.pending_prompt_target.take() {
                     self.emit_prompt_result(
+                        self.pending_submission_id.as_deref(),
                         &target,
                         crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                     );

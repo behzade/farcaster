@@ -65,7 +65,10 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let target = destination.target;
-        if self.pending_submissions.contains_key(&target) {
+        if crate::app::composer::submissions::has_pending_submission(
+            &self.pending_submissions,
+            &target,
+        ) {
             self.send_to_chat_error(
                 "A message is still being sent to this chat. Try again shortly.".into(),
                 cx,
@@ -164,10 +167,14 @@ impl FarcasterApp {
         let target = &chat.target;
         self.begin_draft_submission(target, &message);
         self.composer_sessions.record_submission(target, &message);
+        let submission_id = uuid::Uuid::new_v4().to_string();
         self.pending_submissions.insert(
-            target.clone(),
+            submission_id.clone(),
             PendingSubmission {
+                id: submission_id,
+                submitted_at: std::time::Instant::now(),
                 submitted_target: target.clone(),
+                mode: crate::protocol::PromptMode::Normal,
                 text: message,
                 images: Vec::new(),
                 pastes: Vec::new(),

@@ -25,7 +25,7 @@ use crate::{
         live_e2e_support::{self, TURN_TIMEOUT, TurnGate, new_turn_gate},
     },
     app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
-    protocol::{ExtensionUiRequest, ExtensionUiResponse},
+    protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
     runtime::ConfigurationStatus,
 };
 
@@ -135,7 +135,8 @@ fn submission_diagnostics(
 ) {
     let details = cx.update(|_, cx| {
         let app = app.read(cx);
-        let target = app.composer_sessions.current_target().to_owned();
+        let target = app.composer_sessions.current_target();
+        let visible_queue = visible_prompt_queue(app);
         let composer = app.composer.read(cx).value().to_owned();
         let rows = markers
             .iter()
@@ -144,11 +145,13 @@ fn submission_diagnostics(
         format!(
             "composer={composer:?} can_submit={} pending={} running={} status={} steering={:?} follow_up={:?} user_rows={rows:?}",
             app.can_submit(),
-            app.pending_submissions.contains_key(&target),
+            app.pending_submissions.values().any(|pending|
+                pending.submitted_target == target && pending.result.is_none()
+            ),
             app.snapshot.conversation.running,
             app.snapshot.status,
-            app.snapshot.conversation.queue.steering,
-            app.snapshot.conversation.queue.follow_up,
+            visible_queue.steering,
+            visible_queue.follow_up,
         )
     });
     phase(&format!("{label}:{details}"));
@@ -174,21 +177,27 @@ fn user_rows(app: &FarcasterApp, marker: &str) -> Vec<std::sync::Arc<TranscriptI
 }
 
 fn queued_steer(app: &FarcasterApp, marker: &str) -> bool {
-    app.snapshot
-        .conversation
-        .queue
+    visible_prompt_queue(app)
         .steering
         .iter()
         .any(|message| message.contains(marker))
 }
 
 fn queued_follow_up(app: &FarcasterApp, marker: &str) -> bool {
-    app.snapshot
-        .conversation
-        .queue
+    visible_prompt_queue(app)
         .follow_up
         .iter()
         .any(|message| message.contains(marker))
+}
+
+fn visible_prompt_queue(
+    app: &FarcasterApp,
+) -> crate::app::views::transcript::conversation::QueueState {
+    crate::app::composer::submissions::visible_prompt_queue(
+        &app.snapshot.conversation.queue,
+        &app.pending_submissions,
+        app.composer_sessions.current_target(),
+    )
 }
 
 fn has_exact_queued_inputs(
@@ -196,7 +205,7 @@ fn has_exact_queued_inputs(
     steering: Option<&str>,
     follow_up: Option<&str>,
 ) -> bool {
-    let queue = &app.snapshot.conversation.queue;
+    let queue = visible_prompt_queue(app);
     let matches = |messages: &[String], marker: Option<&str>| match marker {
         Some(marker) => messages.len() == 1 && messages[0].contains(marker),
         None => messages.is_empty(),
@@ -205,9 +214,28 @@ fn has_exact_queued_inputs(
 }
 
 fn current_pending_submission_is(app: &FarcasterApp, text: &str) -> bool {
-    app.pending_submissions
-        .get(app.composer_sessions.current_target())
-        .is_some_and(|pending| pending.text == text && pending.result.is_none())
+    app.pending_submissions.values().any(|pending| {
+        pending.submitted_target == app.composer_sessions.current_target()
+            && pending.result.is_none()
+            && pending.text.trim_end() == text
+    })
+}
+
+fn exact_pending_submission(
+    app: &FarcasterApp,
+    mode: PromptMode,
+    submitted_text: &str,
+) -> Option<(String, String)> {
+    let target = app.composer_sessions.current_target();
+    let mut matches = app.pending_submissions.values().filter(|pending| {
+        pending.submitted_target == target
+            && pending.mode == mode
+            && pending.text.trim_end() == submitted_text
+            && pending.result.is_none()
+    });
+    let pending = matches.next()?;
+    let exact = (pending.id.clone(), pending.text.clone());
+    matches.next().is_none().then_some(exact)
 }
 
 /// A mixed steer/follow-up test needs a real rendered queue before it presses
@@ -229,15 +257,19 @@ fn wait_for_exact_queue(
             app.update(cx, |app, cx| app.drain_runtime(cx));
             window.draw(cx).clear(cx);
             let app = app.read(cx);
+            let visible_queue = visible_prompt_queue(app);
             (
                 has_exact_queued_inputs(app, steering, follow_up),
                 app.can_submit(),
                 format!(
                     "steering={:?} follow_up={:?} pending={} can_submit={}",
-                    app.snapshot.conversation.queue.steering,
-                    app.snapshot.conversation.queue.follow_up,
+                    visible_queue.steering,
+                    visible_queue.follow_up,
                     app.pending_submissions
-                        .contains_key(app.composer_sessions.current_target()),
+                        .values()
+                        .any(|pending| pending.submitted_target
+                            == app.composer_sessions.current_target()
+                            && pending.result.is_none()),
                     app.can_submit(),
                 ),
             )
@@ -828,63 +860,69 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
 
         let steer = format!("FARCASTER_UI_STEER_{}", uuid::Uuid::new_v4().simple());
         let queued = format!("FARCASTER_UI_QUEUE_{}", uuid::Uuid::new_v4().simple());
+        let steer_message =
+            format!("Stop the gated command. Include this token in your reply: {steer}. If pending messages request other tokens, include all of them in the same reply. Do not use tools.");
+        let queued_message =
+            format!("Include this token in your reply: {queued}. If pending messages request other tokens, include all of them in the same reply. Do not use tools.");
         focus_composer(cx, app);
         phase("first:steer-typed");
-        type_and_enter(
-            cx,
-            &format!("Stop the gated command and reply with this exact token: {steer}"),
-        );
+        type_and_enter(cx, &steer_message);
         submission_diagnostics(cx, app, "first:after-steer-submit", &[&steer]);
-        assert!(
-            cx.update(|_, cx| {
-                let app = app.read(cx);
-                app.composer.read(cx).value().is_empty()
-            }),
-            "Enter did not clear the composer for the steering submission"
-        );
-        // Do not infer a receipt from an empty pending map. The queue itself
-        // must render first; the submit slot matters only because the next
-        // action is a real Tab key that the app otherwise rejects.
-        wait_for_exact_queue(
-            cx,
-            app,
-            "the steer queue before the Tab follow-up",
-            Some(&steer),
-            None,
-            true,
-        )?;
+        let (steer_submission_id, steer_raw_text) = cx.update(|_, cx| {
+            let app = app.read(cx);
+            assert!(
+                app.composer.read(cx).value().is_empty(),
+                "Enter did not clear the composer for the steering submission"
+            );
+            let pending = exact_pending_submission(app, PromptMode::Steer, &steer_message)
+                .expect("the steer lacks one exact unresolved submission");
+            assert_eq!(pending.1.trim_end(), steer_message);
+            let queue = visible_prompt_queue(app);
+            assert_eq!(
+                queue.steering,
+                [pending.1.as_str()],
+                "the production composer did not render the unresolved steer immediately"
+            );
+            assert!(queue.follow_up.is_empty());
+            assert!(
+                user_rows(app, &steer).is_empty(),
+                "the unresolved steer reached the transcript before native delivery"
+            );
+            pending
+        });
         focus_composer(cx, app);
         phase("first:queue-typed");
-        type_and_queue(
-            cx,
-            &format!("After the steering reply, reply with this exact token: {queued}"),
-        );
+        type_and_queue(cx, &queued_message);
         submission_diagnostics(cx, app, "first:after-queue-submit", &[&steer, &queued]);
-        assert!(
-            cx.update(|_, cx| {
-                let app = app.read(cx);
-                app.composer.read(cx).value().is_empty()
-            }),
-            "Tab did not clear the composer for the follow-up submission"
-        );
-        // Admission puts active-turn input into the rendered queue. It is not
-        // yet a user transcript message: only native model delivery earns
-        // that row. This requires exactly one steer and one follow-up, not an
-        // acknowledgement-shaped UI state.
-        wait_for_exact_queue(
-            cx,
-            app,
-            "the exact steer and follow-up queues",
-            Some(&steer),
-            Some(&queued),
-            false,
-        )?;
-        assert!(
-            cx.update(|_, cx| {
-                let app = app.read(cx);
-                user_rows(app, &steer).is_empty() && user_rows(app, &queued).is_empty()
-            }),
-            "admitted steer or queue text reached the transcript before native delivery"
+        let queued_submission_id = cx.update(|_, cx| {
+            let app = app.read(cx);
+            assert!(
+                app.composer.read(cx).value().is_empty(),
+                "Tab did not clear the composer for the follow-up submission"
+            );
+            let queued_pending =
+                exact_pending_submission(app, PromptMode::FollowUp, &queued_message)
+                    .expect("the follow-up lacks one exact unresolved submission");
+            assert_eq!(queued_pending.1.trim_end(), queued_message);
+            let queue = visible_prompt_queue(app);
+            assert_eq!(queue.steering, [steer_raw_text.as_str()]);
+            assert_eq!(queue.follow_up, [queued_pending.1.as_str()]);
+            assert!(
+                user_rows(app, &steer).is_empty() && user_rows(app, &queued).is_empty(),
+                "unresolved steer or follow-up reached the transcript before native delivery"
+            );
+            let steer_pending = exact_pending_submission(app, PromptMode::Steer, &steer_message)
+                .expect("the first unresolved submission disappeared before Escape");
+            assert_eq!(
+                steer_pending,
+                (steer_submission_id.clone(), steer_raw_text.clone()),
+                "the first unresolved submission changed identity before Escape",
+            );
+            queued_pending.0
+        });
+        assert_ne!(
+            steer_submission_id, queued_submission_id,
+            "steer and follow-up reused a submission ID"
         );
         gate.assert_process_alive()?;
         let completed_runs_before_apply =

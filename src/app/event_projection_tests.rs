@@ -352,7 +352,10 @@ fn prompt_result_follows_submission_through_draft_promotion() {
             let mut pending = HashMap::from([(
                 draft.to_owned(),
                 PendingSubmission {
+                    id: "submission-new".into(),
+                    submitted_at: std::time::Instant::now(),
                     submitted_target: draft.into(),
+                    mode: crate::protocol::PromptMode::Normal,
                     text: "keep this on rejection".into(),
                     images: Vec::new(),
                     pastes: Vec::new(),
@@ -401,7 +404,10 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once() {
     let mut pending = HashMap::from([(
         target.to_owned(),
         PendingSubmission {
+            id: "submission-unknown".into(),
+            submitted_at: std::time::Instant::now(),
             submitted_target: target.into(),
+            mode: crate::protocol::PromptMode::Steer,
             text: "exact unresolved text".into(),
             images: vec![image.clone()],
             pastes: Vec::new(),
@@ -455,7 +461,10 @@ fn accepted_submission_cannot_be_downgraded_by_a_late_unknown_or_rejection() {
     let mut pending = HashMap::from([(
         target.to_owned(),
         PendingSubmission {
+            id: "submission-accepted".into(),
+            submitted_at: std::time::Instant::now(),
             submitted_target: target.into(),
+            mode: crate::protocol::PromptMode::Steer,
             text: "accepted".into(),
             images: Vec::new(),
             pastes: Vec::new(),
@@ -477,6 +486,51 @@ fn accepted_submission_cannot_be_downgraded_by_a_late_unknown_or_rejection() {
     }
     assert_eq!(
         pending[target].result,
+        Some((crate::agents::PromptOutcome::Accepted, None))
+    );
+}
+
+#[test]
+fn prompt_results_never_fall_back_from_an_explicit_missing_id() {
+    let target = "session:one";
+    let make = |id: &str| PendingSubmission {
+        id: id.into(),
+        submitted_at: std::time::Instant::now(),
+        submitted_target: target.into(),
+        mode: crate::protocol::PromptMode::Steer,
+        text: id.into(),
+        images: Vec::new(),
+        pastes: Vec::new(),
+        append_on_failure: false,
+        result: None,
+    };
+    let mut pending = HashMap::from([("old".into(), make("old")), ("new".into(), make("new"))]);
+
+    record_pending_prompt_result_for_submission(
+        &mut pending,
+        Some("removed"),
+        target,
+        crate::agents::PromptOutcome::Accepted,
+        None,
+    );
+    assert!(pending.values().all(|pending| pending.result.is_none()));
+    record_pending_prompt_result(
+        &mut pending,
+        target,
+        crate::agents::PromptOutcome::Accepted,
+        None,
+    );
+    assert!(pending.values().all(|pending| pending.result.is_none()));
+
+    pending.remove("old");
+    record_pending_prompt_result(
+        &mut pending,
+        target,
+        crate::agents::PromptOutcome::Accepted,
+        None,
+    );
+    assert_eq!(
+        pending["new"].result,
         Some((crate::agents::PromptOutcome::Accepted, None))
     );
 }

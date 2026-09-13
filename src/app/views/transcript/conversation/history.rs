@@ -3,20 +3,38 @@ use super::*;
 impl ConversationState {
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
         let history_is_empty = messages.is_empty();
+        let history_ids = messages
+            .iter()
+            .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
+            .collect::<std::collections::HashSet<_>>();
         let mut retained = std::mem::take(&mut self.submitted_users)
             .into_iter()
-            .filter(|(_, entry)| {
-                !entry.delivered && (entry.unknown || entry.delivery_tracked || history_is_empty)
+            .filter(|(id, entry)| {
+                (entry.delivered && history_ids.contains(id.as_str()))
+                    || !entry.delivered
+                        && (entry.queued
+                            || entry.unknown
+                            || entry.delivery_tracked
+                            || history_is_empty)
             })
             .filter_map(|(id, entry)| {
-                self.items
+                let index = self
+                    .items
                     .position(|item| Arc::ptr_eq(item, &entry.item))
-                    .map(|index| (index, id, entry))
+                    .or_else(|| (!entry.is_visible()).then_some(usize::MAX))?;
+                Some((index, id, entry))
             })
             .collect::<Vec<_>>();
         retained.sort_by_key(|(index, ..)| *index);
         self.items.clear();
         self.optimistic_user = None;
+        // Exact native IDs may prove delivery without repeating attachment
+        // bytes. Keep the submitted payload available during history replay.
+        self.submitted_users.extend(
+            retained
+                .iter()
+                .map(|(_, id, entry)| (id.clone(), entry.clone())),
+        );
         self.run_started_at = None;
         self.completed_runs.clear();
         self.average_cache_hit_rate = None;
@@ -43,10 +61,15 @@ impl ConversationState {
         }
         // Backend history need not contain input that was only admitted or whose
         // receipt is uncertain. Reconcile by identity, never equal message text.
-        for (_, id, entry) in retained {
-            if !self.submitted_users.contains_key(&id) {
+        for (_, id, _) in retained {
+            if let Some(entry) = self.submitted_users.get(&id)
+                && entry.is_visible()
+                && self
+                    .items
+                    .position(|item| Arc::ptr_eq(item, &entry.item))
+                    .is_none()
+            {
                 self.items.push(entry.item.clone());
-                self.submitted_users.insert(id, entry);
             }
         }
         self.live_message = None;

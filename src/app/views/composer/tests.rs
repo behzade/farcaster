@@ -1,6 +1,7 @@
 use super::{
     QueuedMessageKind, choice_copy, composer_primary_action, dialog_copy, dialog_number_selection,
-    numbered_dialog_choice, plain_text_html, queued_message_groups, queued_message_preview,
+    numbered_dialog_choice, pending_receipt_label, plain_text_html, queued_message_groups,
+    queued_message_preview,
 };
 use crate::{app::views::transcript::conversation::QueueState, protocol::ExtensionUiRequest};
 
@@ -45,6 +46,29 @@ fn queued_message_preview_hides_multiline_payloads() {
     assert_eq!(
         queued_message_preview("inspect this\n\nPasted text files:\n- file.txt"),
         "inspect this…"
+    );
+}
+
+#[test]
+fn restored_receipt_copy_does_not_claim_delivery() {
+    let receipt = crate::app::views::transcript::conversation::PendingReceipt {
+        id: "receipt-1".into(),
+        mode: Some(crate::protocol::PromptMode::FollowUp),
+        text: "later".into(),
+        images: std::sync::Arc::new(Vec::new()),
+        unknown: false,
+    };
+    assert_eq!(
+        pending_receipt_label(&receipt),
+        "Follow-up · Awaiting delivery"
+    );
+    let unknown = crate::app::views::transcript::conversation::PendingReceipt {
+        unknown: true,
+        ..receipt
+    };
+    assert_eq!(
+        pending_receipt_label(&unknown),
+        "Follow-up · Delivery unknown"
     );
 }
 

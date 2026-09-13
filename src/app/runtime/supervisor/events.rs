@@ -100,11 +100,11 @@ impl Supervisor {
             RuntimeEvent::Snapshot { snapshot, .. } => {
                 let mut snapshot = snapshot;
                 // A fast catalog can finish before the actor's first snapshot.
-                if snapshot.models.is_empty()
-                    && let Some(actor) = self.actors.get(&key)
-                    && let Some(command) = self
-                        .configurations
-                        .catalog_command(&snapshot.harness, &snapshot.project)
+                // Send only missing or stale state: capability-only Pi catalogs
+                // can have no models, so an empty-model test alone loops forever.
+                if let Some(actor) = self.actors.get(&key)
+                    && let Some(command) =
+                        self.configurations.catalog_command_for_snapshot(&snapshot)
                 {
                     actor.send(command);
                 }
@@ -126,6 +126,7 @@ impl Supervisor {
                         crate::agents::ConfigurationCatalog {
                             models: snapshot.models.clone(),
                             efforts: snapshot.thinking_levels.clone(),
+                            sandbox_adapter: snapshot.sandbox_adapter.clone(),
                         },
                     )
                     && let Some(state) = self.catalog_state.as_ref()

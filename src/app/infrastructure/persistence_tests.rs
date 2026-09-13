@@ -159,6 +159,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
                 efforts: Some(vec!["low".into(), "high".into()]),
             }],
             efforts: vec!["high".into()],
+            sandbox_adapter: Some("catalog-adapter".into()),
         },
     };
 
@@ -207,6 +208,7 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
             efforts: None,
         }],
         efforts: Vec::new(),
+        sandbox_adapter: None,
     };
     let legacy = vec![
         CachedConfigurationCatalog {

@@ -22,15 +22,17 @@ pub(super) struct DeferredPrompt {
 }
 
 impl RuntimeOwner {
-    pub(super) fn send_prompt(
+    pub(super) fn send_prompt_for_submission(
         &mut self,
+        submission_id: String,
         target: String,
         mode: PromptMode,
         message: String,
         images: Vec<PromptImage>,
         allow_while_running: bool,
     ) {
-        self.send_prompt_with_presentation(
+        self.send_prompt_with_presentation_for_submission(
+            submission_id,
             target,
             mode,
             message,
@@ -42,8 +44,9 @@ impl RuntimeOwner {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn send_prompt_with_presentation(
+    pub(super) fn send_prompt_with_presentation_for_submission(
         &mut self,
+        submission_id: String,
         target: String,
         mode: PromptMode,
         message: String,
@@ -53,18 +56,30 @@ impl RuntimeOwner {
         allow_while_running: bool,
     ) {
         if self.harness.is_empty() {
-            self.reject_prompt(&target, "Choose a backend before sending a message.".into());
+            self.reject_prompt(
+                &submission_id,
+                &target,
+                "Choose a backend before sending a message.".into(),
+            );
             return;
         }
         if let Some(error) = self.pending_session_controls.model_error() {
             self.reject_prompt(
+                &submission_id,
                 &target,
                 format!("Select a working model before sending: {error}"),
             );
             return;
         }
-        if self.pending_prompt_id.is_some() || self.pending_prompt_target.is_some() {
-            self.reject_prompt(&target, "Another message is still being sent".into());
+        let queue_behind_pending = self.pending_prompt_id.is_some()
+            || self.pending_prompt_target.is_some()
+            || self.deferred_prompt.is_some();
+        if queue_behind_pending && mode == PromptMode::Normal {
+            self.reject_prompt(
+                &submission_id,
+                &target,
+                "Another message is still being sent".into(),
+            );
             return;
         }
         let was_running = self.active_snapshot().conversation.running;
@@ -72,6 +87,7 @@ impl RuntimeOwner {
             || !can_send_prompt(mode, was_running, allow_while_running)
         {
             self.reject_prompt(
+                &submission_id,
                 &target,
                 format!("{} is already working on this session", self.backend_name()),
             );
@@ -100,10 +116,75 @@ impl RuntimeOwner {
         let (outbox_id, images) = match queued {
             Ok(queued) => queued,
             Err(error) => {
-                self.reject_prompt(&target, error);
+                self.reject_prompt(&submission_id, &target, error);
                 return;
             }
         };
+        if queue_behind_pending {
+            let outbox_id = outbox_id.expect("saved prompt has an outbox id");
+            let can_dispatch_now = self.process.is_some()
+                && self.startup_state_loaded
+                && self.startup_history_loaded
+                && self.active_session.is_some()
+                && !self.pending_session_controls.model_pending();
+            if can_dispatch_now {
+                let dispatch = self
+                    .state
+                    .as_ref()
+                    .ok_or_else(|| "State unavailable".to_owned())
+                    .and_then(|state| agents::begin_prompt(state, outbox_id))
+                    .and_then(|()| {
+                        self.process.as_mut().expect("checked process").send(
+                            SessionCommand::Prompt {
+                                mode,
+                                message,
+                                images,
+                            },
+                        )
+                    });
+                match dispatch {
+                    Ok(request_id) => {
+                        self.pending_queued_prompts.insert(
+                            request_id,
+                            super::PendingQueuedPrompt {
+                                submission_id,
+                                target,
+                                outbox_id,
+                                session: self.active_session.clone(),
+                                delivery_tracked: self
+                                    .process
+                                    .as_ref()
+                                    .is_some_and(|process| process.tracks_prompt_delivery(mode)),
+                                result_emitted: false,
+                            },
+                        );
+                    }
+                    Err(error) => {
+                        if let Some(state) = &self.state {
+                            let _ = agents::fail_prompt(state, outbox_id, &error);
+                        }
+                        self.reject_prompt(&submission_id, &target, error);
+                    }
+                }
+                return;
+            }
+            self.queued_prompts.push_back(QueuedPrompt {
+                id: outbox_id,
+                submission_id: Some(submission_id),
+                target,
+                harness: self.harness.clone(),
+                project: self.project.clone(),
+                session: self.snapshot.selected_session.clone(),
+                mode,
+                message,
+                display_message,
+                invocation,
+                images,
+            });
+            return;
+        }
+        self.pending_submission_id = Some(submission_id);
+        self.pending_prompt_result_emitted = false;
         self.pending_prompt_target = Some(target);
         self.snapshot.pending_question = None;
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
@@ -111,8 +192,8 @@ impl RuntimeOwner {
             &self.snapshot.commands,
         );
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item =
-            (!was_running).then(|| match (display_message.as_ref(), invocation.as_ref()) {
+        self.pending_prompt_item = (mode == PromptMode::Normal && !was_running).then(|| {
+            match (display_message.as_ref(), invocation.as_ref()) {
                 (Some(display), Some(invocation)) => conversation
                     .push_local_invocation_with_prompt_images(
                         display.clone(),
@@ -124,7 +205,8 @@ impl RuntimeOwner {
                     &images,
                     native_invocation,
                 ),
-            });
+            }
+        });
         conversation.begin_run();
         self.snapshot.status = "Working".into();
         self.publish();
@@ -138,6 +220,49 @@ impl RuntimeOwner {
         );
     }
 
+    #[cfg(test)]
+    pub(super) fn send_prompt(
+        &mut self,
+        target: String,
+        mode: PromptMode,
+        message: String,
+        images: Vec<PromptImage>,
+        allow_while_running: bool,
+    ) {
+        self.send_prompt_for_submission(
+            uuid::Uuid::new_v4().to_string(),
+            target,
+            mode,
+            message,
+            images,
+            allow_while_running,
+        );
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn send_prompt_with_presentation(
+        &mut self,
+        target: String,
+        mode: PromptMode,
+        message: String,
+        display_message: Option<String>,
+        invocation: Option<String>,
+        images: Vec<PromptImage>,
+        allow_while_running: bool,
+    ) {
+        self.send_prompt_with_presentation_for_submission(
+            uuid::Uuid::new_v4().to_string(),
+            target,
+            mode,
+            message,
+            display_message,
+            invocation,
+            images,
+            allow_while_running,
+        );
+    }
+
     pub(super) fn deliver_queued(&mut self, prompt: QueuedPrompt) {
         if !self.can_deliver_queued(prompt.mode) {
             self.queued_prompts.push_back(prompt);
@@ -146,24 +271,28 @@ impl RuntimeOwner {
         self.project = prompt.project;
         self.snapshot.project = self.project.clone();
         self.snapshot.selected_session = prompt.session.clone();
+        self.pending_submission_id = prompt.submission_id;
+        self.pending_prompt_result_emitted = false;
         self.pending_prompt_target = Some(prompt.target);
         let native_invocation = crate::app::composer::user_invocations::contains_invocation(
             &prompt.message,
             &self.snapshot.commands,
         );
         let conversation = Arc::make_mut(&mut self.snapshot.conversation);
-        self.pending_prompt_item = Some(match (&prompt.display_message, &prompt.invocation) {
-            (Some(display), Some(invocation)) => conversation
-                .push_local_invocation_with_prompt_images(
-                    display.clone(),
+        self.pending_prompt_item = (prompt.mode == PromptMode::Normal).then(|| {
+            match (&prompt.display_message, &prompt.invocation) {
+                (Some(display), Some(invocation)) => conversation
+                    .push_local_invocation_with_prompt_images(
+                        display.clone(),
+                        &prompt.images,
+                        invocation.clone(),
+                    ),
+                _ => conversation.push_local_user_with_prompt_images(
+                    prompt.message.clone(),
                     &prompt.images,
-                    invocation.clone(),
+                    native_invocation,
                 ),
-            _ => conversation.push_local_user_with_prompt_images(
-                prompt.message.clone(),
-                &prompt.images,
-                native_invocation,
-            ),
+            }
         });
         conversation.begin_run();
         self.snapshot.status = "Working".into();
@@ -214,7 +343,7 @@ impl RuntimeOwner {
             self.pending_outbox_id = outbox_id;
             self.rollback_failed_prompt(&error);
             if let Some(target) = self.pending_prompt_target.take() {
-                self.reject_prompt(
+                self.reject_pending_prompt(
                     &target,
                     format!("Select a working model before sending: {error}"),
                 );
@@ -253,7 +382,7 @@ impl RuntimeOwner {
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();
             conversation_mut(self.active_snapshot_mut()).running = was_running;
-            self.reject_prompt(&target, error.into());
+            self.reject_pending_prompt(&target, error.into());
             return;
         }
         if let Some(id) = outbox_id
@@ -262,7 +391,7 @@ impl RuntimeOwner {
         {
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();
-            self.reject_prompt(&target, error);
+            self.reject_pending_prompt(&target, error);
             return;
         }
         let was_running = self
@@ -305,7 +434,7 @@ impl RuntimeOwner {
                 self.rollback_failed_prompt(&error);
                 self.pending_prompt_id = None;
                 if let Some(target) = self.pending_prompt_target.take() {
-                    self.reject_prompt(&target, error);
+                    self.reject_pending_prompt(&target, error);
                 }
             }
             None => {
@@ -331,11 +460,20 @@ impl RuntimeOwner {
             && agents::supports_auto_title_generation(&self.harness)
     }
 
-    pub(super) fn reject_prompt(&mut self, target: &str, message: String) {
+    pub(super) fn reject_prompt(&mut self, submission_id: &str, target: &str, message: String) {
         Arc::make_mut(&mut self.snapshot.conversation).push_local_error("Prompt not sent", message);
         self.snapshot.status = "Prompt not sent".into();
-        self.emit_prompt_result(target, PromptOutcome::RejectedBeforeAcceptance);
+        self.emit_prompt_result(
+            (!submission_id.is_empty()).then_some(submission_id),
+            target,
+            PromptOutcome::RejectedBeforeAcceptance,
+        );
         self.publish();
+    }
+
+    fn reject_pending_prompt(&mut self, target: &str, message: String) {
+        let submission_id = self.pending_submission_id.take().unwrap_or_default();
+        self.reject_prompt(&submission_id, target, message);
     }
 
     pub(super) fn rollback_failed_prompt(&mut self, error: &str) {
@@ -349,12 +487,18 @@ impl RuntimeOwner {
         conversation_mut(self.active_snapshot_mut()).running = running;
     }
 
-    pub(super) fn emit_prompt_result(&self, target: &str, mut outcome: PromptOutcome) {
+    pub(super) fn emit_prompt_result(
+        &self,
+        submission_id: Option<&str>,
+        target: &str,
+        mut outcome: PromptOutcome,
+    ) {
         let session = self.active_session.clone();
         if outcome == PromptOutcome::Accepted && session.is_none() {
             outcome = PromptOutcome::RejectedBeforeAcceptance;
         }
         let _ = self.event_tx.send(RuntimeEvent::PromptResult {
+            submission_id: submission_id.map(str::to_owned),
             target: target.to_owned(),
             outcome,
             session,
@@ -379,7 +523,7 @@ impl RuntimeOwner {
             self.deliver_queued(prompt);
         }
         if let Some(prompt) = self.deferred_prompt.take() {
-            if self.pending_prompt_item.is_none() {
+            if prompt.mode == PromptMode::Normal && self.pending_prompt_item.is_none() {
                 let optimistic = match (&prompt.display_message, &prompt.invocation) {
                     (Some(display), Some(invocation)) => {
                         conversation_mut(self.active_snapshot_mut())
@@ -430,8 +574,13 @@ impl RuntimeOwner {
         }
         self.rollback_failed_prompt("Prompt cancelled before delivery");
         if let Some(target) = self.pending_prompt_target.take() {
-            self.emit_prompt_result(&target, PromptOutcome::RejectedBeforeAcceptance);
+            self.emit_prompt_result(
+                self.pending_submission_id.as_deref(),
+                &target,
+                PromptOutcome::RejectedBeforeAcceptance,
+            );
         }
+        self.pending_submission_id = None;
         self.snapshot.status = "Stopped".into();
         self.publish();
     }

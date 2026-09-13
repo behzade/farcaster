@@ -63,6 +63,7 @@ fn pi_prefers_a_cheap_model_from_the_active_provider() {
             model_from("anthropic", "claude-haiku", true),
         ],
         efforts: Vec::new(),
+        sandbox_adapter: None,
     };
     let active = model_from("anthropic", "claude-opus", true);
     let selected =
@@ -78,6 +79,7 @@ fn pi_ignores_image_models_with_cheap_display_names() {
     let catalog = ConfigurationCatalog {
         models: vec![image, model_from("google", "gemini-2.5-flash-lite", true)],
         efforts: Vec::new(),
+        sandbox_adapter: None,
     };
     let active = model_from("google", "gemini-2.5-pro", true);
     assert_eq!(
@@ -93,6 +95,7 @@ fn pi_without_an_active_model_uses_backend_default() {
     let catalog = ConfigurationCatalog {
         models: vec![model_from("google", "gemini-flash-lite", false)],
         efforts: Vec::new(),
+        sandbox_adapter: None,
     };
     assert_eq!(title_model("pi", &catalog, None), None);
 }
@@ -114,6 +117,7 @@ fn codex_prefers_luna() {
             model_from("openai", "gpt-5.6-luna", true),
         ],
         efforts: Vec::new(),
+        sandbox_adapter: None,
     };
     assert_eq!(
         title_model("codex-cli", &catalog, None)
@@ -128,6 +132,7 @@ fn no_known_cheap_model_uses_backend_default() {
     let catalog = ConfigurationCatalog {
         models: vec![model("custom", false)],
         efforts: Vec::new(),
+        sandbox_adapter: None,
     };
     assert_eq!(title_model("codex-cli", &catalog, None), None);
 }

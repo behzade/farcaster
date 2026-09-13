@@ -58,7 +58,10 @@ pub(super) fn session_family_has_active_work(
 ) -> bool {
     let has_live_work = |path: &Path| {
         session_has_live_work(path, statuses, snapshot)
-            || pending_submissions.contains_key(&session_target(path))
+            || crate::app::composer::submissions::has_pending_submission(
+                pending_submissions,
+                &session_target(path),
+            )
     };
     has_live_work(path)
         || session_family_for_path(sessions, path).is_some_and(|family| {

@@ -109,6 +109,9 @@ struct RuntimeOwner {
     session_refresh_due: Option<Instant>,
     process_generation: u64,
     pending_prompt_id: Option<String>,
+    pending_submission_id: Option<String>,
+    pending_prompt_result_emitted: bool,
+    pending_queued_prompts: HashMap<String, PendingQueuedPrompt>,
     pending_prompt_target: Option<String>,
     pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
@@ -134,6 +137,16 @@ struct RuntimeOwner {
     startup_history_loaded: bool,
     state: Option<StateStore>,
     session_query: String,
+}
+
+#[derive(Clone, Debug)]
+struct PendingQueuedPrompt {
+    submission_id: String,
+    target: String,
+    outbox_id: i64,
+    session: Option<PathBuf>,
+    delivery_tracked: bool,
+    result_emitted: bool,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -178,9 +191,9 @@ impl Default for SessionTitleGeneration {
 }
 
 #[cfg(test)]
+mod live_e2e_tests;
+#[cfg(test)]
 #[path = "outbox_recovery_tests.rs"]
 mod outbox_recovery_tests;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod live_e2e_tests;

@@ -10,6 +10,23 @@ pub(super) struct RetiredPrompt {
 }
 
 impl RuntimeOwner {
+    pub(super) fn retire_queued_unknown_prompt(
+        &mut self,
+        id: &str,
+        pending: &super::PendingQueuedPrompt,
+    ) {
+        self.retired_prompts.insert(
+            id.to_owned(),
+            RetiredPrompt {
+                outbox_id: Some(pending.outbox_id),
+                target: pending.target.clone(),
+                session: pending.session.clone(),
+                delivery_tracked: pending.delivery_tracked,
+                delivered: false,
+            },
+        );
+    }
+
     pub(super) fn retire_unknown_prompt(&mut self, id: &str) {
         self.retired_prompts
             .entry(id.to_owned())

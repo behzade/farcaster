@@ -49,6 +49,7 @@ impl Supervisor {
             actor.send(command);
         } else {
             let _ = self.event_tx.send(RuntimeEvent::PromptResult {
+                submission_id: None,
                 target: target.clone(),
                 outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 session: session.as_ref().map(|session| session.path.clone()),
@@ -84,6 +85,7 @@ impl Supervisor {
             actor.send(RuntimeCommand::SetThinking(effort));
         }
         actor.send(RuntimeCommand::Prompt {
+            submission_id: uuid::Uuid::new_v4().to_string(),
             target: key.clone(),
             mode: PromptMode::Normal,
             message,
@@ -107,7 +109,7 @@ impl Supervisor {
         self.actors.insert(key, actor);
     }
 
-    fn request_configuration(&mut self, harness: String, project: PathBuf) {
+    fn request_configuration(&mut self, harness: String, project: PathBuf, target: &str) {
         let Some(sender) = &self.configuration_tx else {
             return;
         };
@@ -122,7 +124,7 @@ impl Supervisor {
             .set_catalog_loading(harness.clone(), project.clone());
         let request_harness = harness.clone();
         let request_project = project.clone();
-        let process_command = self.process_command.clone();
+        let process_command = self.configuration_process_command(&harness, &project, target);
         let supervisor = self.supervisor_thread.clone();
         let updates = sender.clone();
         if let Err(error) = thread::Builder::new()
@@ -146,6 +148,31 @@ impl Supervisor {
         self.publish_configuration_snapshots(&harness, &project);
     }
 
+    pub(super) fn configuration_process_command(
+        &self,
+        harness: &str,
+        project: &std::path::Path,
+        target: &str,
+    ) -> AgentLaunchConfig {
+        let mut command = self.process_command.clone();
+        if let Some((requested_harness, requested_project, requested_mode)) =
+            self.requested_access_modes.get(target)
+            && requested_harness == harness
+            && requested_project.as_path() == project
+        {
+            command.access_mode = *requested_mode;
+            return command;
+        }
+        if let Some(snapshot) = self
+            .latest
+            .get(target)
+            .filter(|snapshot| snapshot.harness == harness && snapshot.project.as_path() == project)
+        {
+            command.access_mode = snapshot.access_mode;
+        }
+        command
+    }
+
     pub(super) fn process_next_command(&mut self) -> bool {
         match self.command_rx.try_recv() {
             Ok(RuntimeCommand::Shutdown) => false,
@@ -164,7 +191,8 @@ impl Supervisor {
                     return true;
                 }
                 if let RuntimeCommand::LoadConfiguration { harness, project } = &command {
-                    self.request_configuration(harness.clone(), project.clone());
+                    let selected = self.selected.clone();
+                    self.request_configuration(harness.clone(), project.clone(), &selected);
                     return true;
                 }
                 if self.handle_session_family_command(&command) {
@@ -223,6 +251,14 @@ impl Supervisor {
                     }
                     return true;
                 }
+                if let RuntimeCommand::SetAccessMode(mode) = &command
+                    && let Some(snapshot) = self.latest.get(&self.selected)
+                {
+                    self.requested_access_modes.insert(
+                        self.selected.clone(),
+                        (snapshot.harness.clone(), snapshot.project.clone(), *mode),
+                    );
+                }
                 let identity_changed = self.latest.get(&self.selected).is_some_and(|snapshot| {
                     adopts_selected_configuration(snapshot, &self.catalog_sessions)
                         && update_selected_configuration(
@@ -249,7 +285,6 @@ impl Supervisor {
                 }
                 let next = command_target(&command);
                 if let Some((requested_key, project, harness)) = next {
-                    self.request_configuration(harness.clone(), project.clone());
                     let _selection_timing = is_view_only_selection(&command).then(|| {
                         crate::app::infrastructure::performance::Timing::new("switch.runtime_route")
                     });
@@ -262,6 +297,7 @@ impl Supervisor {
                         }
                         _ => requested_key,
                     };
+                    self.request_configuration(harness.clone(), project.clone(), &key);
                     self.clock = self.clock.saturating_add(1);
                     self.last_touch.insert(key.clone(), self.clock);
                     self.interacted.insert(key.clone());

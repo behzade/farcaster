@@ -1,4 +1,14 @@
 use super::*;
+use crate::protocol::PromptMode;
+
+#[derive(Clone, Debug)]
+pub(crate) struct PendingReceipt {
+    pub id: String,
+    pub mode: Option<PromptMode>,
+    pub text: String,
+    pub images: Arc<Vec<Arc<Image>>>,
+    pub unknown: bool,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct SubmittedUser {
@@ -7,9 +17,39 @@ pub(super) struct SubmittedUser {
     pub(super) delivered: bool,
     pub(super) delivery_tracked: bool,
     pub(super) unknown: bool,
+    pub(super) queued: bool,
+    mode: Option<PromptMode>,
+    order: usize,
+}
+
+impl SubmittedUser {
+    pub(super) fn is_visible(&self) -> bool {
+        !self.queued || self.delivered
+    }
 }
 
 impl ConversationState {
+    /// Saved receipt presentation only. These records must never become
+    /// executable queue entries merely because history was opened.
+    pub(crate) fn pending_receipts(&self) -> Vec<PendingReceipt> {
+        let mut pending = self
+            .submitted_users
+            .iter()
+            .filter(|(_, entry)| !entry.is_visible())
+            .collect::<Vec<_>>();
+        pending.sort_by_key(|(_, entry)| entry.order);
+        pending
+            .into_iter()
+            .map(|(id, entry)| PendingReceipt {
+                id: id.clone(),
+                mode: entry.mode,
+                text: entry.item.text.clone(),
+                images: entry.item.images.clone(),
+                unknown: entry.unknown,
+            })
+            .collect()
+    }
+
     pub(crate) fn bind_submitted_prompt(&mut self, id: &str, item: &Arc<TranscriptItem>) {
         self.bind_submitted_prompt_with_evidence(id, item, false);
     }
@@ -20,6 +60,8 @@ impl ConversationState {
         item: &Arc<TranscriptItem>,
         delivery_tracked: bool,
     ) {
+        let order = self.next_submission_order;
+        self.next_submission_order = order.saturating_add(1);
         self.submitted_users
             .entry(id.to_owned())
             .or_insert_with(|| SubmittedUser {
@@ -28,10 +70,14 @@ impl ConversationState {
                 delivered: false,
                 delivery_tracked,
                 unknown: false,
+                queued: false,
+                mode: Some(PromptMode::Normal),
+                order,
             });
     }
 
-    /// Admission and delivery update one row. Neither is a new assistant stream.
+    /// Admission retains queued payloads off-transcript. Only delivery creates
+    /// their user row; ordinary optimistic input keeps its existing row.
     pub(crate) fn record_prompt_delivery(
         &mut self,
         id: &str,
@@ -63,6 +109,8 @@ impl ConversationState {
         let mut entry = if let Some(entry) = previous {
             entry
         } else {
+            let order = self.next_submission_order;
+            self.next_submission_order = order.saturating_add(1);
             let optimistic = (message.get("queued").and_then(Value::as_bool) != Some(true))
                 .then(|| self.optimistic_user.clone())
                 .flatten();
@@ -79,6 +127,14 @@ impl ConversationState {
                 delivery_tracked: message.get("deliveryTracked").and_then(Value::as_bool)
                     == Some(true),
                 unknown: false,
+                queued: message.get("queued").and_then(Value::as_bool) == Some(true),
+                mode: match message.get("promptMode").and_then(Value::as_str) {
+                    Some("normal") => Some(PromptMode::Normal),
+                    Some("steer") => Some(PromptMode::Steer),
+                    Some("follow_up") => Some(PromptMode::FollowUp),
+                    _ => None,
+                },
+                order,
             }
         };
         entry.delivery_tracked |=
@@ -86,6 +142,10 @@ impl ConversationState {
         entry.accepted |= status == "accepted" || status == "delivered";
         entry.delivered |= status == "delivered";
         entry.unknown = !entry.accepted && status == "unknown";
+        if !entry.is_visible() {
+            self.submitted_users.insert(id.to_owned(), entry);
+            return None;
+        }
         let index = index.or_else(|| self.items.position(|item| Arc::ptr_eq(item, &entry.item)));
         let was_optimistic = self
             .optimistic_user

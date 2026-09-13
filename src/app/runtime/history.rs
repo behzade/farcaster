@@ -167,6 +167,8 @@ impl RuntimeOwner {
         self.project = project.clone();
         self.session_id = None;
         self.pending_prompt_target = None;
+        self.pending_submission_id = None;
+        self.pending_prompt_result_emitted = false;
         self.pending_outbox_id = None;
         self.deferred_prompt = None;
         self.pending_session_controls = PendingSessionControls::default();
@@ -277,6 +279,7 @@ pub(super) fn annotate_history_presentations(
                 };
                 if !history_was_empty
                     && message.get("deliveryTracked").and_then(Value::as_bool) != Some(true)
+                    && message.get("queued").and_then(Value::as_bool) != Some(true)
                 {
                     continue;
                 }

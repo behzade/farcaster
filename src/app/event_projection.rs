@@ -372,7 +372,8 @@ impl FarcasterApp {
             self.session_surfaces.remove(&target);
             self.composer_images.remove(&target);
             self.composer_pastes.remove(&target);
-            self.pending_submissions.remove(&target);
+            self.pending_submissions
+                .retain(|_, pending| pending.submitted_target != target);
             self.run_statuses.remove(&target);
             self.recent_completions.remove(&target);
             self.recent_completion_expiries.remove(&target);
@@ -384,7 +385,8 @@ impl FarcasterApp {
             self.session_surfaces.remove(&target);
             self.composer_images.remove(&target);
             self.composer_pastes.remove(&target);
-            self.pending_submissions.remove(&target);
+            self.pending_submissions
+                .retain(|_, pending| pending.submitted_target != target);
             self.submitted_drafts.remove(id);
             self.draft_session_ids.remove(id);
             self.run_statuses.remove(&target);
@@ -550,6 +552,7 @@ impl FarcasterApp {
     }
     fn project_prompt_result(
         &mut self,
+        submission_id: Option<String>,
         target: String,
         outcome: crate::agents::PromptOutcome,
         session: Option<PathBuf>,
@@ -569,7 +572,13 @@ impl FarcasterApp {
             self.run_statuses
                 .insert(target.clone(), "Delivery unknown".into());
         }
-        record_pending_prompt_result(&mut self.pending_submissions, &target, outcome, session);
+        record_pending_prompt_result_for_submission(
+            &mut self.pending_submissions,
+            submission_id.as_deref(),
+            &target,
+            outcome,
+            session,
+        );
         dirty.rail |= self.reconcile_submitted_drafts(cx);
     }
 
@@ -742,12 +751,13 @@ impl FarcasterApp {
                 self.show_attention_notification(&title, &body, target, cx);
             }
             RuntimeEvent::PromptResult {
+                submission_id,
                 target,
                 outcome,
                 session,
             } => {
                 // Replies belong to a submission, even after navigation changes generations.
-                self.project_prompt_result(target, outcome, session, dirty, cx);
+                self.project_prompt_result(submission_id, target, outcome, session, dirty, cx);
             }
             RuntimeEvent::SessionStatus {
                 target,
@@ -875,10 +885,27 @@ fn record_pending_prompt_result(
     outcome: crate::agents::PromptOutcome,
     session: Option<PathBuf>,
 ) {
-    if let Some(pending) = pending
-        .values_mut()
-        .find(|pending| pending.submitted_target == target)
-    {
+    record_pending_prompt_result_for_submission(pending, None, target, outcome, session);
+}
+
+fn record_pending_prompt_result_for_submission(
+    pending: &mut HashMap<String, PendingSubmission>,
+    submission_id: Option<&str>,
+    target: &str,
+    outcome: crate::agents::PromptOutcome,
+    session: Option<PathBuf>,
+) {
+    let key = match submission_id {
+        Some(id) => pending.contains_key(id).then(|| id.to_owned()),
+        None => {
+            let mut matches = pending.iter().filter(|(_, pending)| {
+                pending.submitted_target == target && pending.result.is_none()
+            });
+            let first = matches.next().map(|(id, _)| id.clone());
+            first.filter(|_| matches.next().is_none())
+        }
+    };
+    if let Some(pending) = key.and_then(|id| pending.get_mut(&id)) {
         if pending.result.as_ref().is_some_and(|(previous, _)| {
             matches!(
                 previous,

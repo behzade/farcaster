@@ -1,5 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
+use sha2::{Digest as _, Sha256};
+
 use super::*;
 use crate::app::runtime::tests::owner_without_process;
 
@@ -64,6 +66,78 @@ fn sent_messages(sent: &Rc<RefCell<Vec<SessionCommand>>>) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn startup_held_follow_up_stays_in_queue_until_native_delivery() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, _) = owner_without_process(temp.path().into());
+    let sent = Rc::new(RefCell::new(Vec::new()));
+    owner.process = Some(Box::new(Recorder(sent.clone())));
+    owner.state = Some(StateStore::open_at(&database)?);
+    owner.harness = "claude".into();
+    owner.active_session = Some(temp.path().join("session.jsonl"));
+    owner.snapshot.selected_session = owner.active_session.clone();
+    owner.snapshot.session = Some(empty_session());
+
+    owner.send_prompt_for_submission(
+        "startup-follow-up".into(),
+        "session:startup".into(),
+        PromptMode::FollowUp,
+        "queued during startup".into(),
+        Vec::new(),
+        false,
+    );
+    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.snapshot.conversation.items.is_empty());
+
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.maybe_send_deferred_prompt();
+    assert_eq!(sent_messages(&sent), ["queued during startup"]);
+    assert!(
+        owner.snapshot.conversation.items.is_empty(),
+        "queued startup input must not become an optimistic user row"
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_recovered_steer_and_follow_up_never_create_optimistic_users() -> Result<(), String> {
+    for mode in [PromptMode::Steer, PromptMode::FollowUp] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let store = StateStore::open_at(&database)?;
+        store.enqueue_prompt(
+            "session:recovered",
+            "claude",
+            temp.path(),
+            Some(&temp.path().join("session.jsonl")),
+            mode,
+            "saved queued input",
+            &[],
+        )?;
+        let prompt = store.queued_prompts()?.remove(0);
+        let (mut owner, _) = owner_without_process(temp.path().into());
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        owner.process = Some(Box::new(Recorder(sent.clone())));
+        owner.state = Some(store);
+        owner.harness = "claude".into();
+        owner.active_session = Some(temp.path().join("session.jsonl"));
+        owner.snapshot.session = Some(empty_session());
+        owner.startup_state_loaded = true;
+        owner.startup_history_loaded = true;
+
+        owner.deliver_queued(prompt);
+
+        assert_eq!(sent_messages(&sent), ["saved queued input"]);
+        assert!(
+            owner.snapshot.conversation.items.is_empty(),
+            "{mode:?} recovery must remain queue presentation only"
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -841,19 +915,35 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
             }
             assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
             assert_eq!(owner.pending_outbox_id, Some(new_outbox));
-            assert_eq!(owner.snapshot.conversation.items.len(), rows_before);
-            assert!(Arc::ptr_eq(
-                &owner
-                    .snapshot
-                    .conversation
-                    .items
+            // A same-session queued receipt admits its old row. A normal row
+            // was already optimistic, while navigation must not project any
+            // old row into the new session. No branch may consume the new row.
+            let admits_old_row = !navigate && mode != PromptMode::Normal;
+            assert_eq!(
+                owner.snapshot.conversation.items.len(),
+                rows_before + usize::from(admits_old_row)
+            );
+            let user_images = owner
+                .snapshot
+                .conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .map(|item| item.images[0].clone())
+                .collect::<Vec<_>>();
+            assert_eq!(user_images.len(), if navigate { 1 } else { 2 });
+            assert!(
+                user_images
                     .iter()
-                    .filter(|item| item.kind == TranscriptKind::User)
-                    .last()
-                    .unwrap()
-                    .images[0],
-                &new_image
-            ));
+                    .any(|image| Arc::ptr_eq(image, &new_image))
+            );
+            if !navigate {
+                assert!(
+                    user_images
+                        .iter()
+                        .any(|image| !Arc::ptr_eq(image, &new_image))
+                );
+            }
             let outcomes = events
                 .try_iter()
                 .filter_map(|event| match event {
@@ -892,6 +982,29 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
             assert_eq!(saved.len(), 1);
             assert_eq!(saved[0]["submissionId"], new_id);
             assert_eq!(saved[0]["content"][1]["data"], GIF);
+            let connection =
+                rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+            let (accepted_rows, delivered_rows, attachment, mime_type): (i64, i64, String, String) =
+                connection
+                    .query_row(
+                        "SELECT
+                        SUM(json_extract(body,'$.type')='accepted_prompt'),
+                        SUM(json_extract(body,'$.type')='prompt_delivery_receipt'),
+                        MAX(CASE WHEN json_extract(body,'$.type')='accepted_prompt'
+                            THEN json_extract(body,'$.images[0].attachment') END),
+                        MAX(CASE WHEN json_extract(body,'$.type')='accepted_prompt'
+                            THEN json_extract(body,'$.images[0].mimeType') END)
+                       FROM session_events
+                      WHERE json_extract(body,'$.submissionId')=?1",
+                        [&old_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .map_err(|error| error.to_string())?;
+            assert_eq!((accepted_rows, delivered_rows), (1, 1));
+            let png_bytes =
+                crate::protocol::PromptImage::new(PNG.into(), "image/png".into()).bytes()?;
+            assert_eq!(attachment, format!("{:x}", Sha256::digest(png_bytes)));
+            assert_eq!(mime_type, "image/png");
         }
     }
     Ok(())

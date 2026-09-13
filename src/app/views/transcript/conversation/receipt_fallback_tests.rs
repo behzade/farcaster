@@ -84,3 +84,61 @@ fn restored_legacy_receipt_does_not_gain_tracking_on_a_second_history_refresh() 
     assert_eq!(state.items[0].text, "new input");
     assert_eq!(state.items[0].images.len(), 1);
 }
+
+#[test]
+fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::app::infrastructure::persistence::StateStore;
+    use crate::protocol::PromptMode;
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("native-session");
+    let image = PromptImage::new(PNG.into(), "image/png".into());
+    let mut store = StateStore::open_at(&database)?;
+    for (id, mode) in [
+        ("steer", PromptMode::Steer),
+        ("follow", PromptMode::FollowUp),
+    ] {
+        let row = store.enqueue_prompt(
+            "draft:queue",
+            "codex-cli",
+            temp.path(),
+            None,
+            mode,
+            "same text",
+            &[image.clone()],
+        )?;
+        store.complete_prompt_with_receipt(row, "draft:queue", Some(&session), id, true)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    assert!(
+        store.queued_prompts()?.is_empty(),
+        "accepted input must never replay"
+    );
+    let receipts = store.accepted_prompt_history(&session)?;
+    assert_eq!(receipts.len(), 2);
+    for receipt in &receipts {
+        assert_eq!(receipt["queued"], true);
+        assert_eq!(receipt["content"][1]["data"], PNG);
+    }
+    let mut state = ConversationState::default();
+    state.replace_history(&receipts);
+    assert!(
+        state.items.is_empty(),
+        "reopen cannot turn receipt into delivery"
+    );
+    for receipt in &receipts {
+        let id = receipt["submissionId"].as_str().unwrap();
+        state.record_prompt_delivery(id, receipt, "delivered");
+        state.record_prompt_delivery(id, receipt, "delivered");
+    }
+    assert_eq!(state.items.len(), 2);
+    assert!(
+        state
+            .items
+            .iter()
+            .all(|item| item.text == "same text" && item.images.len() == 1)
+    );
+    Ok(())
+}

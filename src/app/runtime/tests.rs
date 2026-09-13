@@ -112,6 +112,9 @@ pub(super) fn owner_without_process(
             process_generation: 1,
             retired_prompts: HashMap::new(),
             pending_prompt_id: None,
+            pending_submission_id: None,
+            pending_prompt_result_emitted: false,
+            pending_queued_prompts: HashMap::new(),
             pending_prompt_target: None,
             pending_prompt_item: None,
             pending_outbox_id: None,
@@ -1202,7 +1205,11 @@ fn accepted_prompt_result_has_the_normalized_active_session_path()
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.active_session = Some(crate::sessions::normalize_session_path(&link));
 
-    owner.emit_prompt_result("draft:a", crate::agents::PromptOutcome::Accepted);
+    owner.emit_prompt_result(
+        Some("submission-a"),
+        "draft:a",
+        crate::agents::PromptOutcome::Accepted,
+    );
 
     assert!(events.try_iter().any(|event| matches!(
         event,
@@ -2016,6 +2023,9 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         process_generation: 4,
         retired_prompts: HashMap::new(),
         pending_prompt_id: None,
+        pending_submission_id: None,
+        pending_prompt_result_emitted: false,
+        pending_queued_prompts: HashMap::new(),
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
@@ -2254,6 +2264,9 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         process_generation: 3,
         retired_prompts: HashMap::new(),
         pending_prompt_id: None,
+        pending_submission_id: None,
+        pending_prompt_result_emitted: false,
+        pending_queued_prompts: HashMap::new(),
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
@@ -2438,6 +2451,9 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         process_generation: 7,
         retired_prompts: HashMap::new(),
         pending_prompt_id: Some("pending-prompt".into()),
+        pending_submission_id: Some("submission-prompt".into()),
+        pending_prompt_result_emitted: false,
+        pending_queued_prompts: HashMap::new(),
         pending_prompt_target: Some(format!("session:{}", active_path.display())),
         pending_prompt_item: None,
         pending_outbox_id: None,
