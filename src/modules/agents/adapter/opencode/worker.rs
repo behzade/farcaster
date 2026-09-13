@@ -760,7 +760,10 @@ impl OpenCodeWorkerSession {
                 );
                 return Some(WorkerEvent::NeedsInput(WorkerInput {
                     id: request_id.to_owned(),
-                    prompt: opencode_permission_prompt(&event.data),
+                    prompt: opencode_permission_prompt(
+                        &event.data,
+                        opencode_permission_tool(&event.data, &self.active_tools),
+                    ),
                     options: vec!["Allow once".into(), "Always allow".into(), "Decline".into()],
                     secret: false,
                 }));
@@ -1728,25 +1731,78 @@ fn opencode_permission_request(event: &super::contract::OpenCodeEvent) -> Option
     Some((session_id, request_id))
 }
 
-fn opencode_permission_prompt(data: &Value) -> String {
+fn opencode_permission_tool<'a>(
+    data: &Value,
+    tools: &'a HashMap<String, ActiveOpenCodeTool>,
+) -> Option<&'a ActiveOpenCodeTool> {
+    let source = data.get("source")?;
+    if source.get("type")?.as_str()? != "tool" {
+        return None;
+    }
+    let tool = tools.get(source.get("id")?.as_str()?)?;
+    // Call IDs alone can repeat across messages or child sessions.
+    if tool.native.get("sessionID")?.as_str()? != data.get("sessionID")?.as_str()?
+        || tool.native.get("assistantMessageID")?.as_str()? != source.get("messageID")?.as_str()?
+    {
+        return None;
+    }
+    Some(tool)
+}
+
+fn opencode_permission_prompt(data: &Value, tool: Option<&ActiveOpenCodeTool>) -> String {
     let permission = data
-        .get("permission")
+        .get("action")
         .and_then(Value::as_str)
+        .or_else(|| data.get("permission").and_then(Value::as_str))
         .unwrap_or("tool use");
-    let patterns = data
-        .get("patterns")
+    let resources = data
+        .get("resources")
         .and_then(Value::as_array)
+        .or_else(|| data.get("patterns").and_then(Value::as_array))
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .collect::<Vec<_>>();
-    if patterns.is_empty() {
-        format!("OpenCode requests permission for {permission}")
-    } else {
-        format!(
-            "OpenCode requests permission for {permission}\n{}",
-            patterns.join("\n")
-        )
+        .filter(|resource| !resource.trim().is_empty());
+    let mut prompt = format!("OpenCode requests permission for {permission}");
+    for resource in resources {
+        prompt.push('\n');
+        prompt.push_str(resource);
+    }
+    if let Some(tool) = tool
+        && let Some(args) = tool
+            .args
+            .clone()
+            .or_else(|| serde_json::from_str(&tool.input).ok())
+    {
+        append_permission_details(&mut prompt, &format!("Tool {}", tool.name), &args);
+    }
+    if let Some(metadata) = data.get("metadata") {
+        append_permission_details(&mut prompt, "Details", metadata);
+    }
+    prompt
+}
+
+fn append_permission_details(prompt: &mut String, label: &str, value: &Value) {
+    match value {
+        Value::Null => {}
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                append_permission_details(prompt, &format!("{label} / {key}"), value);
+            }
+        }
+        Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                append_permission_details(prompt, &format!("{label} / {}", index + 1), value);
+            }
+        }
+        Value::String(text) if text.trim().is_empty() => {}
+        value => {
+            prompt.push_str(&format!("\n\n{label}:\n"));
+            match value {
+                Value::String(text) => prompt.push_str(text),
+                value => prompt.push_str(&value.to_string()),
+            }
+        }
     }
 }
 

@@ -493,15 +493,59 @@ fn supported_modes_use_the_opencode_server_without_auto_approval() {
 }
 
 #[test]
-fn sandboxed_permission_requests_keep_native_choices() {
-    let data = json!({
-        "permission": "bash",
-        "patterns": ["git status", "git diff"]
+fn permission_prompt_uses_only_the_matching_tool_input() {
+    let mut data = json!({
+        "action": "shell", "resources": ["git *"], "sessionID": "session-1",
+        "source": {"type": "tool", "messageID": "message-1", "id": "call-1"}
     });
+    let tools = HashMap::from([(
+        "call-1".into(),
+        ActiveOpenCodeTool {
+            name: "bash".into(),
+            input: r#"{"command":"git diff -- src/main.rs"}"#.into(),
+            native: json!({"sessionID": "session-1", "assistantMessageID": "message-1"}),
+            ..Default::default()
+        },
+    )]);
+    let prompt = opencode_permission_prompt(&data, opencode_permission_tool(&data, &tools));
+    assert!(prompt.contains("Tool bash / command:\ngit diff -- src/main.rs"));
+    data["source"]["messageID"] = json!("message-2");
+    assert!(opencode_permission_tool(&data, &tools).is_none());
+    data["source"]["messageID"] = json!("message-1");
+    data["sessionID"] = json!("child-1");
+    assert!(opencode_permission_tool(&data, &tools).is_none());
+}
+
+#[test]
+fn permission_prompt_preserves_metadata_when_resources_are_vague() {
+    let diff = "@@ -1 +1 @@\n-old\n+<new>&";
+    let mut data = json!({
+        "action": "edit",
+        "resources": ["*"],
+        "metadata": {"files": [{"file": "src/main.rs", "patch": diff}]}
+    });
+    let prompt = opencode_permission_prompt(&data, None);
+    assert!(prompt.starts_with("OpenCode requests permission for edit\n*"));
+    assert!(prompt.contains("Details / files / 1 / file:\nsrc/main.rs"));
+    assert!(prompt.contains(&format!("Details / files / 1 / patch:\n{diff}")));
+    data["resources"] = json!([]);
     assert_eq!(
-        opencode_permission_prompt(&data),
-        "OpenCode requests permission for bash\ngit status\ngit diff"
+        opencode_permission_prompt(&data, None),
+        prompt.replacen("\n*", "", 1)
     );
+}
+
+#[test]
+fn sandboxed_permission_requests_keep_native_choices() {
+    for data in [
+        json!({"action": "bash", "resources": ["git status", "git diff"]}),
+        json!({"permission": "bash", "patterns": ["git status", "git diff"]}),
+    ] {
+        assert_eq!(
+            opencode_permission_prompt(&data, None),
+            "OpenCode requests permission for bash\ngit status\ngit diff"
+        );
+    }
     assert_eq!(
         opencode_permission_reply(Some("Allow once"), false),
         Ok("once")
