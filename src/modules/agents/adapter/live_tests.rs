@@ -961,7 +961,7 @@ fn require_response(
 fn approve(
     session: &mut dyn SessionTransport,
     request: ExtensionUiRequest,
-    gates: &[support::TurnGate],
+    allowed_commands: &[String],
 ) -> Result<(), String> {
     match request {
         // These mutate only harness UI state.  They have no dialog ID under
@@ -973,7 +973,7 @@ fn approve(
         | ExtensionUiRequest::SetTitle { .. }
         | ExtensionUiRequest::SetEditorText { .. } => Ok(()),
         request => {
-            let response = support::bounded_gate_permission(&request, gates)?;
+            let response = support::bounded_command_permission(&request, allowed_commands)?;
             session.respond(response)
         }
     }
@@ -1263,12 +1263,15 @@ pub(crate) mod support {
         }
     }
 
-    /// Returns a reply only for the exact Bash permission required by one of
-    /// this process's registered project-local gates.  Live tests never grant
-    /// a general shell permission, even though the fixture itself is safe.
-    pub(crate) fn bounded_gate_permission(
+    /// Returns a one-shot reply only when an installed client asks to run one
+    /// of the exact project-local commands registered by this test.
+    ///
+    /// This recognizes only the three observed permission forms.  In
+    /// particular, it never chooses an "always" option and never accepts a
+    /// title which merely contains an allowed command.
+    pub(crate) fn bounded_command_permission(
         request: &ExtensionUiRequest,
-        gates: &[TurnGate],
+        allowed_commands: &[String],
     ) -> Result<ExtensionUiResponse, String> {
         let ExtensionUiRequest::Select {
             id, title, options, ..
@@ -1278,35 +1281,78 @@ pub(crate) mod support {
                 "E2E_BLOCKED: live harness requested unmanaged interaction {request:?}; refusing to grant permission outside the fixture scope"
             ));
         };
-        if options.len() != 2 || options[0] != "Deny" || options[1] != "Allow" {
-            return Err(format!(
-                "E2E_BLOCKED: refusing gate permission with unexpected choices: {options:?}"
-            ));
-        }
-        let payload = title.strip_prefix("Allow Bash?\n").ok_or_else(|| {
-            format!(
-                "E2E_BLOCKED: refusing non-gate selection while waiting for a registered gate: {title:?}"
-            )
-        })?;
-        let payload: Value = serde_json::from_str(payload).map_err(|error| {
-            format!("E2E_BLOCKED: refusing malformed gate permission payload: {error}")
-        })?;
-        let command = payload
-            .as_object()
-            .and_then(|object| object.get("command"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                "E2E_BLOCKED: refusing gate permission without an exact command".to_owned()
+        let exact_command =
+            |command: &str| allowed_commands.iter().any(|allowed| command == allowed);
+        let options_are = |expected: &[&str]| {
+            options.len() == expected.len()
+                && options
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.iter().copied())
+        };
+        let response = if options_are(&["Deny", "Allow"]) {
+            let payload = title.strip_prefix("Allow Bash?\n").ok_or_else(|| {
+                format!(
+                    "E2E_BLOCKED: refusing non-gate Bash selection while waiting for a registered command: {title:?}"
+                )
             })?;
-        if !gates.iter().any(|gate| command == gate.shell_command()) {
+            let payload: Value = serde_json::from_str(payload).map_err(|error| {
+                format!("E2E_BLOCKED: refusing malformed Bash permission payload: {error}")
+            })?;
+            let command = payload
+                .as_object()
+                .and_then(|object| object.get("command"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "E2E_BLOCKED: refusing Bash permission without an exact command".to_owned()
+                })?;
+            if !exact_command(command) {
+                return Err(format!(
+                    "E2E_BLOCKED: refusing Bash command outside the registered project-local fixture: {command:?}"
+                ));
+            }
+            "Allow"
+        } else if options_are(&["Allow once", "Allow always", "Reject"]) {
+            let cursor_title_matches = exact_command(title)
+                || allowed_commands
+                    .iter()
+                    .any(|command| title == &format!("`{command}`"));
+            if !cursor_title_matches {
+                return Err(format!(
+                    "E2E_BLOCKED: refusing Cursor command outside the registered project-local fixture: {title:?}"
+                ));
+            }
+            "Allow once"
+        } else if options_are(&["Allow Always (risky)", "Allow", "Deny"]) {
+            if !exact_command(title) {
+                return Err(format!(
+                    "E2E_BLOCKED: refusing ACP command outside the registered project-local fixture: {title:?}"
+                ));
+            }
+            "Allow"
+        } else {
             return Err(format!(
-                "E2E_BLOCKED: refusing Bash command outside the registered project-local gate: {command:?}"
+                "E2E_BLOCKED: refusing command permission with unexpected choices: {options:?}"
             ));
-        }
+        };
         Ok(ExtensionUiResponse::Value {
             id: id.clone(),
-            value: "Allow".into(),
+            value: response.into(),
         })
+    }
+
+    /// Returns a reply only for the exact Bash permission required by one of
+    /// this process's registered project-local gates.  Live tests never grant
+    /// a general shell permission, even though the fixture itself is safe.
+    pub(crate) fn bounded_gate_permission(
+        request: &ExtensionUiRequest,
+        gates: &[TurnGate],
+    ) -> Result<ExtensionUiResponse, String> {
+        let commands = gates
+            .iter()
+            .map(TurnGate::shell_command)
+            .collect::<Vec<_>>();
+        bounded_command_permission(request, &commands)
     }
 
     fn gate_process_alive(pid: u32) -> Result<bool, String> {
@@ -1350,6 +1396,7 @@ pub(crate) mod support {
         activities: Vec<TraceEvent>,
         stderr: Vec<String>,
         gates: Vec<TurnGate>,
+        fixture_commands: Vec<String>,
         started_at: Instant,
         program_version: String,
         model_identity: Option<String>,
@@ -1406,6 +1453,7 @@ pub(crate) mod support {
                 activities: Vec::new(),
                 stderr: Vec::new(),
                 gates: Vec::new(),
+                fixture_commands: Vec::new(),
                 started_at: Instant::now(),
                 program_version,
                 model_identity: None,
@@ -1562,6 +1610,32 @@ pub(crate) mod support {
 
         pub(crate) fn abort(&mut self) -> Result<String, String> {
             self.transport.send(SessionCommand::Abort)
+        }
+
+        /// Registers one literal command for the live fixture's narrow
+        /// one-shot permission responder.  Callers must use the returned
+        /// value verbatim in their prompt; the responder never extracts a
+        /// command from model or backend output.
+        pub(crate) fn register_fixture_command(
+            &mut self,
+            command: impl Into<String>,
+        ) -> Result<String, String> {
+            let command = command.into();
+            if command.is_empty()
+                || command.trim() != command.as_str()
+                || command.chars().any(|character| {
+                    matches!(
+                        character,
+                        '\n' | '\r' | ';' | '|' | '&' | '`' | '$' | '(' | ')' | '<' | '>'
+                    )
+                })
+            {
+                return Err(format!(
+                    "refusing unsafe live fixture command registration: {command:?}"
+                ));
+            }
+            self.fixture_commands.push(command.clone());
+            Ok(command)
         }
 
         /// Ask the real model to hold an actual shell invocation.  Tests wait
@@ -1966,7 +2040,7 @@ pub(crate) mod support {
                     && event.value.get("status").and_then(Value::as_str) == Some("delivered")
             }) {
                 Err(format!(
-                    "submission {submission_id} delivered before its intended boundary; trace={}",
+                    "submission {submission_id} delivered at or after forbidden event boundary {cursor}; trace={}",
                     self.trace_summary()
                 ))
             } else {
@@ -2333,8 +2407,9 @@ pub(crate) mod support {
                     }
                 }
                 Some(SessionEvent::Interaction(request)) => {
-                    let gates = self.gates.clone();
-                    approve(&mut *self.transport, request, &gates)?
+                    let mut allowed_commands = self.fixture_commands.clone();
+                    allowed_commands.extend(self.gates.iter().map(TurnGate::shell_command));
+                    approve(&mut *self.transport, request, &allowed_commands)?
                 }
                 Some(SessionEvent::Failure(error)) => {
                     return Err(format!("live {} transport failure: {error}", self.harness));

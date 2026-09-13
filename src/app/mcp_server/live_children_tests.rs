@@ -21,6 +21,7 @@ use crate::{
         runtime::catalog::live_worker_activities,
         views::run_panel::{agents::AgentSection, live_run_panel_agent_rows},
     },
+    protocol::{ExtensionUiRequest, ExtensionUiResponse},
 };
 
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
@@ -423,13 +424,10 @@ impl ShellGate {
         )
     }
 
-    fn validates_approval(&self, input: &WorkerInput) -> Result<(), String> {
-        if input.options != ["Deny", "Allow"] {
-            return Err(format!(
-                "E2E_BLOCKED: real child requested unknown permission choices {:?}; only the registered shell-gate Allow Bash request is safe to answer",
-                input.options
-            ));
-        }
+    fn registered_permission_request(
+        &self,
+        input: &WorkerInput,
+    ) -> Result<ExtensionUiRequest, String> {
         let (child, permission) = input.prompt.split_once("\n\n").ok_or_else(|| {
             format!(
                 "E2E_BLOCKED: real child permission omitted the production child wrapper: {:?}",
@@ -441,36 +439,12 @@ impl ShellGate {
                 "E2E_BLOCKED: real child permission had an unexpected registry wrapper: {child:?}"
             ));
         }
-        let (title, json) = permission.split_once('\n').ok_or_else(|| {
-            format!(
-                "E2E_BLOCKED: real child permission omitted its JSON command payload: {permission:?}"
-            )
-        })?;
-        if title != "Allow Bash?" {
-            return Err(format!(
-                "E2E_BLOCKED: real child requested {title:?}; only the registered Allow Bash gate is safe to answer"
-            ));
-        }
-        let command = serde_json::from_str::<serde_json::Value>(json)
-            .ok()
-            .and_then(|payload| {
-                payload
-                    .get("command")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            })
-            .ok_or_else(|| {
-                format!(
-                    "E2E_BLOCKED: Allow Bash request did not contain an exact command: {json:?}"
-                )
-            })?;
-        if command != self.command() {
-            return Err(format!(
-                "E2E_BLOCKED: refused non-gate shell command {command:?}; expected exactly {:?}",
-                self.command()
-            ));
-        }
-        Ok(())
+        Ok(ExtensionUiRequest::Select {
+            id: input.id.clone(),
+            title: permission.into(),
+            options: input.options.clone(),
+            timeout: None,
+        })
     }
 
     fn release(&self) -> Result<(), String> {
@@ -741,7 +715,6 @@ impl LiveChildFixture {
             self.harness, self.model_identity, child.id,
         );
         let deadline = Instant::now() + TURN_TIMEOUT;
-        let mut observed_running = child.status == WorkerStatus::Running;
         let mut approved_gate = false;
         loop {
             if gate.started_path.is_file() {
@@ -753,24 +726,24 @@ impl LiveChildFixture {
             }
             approved_gate |= self.approve_registered_gate(parent_session, gate, phase)?;
             let snapshot = self.snapshot(&child.id)?;
-            observed_running |= snapshot.status == WorkerStatus::Running;
             if snapshot.status == WorkerStatus::NeedsInput && !approved_gate {
                 return Err(format!(
                     "E2E_BLOCKED: child requested native input that was not the registered shell-gate approval: harness={} model={} worker={} phase={phase} final_snapshot={snapshot:?}",
                     self.harness, self.model_identity, child.id,
                 ));
             }
-            if snapshot.status == WorkerStatus::Idle && !observed_running {
-                // A named worker may still expose its prior idle snapshot
-                // while the accepted peer message reaches its run loop.
-            } else if snapshot.status != WorkerStatus::Running
-                && snapshot.status != WorkerStatus::NeedsInput
-            {
+            if matches!(
+                snapshot.status,
+                WorkerStatus::Failed | WorkerStatus::Stopped
+            ) {
                 return Err(format!(
-                    "child left Running before reaching its real shell gate: harness={} model={} worker={} phase={phase} final_snapshot={snapshot:?}",
+                    "child terminated before reaching its real shell gate: harness={} model={} worker={} phase={phase} final_snapshot={snapshot:?}",
                     self.harness, self.model_identity, child.id,
                 ));
             }
+            // A named child may retain an older Idle snapshot until its peer
+            // message reaches the run loop. Only the real gate witness proves
+            // the new turn started; Idle is not a rejection signal here.
             if Instant::now() >= deadline {
                 return Err(format!(
                     "timed out waiting for real child shell gate: harness={} model={} worker={} phase={phase} final_snapshot={snapshot:?} gate_started={} gate_timed_out={}",
@@ -803,10 +776,23 @@ impl LiveChildFixture {
             ));
         }
         let input = &inputs[0];
-        gate.validates_approval(input)?;
+        let request = gate.registered_permission_request(input)?;
+        let response = crate::agents::live_e2e_support::bounded_command_permission(
+            &request,
+            &[gate.command()],
+        )?;
+        let ExtensionUiResponse::Value { id, value } = response else {
+            return Err("E2E_BLOCKED: gate permission helper returned a non-value response".into());
+        };
+        if id != input.id {
+            return Err(format!(
+                "E2E_BLOCKED: gate permission helper changed the registered input id: {:?} -> {id:?}",
+                input.id
+            ));
+        }
         CallerRegistry::shared().respond_to_child_input(WorkerInputResponse {
-            id: input.id.clone(),
-            value: Some("Allow".into()),
+            id,
+            value: Some(value),
             cancel: false,
         })?;
         eprintln!(

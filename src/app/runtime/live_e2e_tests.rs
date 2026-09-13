@@ -45,8 +45,8 @@ use crate::{
 };
 
 use crate::agents::live_e2e_support::{
-    McpGuard, TEST_IMAGE, TURN_TIMEOUT, alternate_image, e2e_case_dir, isolated_locator_root,
-    live_access_mode_for_harness, selected_live_harnesses,
+    McpGuard, TEST_IMAGE, TURN_TIMEOUT, alternate_image, bounded_command_permission, e2e_case_dir,
+    isolated_locator_root, live_access_mode_for_harness, selected_live_harnesses,
 };
 
 const EVENT_POLL: Duration = Duration::from_millis(20);
@@ -915,25 +915,19 @@ fn approve_safe(
     request: ExtensionUiRequest,
 ) -> Result<Option<ExtensionUiResponse>, String> {
     match request {
-        ExtensionUiRequest::Confirm { title, .. } => Err(format!(
-            "E2E_BLOCKED: refusing an unstructured confirmation request; no verified exact-command envelope is available: {title}"
-        )),
-        ExtensionUiRequest::Select {
-            id, title, options, ..
-        } => approve_claude_gate_select(project, safe_gate, &id, &title, &options).map(Some),
-        ExtensionUiRequest::Input { title, .. } | ExtensionUiRequest::Editor { title, .. } => {
-            Err(format!(
-                "E2E_BLOCKED: live runtime needs an interactive response that this test will not guess: {title}"
-            ))
-        }
-        ExtensionUiRequest::Unknown { .. } => {
-            Err("E2E_BLOCKED: live runtime requested an unclassified interaction".into())
-        }
         ExtensionUiRequest::Notify { .. }
         | ExtensionUiRequest::SetStatus { .. }
         | ExtensionUiRequest::SetWidget { .. }
         | ExtensionUiRequest::SetTitle { .. }
         | ExtensionUiRequest::SetEditorText { .. } => Ok(None),
+        request => {
+            let gate = safe_gate.ok_or_else(|| {
+                "E2E_BLOCKED: refusing an interaction before a registered project-local gate"
+                    .to_owned()
+            })?;
+            let _gate_path = checked_gate_name_path(project, gate)?;
+            bounded_command_permission(&request, &[gate_command(gate)]).map(Some)
+        }
     }
 }
 
@@ -1085,46 +1079,6 @@ fn gate_name(message: &str) -> &str {
         .unwrap_or_default()
 }
 
-fn approve_claude_gate_select(
-    project: &Path,
-    safe_gate: Option<&str>,
-    id: &str,
-    title: &str,
-    options: &[String],
-) -> Result<ExtensionUiResponse, String> {
-    let gate = safe_gate.ok_or_else(|| {
-        "E2E_BLOCKED: refusing an unregistered Claude Bash permission request".to_owned()
-    })?;
-    let _gate_path = checked_gate_name_path(project, gate)?;
-    if !options.iter().map(String::as_str).eq(["Deny", "Allow"]) {
-        return Err(format!(
-            "E2E_BLOCKED: refusing Claude Bash permission with unexpected choices: {options:?}"
-        ));
-    }
-    let payload = title.strip_prefix("Allow Bash?\n").ok_or_else(|| {
-        "E2E_BLOCKED: refusing a non-Bash selection while waiting for the exact gate".to_owned()
-    })?;
-    let payload: serde_json::Value = serde_json::from_str(payload).map_err(|error| {
-        format!("E2E_BLOCKED: refusing malformed Claude Bash permission payload: {error}")
-    })?;
-    let command = payload
-        .as_object()
-        .and_then(|payload| payload.get("command"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            "E2E_BLOCKED: refusing Claude Bash permission without an exact command".to_owned()
-        })?;
-    if command != gate_command(gate) {
-        return Err(format!(
-            "E2E_BLOCKED: refusing Claude Bash command outside the registered project-local gate: {command:?}"
-        ));
-    }
-    Ok(ExtensionUiResponse::Value {
-        id: id.to_owned(),
-        value: "Allow".into(),
-    })
-}
-
 fn release_gate(project: &Path, message: &str) -> Result<(), String> {
     let path = checked_gate_path(project, message)?;
     fs::write(&path, "release\n")
@@ -1223,7 +1177,7 @@ fn checked_gate_name_path(project: &Path, name: &str) -> Result<PathBuf, String>
 }
 
 #[test]
-fn claude_gate_selection_allows_only_the_exact_registered_command() {
+fn runtime_gate_permission_allows_only_the_exact_registered_command() {
     let project = Path::new("/private/tmp/farcaster-live-runtime-permission");
     let gate = "farcaster-live-gate";
     let title = format!(
@@ -1231,37 +1185,43 @@ fn claude_gate_selection_allows_only_the_exact_registered_command() {
         serde_json::json!({"command": gate_command(gate), "description": "runtime gate"})
     );
     assert_eq!(
-        approve_claude_gate_select(
+        approve_safe(
             project,
             Some(gate),
-            "permission-id",
-            &title,
-            &["Deny".into(), "Allow".into()],
+            ExtensionUiRequest::Select {
+                id: "permission-id".into(),
+                title,
+                options: vec!["Deny".into(), "Allow".into()],
+                timeout: None,
+            },
         ),
-        Ok(ExtensionUiResponse::Value {
+        Ok(Some(ExtensionUiResponse::Value {
             id: "permission-id".into(),
             value: "Allow".into(),
-        })
+        }))
     );
 }
 
 #[test]
-fn claude_gate_selection_rejects_a_compound_command() {
+fn runtime_gate_permission_rejects_a_compound_command() {
     let project = Path::new("/private/tmp/farcaster-live-runtime-permission");
     let gate = "farcaster-live-gate";
     let title = format!(
         "Allow Bash?\n{}",
         serde_json::json!({"command": format!("{}; touch not-allowed", gate_command(gate))})
     );
-    let error = approve_claude_gate_select(
+    let error = approve_safe(
         project,
         Some(gate),
-        "permission-id",
-        &title,
-        &["Deny".into(), "Allow".into()],
+        ExtensionUiRequest::Select {
+            id: "permission-id".into(),
+            title,
+            options: vec!["Deny".into(), "Allow".into()],
+            timeout: None,
+        },
     )
     .expect_err("compound command must not be approved");
-    assert!(error.contains("outside the registered project-local gate"));
+    assert!(error.contains("E2E_BLOCKED"));
 }
 
 fn unique(prefix: &str) -> String {

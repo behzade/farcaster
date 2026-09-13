@@ -25,7 +25,7 @@ use crate::{
         live_e2e_support::{self, TURN_TIMEOUT, TurnGate, new_turn_gate},
     },
     app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
-    protocol::ExtensionUiRequest,
+    protocol::{ExtensionUiRequest, ExtensionUiResponse},
     runtime::ConfigurationStatus,
 };
 
@@ -379,52 +379,85 @@ fn apply_handoff_reached_boundary(
                 || completed_runs >= completed_runs_before_apply.saturating_add(2)))
 }
 
-/// Claude presents shell approval as a Select whose detail is structured JSON.
-/// Do not approve based on a filename substring: this suite may only allow the
-/// one project-local shell command created by its bounded gate.
-fn validate_gate_bash_select(
-    title: &str,
-    options: &[String],
+/// The shared matcher validates the exact registered command and a harness's
+/// known one-shot Allow options. This UI layer only turns its selected value
+/// into the actual rendered number key; it never sends a response itself.
+fn gate_permission_option_index(
+    request: &ExtensionUiRequest,
     gate: &TurnGate,
-) -> Result<(), String> {
-    if options.len() != 2 || options[0] != "Deny" || options[1] != "Allow" {
-        return Err(format!(
-            "E2E_BLOCKED: gate requested unexpected Bash choices {options:?}; refusing approval"
-        ));
-    }
-    let Some((heading, encoded)) = title.split_once('\n') else {
-        return Err(format!(
-            "E2E_BLOCKED: gate Bash approval had no structured command detail: {title:?}"
-        ));
+) -> Result<usize, String> {
+    let response = live_e2e_support::bounded_command_permission(request, &[gate.shell_command()])?;
+    let ExtensionUiResponse::Value { value, .. } = response else {
+        return Err("E2E_BLOCKED: gate permission matcher returned a non-select response".into());
     };
-    if heading.trim() != "Allow Bash?" {
+    if value.to_ascii_lowercase().contains("always") {
         return Err(format!(
-            "E2E_BLOCKED: gate requested unexpected approval title {heading:?}"
+            "E2E_BLOCKED: refusing non-one-shot gate permission value {value:?}"
         ));
     }
-    let detail: serde_json::Value = serde_json::from_str(encoded.trim()).map_err(|error| {
-        format!("E2E_BLOCKED: gate Bash approval has invalid structured command detail: {error}")
+    let ExtensionUiRequest::Select { options, .. } = request else {
+        return Err("E2E_BLOCKED: gate permission matcher accepted a non-select request".into());
+    };
+    let index = options.iter().position(|option| option == &value).ok_or_else(|| {
+        format!(
+            "E2E_BLOCKED: selected gate permission value {value:?} is absent from rendered options {options:?}"
+        )
     })?;
-    let command = detail.get("command").and_then(serde_json::Value::as_str);
-    let expected = format!("sh ./{}.sh", gate.file_name());
-    if command != Some(expected.as_str()) {
+    if index >= 5 {
         return Err(format!(
-            "E2E_BLOCKED: refusing Bash approval outside the exact gate command {expected:?}; received {command:?}"
+            "E2E_BLOCKED: gate permission option {value:?} is at unsupported rendered shortcut index {}",
+            index + 1
         ));
     }
-    Ok(())
+    Ok(index)
 }
 
 #[test]
-fn gate_bash_select_matcher_approves_only_the_exact_owned_command() -> Result<(), String> {
+fn gate_permission_matcher_allows_only_the_exact_owned_command() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| format!("create gate project: {error}"))?;
     let gate = new_turn_gate(project.path(), "approval")?;
-    let command = format!("sh ./{}.sh", gate.file_name());
+    let command = gate.shell_command();
     let exact_title = format!("Allow Bash?\n{{\"command\":{command:?}}}");
+    let select = |title, options| ExtensionUiRequest::Select {
+        id: "gate-permission".into(),
+        title,
+        options,
+        timeout: None,
+    };
 
     // This is the title/options shape captured from Claude's actual gate
-    // request. The matcher must accept it before the live test uses key [2].
-    validate_gate_bash_select(&exact_title, &["Deny".into(), "Allow".into()], &gate)?;
+    // request. The matcher must select the rendered Allow option, not reply.
+    assert_eq!(
+        gate_permission_option_index(
+            &select(exact_title.clone(), vec!["Deny".into(), "Allow".into()]),
+            &gate,
+        )?,
+        1
+    );
+    // Cursor renders its safe one-shot option first and wraps only the exact
+    // command in one backtick pair. Antigravity/ACP renders Allow second.
+    // Keep these indices explicit: the live UI must press the matching
+    // rendered number, never a hard-coded "2" or an Always variant.
+    assert_eq!(
+        gate_permission_option_index(
+            &select(
+                format!("`{command}`"),
+                vec!["Allow once".into(), "Allow always".into(), "Reject".into()],
+            ),
+            &gate,
+        )?,
+        0
+    );
+    assert_eq!(
+        gate_permission_option_index(
+            &select(
+                command.clone(),
+                vec!["Allow Always (risky)".into(), "Allow".into(), "Deny".into()],
+            ),
+            &gate,
+        )?,
+        1
+    );
 
     let cases = [
         (
@@ -452,7 +485,7 @@ fn gate_bash_select_matcher_approves_only_the_exact_owned_command() -> Result<()
         ),
     ];
     for (name, title, options) in cases {
-        let error = validate_gate_bash_select(&title, &options, &gate)
+        let error = gate_permission_option_index(&select(title, options), &gate)
             .expect_err(&format!("matcher approved {name}"));
         assert!(
             error.starts_with("E2E_BLOCKED:"),
@@ -491,18 +524,10 @@ fn wait_for_gate_tool(
             thread::sleep(UI_POLL);
             continue;
         }
-        let approval_key = match dialog {
-            Some(ExtensionUiRequest::Select { title, options, .. }) => {
-                validate_gate_bash_select(&title, &options, gate)?;
-                // The rendered Select view binds [1] Deny and [2] Allow.
-                "2"
-            }
-            request => {
-                return Err(format!(
-                    "E2E_BLOCKED: gate requires an unverified permission dialog {request:?}; refusing approval"
-                ));
-            }
-        };
+        let request = dialog.as_ref().ok_or_else(|| {
+            "E2E_BLOCKED: gate permission disappeared before the rendered choice".to_owned()
+        })?;
+        let approval_key = (gate_permission_option_index(request, gate)? + 1).to_string();
         // Exercise the rendered dialog's actual keyboard path. Do not inject
         // an ExtensionResponse or approve any command other than this gate.
         cx.update(|window, cx| {
@@ -510,7 +535,7 @@ fn wait_for_gate_tool(
             dialog_focus.focus(window, cx);
             window.draw(cx).clear(cx);
         });
-        dispatch_named_key(cx, approval_key);
+        dispatch_named_key(cx, &approval_key);
     }
     Err(format!(
         "timed out after {} seconds waiting for native tool gate {}",

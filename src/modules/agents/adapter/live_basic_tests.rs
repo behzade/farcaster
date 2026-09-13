@@ -18,8 +18,8 @@ use crate::{
 };
 
 use super::live_tests::support::{
-    LiveSession, Submission, TurnGate, alternate_image, bounded_gate_permission, for_each_selected,
-    image, marker,
+    LiveSession, Submission, TurnGate, alternate_image, bounded_command_permission,
+    bounded_gate_permission, for_each_selected, image, marker,
 };
 use super::live_tests::{TEST_IMAGE, TURN_TIMEOUT};
 
@@ -27,23 +27,46 @@ const BASIC_TIMEOUT: Duration = TURN_TIMEOUT;
 
 #[test]
 #[ignore = "real installed harness/model E2E; run through scripts/e2e.sh"]
+fn live_e2e_regular_message_response_once() -> Result<(), String> {
+    for_each_selected(|session| regular_response(session).map(|_| ()))
+}
+
+fn regular_response(session: &mut LiveSession) -> Result<(Submission, String), String> {
+    session.require_available("normal prompts", &session.capabilities().turns.prompt)?;
+    let input = marker("normal_input");
+    let answer = marker("normal_answer");
+    let cursor = session.activity_cursor();
+    let submission = session.submit(
+        PromptMode::Normal,
+        format!(
+            "This is a live integration test with input ID {input}. Reply with the exact token {answer} and no other words."
+        ),
+        Vec::new(),
+    )?;
+    require_accepted(session, &submission)?;
+    session.wait_for_settled_after(cursor, BASIC_TIMEOUT)?;
+    session.assert_transcript_user_once(&input, 0)?;
+    let answer_count = session
+        .conversation()
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::Assistant)
+        .map(|item| item.complete_text().matches(answer.as_str()).count())
+        .sum::<usize>();
+    if answer_count != 1 {
+        return Err(format!(
+            "expected one completed model response containing {answer:?}, found {answer_count}"
+        ));
+    }
+    Ok((submission, answer))
+}
+
+#[test]
+#[ignore = "real installed harness/model E2E; run through scripts/e2e.sh"]
 fn live_e2e_regular_message_response_history_once() -> Result<(), String> {
     for_each_selected(|session| {
-        session.require_available("normal prompts", &session.capabilities().turns.prompt)?;
         session.require_available("native history", &session.capabilities().sessions.history)?;
-        let input = marker("normal_input");
-        let answer = marker("normal_answer");
-        let cursor = session.activity_cursor();
-        let submission = session.submit(
-            PromptMode::Normal,
-            format!(
-                "This is a live integration test with input ID {input}. Reply with the exact token {answer} and no other words."
-            ),
-            Vec::new(),
-        )?;
-        require_accepted(session, &submission)?;
-        session.wait_for_assistant_text(&answer, BASIC_TIMEOUT)?;
-        session.wait_for_settled_after(cursor, BASIC_TIMEOUT)?;
+        let (submission, answer) = regular_response(session)?;
         session.assert_submission_once(&submission)?;
         let history = session.history_reload()?;
         if !history.iter().any(|message| {
@@ -54,7 +77,7 @@ fn live_e2e_regular_message_response_history_once() -> Result<(), String> {
                 "native history omitted the completed assistant response {answer:?}: {history:?}"
             ));
         }
-        session.assert_transcript_user_once(&input, 0)
+        session.assert_transcript_user_once(&submission.marker, 0)
     })
 }
 
@@ -129,11 +152,12 @@ fn live_e2e_tool_lifecycle_and_failed_command_output_are_visible() -> Result<(),
         )?;
         let missing = marker("missing_file").to_ascii_lowercase();
         let answer = marker("tool_error_answer");
+        let command = session.register_fixture_command(format!("cat {missing}"))?;
         let cursor = session.activity_cursor();
         let submission = session.submit(
             PromptMode::Normal,
             format!(
-                "Use the shell tool to run exactly `cat {missing}`. It must fail because that file does not exist. Then reply with the exact token {answer}. Do not create the file."
+                "Use the shell tool to run exactly `{command}`. It must fail because that file does not exist. Then reply with the exact token {answer}. Do not create the file."
             ),
             Vec::new(),
         )?;
@@ -205,11 +229,12 @@ fn live_e2e_mixed_streaming_preserves_tool_and_text_order() -> Result<(), String
         )?;
         let tool_token = marker("mixed_tool");
         let answer = marker("mixed_answer");
+        let command = session.register_fixture_command(format!("printf {tool_token}"))?;
         let cursor = session.activity_cursor();
         let submission = session.submit(
             PromptMode::Normal,
             format!(
-                "Use the shell tool to run exactly `printf {tool_token}`. After it returns, explain in one short sentence that it printed {tool_token}, then include the exact token {answer}."
+                "Use the shell tool to run exactly `{command}`. After it returns, explain in one short sentence that it printed {tool_token}, then include the exact token {answer}."
             ),
             Vec::new(),
         )?;
@@ -387,6 +412,57 @@ fn bounded_gate_permission_allows_only_the_registered_script() -> Result<(), Str
 }
 
 #[test]
+fn bounded_command_permission_allows_only_exact_oneshot_acp_forms() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let command = TurnGate::new(project.path(), "permission")?.shell_command();
+    let select = |id: &str, title: String, options: Vec<String>| ExtensionUiRequest::Select {
+        id: id.into(),
+        title,
+        options,
+        timeout: None,
+    };
+    let allowed = vec![command.clone()];
+    for (request, id, value) in [
+        (
+            select(
+                "cursor-raw",
+                command.clone(),
+                vec!["Allow once".into(), "Allow always".into(), "Reject".into()],
+            ),
+            "cursor-raw",
+            "Allow once",
+        ),
+        (
+            select(
+                "cursor-backtick",
+                format!("`{command}`"),
+                vec!["Allow once".into(), "Allow always".into(), "Reject".into()],
+            ),
+            "cursor-backtick",
+            "Allow once",
+        ),
+        (
+            select(
+                "antigravity",
+                command.clone(),
+                vec!["Allow Always (risky)".into(), "Allow".into(), "Deny".into()],
+            ),
+            "antigravity",
+            "Allow",
+        ),
+    ] {
+        assert_eq!(
+            bounded_command_permission(&request, &allowed),
+            Ok(ExtensionUiResponse::Value {
+                id: id.into(),
+                value: value.into()
+            })
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn bounded_gate_permission_rejects_unregistered_or_composed_commands() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let gate = TurnGate::new(project.path(), "permission")?;
@@ -437,5 +513,49 @@ fn bounded_gate_permission_rejects_unregistered_or_composed_commands() -> Result
             .expect_err("non-gate dialog must not receive an approval")
             .contains("E2E_BLOCKED")
     );
+    Ok(())
+}
+
+#[test]
+fn bounded_command_permission_rejects_nonexact_acp_titles_and_choices() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let command = TurnGate::new(project.path(), "permission")?.shell_command();
+    let select = |title: String, options: Vec<String>| ExtensionUiRequest::Select {
+        id: "gate-permission".into(),
+        title,
+        options,
+        timeout: None,
+    };
+    let invalid = [
+        // Antigravity's observed form is raw only: it must not accept a
+        // wrapper, suffix, or a different option order.
+        select(
+            format!("`{command}`"),
+            vec!["Allow Always (risky)".into(), "Allow".into(), "Deny".into()],
+        ),
+        select(
+            format!("{command}; touch forbidden"),
+            vec!["Allow Always (risky)".into(), "Allow".into(), "Deny".into()],
+        ),
+        // Cursor may present exactly one enclosing pair of backticks, but no
+        // prose, nesting, or changed choice order.
+        select(
+            format!("run `{command}` now"),
+            vec!["Allow once".into(), "Allow always".into(), "Reject".into()],
+        ),
+        select(
+            format!("``{command}``"),
+            vec!["Allow once".into(), "Allow always".into(), "Reject".into()],
+        ),
+        select(
+            command.clone(),
+            vec!["Allow always".into(), "Allow once".into(), "Reject".into()],
+        ),
+    ];
+    for request in invalid {
+        let error = bounded_command_permission(&request, std::slice::from_ref(&command))
+            .expect_err("nonexact ACP command selection must not receive an approval");
+        assert!(error.contains("E2E_BLOCKED"), "{error}");
+    }
     Ok(())
 }
