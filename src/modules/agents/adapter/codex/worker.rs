@@ -114,6 +114,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             child,
             writer: Some(writer),
             incoming,
+            wake: launch.wake.clone(),
             thread_id: thread_id.clone(),
             model: launch.model,
             effort: launch.effort,
@@ -126,6 +127,8 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             next_id,
             current_turn: None,
             abort_starting_turn: false,
+            abort_cleanup: None,
+            abort_cleanup_response_timeout: ABORT_CLEANUP_RESPONSE_TIMEOUT,
             output: String::new(),
             reasoning_started: false,
             compacting: false,
@@ -230,7 +233,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let (sender, incoming) = mpsc::channel();
     let thread_id = thread.id.clone();
     let reader_name = thread_id.clone();
-    let wake = launch.wake.clone();
+    let session_wake = launch.wake.clone();
+    let wake = session_wake.clone();
     thread::Builder::new()
         .name(format!("codex-session-{reader_name}"))
         .spawn(move || {
@@ -264,6 +268,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         child,
         writer: Some(writer),
         incoming,
+        wake: session_wake,
         thread_id: thread_id.clone(),
         model: None,
         effort: None,
@@ -276,6 +281,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         next_id,
         current_turn: None,
         abort_starting_turn: false,
+        abort_cleanup: None,
+        abort_cleanup_response_timeout: ABORT_CLEANUP_RESPONSE_TIMEOUT,
         output: String::new(),
         reasoning_started: false,
         compacting: false,
@@ -566,7 +573,39 @@ enum PendingRequest {
         client_id: String,
         starts_turn: bool,
     },
+    AbortCleanup {
+        target_turn: String,
+        phase: AbortCleanupPhase,
+    },
 }
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AbortCleanupPhase {
+    Initial,
+    AfterCompletion,
+}
+
+impl AbortCleanupPhase {
+    fn description(self) -> &'static str {
+        match self {
+            Self::Initial => "initial cleanup",
+            Self::AfterCompletion => "post-completion cleanup",
+        }
+    }
+}
+
+struct AbortCleanup {
+    target_turn: String,
+    watch_late_handoff: bool,
+    initial_accepted: bool,
+    initial_response_deadline: Option<std::time::Instant>,
+    target_completed: bool,
+    completion: Option<WorkerEvent>,
+    after_completion_accepted: bool,
+    after_completion_response_deadline: Option<std::time::Instant>,
+}
+
+const ABORT_CLEANUP_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[derive(Clone)]
 struct NativeInputDelivery {
@@ -651,6 +690,7 @@ struct CodexWorkerSession {
     child: Child,
     writer: Option<ChildStdin>,
     incoming: mpsc::Receiver<Result<CodexInbound, String>>,
+    wake: Option<thread::Thread>,
     thread_id: String,
     model: Option<String>,
     effort: Option<String>,
@@ -663,6 +703,8 @@ struct CodexWorkerSession {
     next_id: i64,
     current_turn: Option<String>,
     abort_starting_turn: bool,
+    abort_cleanup: Option<AbortCleanup>,
+    abort_cleanup_response_timeout: std::time::Duration,
     output: String,
     reasoning_started: bool,
     compacting: bool,
@@ -699,6 +741,7 @@ impl WorkerSession for CodexWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<(), String> {
+        self.ensure_abort_cleanup_finished()?;
         if self.dispatch_command(&message, mode, &images, None)? {
             return Ok(());
         }
@@ -712,6 +755,7 @@ impl WorkerSession for CodexWorkerSession {
         mode: WorkerSendMode,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, String> {
+        self.ensure_abort_cleanup_finished()?;
         if self.dispatch_command(&message, mode, &images, Some(id.clone()))? {
             return Ok(false);
         }
@@ -750,13 +794,17 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
+        if self.abort_cleanup.is_some() {
+            return Ok(());
+        }
         self.discard_retry_inputs();
         let handoff_phase = self.handoff.as_ref().map(|handoff| handoff.phase);
+        let handoff_target = self
+            .handoff
+            .as_ref()
+            .and_then(|handoff| handoff.target_turn.clone());
         if handoff_phase.is_some() {
             self.cancel_handoff()?;
-            if handoff_phase != Some(HandoffPhase::Submitted) {
-                return Ok(());
-            }
         }
         let Some(turn_id) = self.current_turn.clone() else {
             if self.pending.values().any(|request| {
@@ -770,13 +818,15 @@ impl WorkerSession for CodexWorkerSession {
                 )
             }) {
                 self.abort_starting_turn = true;
+                return Ok(());
             }
-            return Ok(());
+            return self.clean_completed_abort(handoff_target.as_deref().unwrap_or("idle"));
         };
-        self.interrupt_turn(&turn_id)
+        self.begin_abort_cleanup(&turn_id, handoff_phase != Some(HandoffPhase::Interrupting))
     }
 
     fn apply_steering(&mut self) -> Result<(), String> {
+        self.ensure_abort_cleanup_finished()?;
         if self.handoff.is_some() {
             return Ok(());
         }
@@ -853,10 +903,18 @@ impl WorkerSession for CodexWorkerSession {
         if let Some(event) = self.events.pop_front() {
             return Some(event);
         }
+        if let Some(event) = self.abort_cleanup_timeout() {
+            return Some(event);
+        }
+        if let Some(event) = self.release_abort_cleanup_if_ready() {
+            return Some(event);
+        }
         if let Some(message) = self.caller_identity.try_recv() {
             self.peer_messages.push_back(message);
         }
-        if let Some(mode) = WorkerSendMode::for_peer(self.activity())
+        if self.abort_cleanup.is_none()
+            && !self.abort_starting_turn
+            && let Some(mode) = WorkerSendMode::for_peer(self.activity())
             && !self.peer_messages.is_empty()
             && self.caller_identity.try_activate()
             && let Some(message) = self.peer_messages.pop_front()
@@ -1063,6 +1121,13 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         }
                     }
+                    Some(PendingRequest::AbortCleanup { target_turn, phase }) => {
+                        match self.accept_abort_cleanup(&target_turn, phase) {
+                            Ok(Some(event)) => return Some(event),
+                            Ok(None) => {}
+                            Err(error) => return Some(WorkerEvent::Failed(error)),
+                        }
+                    }
                     Some(
                         PendingRequest::Ignore
                         | PendingRequest::ObsoleteChildStatus
@@ -1177,7 +1242,13 @@ impl WorkerSession for CodexWorkerSession {
                             );
                             continue;
                         }
-                        Some(PendingRequest::HandoffTurn { client_id, .. }) => {
+                        Some(PendingRequest::HandoffTurn {
+                            client_id,
+                            starts_turn,
+                        }) => {
+                            if starts_turn {
+                                self.abort_starting_turn = false;
+                            }
                             let retained = self.reject_handoff(&client_id, &error.message);
                             return Some(WorkerEvent::RequestFailed {
                                 operation: "Codex steering handoff".into(),
@@ -1190,6 +1261,22 @@ impl WorkerSession for CodexWorkerSession {
                                     error.message
                                 },
                             });
+                        }
+                        Some(PendingRequest::AbortCleanup { target_turn, phase }) => {
+                            if self
+                                .abort_cleanup
+                                .as_ref()
+                                .is_none_or(|cleanup| cleanup.target_turn != target_turn)
+                            {
+                                continue;
+                            }
+                            self.abort_cleanup = None;
+                            return Some(WorkerEvent::Failed(format!(
+                                "Codex Abort cleanup for turn {target_turn} was rejected during {}: {} ({})",
+                                phase.description(),
+                                error.message,
+                                error.code
+                            )));
                         }
                         Some(PendingRequest::Ignore) | None => {}
                     }
@@ -1509,6 +1596,42 @@ impl WorkerSession for CodexWorkerSession {
                                 }
                             }
                             let failed = params["turn"]["status"].as_str() == Some("failed");
+                            if self
+                                .abort_cleanup
+                                .as_ref()
+                                .is_some_and(|cleanup| cleanup.target_turn == completed_turn)
+                            {
+                                let completion = if self.manual_compaction {
+                                    WorkerEvent::Settled {
+                                        output: String::new(),
+                                    }
+                                } else if failed {
+                                    WorkerEvent::Failed(codex_turn_failure(self.turn_error.take()))
+                                } else {
+                                    WorkerEvent::Settled {
+                                        output: self.output.clone(),
+                                    }
+                                };
+                                if let Err(error) =
+                                    self.complete_aborted_turn(&completed_turn, completion)
+                                {
+                                    return Some(WorkerEvent::Failed(error));
+                                }
+                                if self.manual_compaction {
+                                    self.manual_compaction = false;
+                                    if self.compacting || failed {
+                                        self.compacting = false;
+                                        return Some(WorkerEvent::Activity(
+                                            WorkerActivity::CompactionFinished {
+                                                aborted: false,
+                                                error: failed
+                                                    .then(|| "Codex compaction failed".into()),
+                                            },
+                                        ));
+                                    }
+                                }
+                                continue;
+                            }
                             if self.manual_compaction {
                                 self.manual_compaction = false;
                                 if self.compacting || failed {
@@ -1637,6 +1760,210 @@ impl WorkerSession for CodexWorkerSession {
 }
 
 impl CodexWorkerSession {
+    fn ensure_abort_cleanup_finished(&self) -> Result<(), String> {
+        if self.abort_cleanup.is_some() || self.abort_starting_turn {
+            Err("Codex Abort cleanup is still pending".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn begin_abort_cleanup(&mut self, turn_id: &str, interrupt: bool) -> Result<(), String> {
+        if self.abort_cleanup.is_some() {
+            if self
+                .abort_cleanup
+                .as_ref()
+                .is_some_and(|cleanup| cleanup.target_turn == turn_id)
+            {
+                return Ok(());
+            }
+        }
+        let watch_late_handoff = self
+            .abort_cleanup
+            .as_ref()
+            .is_some_and(|cleanup| cleanup.watch_late_handoff)
+            || self.handoff.is_some();
+        self.abort_cleanup = Some(AbortCleanup {
+            target_turn: turn_id.to_owned(),
+            watch_late_handoff,
+            initial_accepted: false,
+            initial_response_deadline: None,
+            target_completed: false,
+            completion: None,
+            after_completion_accepted: false,
+            after_completion_response_deadline: None,
+        });
+        let result = (|| {
+            if interrupt {
+                self.interrupt_turn(turn_id)?;
+            }
+            self.request_abort_cleanup(turn_id, AbortCleanupPhase::Initial)
+        })();
+        if result.is_err() {
+            self.abort_cleanup = None;
+        }
+        result
+    }
+
+    fn clean_completed_abort(&mut self, target_turn: &str) -> Result<(), String> {
+        self.abort_cleanup = Some(AbortCleanup {
+            target_turn: target_turn.to_owned(),
+            watch_late_handoff: self.handoff.is_some(),
+            initial_accepted: true,
+            initial_response_deadline: None,
+            target_completed: true,
+            completion: None,
+            after_completion_accepted: false,
+            after_completion_response_deadline: None,
+        });
+        if let Err(error) =
+            self.request_abort_cleanup(target_turn, AbortCleanupPhase::AfterCompletion)
+        {
+            self.abort_cleanup = None;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn request_abort_cleanup(
+        &mut self,
+        target_turn: &str,
+        phase: AbortCleanupPhase,
+    ) -> Result<(), String> {
+        let id = self.request(
+            "thread/backgroundTerminals/clean",
+            json!({"threadId": self.thread_id}),
+        )?;
+        self.pending.insert(
+            id,
+            PendingRequest::AbortCleanup {
+                target_turn: target_turn.to_owned(),
+                phase,
+            },
+        );
+        let deadline = std::time::Instant::now() + self.abort_cleanup_response_timeout;
+        let scheduled = if let Some(cleanup) = self
+            .abort_cleanup
+            .as_mut()
+            .filter(|cleanup| cleanup.target_turn == target_turn)
+        {
+            match phase {
+                AbortCleanupPhase::Initial => cleanup.initial_response_deadline = Some(deadline),
+                AbortCleanupPhase::AfterCompletion => {
+                    cleanup.after_completion_response_deadline = Some(deadline);
+                }
+            }
+            true
+        } else {
+            false
+        };
+        if scheduled {
+            self.schedule_abort_cleanup_wake(deadline)?;
+        }
+        Ok(())
+    }
+
+    fn complete_aborted_turn(
+        &mut self,
+        target_turn: &str,
+        completion: WorkerEvent,
+    ) -> Result<(), String> {
+        let Some(cleanup) = self.abort_cleanup.as_mut() else {
+            return Ok(());
+        };
+        if cleanup.target_turn != target_turn || cleanup.completion.is_some() {
+            return Ok(());
+        }
+        cleanup.target_completed = true;
+        cleanup.completion = Some(completion);
+        if let Err(error) =
+            self.request_abort_cleanup(target_turn, AbortCleanupPhase::AfterCompletion)
+        {
+            self.abort_cleanup = None;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn accept_abort_cleanup(
+        &mut self,
+        target_turn: &str,
+        phase: AbortCleanupPhase,
+    ) -> Result<Option<WorkerEvent>, String> {
+        // This ACK only confirms that app-server admitted the core cleanup op.
+        // The live gate test verifies that the owned shell actually exits.
+        let Some(cleanup) = self.abort_cleanup.as_mut() else {
+            return Ok(None);
+        };
+        if cleanup.target_turn != target_turn {
+            return Ok(None);
+        }
+        match phase {
+            AbortCleanupPhase::Initial => {
+                cleanup.initial_accepted = true;
+                cleanup.initial_response_deadline = None;
+            }
+            AbortCleanupPhase::AfterCompletion => {
+                cleanup.after_completion_accepted = true;
+                cleanup.after_completion_response_deadline = None;
+            }
+        }
+        Ok(self.release_abort_cleanup_if_ready())
+    }
+
+    fn abort_cleanup_timeout(&mut self) -> Option<WorkerEvent> {
+        let now = std::time::Instant::now();
+        let cleanup = self.abort_cleanup.as_ref()?;
+        let phase = if cleanup
+            .initial_response_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            AbortCleanupPhase::Initial
+        } else if cleanup
+            .after_completion_response_deadline
+            .is_some_and(|deadline| now >= deadline)
+        {
+            AbortCleanupPhase::AfterCompletion
+        } else {
+            return None;
+        };
+        let target_turn = cleanup.target_turn.clone();
+        self.abort_cleanup = None;
+        Some(WorkerEvent::Failed(format!(
+            "Codex Abort cleanup for turn {target_turn} received no {} acknowledgement within {} seconds",
+            phase.description(),
+            self.abort_cleanup_response_timeout.as_secs_f64()
+        )))
+    }
+
+    fn schedule_abort_cleanup_wake(&self, deadline: std::time::Instant) -> Result<(), String> {
+        let Some(wake) = self.wake.clone() else {
+            return Ok(());
+        };
+        thread::Builder::new()
+            .name("codex-abort-cleanup-deadline".into())
+            .spawn(move || {
+                thread::park_timeout(deadline.saturating_duration_since(std::time::Instant::now()));
+                wake.unpark();
+            })
+            .map(|_| ())
+            .map_err(|error| format!("schedule Codex Abort cleanup deadline: {error}"))
+    }
+
+    fn release_abort_cleanup_if_ready(&mut self) -> Option<WorkerEvent> {
+        let ready = self.abort_cleanup.as_ref().is_some_and(|cleanup| {
+            cleanup.initial_accepted
+                && cleanup.target_completed
+                && cleanup.after_completion_accepted
+                && (!cleanup.watch_late_handoff || self.handoff.is_none())
+        });
+        if !ready {
+            return None;
+        }
+        let mut cleanup = self.abort_cleanup.take()?;
+        cleanup.completion.take()
+    }
+
     fn record_prompt_ack(&mut self, id: String, result: Result<(), String>) {
         if self.acknowledged_prompts.insert(id.clone()) {
             self.prompt_acks.push_back((id, result));
@@ -1690,7 +2017,7 @@ impl CodexWorkerSession {
                 self.client_submissions.remove(client_id);
                 if input.cancel_on_delivery
                     && let Some(turn_id) = self.current_turn.clone()
-                    && let Err(error) = self.interrupt_turn(&turn_id)
+                    && let Err(error) = self.begin_abort_cleanup(&turn_id, true)
                 {
                     self.events.push_back(WorkerEvent::Failed(error));
                 }
@@ -1776,14 +2103,20 @@ impl CodexWorkerSession {
     }
 
     fn interrupt_started_turn_if_requested(&mut self) -> Result<(), String> {
-        if !self.abort_starting_turn {
-            return Ok(());
-        }
         let Some(turn_id) = self.current_turn.clone() else {
             return Ok(());
         };
-        self.interrupt_turn(&turn_id)?;
-        self.abort_starting_turn = false;
+        if self.abort_starting_turn {
+            self.abort_starting_turn = false;
+            return self.begin_abort_cleanup(&turn_id, true);
+        }
+        if self
+            .abort_cleanup
+            .as_ref()
+            .is_some_and(|cleanup| cleanup.watch_late_handoff && cleanup.target_turn != turn_id)
+        {
+            return self.begin_abort_cleanup(&turn_id, true);
+        }
         Ok(())
     }
 

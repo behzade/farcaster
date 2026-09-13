@@ -158,13 +158,16 @@ fn rejected_claimed_handoff_retries_exact_input_only_on_explicit_apply() {
 #[test]
 fn abort_discards_rejected_handoff_instead_of_retrying_it() {
     for abort_before_rejection in [false, true] {
-        let (mut session, _sent, batch) = claimed_batch(false);
+        let (mut session, mut sent, batch) = claimed_batch(false);
         if abort_before_rejection {
             session.abort().unwrap();
         }
         reject(&mut session, &batch);
         if !abort_before_rejection {
             session.abort().unwrap();
+            let cleanup = request(&mut sent);
+            assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
+            reply(&mut session, &cleanup, json!({}));
         }
         let before = session.next_id;
         session.apply_steering().unwrap();

@@ -339,6 +339,7 @@ fn test_session() -> CodexWorkerSession {
             .expect("test child"),
         writer: None,
         incoming,
+        wake: None,
         thread_id: "thread-1".into(),
         model: None,
         effort: None,
@@ -351,6 +352,8 @@ fn test_session() -> CodexWorkerSession {
         next_id: 0,
         current_turn: None,
         abort_starting_turn: false,
+        abort_cleanup: None,
+        abort_cleanup_response_timeout: ABORT_CLEANUP_RESPONSE_TIMEOUT,
         output: String::new(),
         reasoning_started: false,
         compacting: false,
@@ -422,6 +425,11 @@ fn assert_deferred_interrupt(start: CodexInbound) {
     let interrupt = serde_json::from_str::<Value>(&request).expect("decode turn interrupt");
     assert_eq!(interrupt["method"], "turn/interrupt");
     assert_eq!(interrupt["params"]["turnId"], "turn-1");
+    request.clear();
+    sent.read_line(&mut request).expect("read deferred cleanup");
+    let cleanup = serde_json::from_str::<Value>(&request).expect("decode terminal cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
+    assert_eq!(cleanup["params"]["threadId"], "thread-1");
 }
 
 #[test]
@@ -438,6 +446,202 @@ fn abort_before_turn_id_interrupts_after_started_notification() {
         method: "turn/started".into(),
         params: json!({"threadId": "thread-1", "turn": {"id": "turn-1"}}),
     });
+}
+
+#[test]
+fn abort_holds_settled_and_new_input_until_both_native_cleanups_are_accepted() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session.output = "partial".into();
+    session.abort().expect("abort active turn");
+
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("read interrupt");
+    let interrupt = serde_json::from_str::<Value>(&line).expect("decode interrupt");
+    assert_eq!(interrupt["method"], "turn/interrupt");
+    assert_eq!(interrupt["params"]["turnId"], "turn-1");
+    line.clear();
+    sent.read_line(&mut line).expect("read initial cleanup");
+    let cleanup = serde_json::from_str::<Value>(&line).expect("decode cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
+    assert_eq!(cleanup["params"], json!({"threadId": "thread-1"}));
+
+    assert_eq!(
+        session
+            .send("too soon".into(), WorkerSendMode::Prompt)
+            .expect_err("new turn must stay fenced"),
+        "Codex Abort cleanup is still pending"
+    );
+    assert_eq!(
+        session
+            .apply_steering()
+            .expect_err("handoff must stay fenced"),
+        "Codex Abort cleanup is still pending"
+    );
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(2),
+        result: json!({}),
+    }));
+    assert!(session.poll().is_none(), "initial clean ACK is not settled");
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    assert!(
+        session.poll().is_none(),
+        "completion waits for repeat cleanup"
+    );
+    line.clear();
+    sent.read_line(&mut line).expect("read repeat cleanup");
+    let cleanup = serde_json::from_str::<Value>(&line).expect("decode repeat cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(3),
+        result: json!({}),
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Settled { output }) if output == "partial"
+    ));
+    assert!(session.abort_cleanup.is_none());
+}
+
+#[test]
+fn rejected_native_abort_cleanup_fails_instead_of_reporting_settled() {
+    let (mut session, _sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session.abort().expect("abort active turn");
+    session.queued_inbound.push_back(Ok(CodexInbound::Error {
+        id: CodexRequestId::Number(2),
+        error: super::super::contract::CodexRpcError {
+            code: -32601,
+            message: "experimental method unavailable".into(),
+            data: Value::Null,
+        },
+    }));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error))
+            if error.contains("initial cleanup")
+                && error.contains("experimental method unavailable")
+    ));
+    assert!(session.abort_cleanup.is_none());
+}
+
+#[test]
+fn withheld_initial_native_abort_cleanup_ack_fails_on_deadline() {
+    let (mut session, _sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session.abort().expect("abort active turn");
+    session
+        .abort_cleanup
+        .as_mut()
+        .expect("pending cleanup")
+        .initial_response_deadline = Some(std::time::Instant::now());
+
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error))
+            if error.contains("initial cleanup acknowledgement")
+                && error.contains("within 15 seconds")
+    ));
+    assert!(session.abort_cleanup.is_none());
+}
+
+#[test]
+fn withheld_post_completion_native_abort_cleanup_ack_never_reports_settled() {
+    let (mut session, _sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session.abort().expect("abort active turn");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(2),
+        result: json!({}),
+    }));
+    assert!(session.poll().is_none());
+    session
+        .queued_inbound
+        .push_back(Ok(CodexInbound::Notification {
+            method: "turn/completed".into(),
+            params: json!({"threadId":"thread-1","turn":{
+                "id":"turn-1","status":"interrupted"
+            }}),
+        }));
+    assert!(session.poll().is_none());
+    session
+        .abort_cleanup
+        .as_mut()
+        .expect("pending repeat cleanup")
+        .after_completion_response_deadline = Some(std::time::Instant::now());
+
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error))
+            if error.contains("post-completion cleanup acknowledgement")
+                && error.contains("within 15 seconds")
+    ));
+    assert!(session.abort_cleanup.is_none());
+    assert!(session.poll().is_none(), "timeout must not emit Settled");
+}
+
+#[test]
+fn native_abort_cleanup_deadline_wakes_an_idle_worker_loop() {
+    let (mut session, _sent) = writable_test_session();
+    session.current_turn = Some("turn-1".into());
+    session.wake = Some(std::thread::current());
+    session.abort_cleanup_response_timeout = std::time::Duration::from_millis(20);
+    session.abort().expect("abort active turn");
+
+    let test_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let failure = loop {
+        std::thread::park_timeout(
+            test_deadline.saturating_duration_since(std::time::Instant::now()),
+        );
+        if let Some(event) = session.poll() {
+            break event;
+        }
+        assert!(
+            std::time::Instant::now() < test_deadline,
+            "idle worker received no cleanup-deadline wake"
+        );
+    };
+    assert!(matches!(
+        failure,
+        WorkerEvent::Failed(error) if error.contains("initial cleanup acknowledgement")
+    ));
+}
+
+#[test]
+fn idle_abort_cleans_native_terminals_before_accepting_another_turn() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    session.abort().expect("clean idle thread");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("read idle cleanup");
+    let cleanup = serde_json::from_str::<Value>(&line).expect("decode idle cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
+    assert!(
+        session
+            .send("too soon".into(), WorkerSendMode::Prompt)
+            .is_err()
+    );
+
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: CodexRequestId::Number(1),
+        result: json!({}),
+    }));
+    assert!(session.poll().is_none());
+    session
+        .send("after cleanup".into(), WorkerSendMode::Prompt)
+        .expect("start after cleanup ACK");
 }
 
 #[test]
@@ -1486,13 +1690,14 @@ fn old_unknown_batch_does_not_block_cancelled_handoff_cleanup_or_later_apply() {
     assert_eq!(apply_interrupt["method"], "turn/interrupt");
     let before_abort = session.next_id;
     session.abort().expect("second escape");
-    if session.next_id != before_abort {
-        line.clear();
-        sent.read_line(&mut line).expect("abort request");
-        let abort: Value = serde_json::from_str(&line).expect("decode abort request");
-        assert_eq!(abort["method"], "turn/interrupt");
-        assert_eq!(abort["params"]["turnId"], "turn-2");
-    }
+    assert_eq!(session.next_id, before_abort + 1);
+    line.clear();
+    sent.read_line(&mut line).expect("abort cleanup");
+    let initial_cleanup: Value = serde_json::from_str(&line).expect("decode abort cleanup");
+    assert_eq!(
+        initial_cleanup["method"],
+        "thread/backgroundTerminals/clean"
+    );
     session
         .queued_inbound
         .push_back(Ok(CodexInbound::Notification {
@@ -1502,6 +1707,21 @@ fn old_unknown_batch_does_not_block_cancelled_handoff_cleanup_or_later_apply() {
             }}),
         }));
     let _ = session.poll();
+    line.clear();
+    sent.read_line(&mut line).expect("post-completion cleanup");
+    let repeat_cleanup: Value =
+        serde_json::from_str(&line).expect("decode post-completion cleanup");
+    assert_eq!(repeat_cleanup["method"], "thread/backgroundTerminals/clean");
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: serde_json::from_value(initial_cleanup["id"].clone()).expect("initial cleanup id"),
+        result: json!({}),
+    }));
+    assert!(session.poll().is_none());
+    session.queued_inbound.push_back(Ok(CodexInbound::Response {
+        id: serde_json::from_value(repeat_cleanup["id"].clone()).expect("repeat cleanup id"),
+        result: json!({}),
+    }));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert!(session.handoff.is_none());
     assert!(session.batch_deliveries.contains_key("farcaster-handoff-3"));
 
@@ -1837,6 +2057,10 @@ fn abort_cancels_handoff_but_acknowledges_and_deletes_late_queue_add() {
     line.clear();
     sent.read_line(&mut line).expect("handoff interrupt");
     session.abort().expect("second escape");
+    line.clear();
+    sent.read_line(&mut line).expect("abort cleanup");
+    let cleanup: Value = serde_json::from_str(&line).expect("decode abort cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
 
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
         id: CodexRequestId::Number(1),
@@ -1852,7 +2076,7 @@ fn abort_cancels_handoff_but_acknowledges_and_deletes_late_queue_add() {
     assert_eq!(delete["method"], "thread/queue/delete");
     assert_eq!(delete["params"]["queuedSubmissionId"], "queued-1");
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
-        id: CodexRequestId::Number(3),
+        id: CodexRequestId::Number(4),
         result: json!({"deleted":true}),
     }));
     assert!(session.poll().is_none());
@@ -2058,6 +2282,10 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
     if !abort_before_delete_reply {
         session.abort().expect("second escape after delete reply");
     }
+    line.clear();
+    sent.read_line(&mut line).expect("completed-turn cleanup");
+    let cleanup: Value = serde_json::from_str(&line).expect("decode completed-turn cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
 
     session
         .queued_inbound
@@ -2094,6 +2322,11 @@ fn assert_second_abort_cancels_auto_started_queue(abort_before_delete_reply: boo
     let interrupt: Value = serde_json::from_str(&line).expect("decode auto-start interrupt");
     assert_eq!(interrupt["method"], "turn/interrupt");
     assert_eq!(interrupt["params"]["turnId"], "auto-turn");
+    line.clear();
+    sent.read_line(&mut line)
+        .expect("clean owned auto-start terminals");
+    let cleanup: Value = serde_json::from_str(&line).expect("decode auto-start cleanup");
+    assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
     assert!(session.handoff.is_none(), "cancelled handoff must release");
 }
 
