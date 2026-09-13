@@ -119,6 +119,73 @@ fn completed_update_retains_content_from_an_earlier_partial_update() {
 }
 
 #[test]
+fn cursor_failed_process_preserves_stderr_and_sets_error() {
+    let update = json!({
+        "sessionUpdate":"tool_call_update",
+        "toolCallId":"cursor-shell",
+        "kind":"execute",
+        "status":"completed",
+        "rawOutput":{
+            "exitCode":1,
+            "stdout":"",
+            "stderr":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+        }
+    });
+    let metadata = tool_metadata(&update);
+
+    assert_eq!(
+        tool_result(&metadata, &update)["content"],
+        json!([{
+            "type":"text",
+            "text":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+        }])
+    );
+    assert!(tool_result_is_error(&metadata, &update));
+}
+
+#[test]
+fn antigravity_failed_process_prefers_combined_output_without_duplication() {
+    let update = json!({
+        "sessionUpdate":"tool_call_update",
+        "toolCallId":"antigravity-shell",
+        "kind":"execute",
+        "status":"completed",
+        "rawOutput":{
+            "commandLine":"cat farcaster_e2e_missing_file",
+            "exitCode":1,
+            "exit_code":1,
+            "combinedOutput":"cat: farcaster_e2e_missing_file: No such file or directory\n",
+            "formatted_output":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+        }
+    });
+    let metadata = tool_metadata(&update);
+
+    assert_eq!(
+        tool_result(&metadata, &update)["content"],
+        json!([{
+            "type":"text",
+            "text":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+        }])
+    );
+    assert!(tool_result_is_error(&metadata, &update));
+}
+
+#[test]
+fn successful_process_exit_is_not_an_error() {
+    let update = json!({
+        "status":"completed",
+        "rawOutput":{"exitCode":"0", "stdout":"done\n", "stderr":""}
+    });
+    let metadata = tool_metadata(&update);
+
+    assert_eq!(
+        tool_result(&metadata, &update)["content"],
+        json!([{"type":"text", "text":"done\n"}])
+    );
+    assert!(!tool_result_is_error(&metadata, &update));
+}
+
+#[test]
 fn edit_payloads_use_canonical_args_and_diff_details() {
     assert_eq!(
         tool_args(&tool_metadata(&json!({

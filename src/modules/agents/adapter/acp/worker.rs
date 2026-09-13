@@ -13,7 +13,7 @@ use super::{
     translate::{
         ConfigIds, commands_from_update, commands_from_value, content_text, find_permission_option,
         is_acceptance, merge_tool_metadata, normalize_content, normalize_tool_name, tool_args,
-        tool_result, usage_update,
+        tool_result, tool_result_is_error, usage_update,
     },
 };
 use crate::{
@@ -716,7 +716,8 @@ impl AcpWorkerSession {
                 emitted.push_back(WorkerEvent::Activity(WorkerActivity::ToolFinished {
                     id: id.clone(),
                     result: tool_result(&state.metadata, update),
-                    is_error: status == Some("failed"),
+                    is_error: status == Some("failed")
+                        || tool_result_is_error(&state.metadata, update),
                 }));
             } else if !state.finished
                 && let Some(content) = update.get("content").or_else(|| update.get("rawOutput"))
@@ -859,6 +860,19 @@ impl AcpWorkerSession {
                     input.images.clone(),
                 )));
         }
+    }
+
+    fn acknowledge_current_prompt_before(&mut self, event: WorkerEvent) -> WorkerEvent {
+        // Translating one native update can queue follow-on events, such as a
+        // tool finish after its metadata change. Delivery must precede all of
+        // those execution events so the transcript keeps one assistant turn.
+        let deferred = std::mem::take(&mut self.events);
+        self.acknowledge_current_prompt_started();
+        self.events.push_back(event);
+        self.events.extend(deferred);
+        self.events
+            .pop_front()
+            .expect("the translated ACP event was queued")
     }
 
     fn reject_inputs(&mut self, inputs: impl IntoIterator<Item = PendingPrompt>, error: &str) {
@@ -1408,13 +1422,12 @@ impl WorkerSession for AcpWorkerSession {
                         let proves_execution = Self::update_proves_prompt_execution(&params);
                         if let Some(event) = self.update(params) {
                             if proves_execution {
-                                self.acknowledge_current_prompt_started();
+                                return Some(self.acknowledge_current_prompt_before(event));
                             }
                             return Some(event);
                         }
                     } else if let Some(event) = self.cursor_notification(&method, &params) {
-                        self.acknowledge_current_prompt_started();
-                        return Some(event);
+                        return Some(self.acknowledge_current_prompt_before(event));
                     } else {
                         log_bad_acp_message(
                             self.profile.name,
@@ -1451,6 +1464,7 @@ impl WorkerSession for AcpWorkerSession {
     }
 
     fn close(&mut self) -> Result<(), String> {
+        let mut errors = Vec::new();
         if self.features.close
             && self
                 .child
@@ -1458,7 +1472,12 @@ impl WorkerSession for AcpWorkerSession {
                 .map_err(|error| format!("check {} ACP agent: {error}", self.profile.name))?
                 .is_none()
         {
-            let _ = self.request("session/close", json!({"sessionId": self.session_id}));
+            if let Err(error) = self
+                .connection
+                .request_blocking("session/close", json!({"sessionId": self.session_id}))
+            {
+                errors.push(format!("close {} session: {error}", self.profile.name));
+            }
         }
         if self
             .child
@@ -1466,14 +1485,21 @@ impl WorkerSession for AcpWorkerSession {
             .map_err(|error| format!("check {} ACP agent: {error}", self.profile.name))?
             .is_none()
         {
-            self.child
-                .kill()
-                .map_err(|error| format!("terminate {} ACP agent: {error}", self.profile.name))?;
+            if let Err(error) = self.child.kill() {
+                errors.push(format!(
+                    "terminate {} ACP agent: {error}",
+                    self.profile.name
+                ));
+            }
         }
-        self.child
-            .wait()
-            .map_err(|error| format!("reap {} ACP agent: {error}", self.profile.name))?;
-        Ok(())
+        if let Err(error) = self.child.wait() {
+            errors.push(format!("reap {} ACP agent: {error}", self.profile.name));
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
     }
 }
 

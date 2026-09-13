@@ -368,6 +368,29 @@ pub(super) fn tool_result(metadata: &ToolMetadata, update: &Value) -> Value {
     result
 }
 
+pub(super) fn tool_result_is_error(metadata: &ToolMetadata, update: &Value) -> bool {
+    let native = metadata.native.as_ref().unwrap_or(update);
+    exit_code(native)
+        .or_else(|| exit_code(update))
+        .is_some_and(|code| code != 0)
+}
+
+fn exit_code(value: &Value) -> Option<i64> {
+    value
+        .get("rawOutput")
+        .into_iter()
+        .chain(std::iter::once(value))
+        .find_map(|output| {
+            ["exitCode", "exit_code"]
+                .into_iter()
+                .find_map(|key| match output.get(key)? {
+                    Value::Number(code) => code.as_i64(),
+                    Value::String(code) => code.parse().ok(),
+                    _ => None,
+                })
+        })
+}
+
 fn edit_result_details(metadata: &ToolMetadata) -> Option<Value> {
     let (old, new) = edit_texts(metadata)?;
     let diff = line_diff(old, new);
@@ -515,21 +538,38 @@ pub(super) fn tool_content(update: &Value) -> Value {
 pub(super) fn normalize_content(content: &Value) -> Value {
     Value::Array(
         content_values(content)
-            .filter_map(|value| match value.get("type").and_then(Value::as_str) {
-                Some("content") => value.get("content").cloned(),
-                Some("text" | "image" | "resource") => Some(value.clone()),
-                Some("diff") => Some(json!({
+            .flat_map(|value| match value.get("type").and_then(Value::as_str) {
+                Some("content") => value.get("content").cloned().into_iter().collect(),
+                Some("text" | "image" | "resource") => vec![value.clone()],
+                Some("diff") => vec![json!({
                     "type": "text",
                     "text": format_diff(value),
-                })),
+                })],
                 _ => value
                     .as_str()
                     .or_else(|| value.get("text").and_then(Value::as_str))
                     .or_else(|| value.get("output").and_then(Value::as_str))
-                    .map(|text| json!({"type": "text", "text": text})),
+                    .map(|text| vec![json!({"type": "text", "text": text})])
+                    .unwrap_or_else(|| normalize_process_output(value)),
             })
             .collect(),
     )
+}
+
+fn normalize_process_output(value: &Value) -> Vec<Value> {
+    for key in ["combinedOutput", "combined_output", "formatted_output"] {
+        if let Some(text) = value.get(key).and_then(Value::as_str)
+            && !text.is_empty()
+        {
+            return vec![json!({"type": "text", "text": text})];
+        }
+    }
+    ["stdout", "stderr"]
+        .into_iter()
+        .filter_map(|key| value.get(key).and_then(Value::as_str))
+        .filter(|text| !text.is_empty())
+        .map(|text| json!({"type": "text", "text": text}))
+        .collect()
 }
 
 fn format_diff(value: &Value) -> String {

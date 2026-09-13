@@ -1307,7 +1307,7 @@ fn acp_in_memory_queue_is_not_an_acknowledgement() {
 }
 
 #[test]
-fn acp_prompt_admission_does_not_wait_for_turn_completion() {
+fn acp_prompt_delivery_precedes_the_first_execution_chunk() {
     let mut session = inert_session();
     track_inert_submission(&mut session, "prompt");
     assert!(session.poll_prompt_ack().is_none());
@@ -1323,9 +1323,16 @@ fn acp_prompt_admission_does_not_wait_for_turn_completion() {
         }]));
     assert!(matches!(
         session.poll(),
-        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { .. }))
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+        )) if submission_id == "prompt"
     ));
     assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+            if delta == "working"
+    ));
 
     let current = session.current_prompt.clone().expect("active prompt");
     session
@@ -1334,14 +1341,224 @@ fn acp_prompt_admission_does_not_wait_for_turn_completion() {
             id: current,
             result: json!({"stopReason":"cancelled"}),
         }]));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.poll_prompt_ack().is_none());
+}
+
+#[test]
+fn acp_completed_tool_with_nonzero_exit_finishes_as_an_error() {
+    let mut session = inert_session();
+    let event = session
+        .update(json!({
+            "sessionId":"one",
+            "update":{
+                "sessionUpdate":"tool_call_update",
+                "toolCallId":"antigravity-shell",
+                "title":"cat farcaster_e2e_missing_file",
+                "kind":"execute",
+                "status":"completed",
+                "rawOutput":{
+                    "exitCode":1,
+                    "combinedOutput":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+                }
+            }
+        }))
+        .expect("completed tool should emit its start first");
+    assert!(matches!(
+        event,
+        WorkerEvent::Activity(WorkerActivity::ToolStarted { id, .. })
+            if id == "antigravity-shell"
+    ));
+    assert!(matches!(
+        session.events.pop_front(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
+            id,
+            result,
+            is_error: true,
+        })) if id == "antigravity-shell"
+            && result.to_string().contains("farcaster_e2e_missing_file")
+    ));
+}
+
+#[test]
+fn acp_first_completed_tool_update_delivers_before_exact_tool_lifecycle() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({
+                "sessionId":"one",
+                "update":{
+                    "sessionUpdate":"tool_call_update",
+                    "toolCallId":"antigravity-shell",
+                    "title":"cat farcaster_e2e_missing_file",
+                    "kind":"execute",
+                    "status":"completed",
+                    "rawOutput":{
+                        "exitCode":1,
+                        "combinedOutput":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+                    }
+                }
+            }),
+        },
+        AcpInbound::Response {
+            id: AcpRequestId::Number(1),
+            result: json!({"stopReason":"end_turn"}),
+        },
+    ]));
+
     assert!(matches!(
         session.poll(),
         Some(WorkerEvent::Activity(
             WorkerActivity::SubmittedInputDelivered { submission_id, .. }
         )) if submission_id == "prompt"
     ));
-    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
     assert!(session.poll_prompt_ack().is_none());
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolStarted { id, .. }))
+            if id == "antigravity-shell"
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
+            id,
+            result,
+            is_error: true,
+        })) if id == "antigravity-shell"
+            && result.to_string().contains("farcaster_e2e_missing_file")
+    ));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.events.is_empty());
+    assert!(session.poll_prompt_ack().is_none());
+}
+
+#[test]
+fn acp_close_waits_for_the_matching_response_before_reaping() {
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::net::UnixStream;
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let mut session = inert_session();
+    session.features.close = true;
+    session.child = std::process::Command::new("sh")
+        .args(["-c", "read _"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("spawn close fixture child");
+    let child_pid = session.child.id().to_string();
+    let (client, peer) = UnixStream::pair().expect("create close fixture transport");
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("clone client transport")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("create ACP close fixture connection");
+
+    let (request_seen, request_received) = mpsc::sync_channel(1);
+    let (release_response, response_released) = mpsc::sync_channel(1);
+    let peer = thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(peer.try_clone().expect("clone peer transport"));
+        let mut request = String::new();
+        reader
+            .read_line(&mut request)
+            .expect("read session close request");
+        let request: Value = serde_json::from_str(&request).expect("parse session close request");
+        assert_eq!(request["method"], "session/close");
+        assert_eq!(request["params"]["sessionId"], "one");
+        request_seen.send(()).expect("report close request");
+        response_released
+            .recv_timeout(Duration::from_secs(3))
+            .expect("release close response");
+        let mut peer = peer;
+        writeln!(
+            peer,
+            "{}",
+            json!({"jsonrpc":"2.0", "id":request["id"], "result":{}})
+        )
+        .expect("write session close response");
+        peer.flush().expect("flush session close response");
+    });
+
+    let close = thread::spawn(move || {
+        let result = session.close();
+        let status = session.child.try_wait().expect("inspect reaped ACP child");
+        (result, status)
+    });
+    request_received
+        .recv_timeout(Duration::from_secs(3))
+        .expect("observe close request");
+    assert!(
+        !close.is_finished(),
+        "ACP close returned before its matching response"
+    );
+    let child_alive = std::process::Command::new("/bin/kill")
+        .args(["-0", child_pid.as_str()])
+        .status()
+        .expect("probe ACP close fixture child");
+    assert!(
+        child_alive.success(),
+        "ACP child exited before its matching close response"
+    );
+    release_response.send(()).expect("release close response");
+    let (result, status) = close.join().expect("join ACP close");
+    result.expect("close response should complete graceful shutdown");
+    assert!(status.is_some(), "ACP child was not reaped");
+    peer.join().expect("join ACP close peer");
+}
+
+#[test]
+fn acp_close_reports_eof_before_response_and_still_reaps() {
+    use std::io::BufRead as _;
+    use std::os::unix::net::UnixStream;
+    use std::process::Stdio;
+
+    let mut session = inert_session();
+    session.features.close = true;
+    session.child = std::process::Command::new("sh")
+        .args(["-c", "read _"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("spawn EOF fixture child");
+    let (client, peer) = UnixStream::pair().expect("create EOF fixture transport");
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("clone client transport")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("create ACP EOF fixture connection");
+    let peer = thread::spawn(move || {
+        let mut request = String::new();
+        std::io::BufReader::new(peer)
+            .read_line(&mut request)
+            .expect("read session close request");
+        let request: Value = serde_json::from_str(&request).expect("parse session close request");
+        assert_eq!(request["method"], "session/close");
+    });
+
+    let error = session
+        .close()
+        .expect_err("EOF cannot confirm session close completion");
+    let cause = error
+        .strip_prefix("close Test ACP session: ")
+        .expect("close error should name the ACP profile once");
+    assert!(
+        !cause.trim().is_empty(),
+        "close error omitted the EOF cause"
+    );
+    assert!(
+        session
+            .child
+            .try_wait()
+            .expect("inspect reaped ACP child")
+            .is_some(),
+        "ACP child was not reaped after early EOF"
+    );
+    peer.join().expect("join ACP EOF peer");
 }
 
 #[test]
