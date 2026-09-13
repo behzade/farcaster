@@ -4,6 +4,8 @@ mod composer;
 mod event_projection;
 pub(crate) mod extensions;
 pub(crate) mod infrastructure;
+#[cfg(test)]
+mod live_e2e_tests;
 #[allow(unused_imports)]
 pub(crate) use infrastructure::{launch, paths, persistence, shell_environment};
 pub(crate) mod mcp_server;

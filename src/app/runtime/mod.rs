@@ -182,3 +182,5 @@ impl Default for SessionTitleGeneration {
 mod outbox_recovery_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod live_e2e_tests;

@@ -67,6 +67,20 @@ fn run_panel_agent_rows<'a>(
         .collect()
 }
 
+#[cfg(test)]
+pub(crate) fn live_run_panel_agent_rows<'a>(
+    sessions: &'a [crate::sessions::SessionSummary],
+    activities: &std::collections::HashMap<String, AgentActivity>,
+    selected: Option<&std::path::Path>,
+) -> Vec<(
+    AgentActivity,
+    usize,
+    &'a crate::sessions::SessionSummary,
+    AgentSection,
+)> {
+    run_panel_agent_rows(sessions, activities, selected)
+}
+
 impl FarcasterApp {
     pub(super) fn render_run_panel(
         &self,

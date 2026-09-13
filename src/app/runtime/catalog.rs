@@ -246,6 +246,14 @@ fn worker_activities(
         .collect()
 }
 
+#[cfg(test)]
+pub(crate) fn live_worker_activities(
+    sessions: &[SessionSummary],
+    snapshots: Vec<agents::WorkerSnapshot>,
+) -> HashMap<String, AgentActivity> {
+    worker_activities(sessions, snapshots)
+}
+
 pub(in crate::app) fn native_child_activity(
     child: &Value,
     metadata: &agents::SessionMetadata,

@@ -7,6 +7,8 @@ pub(crate) use lifecycle::{
     finish_session_family_worker_stop, set_enabled, set_worker_app_proxy, start,
     stop_session_family_workers, worker_snapshots,
 };
+#[cfg(test)]
+mod live_children_tests;
 mod workers;
 mod workgraph;
 
