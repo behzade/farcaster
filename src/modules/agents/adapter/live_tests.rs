@@ -1397,6 +1397,7 @@ pub(crate) mod support {
         stderr: Vec<String>,
         gates: Vec<TurnGate>,
         fixture_commands: Vec<String>,
+        submitted_prompt: bool,
         started_at: Instant,
         program_version: String,
         model_identity: Option<String>,
@@ -1454,6 +1455,7 @@ pub(crate) mod support {
                 stderr: Vec::new(),
                 gates: Vec::new(),
                 fixture_commands: Vec::new(),
+                submitted_prompt: false,
                 started_at: Instant::now(),
                 program_version,
                 model_identity: None,
@@ -1562,6 +1564,7 @@ pub(crate) mod support {
                 message: text.clone(),
                 images: images.clone(),
             })?;
+            self.submitted_prompt = true;
             Ok(Submission {
                 id,
                 mode,
@@ -2263,6 +2266,7 @@ pub(crate) mod support {
         }
 
         pub(crate) fn history(&mut self) -> Result<Vec<Value>, String> {
+            self.require_available("native history", &self.capabilities.sessions.history)?;
             if self.harness != "pi" {
                 return load_external_history(&self.path)
                     .ok_or_else(|| {
@@ -2363,6 +2367,37 @@ pub(crate) mod support {
                         .map(|error| format!("close live {} session: {error}", self.harness)),
                     evidence.err(),
                     cleanup.err(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("; ")),
+            }
+        }
+
+        /// Closes a LoadState-only model probe.  It deliberately does not ask
+        /// the native client to delete the locator: Codex rejects that request
+        /// before a prompt has created a rollout.  Real E2E turns continue to
+        /// use `close_cleanup`, which keeps deletion errors strict.
+        fn close_model_probe(mut self) -> Result<(), String> {
+            if self.submitted_prompt || !self.gates.is_empty() {
+                return Err("refusing probe-only cleanup after a live prompt or gate".into());
+            }
+            let close = self.transport.close();
+            let evidence = self.write_evidence();
+            let identity = external_session_locator(&self.harness, &self.path)
+                .unwrap_or_else(|| self.path.display().to_string());
+            eprintln!(
+                "E2E_LIMIT: {} LoadState-only model probe retained no-turn native locator {identity}; skipping deletion because no persisted rollout was established",
+                self.harness
+            );
+            match (close, evidence) {
+                (Ok(()), Ok(())) => Ok(()),
+                (close, evidence) => Err([
+                    close
+                        .err()
+                        .map(|error| format!("close live {} model probe: {error}", self.harness)),
+                    evidence.err(),
                 ]
                 .into_iter()
                 .flatten()
@@ -2521,7 +2556,7 @@ pub(crate) mod support {
                 model: model.id,
             })
         })();
-        let cleanup = probe.close_cleanup();
+        let cleanup = probe.close_model_probe();
         match (outcome, cleanup) {
             (Ok(model), Ok(())) => Ok(model),
             (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),

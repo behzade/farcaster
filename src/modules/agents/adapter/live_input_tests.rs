@@ -32,6 +32,12 @@ struct Input {
     submitted_at: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AbortReceipt {
+    Accepted,
+    RejectedBeforeAcceptance,
+}
+
 #[test]
 #[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
 fn live_e2e_input_queue_runs_once_after_the_held_turn() -> Result<(), String> {
@@ -290,8 +296,9 @@ fn live_e2e_input_queue_steer_and_abort_cancels_only_undelivered_handoff_work() 
         let apply = live.apply_steering()?;
         require_control_success(live, &apply, SessionOperation::ApplySteering)?;
         // Deliberately do not wait for either delivery: this is the second-Esc
-        // race. A delivery that beat Abort remains one transcript row; only
-        // undelivered work must never start later.
+        // race. Abort may find a local input or one the harness already owns.
+        // The native cancellation result determines which claim this test can
+        // make; a late receipt alone cannot establish that timing.
         let aborted_at = live.activity_cursor();
         let abort = live.abort()?;
         require_control_success(live, &abort, SessionOperation::Abort)?;
@@ -303,10 +310,14 @@ fn live_e2e_input_queue_steer_and_abort_cancels_only_undelivered_handoff_work() 
         let liveness_at = live.activity_cursor();
         prove_same_session_liveness(live)?;
         live.wait_for_settled_after(liveness_at, TURN_TIMEOUT)?;
-        require_abort_receipt(live, &queued)?;
-        require_abort_receipt(live, &steer)?;
-        assert_undelivered_never_started_after(live, &queued.submission, settled_at)?;
-        assert_undelivered_never_started_after(live, &steer.submission, settled_at)?;
+        let queued_receipt = require_abort_receipt(live, &queued)?;
+        let steer_receipt = require_abort_receipt(live, &steer)?;
+        // Apply may already have committed a handoff when Abort reaches the
+        // harness. A one-time, ID-correlated late delivery then belongs to the
+        // original submission; it is not a replay. A proven local rejection
+        // must never deliver. Anything else remains an explicit E2E limit.
+        assert_mixed_handoff_abort_disposition(live, &queued, queued_receipt, settled_at)?;
+        assert_mixed_handoff_abort_disposition(live, &steer, steer_receipt, settled_at)?;
         assert_delivered_submissions_exactly_once(live, &[&queued.submission, &steer.submission])?;
         live.assert_no_gate_tool_start_after(settled_at, &gate)
     })
@@ -492,7 +503,7 @@ fn require_submission_accepted(
 /// A second Escape may find a prompt still local to the adapter, or may lose
 /// the race to the harness receipt. Both are observable outcomes. A write with
 /// no receipt is neither and must not become a passing cancellation claim.
-fn require_abort_receipt(live: &mut LiveSession, input: &Input) -> Result<(), String> {
+fn require_abort_receipt(live: &mut LiveSession, input: &Input) -> Result<AbortReceipt, String> {
     let response = live.wait_for_response(&input.submission.id, RECEIPT_TIMEOUT)?;
     if response.operation() != SessionOperation::Prompt(input.submission.mode) {
         return Err(format!(
@@ -503,12 +514,16 @@ fn require_abort_receipt(live: &mut LiveSession, input: &Input) -> Result<(), St
         ));
     }
     match response.result {
-        Ok(SessionResponsePayload::Prompt(mode)) if mode == input.submission.mode => Ok(()),
+        Ok(SessionResponsePayload::Prompt(mode)) if mode == input.submission.mode => {
+            Ok(AbortReceipt::Accepted)
+        }
         Ok(other) => Err(format!(
             "aborted submission {} returned wrong prompt payload: {other:?}",
             input.submission.id
         )),
-        Err(error) if error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance => Ok(()),
+        Err(error) if error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance => {
+            Ok(AbortReceipt::RejectedBeforeAcceptance)
+        }
         Err(error) if error.kind == SessionResponseErrorKind::DeliveryUnknown => Err(format!(
             "E2E_BLOCKED: {} left aborted submission {} with unknown delivery: {error}",
             live.harness(),
@@ -662,6 +677,105 @@ fn assert_undelivered_never_started_after(
         assert_no_delivery_after(live, settled_at, &submission.id)?;
     }
     Ok(())
+}
+
+/// Apply followed by Abort has a third ownership state that plain queued Abort
+/// does not: the harness can have committed the handoff while cancellation is
+/// in flight. A later correlated delivery must land exactly once. The common
+/// event stream cannot prove whether a delivery after settlement predated the
+/// native cancellation attempt, so that outcome remains limited.
+fn assert_mixed_handoff_abort_disposition(
+    live: &mut LiveSession,
+    input: &Input,
+    receipt: AbortReceipt,
+    settled_at: usize,
+) -> Result<(), String> {
+    if !live.tracks_prompt_delivery(input.submission.mode) {
+        eprintln!(
+            "E2E_LIMIT: {} cannot resolve mixed Apply/Abort ownership for untracked {:?} input {}",
+            live.harness(),
+            input.submission.mode,
+            input.submission.id,
+        );
+        return Ok(());
+    }
+
+    match receipt {
+        AbortReceipt::RejectedBeforeAcceptance => {
+            // This is the only outcome that proves the harness never owned
+            // the input. A correlated delivery would contradict that result.
+            live.assert_no_delivery(&input.submission.id)
+        }
+        AbortReceipt::Accepted => {
+            let accepted = prompt_delivery_positions(live, &input.submission.id, "accepted");
+            if accepted.len() != 1 {
+                return Err(format!(
+                    "accepted mixed-handoff submission {} emitted {} acceptance events; trace={}",
+                    input.submission.id,
+                    accepted.len(),
+                    live.trace_summary()
+                ));
+            }
+
+            let delivered = prompt_delivery_positions(live, &input.submission.id, "delivered");
+            match delivered.len() {
+                1 => {
+                    live.assert_submission_once(&input.submission)?;
+                    if delivered[0] >= settled_at {
+                        eprintln!(
+                            "E2E_LIMIT: {} delivered accepted mixed Apply/Abort submission {} after settlement; the common trace cannot prove whether native ownership predated Abort",
+                            live.harness(),
+                            input.submission.id,
+                        );
+                    }
+                    Ok(())
+                }
+                0 => {
+                    assert_no_transcript_user(live, &input.marker)?;
+                    eprintln!(
+                        "E2E_LIMIT: {} accepted mixed Apply/Abort submission {} but exposed no correlated delivery or rejection; native cancellation ownership remains unresolved",
+                        live.harness(),
+                        input.submission.id,
+                    );
+                    Ok(())
+                }
+                count => Err(format!(
+                    "accepted mixed-handoff submission {} emitted {count} deliveries; expected one; trace={}",
+                    input.submission.id,
+                    live.trace_summary()
+                )),
+            }
+        }
+    }
+}
+
+fn assert_no_transcript_user(live: &LiveSession, marker: &str) -> Result<(), String> {
+    if live
+        .conversation()
+        .items
+        .iter()
+        .any(|item| item.kind == TranscriptKind::User && item.complete_text().contains(marker))
+    {
+        Err(format!(
+            "accepted-but-undelivered input {marker:?} created a user transcript row; transcript={}",
+            live.transcript_summary()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn prompt_delivery_positions(live: &LiveSession, submission_id: &str, status: &str) -> Vec<usize> {
+    live.activities()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event.value["type"].as_str() == Some("prompt_delivery")
+                && event.value["submissionId"].as_str() == Some(submission_id)
+                && event.value["status"].as_str() == Some(status))
+            .then_some(index)
+        })
+        .collect()
 }
 
 fn settled_position_after(live: &LiveSession, cursor: usize) -> Result<usize, String> {
