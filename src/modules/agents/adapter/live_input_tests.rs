@@ -572,7 +572,11 @@ fn prove_same_session_liveness(live: &mut LiveSession) -> Result<(), String> {
         &later.marker,
         TURN_TIMEOUT,
     )?;
-    require_effect_and_exactly_once(live, &later)?;
+    live.wait_for_assistant_text(&later.effect, TURN_TIMEOUT)?;
+    // Streaming the token does not prove that the native client has finished
+    // recording this turn. Wait for its real idle state before reading history.
+    live.wait_for_native_idle(TURN_TIMEOUT)?;
+    live.assert_functional_submission_once(&later.submission, &later.marker)?;
     require_accepted(live, &later)
 }
 
