@@ -9,8 +9,8 @@ cd "$repo_root"
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$repo_root/target"}
 
 case ${HARNESS:-} in
-    "") harnesses="opencode2 codex-cli pi claude cursor-cli antigravity-acp" ;;
-    opencode2|codex-cli|pi|claude|cursor-cli|antigravity-acp) harnesses=$HARNESS ;;
+    "") harnesses="opencode codex-cli pi claude cursor-cli antigravity-acp" ;;
+    opencode|codex-cli|pi|claude|cursor-cli|antigravity-acp) harnesses=$HARNESS ;;
     *) echo "Unknown HARNESS: $HARNESS" >&2; exit 2 ;;
 esac
 

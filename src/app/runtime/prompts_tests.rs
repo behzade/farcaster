@@ -5,7 +5,7 @@ use serde_json::json;
 const HARNESSES: [&str; 6] = [
     "codex-cli",
     "pi",
-    "opencode2",
+    "opencode",
     "cursor-cli",
     "claude",
     "antigravity-acp",

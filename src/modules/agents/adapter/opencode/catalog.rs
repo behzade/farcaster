@@ -45,7 +45,7 @@ pub(in crate::modules::agents::adapter) fn delete_session(session_id: &str) -> R
 pub(in crate::modules::agents::adapter) fn load_history(
     path: &Path,
 ) -> Result<DiscoveredHistory, String> {
-    let locator = external_session_locator("opencode2", path)
+    let locator = external_session_locator("opencode", path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
     with_server(|server| {
         let response = server.client().session_messages(&locator)?;
@@ -83,9 +83,7 @@ fn latest_identity(
 pub(super) fn with_server<T>(
     operation: impl FnOnce(&OpenCodeServerProcess) -> Result<T, String>,
 ) -> Result<T, String> {
-    let program = std::env::var_os("FARCASTER_OPENCODE_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| "opencode2".into());
+    let program = super::program();
     let password = format!("farcaster-catalog-{}", std::process::id());
     let mut command = Command::new(program);
     let mut child = command
@@ -143,11 +141,11 @@ fn summary(locator_root: &Path, value: &Value) -> Option<Result<DiscoveredSessio
         .get("status")
         .and_then(Value::as_str)
         .is_some_and(|status| matches!(status, "running" | "active"));
-    let path = external_session_path(locator_root, "opencode2", id);
+    let path = external_session_path(locator_root, "opencode", id);
     let search = format!("{title} {first_user_message} {directory} opencode");
     Some(Ok(DiscoveredSession {
         id: id.to_owned(),
-        harness: "opencode2".into(),
+        harness: "opencode".into(),
         path,
         project,
         title,
@@ -190,7 +188,7 @@ pub(super) fn history_messages(value: &Value) -> Vec<Value> {
                 .get("id")
                 .and_then(Value::as_str)
                 .and_then(|id| id.strip_prefix("msg_"))
-                .filter(|id| id.starts_with("opencode2-"))
+                .filter(|id| id.starts_with("opencode-") || id.starts_with("opencode2-"))
             {
                 message["submissionId"] = Value::String(submission_id.to_owned());
                 message["deliveryStatus"] = Value::String("delivered".into());

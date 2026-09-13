@@ -31,7 +31,7 @@ pub(crate) const LIVE_HARNESSES: [&str; 6] = [
     "pi",
     "codex-cli",
     "cursor-cli",
-    "opencode2",
+    "opencode",
     "claude",
     "antigravity-acp",
 ];

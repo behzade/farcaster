@@ -233,7 +233,7 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
     let child = registry.issue_as(
         &context.project,
         CallerProfile {
-            backend: "opencode2".into(),
+            backend: "opencode".into(),
             provider: None,
             model: None,
             effort: None,
@@ -253,12 +253,12 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
     );
     assert!(
         registry
-            .native_parent_session(&context.worker_id, "opencode2")
+            .native_parent_session(&context.worker_id, "opencode")
             .is_none()
     );
     assert!(
         registry
-            .session_parent("opencode2", "opencode-child")
+            .session_parent("opencode", "opencode-child")
             .is_none()
     );
     assert_eq!(

@@ -66,7 +66,7 @@ fn pending_reset_survives_coalescing_and_is_not_an_empty_queue() {
             level: "low".into()
         }]
     );
-    assert!(SessionControl::Thinking(None).supported_by("opencode2"));
+    assert!(SessionControl::Thinking(None).supported_by("opencode"));
     assert!(!SessionControl::Thinking(None).supported_by("pi"));
 }
 
@@ -74,7 +74,7 @@ fn pending_reset_survives_coalescing_and_is_not_an_empty_queue() {
 fn resetting_a_draft_clears_prefill_and_queues_an_explicit_reset() {
     let (mut owner, _) =
         super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
-    owner.harness = "opencode2".into();
+    owner.harness = "opencode".into();
     owner.set_thinking("high".into());
     assert_eq!(owner.snapshot.session_identity().effort, Some("high"));
     owner.reset_thinking();

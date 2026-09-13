@@ -52,7 +52,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
-                    backend: "opencode2".into(),
+                    backend: "opencode".into(),
                     provider: launch.provider.clone(),
                     model: launch.model.clone(),
                     effort: launch.effort.clone(),
@@ -84,7 +84,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
         let session = match launch.context {
             WorkerContext::Fresh => {
                 let parent_id = launch.parent_worker_id.as_deref().and_then(|id| {
-                    crate::agents::CallerRegistry::shared().native_parent_session(id, "opencode2")
+                    crate::agents::CallerRegistry::shared().native_parent_session(id, "opencode")
                 });
                 client.create_session(
                     &launch.project.to_string_lossy(),
@@ -186,7 +186,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode2".into(),
+            backend: "opencode".into(),
             provider: None,
             model: None,
             effort: None,

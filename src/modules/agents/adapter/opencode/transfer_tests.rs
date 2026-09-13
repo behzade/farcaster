@@ -40,13 +40,13 @@ fn family() -> Vec<SessionSummary> {
         .map(|id| {
             SessionSummary::from_cached_for_harness(
                 id.into(),
-                "opencode2".into(),
-                PathBuf::from(format!("/locators/opencode2/{id}")),
+                "opencode".into(),
+                PathBuf::from(format!("/locators/opencode/{id}")),
                 "/source".into(),
                 String::new(),
                 String::new(),
                 String::new(),
-                (id == "child").then(|| "/locators/opencode2/root".into()),
+                (id == "child").then(|| "/locators/opencode/root".into()),
                 SystemTime::now(),
                 0,
                 Default::default(),
@@ -180,7 +180,7 @@ fn timeout_does_not_claim_rollback_while_a_move_is_still_queued() {
 }
 
 #[test]
-#[ignore = "requires an installed opencode2 and a local listening socket; uses isolated storage"]
+#[ignore = "requires an installed opencode and a local listening socket; uses isolated storage"]
 fn native_family_move_survives_server_restart() -> Result<(), Box<dyn std::error::Error>> {
     use super::super::server::OpenCodeServerProcess;
     use std::process::{Command, Stdio};
@@ -191,7 +191,7 @@ fn native_family_move_survives_server_restart() -> Result<(), Box<dyn std::error
     std::fs::create_dir(&source)?;
     std::fs::create_dir(&destination)?;
     let start = || -> Result<OpenCodeServerProcess, Box<dyn std::error::Error>> {
-        let child = Command::new("opencode2")
+        let child = Command::new(super::super::program())
             .args(["serve", "--stdio"])
             .current_dir(temp.path())
             .env("XDG_DATA_HOME", temp.path().join("data"))
@@ -216,7 +216,7 @@ fn native_family_move_survives_server_restart() -> Result<(), Box<dyn std::error
     let mut family = family();
     for (summary, stored) in family.iter_mut().zip([&root, &child]) {
         summary.id = stored.id.clone();
-        summary.path = temp.path().join("opencode2").join(&stored.id);
+        summary.path = temp.path().join("opencode").join(&stored.id);
         summary.project = source.clone();
     }
     let moved = move_with_client(

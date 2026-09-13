@@ -190,7 +190,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     fixture.supervisor.latest.insert(
         "draft:open".into(),
         Arc::new(RuntimeSnapshot {
-            harness: "opencode2".into(),
+            harness: "opencode".into(),
             project: project.clone(),
             access_mode: Full,
             ..RuntimeSnapshot::default()
@@ -211,7 +211,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     fixture
         .commands
         .send(RuntimeCommand::LoadConfiguration {
-            harness: "opencode2".into(),
+            harness: "opencode".into(),
             project: project.clone(),
         })
         .expect("queue catalog load");
@@ -219,7 +219,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     assert_eq!(
         fixture
             .supervisor
-            .configuration_process_command("opencode2", &project, "draft:open")
+            .configuration_process_command("opencode", &project, "draft:open")
             .access_mode,
         Sandboxed
     );
@@ -227,7 +227,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
         fixture
             .supervisor
             .configuration_process_command(
-                "opencode2",
+                "opencode",
                 std::path::Path::new("/other"),
                 "draft:open",
             )

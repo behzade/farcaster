@@ -18,7 +18,7 @@ const GENERATED: &str = "Inspect archive contents";
 fn isolated_title(name: &str, run: impl FnOnce()) {
     isolated_with_env(
         &format!("title_lifecycle_tests::{name}"),
-        &["pi", "codex", "opencode2", "cursor-cli", "antigravity-acp"],
+        &["pi", "codex", "opencode", "cursor-cli", "antigravity-acp"],
         &[("FARCASTER_FIXTURE_REPORT_MODE", "1")],
         run,
     );
@@ -167,7 +167,7 @@ fn serve(
     let mut peer = Peer::new(stream);
     let mut mode = String::new();
     peer.reader.read_line(&mut mode).unwrap();
-    if peer.backend == "opencode2" {
+    if peer.backend == "opencode" {
         title_native_tests::serve_opencode(peer, state, stop, project);
         return;
     }

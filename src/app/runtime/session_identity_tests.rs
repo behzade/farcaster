@@ -131,7 +131,7 @@ fn non_reasoning_models_have_no_effort_choices() {
 #[test]
 fn session_default_is_not_replaced_by_stale_draft_effort() {
     let snapshot = RuntimeSnapshot {
-        harness: "opencode2".into(),
+        harness: "opencode".into(),
         prefill_thinking_level: Some("high".into()),
         session: Some(
             serde_json::from_value(serde_json::json!({
@@ -148,14 +148,14 @@ fn session_default_is_not_replaced_by_stale_draft_effort() {
 #[test]
 fn cleared_default_stays_unset_after_configuration_restore() {
     let mut store = HarnessConfigurationStore::default();
-    store.set_model("opencode2", model("astra", true, Some(&["low", "high"])));
-    store.set_effort("opencode2", "high".into());
-    assert!(store.reset_effort("opencode2"));
-    assert!(!store.reset_effort("opencode2"));
+    store.set_model("opencode", model("astra", true, Some(&["low", "high"])));
+    store.set_effort("opencode", "high".into());
+    assert!(store.reset_effort("opencode"));
+    assert!(!store.reset_effort("opencode"));
     let mut restored = HarnessConfigurationStore::default();
     restored.restore(store.cached());
     let mut draft = RuntimeSnapshot {
-        harness: "opencode2".into(),
+        harness: "opencode".into(),
         ..Default::default()
     };
     restored.reconcile_snapshot(&mut draft, true);

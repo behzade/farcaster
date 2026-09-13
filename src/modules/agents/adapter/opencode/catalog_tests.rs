@@ -65,7 +65,7 @@ fn translates_session_metadata() -> Result<(), String> {
         "tokens": {"input": 100, "output": 20, "reasoning": 5, "cache": {"read": 80, "write": 10}},
     });
     let session = summary(project.as_path(), &value).ok_or("summary")??;
-    assert_eq!(session.harness, "opencode2");
+    assert_eq!(session.harness, "opencode");
     assert_eq!(session.parent_session.as_deref(), Some("parent-1"));
     assert_eq!(session.title, "Implement feature");
     assert_eq!(session.usage.input, 100);
@@ -75,9 +75,20 @@ fn translates_session_metadata() -> Result<(), String> {
 }
 
 #[test]
-fn preserves_base64_and_data_uri_images_in_user_history() {
+fn restores_delivery_receipts_from_before_the_backend_rename() {
     let messages = history_messages(&json!({
         "id": "msg_opencode2-request-1",
+        "type": "user",
+        "text": "saved prompt",
+    }));
+    assert_eq!(messages[0]["submissionId"], "opencode2-request-1");
+    assert_eq!(messages[0]["deliveryStatus"], "delivered");
+}
+
+#[test]
+fn preserves_base64_and_data_uri_images_in_user_history() {
+    let messages = history_messages(&json!({
+        "id": "msg_opencode-request-1",
         "type": "user",
         "text": "compare",
         "files": [
@@ -97,7 +108,7 @@ fn preserves_base64_and_data_uri_images_in_user_history() {
             {"type": "image", "mimeType": "image/jpeg", "data": "BAUG"},
         ])
     );
-    assert_eq!(messages[0]["submissionId"], "opencode2-request-1");
+    assert_eq!(messages[0]["submissionId"], "opencode-request-1");
     assert_eq!(messages[0]["deliveryStatus"], "delivered");
 }
 

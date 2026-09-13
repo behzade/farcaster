@@ -124,7 +124,7 @@ fn opencode_resume_preserves_backend_title() {
     isolated_title(
         "title_native_tests::opencode_resume_preserves_backend_title",
         || {
-            let s = Scenario::new("opencode2", Some("Saved OpenCode title"), true);
+            let s = Scenario::new("opencode", Some("Saved OpenCode title"), true);
             assert_eq!(
                 s.name(),
                 Some("Saved OpenCode title"),
@@ -139,7 +139,7 @@ fn opencode_title_event_reaches_runtime_and_cache() {
     isolated_title(
         "title_native_tests::opencode_title_event_reaches_runtime_and_cache",
         || {
-            let mut s = Scenario::new("opencode2", None, false);
+            let mut s = Scenario::new("opencode", None, false);
             s.until(|s| s.backend.state.lock().unwrap().event_stream.is_some());
             let event = json!({"type":"session.renamed","data":{"sessionID":"main-thread","title":"Native OpenCode title"}});
             writeln!(

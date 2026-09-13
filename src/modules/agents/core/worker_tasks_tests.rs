@@ -32,7 +32,7 @@ fn empty_is_deliberate_and_invalid_definitions_fail_closed() {
 #[test]
 fn every_default_profile_works_with_any_single_harness() {
     let profiles = WorkerProfiles::default();
-    for harness in ["pi", "codex-cli", "cursor-cli", "opencode2"] {
+    for harness in ["pi", "codex-cli", "cursor-cli", "opencode"] {
         for profile in &profiles.profiles {
             let assignment = profiles
                 .resolve(&profile.name, |model| model.harness == harness)

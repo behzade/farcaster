@@ -458,7 +458,7 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
         project: temp.path().to_path_buf(),
         parent_backend: "codex-cli".into(),
         parent_session: "parent".into(),
-        child_backend: "opencode2".into(),
+        child_backend: "opencode".into(),
         child_session: "new-child-id".into(),
         execution: None,
     })?;
@@ -497,7 +497,7 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
     assert!(families.iter().any(|family| {
         family.project == crate::sessions::normalize_session_path(temp.path())
             && family.parent_backend == "codex-cli"
-            && family.child_backend == "opencode2"
+            && family.child_backend == "opencode"
             && family.child_session == "new-child-id"
     }));
     let backend_isolation: i64 = store
@@ -882,9 +882,9 @@ fn v12_migration_preserves_native_id_worker_family_links() -> Result<(), String>
             "/other-project",
         ),
         (
-            "opencode2",
+            "opencode",
             "native-child",
-            "/locators/opencode2/native-child",
+            "/locators/opencode/native-child",
             "/project",
         ),
         (

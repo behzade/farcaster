@@ -1118,7 +1118,7 @@ impl WorkerSession for SteeringWorker {
 fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
     for (harness, mode) in [
         ("codex-cli", WorkerSendMode::Steer),
-        ("opencode2", WorkerSendMode::Steer),
+        ("opencode", WorkerSendMode::Steer),
         ("cursor-cli", WorkerSendMode::Queue),
         ("claude", WorkerSendMode::Steer),
         ("antigravity-acp", WorkerSendMode::Queue),
@@ -1374,7 +1374,7 @@ fn repeated_started_during_a_stream_does_not_duplicate_visible_text() {
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode2",
+        "opencode",
         "session-1".into(),
         Box::new(IdleWorker),
         MainSessionMetadata::default(),
@@ -1498,13 +1498,9 @@ impl WorkerSession for IdleWorker {
 
 #[test]
 fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_id() {
-    let path = external_session_path(
-        std::path::Path::new("/locators"),
-        "opencode2",
-        "session/one",
-    );
+    let path = external_session_path(std::path::Path::new("/locators"), "opencode", "session/one");
     let launch = crate::agents::SessionLaunch {
-        harness: "opencode2".into(),
+        harness: "opencode".into(),
         session_id: None,
         project: "/project".into(),
         start: crate::agents::SessionStart::Resume(path),
@@ -1768,7 +1764,7 @@ fn a_new_transport_without_a_picked_effort_reports_no_level() {
     };
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode2",
+        "opencode",
         "thread-1".into(),
         Box::new(IdleWorker),
         metadata,

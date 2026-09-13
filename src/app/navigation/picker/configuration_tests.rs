@@ -67,7 +67,7 @@ fn opencode_default_row_is_first_and_matches_only_the_unset_variant() {
     }))
     .unwrap();
     let mut snapshot = crate::runtime::RuntimeSnapshot {
-        harness: "opencode2".into(),
+        harness: "opencode".into(),
         prefill_model: Some(model.clone()),
         ..Default::default()
     };

@@ -360,7 +360,7 @@ fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 15);
+    assert_eq!(database_schema_version(&database)?, 16);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -1114,7 +1114,7 @@ fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
     let mut draft = DraftSession::new("pi".into(), "draft".into(), 1, project.clone(), 1);
-    assert!(draft.change_harness("opencode2".into()));
+    assert!(draft.change_harness("opencode".into()));
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
     projects::save_registry(
@@ -1128,7 +1128,7 @@ fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error
 
     assert_eq!(
         projects::load_registry(&store)?.drafts[0].harness,
-        "opencode2"
+        "opencode"
     );
     Ok(())
 }
@@ -1283,7 +1283,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 15);
+    assert_eq!(database_schema_version(&database)?, 16);
     Ok(())
 }
 
@@ -1321,7 +1321,7 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 15);
+    assert_eq!(database_schema_version(&database)?, 16);
     Ok(())
 }
 
@@ -1339,7 +1339,7 @@ fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::e
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 15);
+    assert_eq!(database_schema_version(&database)?, 16);
     assert!(store.cached_sessions("")?.is_empty());
     Ok(())
 }
@@ -1360,7 +1360,7 @@ fn schema_v4_migrates_to_v11_with_provisional_title_default()
     )?;
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 15);
+    assert_eq!(database_schema_version(&database)?, 16);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     Ok(())
 }
@@ -1403,7 +1403,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, "pi");
-    assert_eq!(database_schema_version(&database)?, 15);
+    assert_eq!(database_schema_version(&database)?, 16);
     Ok(())
 }
 
@@ -1977,12 +1977,12 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     let database = temp.path().join("settings.sqlite3");
     let link = crate::agents::WorkerFamilyLink {
         project: temp.path().to_owned(),
-        child_backend: "opencode2".into(),
+        child_backend: "opencode".into(),
         child_session: "child-session".into(),
         parent_backend: "pi".into(),
         parent_session: "/sessions/parent.jsonl".into(),
         execution: Some(crate::agents::WorkerExecution {
-            harness: "opencode2".into(),
+            harness: "opencode".into(),
             provider: "opencode-go".into(),
             model: "glm-5.3-flash".into(),
             effort: None,

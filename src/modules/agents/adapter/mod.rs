@@ -136,9 +136,7 @@ fn launch_configuration(
             .unwrap_or_else(|| "codex".into()),
         "cursor-cli" => cursor::PROFILE.program(),
         "claude" => claude::program(),
-        "opencode2" => std::env::var_os("FARCASTER_OPENCODE_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| "opencode2".into()),
+        "opencode" => opencode::program(),
         _ => external_acp_profile(harness)
             .ok_or_else(|| format!("unsupported session harness: {harness}"))?
             .program(),
@@ -159,9 +157,7 @@ pub(crate) fn worker_factories(
     let cursor_config = config.clone();
     let mut opencode_config = config.clone();
     opencode_config.access_mode = crate::agents::HarnessAccessMode::Sandboxed;
-    opencode_config.program = std::env::var_os("FARCASTER_OPENCODE_PATH")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "opencode2".into());
+    opencode_config.program = opencode::program();
     let [pi, codex, cursor, opencode, _, _] = known_backend_descriptors();
     let default_backend = pi.id.as_str().to_owned();
     let mut factories = std::collections::BTreeMap::from([
@@ -209,7 +205,7 @@ pub(crate) fn load_configuration_catalog(
             codex::load_configuration(&command, project).and_then(configuration_catalog)
         }
         "cursor-cli" => cursor::load_configuration(project).and_then(configuration_catalog),
-        "opencode2" => {
+        "opencode" => {
             let command = configuration_launch(config, harness)?;
             opencode::load_configuration(&command, project).and_then(configuration_catalog)
         }
@@ -390,7 +386,7 @@ pub(crate) fn spawn_session(
         )
         .map(|transport| Box::new(transport) as _);
     }
-    if matches!(launch.harness.as_str(), "opencode2" | "claude") {
+    if matches!(launch.harness.as_str(), "opencode" | "claude") {
         let history = launch_history(
             &launch,
             if launch.harness == "claude" {
@@ -466,7 +462,7 @@ pub(crate) fn rename_session(
         "pi" => pi::PiRpcProcess::rename_session(config, project, session, name),
         "codex-cli" => codex::rename_session(session_id, name),
         "cursor-cli" => cursor::rename_session(session_id, name),
-        "opencode2" => opencode::rename_session(session_id, name),
+        "opencode" => opencode::rename_session(session_id, name),
         _ => Err(format!("unsupported session harness: {harness}")),
     }
 }
@@ -483,7 +479,7 @@ pub(crate) fn external_session_identity(path: &std::path::Path) -> Option<(&'sta
     if let Some(locator) = main_session::external_session_locator("cursor-cli", path) {
         return Some(("cursor-cli", locator));
     }
-    main_session::external_session_locator("opencode2", path).map(|locator| ("opencode2", locator))
+    main_session::external_session_locator("opencode", path).map(|locator| ("opencode", locator))
 }
 
 #[cfg(test)]
@@ -491,7 +487,7 @@ pub(crate) fn delete_external_session(path: &std::path::Path) -> Option<Result<(
     external_session_identity(path).map(|(harness, locator)| match harness {
         "codex-cli" => codex::delete_session(&locator),
         "cursor-cli" => cursor::delete_session(&locator),
-        "opencode2" => opencode::delete_session(&locator),
+        "opencode" => opencode::delete_session(&locator),
         _ => Err(format!("Session deletion is not supported for {harness}")),
     })
 }
@@ -507,7 +503,7 @@ pub(crate) fn discover_external_sessions_for(
     match harness {
         "codex-cli" => codex::discover(locator_root, query),
         "cursor-cli" => cursor::discover(locator_root, query),
-        "opencode2" => opencode::discover(locator_root, query),
+        "opencode" => opencode::discover(locator_root, query),
         "antigravity-acp" => Ok(Vec::new()),
         "claude" => claude::discover(locator_root, query),
         _ => Err(format!("unsupported session harness: {harness}")),
@@ -527,7 +523,7 @@ pub(crate) fn load_external_history(
     external_session_identity(path).map(|(harness, _)| match harness {
         "codex-cli" => codex::load_history(path),
         "cursor-cli" => cursor::load_history(path),
-        "opencode2" => opencode::load_history(path),
+        "opencode" => opencode::load_history(path),
         "antigravity-acp" => {
             Err("Antigravity ACP does not expose history replay through this adapter".into())
         }
@@ -572,9 +568,7 @@ pub(crate) fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| "codex".into());
     let cursor_program = cursor::PROFILE.program();
-    let opencode_program = std::env::var_os("FARCASTER_OPENCODE_PATH")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| "opencode2".into());
+    let opencode_program = opencode::program();
     known_backend_descriptors()
         .into_iter()
         .zip([

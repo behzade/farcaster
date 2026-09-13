@@ -9,7 +9,7 @@ fn backend_display_names_come_from_descriptors() {
     assert_eq!(backend_display_name("pi"), "Pi");
     assert_eq!(backend_display_name("codex-cli"), "Codex");
     assert_eq!(backend_display_name("cursor-cli"), "Cursor");
-    assert_eq!(backend_display_name("opencode2"), "OpenCode");
+    assert_eq!(backend_display_name("opencode"), "OpenCode");
     assert_eq!(backend_display_name("custom"), "custom");
 }
 
@@ -20,7 +20,7 @@ fn pi_startup_skips_unsupported_mode_query() {
 
 #[test]
 fn access_modes_require_both_backend_and_model_support() {
-    for backend in ["cursor-cli", "opencode2", "claude", "antigravity-acp"] {
+    for backend in ["cursor-cli", "opencode", "claude", "antigravity-acp"] {
         assert_eq!(
             available_access_modes(backend, None, None),
             [Sandboxed, Full],
@@ -64,16 +64,16 @@ fn access_modes_require_both_backend_and_model_support() {
 
 #[test]
 fn catalog_launch_resolves_only_to_supported_safe_modes() {
-    assert_eq!(configuration_access_mode("opencode2", Auto), Ok(Sandboxed));
+    assert_eq!(configuration_access_mode("opencode", Auto), Ok(Sandboxed));
     assert_eq!(
-        configuration_access_mode("opencode2", Sandboxed),
+        configuration_access_mode("opencode", Sandboxed),
         Ok(Sandboxed)
     );
-    assert_eq!(configuration_access_mode("opencode2", Full), Ok(Full));
+    assert_eq!(configuration_access_mode("opencode", Full), Ok(Full));
     assert_eq!(configuration_access_mode("codex-cli", Auto), Ok(Auto));
     assert_eq!(configuration_access_mode("claude", Auto), Ok(Auto));
     assert_eq!(configuration_access_mode("pi", Auto), Ok(Auto));
-    assert!(configuration_access_mode("opencode2", Auto).unwrap() != Full);
+    assert!(configuration_access_mode("opencode", Auto).unwrap() != Full);
 }
 
 #[test]

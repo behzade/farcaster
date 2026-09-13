@@ -90,7 +90,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
         project: temp.path().to_path_buf(),
         parent_backend: "codex-cli".into(),
         parent_session: "not-imported-parent".into(),
-        child_backend: "opencode2".into(),
+        child_backend: "opencode".into(),
         child_session: "cross-backend-child".into(),
         execution: None,
     })?;

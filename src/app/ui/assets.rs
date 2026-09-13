@@ -345,7 +345,7 @@ impl AppIcon {
             "pi" => Self::Pi,
             "codex-cli" => Self::Codex,
             "cursor-cli" => Self::Cursor,
-            "opencode2" => Self::OpenCode,
+            "opencode" => Self::OpenCode,
             "claude" => Self::Claude,
             "antigravity-acp" => Self::Antigravity,
             _ => Self::Code,

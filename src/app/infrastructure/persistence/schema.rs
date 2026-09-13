@@ -74,12 +74,14 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
+                Some(15) => {}
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
                     ));
                 }
             }
+            super::migrate_v16::migrate(&migration)?;
             migration
                 .execute(
                     "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
@@ -125,7 +127,7 @@ impl StateStore {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
-            if !matches!(version, 7 | 11 | 12 | 13 | 14 | SCHEMA_VERSION) {
+            if !matches!(version, 7 | 11 | 12 | 13 | 14 | 15 | SCHEMA_VERSION) {
                 return Err(format!(
                     "legacy pi-gpui state schema {version} is not supported by this build"
                 ));
@@ -136,6 +138,7 @@ impl StateStore {
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|error| format!("start legacy pi-gpui state import: {error}"))?;
             super::migrate_v12::import_legacy_pi_gpui(&transaction)?;
+            super::migrate_v16::migrate(&transaction)?;
             transaction
                 .execute(
                     "INSERT INTO meta(key, value) VALUES('legacy_pi_gpui_state_imported', '1')",

@@ -298,7 +298,7 @@ fn cli_model_fallback_preserves_provider_and_nested_model_ids() {
 #[test]
 fn session_updates_surface_titles() {
     // `session.renamed` carries a flat title; this is what title generation
-    // and renames emit on the installed opencode2 server.
+    // and renames emit on the installed opencode server.
     let renamed = json!({
         "sessionID": "session-1",
         "title": "Renamed probe title"
@@ -469,7 +469,7 @@ fn supported_modes_use_the_opencode_server_without_auto_approval() {
         crate::agents::HarnessAccessMode::Sandboxed,
         crate::agents::HarnessAccessMode::Full,
     ] {
-        let mut command = std::process::Command::new("opencode2");
+        let mut command = std::process::Command::new("opencode");
         configure_opencode_server(&mut command, mode).expect("supported OpenCode mode");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
@@ -484,7 +484,7 @@ fn supported_modes_use_the_opencode_server_without_auto_approval() {
         );
     }
 
-    let mut command = std::process::Command::new("opencode2");
+    let mut command = std::process::Command::new("opencode");
     assert_eq!(
         configure_opencode_server(&mut command, crate::agents::HarnessAccessMode::Auto),
         Err("OpenCode does not support model-reviewed automatic approvals".into())
@@ -563,7 +563,7 @@ fn sandboxed_permission_requests_keep_native_choices() {
 
 #[test]
 fn native_startup_merges_direct_farcaster_mcp() {
-    let mut command = std::process::Command::new("opencode2");
+    let mut command = std::process::Command::new("opencode");
     command.env(
             "OPENCODE_CONFIG_CONTENT",
             r#"{"model":"provider/model","mcp":{"servers":{"other":{"type":"remote","url":"https://example.test/mcp"}}}}"#,
@@ -661,7 +661,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode2".into(),
+            backend: "opencode".into(),
             provider: None,
             model: None,
             effort: None,
@@ -843,7 +843,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode2".into(),
+            backend: "opencode".into(),
             provider: None,
             model: None,
             effort: None,
@@ -947,7 +947,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode2".into(),
+            backend: "opencode".into(),
             provider: None,
             model: None,
             effort: None,
@@ -1021,7 +1021,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         .map_err(|error| error.to_string())?;
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode2",
+        "opencode",
         "session-1".into(),
         Box::new(worker),
         MainSessionMetadata::default(),
@@ -1246,7 +1246,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
     let caller_identity = crate::agents::CallerRegistry::shared().issue(
         std::path::Path::new("/project"),
         crate::modules::agents::core::CallerProfile {
-            backend: "opencode2".into(),
+            backend: "opencode".into(),
             provider: None,
             model: None,
             effort: None,
@@ -1283,7 +1283,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
     };
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
-        "opencode2",
+        "opencode",
         "session-1".into(),
         Box::new(worker),
         MainSessionMetadata::default(),
@@ -1543,6 +1543,6 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
         1,
         "an unknown admission must never be replayed"
     );
-    assert!(lost.starts_with("opencode2-"));
+    assert!(lost.starts_with("opencode-"));
     Ok(())
 }

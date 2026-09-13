@@ -13,7 +13,7 @@ pub(super) fn validate_session_locator(harness: &str, path: &Path) -> Result<(),
 fn validated_locator(harness: &str, path: &Path) -> Result<Option<String>, String> {
     match harness {
         "pi" => pi::session_files::validate_session_file(path).map(|_| None),
-        "codex-cli" | "cursor-cli" | "opencode2" | "claude" | "antigravity-acp" => {
+        "codex-cli" | "cursor-cli" | "opencode" | "claude" | "antigravity-acp" => {
             external_session_locator(harness, path)
                 .map(Some)
                 .ok_or_else(|| format!("session locator does not belong to {harness}"))
@@ -77,7 +77,7 @@ pub(crate) fn move_session_family(
                 .collect::<Vec<_>>();
             pi::transfer::move_to_project(&members, &root.id, target_project, &root.path)
         }
-        "opencode2" => opencode::move_family(family, target_project),
+        "opencode" => opencode::move_family(family, target_project),
         "codex-cli" => codex::move_family(family, target_project),
         _ => Err(format!(
             "unsupported session move harness: {}",
@@ -107,7 +107,7 @@ pub(crate) fn delete_session_family(
             "pi" => pi_paths.push(target.path.clone()),
             "codex-cli" => codex::delete_session(&target.id)?,
             "cursor-cli" => cursor::delete_session(&target.id)?,
-            "opencode2" => opencode::delete_session(&target.id)?,
+            "opencode" => opencode::delete_session(&target.id)?,
             _ => unreachable!("all session targets were validated"),
         }
     }
@@ -124,7 +124,7 @@ pub(crate) fn load_session_history(harness: &str, path: &Path) -> Result<LoadedH
         "pi" => return pi::session_files::load_history(path),
         "codex-cli" => codex::load_history(path)?,
         "cursor-cli" => cursor::load_history(path)?,
-        "opencode2" => opencode::load_history(path)?,
+        "opencode" => opencode::load_history(path)?,
         "antigravity-acp" => {
             return Err(
                 "Antigravity ACP does not expose history replay through this adapter".into(),

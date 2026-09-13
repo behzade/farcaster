@@ -65,7 +65,7 @@ fn deletion_validates_all_members_before_touching_any_file() {
     let temp = tempfile::tempdir().expect("test fixture");
     let root = temp.path().join("root.jsonl");
     std::fs::write(&root, PI_HEADER).expect("test fixture");
-    for harness in ["codex-cli", "cursor-cli", "opencode2", "unknown", ""] {
+    for harness in ["codex-cli", "cursor-cli", "opencode", "unknown", ""] {
         let targets = [
             summary("pi", root.clone(), "root").target(),
             summary(harness, temp.path().join("unrecognized"), "child").target(),
@@ -100,7 +100,7 @@ fn history_requires_explicit_matching_harness_without_pi_fallback() {
     )
     .expect("test fixture");
     assert!(load_session_history("pi", &path).is_ok());
-    for harness in ["codex-cli", "cursor-cli", "opencode2", "unknown", ""] {
+    for harness in ["codex-cli", "cursor-cli", "opencode", "unknown", ""] {
         assert!(load_session_history(harness, &path).is_err(), "{harness}");
     }
 }

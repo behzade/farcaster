@@ -32,7 +32,7 @@ fn harnesses_use_their_brand_icons() {
     assert_eq!(AppIcon::for_harness("pi"), AppIcon::Pi);
     assert_eq!(AppIcon::for_harness("codex-cli"), AppIcon::Codex);
     assert_eq!(AppIcon::for_harness("cursor-cli"), AppIcon::Cursor);
-    assert_eq!(AppIcon::for_harness("opencode2"), AppIcon::OpenCode);
+    assert_eq!(AppIcon::for_harness("opencode"), AppIcon::OpenCode);
     assert_eq!(AppIcon::for_harness("claude"), AppIcon::Claude);
     assert_eq!(
         AppIcon::for_harness("antigravity-acp"),
