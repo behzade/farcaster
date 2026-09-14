@@ -2407,8 +2407,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     assert!(owner.pending_prompt_id.is_none());
     assert!(!owner.snapshot.history_preview);
     assert!(owner.snapshot.conversation.items.iter().any(|item| {
-        item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
-            && item.text == "continue"
+        item.kind == crate::conversation::TranscriptKind::User && item.text == "continue"
     }));
     assert!(event_rx.try_iter().any(|event| matches!(
         event,

@@ -17,7 +17,7 @@ use crate::{
         SessionOperation, SessionResponse, SessionStart, SessionTransport,
         extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode},
     },
-    app::views::transcript::conversation::{ConversationState, TranscriptKind},
+    conversation::{ConversationState, TranscriptKind},
 };
 
 use super::super::contract::{AgentBackendDescriptor, AgentCapabilities, CapabilitySupport};

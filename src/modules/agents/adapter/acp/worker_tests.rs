@@ -5,6 +5,108 @@ use std::io::Write as _;
 
 #[cfg(unix)]
 #[test]
+fn antigravity_sandbox_restart_without_history_replay_preserves_transcript() -> Result<(), String> {
+    use crate::agents::{
+        SessionCommand, SessionEvent, SessionHistory, SessionResponsePayload, SessionTransport,
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    // Antigravity resumes the saved session without replaying session/update messages.
+    // Exercise the real ACP startup and main-session history response, not a fabricated
+    // SessionHistory value: Some(empty history) is different from unavailable history.
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
+    *'"method":"authenticate"'*) result='{}' ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]}]}' ;;
+    *'"method":"session/set_config_option"'*) result='{}' ;;
+    *'"method":"session/close"'*) result='{}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+  case "$line" in *'"method":"session/close"'*) exit 0 ;; esac
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("agent");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(project.path().join("localharness_external"), "fixture")
+        .map_err(|error| error.to_string())?;
+    let mut command = AgentLaunchConfig {
+        program: executable.clone(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let profile = &super::super::super::antigravity::PROFILE;
+    let (mut original, _, _) = spawn_session(&command, profile, project.path(), None, None, None)?;
+    let locator = original.session_id.clone();
+    // This is the visible conversation retained by restart_process_preserving_transcript.
+    let mut conversation = crate::conversation::ConversationState::default();
+    conversation.replace_history(&[
+        json!({"role":"user", "content":"Remember the previous work"}),
+        json!({"role":"assistant", "content":[{"type":"text", "text":"I have the context"}]}),
+    ]);
+    let previous_items = conversation.items.clone();
+    assert_eq!(previous_items.len(), 2);
+    original.close()?;
+
+    command.access_mode = HarnessAccessMode::Full;
+    let (resumed, metadata, history) = spawn_session(
+        &command,
+        profile,
+        project.path(),
+        Some(&locator),
+        None,
+        None,
+    )?;
+    assert_eq!(resumed.session_id, locator);
+    let mut transport = main_session::WorkerSessionTransport::new(
+        project.path(),
+        Backend::Antigravity,
+        locator,
+        Box::new(resumed),
+        metadata,
+        history,
+    )?;
+    transport.send(SessionCommand::LoadHistory)?;
+    let Some(SessionEvent::Response(response)) = transport.poll() else {
+        return Err("expected startup history response".into());
+    };
+    let SessionResponsePayload::LoadHistory(history) =
+        response.result.map_err(|error| format!("{error:?}"))?
+    else {
+        return Err("expected LoadHistory payload".into());
+    };
+    transport.close()?;
+
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(requests.matches("\"method\":\"session/new\"").count(), 1);
+    assert_eq!(requests.matches("\"method\":\"session/resume\"").count(), 1);
+    assert!(requests.contains("\"value\":\"default\""));
+    assert!(requests.contains("\"value\":\"yolo\""));
+
+    // Apply the same history contract as RuntimeOwner's startup projection.
+    if let SessionHistory::Replace(messages) = &history {
+        conversation.replace_history(messages);
+    }
+    assert_eq!(
+        conversation.items.len(),
+        previous_items.len(),
+        "sandbox restart must retain the visible transcript when Antigravity resumes without replay; got {history:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
@@ -574,8 +676,7 @@ done
     let mut delivered_images = HashMap::new();
     let mut handoff_aborted = false;
     let mut boundaries = Vec::new();
-    let mut conversation =
-        crate::app::views::transcript::conversation::ConversationState::default();
+    let mut conversation = crate::conversation::ConversationState::default();
     while settlements < 2 || accepted.values().any(|count| *count == 0) {
         let event = next_event(&mut transport, deadline(), "queued turn");
         if let SessionEvent::Activity(activity) = &event {
@@ -647,9 +748,7 @@ done
     let users = conversation
         .items
         .iter()
-        .filter(|item| {
-            item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
-        })
+        .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
         .collect::<Vec<_>>();
     assert_eq!(users.len(), 5);
     let handoff_users = users
@@ -1348,6 +1447,164 @@ fn acp_prompt_delivery_precedes_the_first_execution_chunk() {
 }
 
 #[test]
+fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    let image = crate::protocol::PromptImage::new("YWJj".into(), "image/png".into());
+    session.current_inputs.push(PendingPrompt {
+        mode: WorkerSendMode::Queue,
+        message: "follow-up with image".into(),
+        images: vec![image.clone()],
+        submission_id: Some("follow-up".into()),
+    });
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"user_message_chunk",
+                "content":{"type":"text","text":"wo"}
+            }}),
+        }]));
+
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: "prompt".into(),
+                mode: WorkerSendMode::Prompt,
+                message: "work".into(),
+            }
+        ))
+    );
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id: "follow-up".into(),
+                mode: WorkerSendMode::Queue,
+                message: "follow-up with image".into(),
+                images: vec![image],
+            }
+        ))
+    );
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("follow-up".into(), Ok(())))
+    );
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty());
+    assert!(session.output.is_empty());
+
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"user_message_chunk",
+                "content":{"type":"text","text":"rk"}
+            }}),
+        },
+        AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"agent_message_chunk",
+                "content":{"type":"text","text":"working"}
+            }}),
+        },
+    ]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+            if delta == "working"
+    ));
+    assert_eq!(session.output, "working");
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty());
+}
+
+#[test]
+fn acp_user_message_chunk_commits_delivery_before_a_cancel_or_error() {
+    for terminal in [
+        AcpInbound::Response {
+            id: AcpRequestId::Number(1),
+            result: json!({"stopReason":"cancelled"}),
+        },
+        AcpInbound::Error {
+            id: AcpRequestId::Number(1),
+            message: "failed after admission".into(),
+        },
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "prompt");
+        session.connection.restore_queued(VecDeque::from([
+            AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":"one","update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"wo"}
+                }}),
+            },
+            terminal,
+        ]));
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+                submission_id, ..
+            })) if submission_id == "prompt"
+        ));
+        assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Settled {
+                output: String::new()
+            })
+        );
+        assert!(session.current_prompt.is_none());
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(
+            session.events.is_empty(),
+            "delivery must not become unknown"
+        );
+    }
+}
+
+#[test]
+fn acp_user_message_chunk_requires_the_current_prompt_and_session() {
+    for (current_prompt, session_id) in [
+        (None, Some("one")),
+        (Some(AcpRequestId::Number(1)), Some("other")),
+        (Some(AcpRequestId::Number(1)), None),
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "prompt");
+        session.current_prompt = current_prompt;
+        session.connection.restore_queued(VecDeque::from([
+            AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":session_id,"update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"work"}
+                }}),
+            },
+            AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":"one","update":{
+                    "sessionUpdate":"session_info_update","title":"Still unacknowledged"
+                }}),
+            },
+        ]));
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(_)))
+        ));
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(session.events.is_empty());
+        assert!(!session.current_prompt_proven);
+    }
+}
+
+#[test]
 fn acp_completed_tool_with_nonzero_exit_finishes_as_an_error() {
     let mut session = inert_session();
     let event = session
@@ -1656,10 +1913,32 @@ fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
         }]));
     assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert!(session.queued_prompts.is_empty());
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
     assert!(session.poll_prompt_ack().is_none());
-    session.acknowledge_current_prompt_started();
-    for id in ["steer-1", "steer-2", "queue"] {
+    assert!(session.events.is_empty(), "dispatch alone is not delivery");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"user_message_chunk",
+                "content":{"type":"text","text":"sa"}
+            }}),
+        }]));
+    for (id, expected_mode) in [
+        ("steer-1", WorkerSendMode::Steer),
+        ("steer-2", WorkerSendMode::Steer),
+        ("queue", WorkerSendMode::Queue),
+    ] {
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id, mode, message, images,
+            })) if submission_id == id && mode == expected_mode
+                && message == "same" && images == vec![image.clone()]
+        ));
         assert_eq!(session.poll_prompt_ack(), Some((id.into(), Ok(()))));
     }
     assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty());
 }

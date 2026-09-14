@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use gpui::{Context, IntoElement as _, Render, WeakEntity};
 
 use super::super::{FarcasterApp, transcript};
-use crate::app::ui::persistent_vec::PersistentVec;
+use crate::utility::persistent_vec::PersistentVec;
 
 pub(crate) struct TranscriptView {
     app: WeakEntity<FarcasterApp>,
@@ -51,7 +51,7 @@ impl TranscriptView {
     pub(crate) fn apply_rows(
         &mut self,
         update: transcript::TranscriptRowUpdate,
-        items: &PersistentVec<Arc<transcript::conversation::TranscriptItem>>,
+        items: &PersistentVec<Arc<crate::conversation::TranscriptItem>>,
     ) -> bool {
         update.apply(&self.list, &mut self.rows, items)
     }

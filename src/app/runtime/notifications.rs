@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::views::transcript::conversation::TranscriptKind;
+use crate::conversation::TranscriptKind;
 
 impl RuntimeOwner {
     pub(super) fn apply_interaction(&mut self, request: ExtensionUiRequest) -> SnapshotChange {

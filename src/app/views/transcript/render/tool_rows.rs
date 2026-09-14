@@ -5,18 +5,18 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
-use crate::app::{
-    FarcasterApp,
-    ui::{
-        assets::AppIcon,
-        persistent_vec::PersistentVec,
-        primitives::{AppIconSize, app_icon},
-        theme::{MONO_FONT_FAMILY, THEME, UI_FONT_FAMILY},
+use crate::{
+    app::{
+        FarcasterApp,
+        ui::{
+            assets::AppIcon,
+            primitives::{AppIconSize, app_icon},
+            theme::{MONO_FONT_FAMILY, THEME, UI_FONT_FAMILY},
+        },
+        views::transcript::tool_changes,
     },
-    views::transcript::{
-        conversation::{ToolExecutionState, ToolReviewState, TranscriptItem, TranscriptKind},
-        tool_changes,
-    },
+    conversation::{ToolExecutionState, ToolReviewState, TranscriptItem, TranscriptKind},
+    utility::persistent_vec::PersistentVec,
 };
 
 use super::{

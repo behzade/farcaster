@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::views::transcript::conversation::ConversationState;
+use crate::conversation::ConversationState;
 use serde_json::json;
 
 fn result() -> Value {

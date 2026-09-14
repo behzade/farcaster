@@ -4,10 +4,9 @@ use gpui::{
 };
 use gpui_component::text::TextViewState;
 
-use crate::app::{
-    FarcasterApp,
-    ui::theme::THEME,
-    views::transcript::conversation::{TranscriptItem, TranscriptKind},
+use crate::{
+    app::{FarcasterApp, ui::theme::THEME},
+    conversation::{TranscriptItem, TranscriptKind},
 };
 
 use super::{

@@ -111,12 +111,16 @@ impl FarcasterApp {
                 self.composer_sessions.record_submission(&target, &value);
                 let pending_images = self.composer_images.remove(&target).unwrap_or_default();
                 let pending_pastes = self.composer_pastes.remove(&target).unwrap_or_default();
-                let previews = Arc::new(
-                    pending_images
-                        .iter()
-                        .map(|image| image.preview.clone())
-                        .collect(),
-                );
+                let transcript_images = show_in_transcript.then(|| {
+                    Arc::new(
+                        pending_images
+                            .iter()
+                            .filter_map(|image| {
+                                crate::app::ui::images::from_preview(image.preview.clone())
+                            })
+                            .collect(),
+                    )
+                });
                 self.pending_submissions.insert(
                     submission_id.clone(),
                     PendingSubmission {
@@ -141,12 +145,12 @@ impl FarcasterApp {
                 let snapshot = Arc::make_mut(&mut self.snapshot);
                 let index = snapshot.conversation.items.len();
                 let conversation = Arc::make_mut(&mut snapshot.conversation);
-                if show_in_transcript {
+                if let Some(transcript_images) = transcript_images {
                     match (display_message, invocation) {
                         (Some(display), Some(invocation)) => {
                             conversation.push_local_user_with_images(
                                 display,
-                                previews,
+                                transcript_images,
                                 Some(invocation),
                             );
                         }
@@ -155,7 +159,7 @@ impl FarcasterApp {
                                 user_invocations::contains_invocation(&value, &snapshot.commands);
                             conversation.push_local_user_with_images(
                                 message,
-                                previews,
+                                transcript_images,
                                 invocation.then(String::new),
                             );
                         }
@@ -326,8 +330,8 @@ pub(in crate::app) fn has_pending_submission(
 pub(in crate::app) fn pending_prompt_queue(
     pending: &std::collections::HashMap<String, PendingSubmission>,
     target: &str,
-) -> crate::app::views::transcript::conversation::QueueState {
-    let mut queue = crate::app::views::transcript::conversation::QueueState::default();
+) -> crate::conversation::QueueState {
+    let mut queue = crate::conversation::QueueState::default();
     let mut submissions = pending
         .values()
         .filter(|submission| submission.submitted_target == target && submission.result.is_none())
@@ -351,10 +355,10 @@ pub(in crate::app) fn pending_prompt_queue(
 /// submissions are separate evidence, so keep every entry and its order within
 /// each source instead of matching or deduplicating by text.
 pub(in crate::app) fn visible_prompt_queue(
-    native: &crate::app::views::transcript::conversation::QueueState,
+    native: &crate::conversation::QueueState,
     pending: &std::collections::HashMap<String, PendingSubmission>,
     target: &str,
-) -> crate::app::views::transcript::conversation::QueueState {
+) -> crate::conversation::QueueState {
     let mut visible = native.clone();
     let local = pending_prompt_queue(pending, target);
     visible.steering.extend(local.steering);

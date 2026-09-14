@@ -32,9 +32,7 @@ impl RuntimeOwner {
             .conversation
             .items
             .iter()
-            .find(|item| {
-                item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
-            })
+            .find(|item| item.kind == crate::conversation::TranscriptKind::User)
             .map(|item| item.text.clone());
         let _ = self
             .event_tx

@@ -5,7 +5,7 @@ use super::*;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle},
     app::session::lifecycle::current_close_target,
-    app::views::transcript::conversation::{TranscriptItem, TranscriptKind},
+    conversation::{TranscriptItem, TranscriptKind},
     sessions::UsageSummary,
 };
 

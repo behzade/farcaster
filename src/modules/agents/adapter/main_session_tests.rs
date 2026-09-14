@@ -71,7 +71,7 @@ impl WorkerSession for ControlledPromptWorker {
 
 fn project_transport(
     transport: &mut WorkerSessionTransport,
-    conversation: &mut crate::app::views::transcript::conversation::ConversationState,
+    conversation: &mut crate::conversation::ConversationState,
 ) -> Vec<SessionResponse> {
     let mut responses = Vec::new();
     while let Some(event) = transport.poll() {
@@ -96,7 +96,7 @@ struct StrictProjection {
 
 fn project_transport_without_failures(
     transport: &mut WorkerSessionTransport,
-    conversation: &mut crate::app::views::transcript::conversation::ConversationState,
+    conversation: &mut crate::conversation::ConversationState,
 ) -> StrictProjection {
     let mut projection = StrictProjection::default();
     while let Some(event) = transport.poll() {
@@ -128,7 +128,7 @@ fn project_transport_without_failures(
 
 #[test]
 fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
 
     const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
@@ -392,7 +392,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
 #[test]
 fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     for delivery_first in [false, true] {
         let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
         let mut transport = WorkerSessionTransport::new(
@@ -470,7 +470,7 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
 
 #[test]
 fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
-    use crate::app::views::transcript::conversation::ConversationState;
+    use crate::conversation::ConversationState;
     for rejected in [false, true] {
         let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
         let mut transport = WorkerSessionTransport::new(
@@ -537,7 +537,7 @@ fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
 
 #[test]
 fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -640,7 +640,7 @@ fn replacement_transports_do_not_reuse_persisted_submission_ids() {
 
 #[test]
 fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -700,7 +700,7 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
 
 #[test]
 fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -772,7 +772,7 @@ fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
 
 #[test]
 fn delivered_image_only_prompt_survives_transcript_finalization() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     let image = crate::protocol::PromptImage::new("AQID".into(), "image/png".into());
     let mut conversation = ConversationState::default();
     conversation.push_local_user_with_prompt_images(
@@ -1316,7 +1316,7 @@ fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
 
 #[test]
 fn request_local_failure_is_visible_without_failing_the_transport() {
-    use crate::app::views::transcript::conversation::ConversationState;
+    use crate::conversation::ConversationState;
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -1371,7 +1371,7 @@ fn settlement_preserves_an_undelivered_follow_up() {
 
 #[test]
 fn repeated_started_during_a_stream_does_not_duplicate_visible_text() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -1413,7 +1413,7 @@ fn repeated_started_during_a_stream_does_not_duplicate_visible_text() {
 
 #[test]
 fn started_after_settlement_begins_a_real_new_assistant_turn() {
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
 
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),

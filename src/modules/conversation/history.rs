@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine as _;
 
 impl ConversationState {
     pub(crate) fn replace_history(&mut self, messages: &[Value]) {
@@ -376,20 +377,17 @@ pub(super) fn user_message_text(message: &str, image_count: usize) -> String {
     }
 }
 
-pub(super) fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<Image>>> {
+pub(super) fn decode_prompt_images(images: &[PromptImage]) -> Arc<Vec<Arc<EncodedImage>>> {
     Arc::new(
         images
             .iter()
-            .filter_map(|image| {
-                let format = ImageFormat::from_mime_type(&image.mime_type)?;
-                let bytes = image.bytes().ok()?;
-                (!bytes.is_empty()).then(|| Arc::new(Image::from_bytes(format, bytes)))
-            })
+            .filter_map(EncodedImage::from_prompt)
+            .map(Arc::new)
             .collect(),
     )
 }
 
-fn message_images(message: &Value) -> Arc<Vec<Arc<Image>>> {
+fn message_images(message: &Value) -> Arc<Vec<Arc<EncodedImage>>> {
     decode_images(
         message
             .get("content")
@@ -406,7 +404,9 @@ fn message_images(message: &Value) -> Arc<Vec<Arc<Image>>> {
     )
 }
 
-fn decode_images<'a>(images: impl IntoIterator<Item = (&'a str, &'a str)>) -> Arc<Vec<Arc<Image>>> {
+fn decode_images<'a>(
+    images: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Arc<Vec<Arc<EncodedImage>>> {
     Arc::new(
         images
             .into_iter()
@@ -415,12 +415,11 @@ fn decode_images<'a>(images: impl IntoIterator<Item = (&'a str, &'a str)>) -> Ar
     )
 }
 
-fn decode_image(data: &str, mime_type: &str) -> Option<Arc<Image>> {
-    let format = ImageFormat::from_mime_type(mime_type)?;
+fn decode_image(data: &str, mime_type: &str) -> Option<Arc<EncodedImage>> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .ok()?;
-    (!bytes.is_empty()).then(|| Arc::new(Image::from_bytes(format, bytes)))
+    EncodedImage::new(bytes, mime_type).map(Arc::new)
 }
 
 fn assistant_error_text(message: &Value, has_content: bool) -> Option<String> {

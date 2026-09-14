@@ -680,7 +680,7 @@ fn delivery_unknown_releases_the_request_and_late_acceptance_preserves_its_paylo
         .conversation
         .items
         .iter()
-        .find(|item| item.kind == crate::app::views::transcript::conversation::TranscriptKind::User)
+        .find(|item| item.kind == crate::conversation::TranscriptKind::User)
         .ok_or("unknown prompt was removed")?;
     assert_eq!(user.text, "$review");
     assert_eq!(user.label, "Delivery unknown");
@@ -706,9 +706,7 @@ fn delivery_unknown_releases_the_request_and_late_acceptance_preserves_its_paylo
             .conversation
             .items
             .iter()
-            .filter(|item| {
-                item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
-            })
+            .filter(|item| { item.kind == crate::conversation::TranscriptKind::User })
             .count(),
         1
     );
@@ -786,7 +784,7 @@ fn fatal_transport_failure_after_dispatch_is_delivery_unknown_not_rejected() -> 
         .conversation
         .items
         .iter()
-        .find(|item| item.kind == crate::app::views::transcript::conversation::TranscriptKind::User)
+        .find(|item| item.kind == crate::conversation::TranscriptKind::User)
         .ok_or("fatal transport failure rolled back the prompt")?;
     assert_eq!(user.text, "retain after uncertain write");
     assert_eq!(user.label, "Delivery unknown");
@@ -1154,8 +1152,7 @@ fn failed_acknowledgement_commit_keeps_accepted_prompt_visible_and_recovers_unkn
     owner.deliver_queued(prompt);
     owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
     assert!(owner.snapshot.conversation.items.iter().any(|item| {
-        item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
-            && item.text == "keep me"
+        item.kind == crate::conversation::TranscriptKind::User && item.text == "keep me"
     }));
     let (message, state): (String, String) = connection
         .query_row("SELECT message, state FROM outbox", [], |row| {

@@ -1,7 +1,8 @@
 use gpui::Context;
 
-use super::{TranscriptRowUpdate, conversation::TranscriptKind, update_conversation_rows};
+use super::{TranscriptRowUpdate, update_conversation_rows};
 use crate::app::FarcasterApp;
+use crate::conversation::TranscriptKind;
 
 impl FarcasterApp {
     pub(in crate::app) fn adjust_transcript_font_size(

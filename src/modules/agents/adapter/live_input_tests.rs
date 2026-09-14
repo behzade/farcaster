@@ -12,7 +12,7 @@ use crate::agents::{
     SessionOperation, SessionResponseErrorKind, SessionResponsePayload,
     extensions::{PromptImage, PromptMode},
 };
-use crate::app::views::transcript::conversation::TranscriptKind;
+use crate::conversation::TranscriptKind;
 
 use super::live_tests::{
     TEST_IMAGE, TURN_TIMEOUT,

@@ -642,6 +642,11 @@ impl AcpWorkerSession {
                     "content":[{"type":"content","content":{"type":"text","text":summary}}]}),
                 )
             }
+            "user_message_chunk" => {
+                // The first live user echo proves admission before any model output.
+                self.acknowledge_current_prompt_started();
+                self.events.pop_front()
+            }
             "agent_message_chunk" => {
                 let text = content_text(update.get("content")?)?;
                 self.output.push_str(&text);

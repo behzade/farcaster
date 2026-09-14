@@ -965,7 +965,7 @@ fn second_escape_retries_after_pending_handoff_interrupt_fails() {
 fn main_session_applies_claude_steering_as_an_interrupting_handoff() {
     use crate::agents::extensions::{ExtensionUiResponse, PromptMode};
     use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
     };

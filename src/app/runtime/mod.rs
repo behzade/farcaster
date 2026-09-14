@@ -46,7 +46,7 @@ use std::{
 use serde_json::{Value, json};
 
 #[cfg(test)]
-use crate::app::views::transcript::conversation::TranscriptKind;
+use crate::conversation::TranscriptKind;
 use crate::{
     agent_activity::AgentActivity,
     agents::{
@@ -54,9 +54,7 @@ use crate::{
         SessionOperation, SessionStart, SessionTransport,
     },
     app::infrastructure::persistence::StateStore,
-    app::views::transcript::conversation::{
-        ConversationState, TranscriptItem, annotate_prompt_presentations,
-    },
+    conversation::{ConversationState, TranscriptItem, annotate_prompt_presentations},
     protocol::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
         SessionState, SlashCommand,

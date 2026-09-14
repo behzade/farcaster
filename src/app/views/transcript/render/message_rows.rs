@@ -7,14 +7,12 @@ use gpui_component::{
     tooltip::Tooltip,
 };
 
-use crate::app::{
-    FarcasterApp,
-    composer::prompt_fragments::invocation_token,
-    ui::theme::THEME,
-    views::transcript::{
-        attachments::render_attachments,
-        conversation::{TranscriptItem, TranscriptKind},
+use crate::{
+    app::{
+        FarcasterApp, composer::prompt_fragments::invocation_token, ui::theme::THEME,
+        views::transcript::attachments::render_attachments,
     },
+    conversation::{TranscriptItem, TranscriptKind},
 };
 
 use super::{

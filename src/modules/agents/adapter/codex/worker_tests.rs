@@ -1255,7 +1255,7 @@ fn correlated_codex_control_rejection_reaches_the_session_caller() {
 fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
     use crate::agents::extensions::PromptMode;
     use crate::agents::{SessionCommand, SessionEvent, SessionResponseErrorKind, SessionTransport};
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
     };
@@ -1847,7 +1847,7 @@ fn native_queue_delivery_correlates_duplicate_text_before_other_rejection() {
 fn native_queue_stays_visible_across_turn_completion_until_delivery() {
     use crate::agents::extensions::PromptMode;
     use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
-    use crate::app::views::transcript::conversation::ConversationState;
+    use crate::conversation::ConversationState;
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
     };
@@ -2717,7 +2717,7 @@ fn committed_original_steer_before_rpc_reply_is_never_replayed() {
 #[test]
 fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
     use crate::agents::{SessionEvent, SessionTransport, WorkerActivityState};
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
     };

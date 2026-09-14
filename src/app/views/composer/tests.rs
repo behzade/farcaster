@@ -3,7 +3,7 @@ use super::{
     numbered_dialog_choice, pending_receipt_label, plain_text_html, queued_message_groups,
     queued_message_preview,
 };
-use crate::{app::views::transcript::conversation::QueueState, protocol::ExtensionUiRequest};
+use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
 
 #[test]
 fn primary_action_only_appears_for_submit_ready_content() {
@@ -51,7 +51,7 @@ fn queued_message_preview_hides_multiline_payloads() {
 
 #[test]
 fn restored_receipt_copy_does_not_claim_delivery() {
-    let receipt = crate::app::views::transcript::conversation::PendingReceipt {
+    let receipt = crate::conversation::PendingReceipt {
         id: "receipt-1".into(),
         mode: Some(crate::protocol::PromptMode::FollowUp),
         text: "later".into(),
@@ -62,7 +62,7 @@ fn restored_receipt_copy_does_not_claim_delivery() {
         pending_receipt_label(&receipt),
         "Follow-up · Awaiting delivery"
     );
-    let unknown = crate::app::views::transcript::conversation::PendingReceipt {
+    let unknown = crate::conversation::PendingReceipt {
         unknown: true,
         ..receipt
     };

@@ -107,7 +107,7 @@ fn visible_queue_is_the_native_queue_plus_each_local_submission() {
     local.id = "local-steer".into();
     local.text = "same text".into();
     let pending = std::collections::HashMap::from([(local.id.clone(), local)]);
-    let native = crate::app::views::transcript::conversation::QueueState {
+    let native = crate::conversation::QueueState {
         steering: vec!["same text".into()],
         follow_up: vec!["native follow-up".into()],
     };

@@ -7,12 +7,12 @@ use gpui::{
 use gpui_base::GlobalState;
 use gpui_component::tooltip::Tooltip;
 
-use crate::app::{
-    ui::{
+use crate::{
+    app::ui::{
         primitives::activates_button,
         theme::{MONO_FONT_FAMILY, THEME},
     },
-    views::transcript::conversation::ToolPresentation,
+    conversation::ToolPresentation,
 };
 
 pub(super) fn title_row(

@@ -6,7 +6,7 @@ use gpui::{
 use crate::{
     agents::PeerMessage,
     app::ui::theme::THEME,
-    app::views::transcript::conversation::{PendingReceipt, QueueState},
+    conversation::{PendingReceipt, QueueState},
     protocol::PromptMode,
 };
 

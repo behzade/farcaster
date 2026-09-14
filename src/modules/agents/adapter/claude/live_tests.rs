@@ -4,7 +4,7 @@ use crate::agents::{
     SessionStart, SessionTransport,
     extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
 };
-use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+use crate::conversation::{ConversationState, TranscriptKind};
 use std::io::Write as _;
 use std::{
     path::Path,

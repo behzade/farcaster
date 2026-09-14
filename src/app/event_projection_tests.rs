@@ -416,8 +416,7 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once() {
         },
     )]);
 
-    let mut conversation =
-        crate::app::views::transcript::conversation::ConversationState::default();
+    let mut conversation = crate::conversation::ConversationState::default();
     for _ in 0..2 {
         conversation.reduce(&serde_json::json!({
             "type":"prompt_delivery",

@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
-use super::conversation::{TranscriptItem, TranscriptKind};
 use super::*;
-use crate::app::ui::{persistent_vec::PersistentVec, theme::THEME};
-use gpui::{Image, ImageFormat, px};
+use crate::{
+    app::ui::theme::THEME,
+    conversation::{self, TranscriptItem, TranscriptKind},
+    utility::persistent_vec::PersistentVec,
+};
+use gpui::px;
 
 fn item(kind: TranscriptKind, label: &str, text: &str) -> Arc<TranscriptItem> {
     Arc::new(TranscriptItem {
@@ -54,10 +57,9 @@ fn scratch_uses_visible_activity_summaries_instead_of_raw_tool_payloads() {
 #[test]
 fn transcript_copy_keeps_image_attachment_markers() {
     let mut attached = item(TranscriptKind::User, "", "look here");
-    Arc::make_mut(&mut attached).images = Arc::new(vec![Arc::new(Image::from_bytes(
-        ImageFormat::Png,
-        vec![1, 2, 3],
-    ))]);
+    Arc::make_mut(&mut attached).images = Arc::new(vec![Arc::new(
+        crate::conversation::EncodedImage::new(vec![1, 2, 3], "image/png").unwrap(),
+    )]);
     let mut items = PersistentVec::default();
     items.push(attached);
 
@@ -801,7 +803,7 @@ fn transcript_copy_keeps_pasted_file_links() {
 
 #[test]
 fn activity_groups_keep_thinking_inside_and_attention_outside() {
-    use super::conversation::{ToolReview, ToolReviewState};
+    use crate::conversation::{ToolReview, ToolReviewState};
     let mut running = item(TranscriptKind::Tool, "Bash", "Command: sleep 1");
     Arc::make_mut(&mut running).streaming = true;
     let mut failed = item(TranscriptKind::Tool, "Read", "Path: denied");

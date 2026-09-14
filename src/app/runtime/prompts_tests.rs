@@ -423,8 +423,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
         assert!(owner.pending_prompt_id.is_none());
         assert!(
             !owner.snapshot.conversation.items.iter().any(|item| {
-                item.kind == crate::app::views::transcript::conversation::TranscriptKind::User
-                    && item.text == "bad input"
+                item.kind == crate::conversation::TranscriptKind::User && item.text == "bad input"
             }),
             "rejected optimistic text must roll back"
         );

@@ -3,12 +3,12 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
 };
 
-use super::conversation::TranscriptItem;
 use crate::app::{
     FarcasterApp,
     ui::theme::THEME,
     views::attachments::{image_card, open_card},
 };
+use crate::conversation::TranscriptItem;
 
 pub(crate) const ATTACHMENT_ROW_HEIGHT: Pixels = px(60.0);
 
@@ -26,9 +26,10 @@ pub(crate) fn render_attachments(
         .overflow_x_scroll()
         .pb(THEME.space.xs)
         .children(item.images.iter().enumerate().map(|(index, image)| {
+            let image = crate::app::ui::images::image(image);
             image_card(
                 format!("message-image-{key}-{index}"),
-                image.clone(),
+                image,
                 index,
                 item.images.len(),
                 entity.clone(),

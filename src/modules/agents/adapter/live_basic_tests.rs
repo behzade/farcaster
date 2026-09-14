@@ -18,7 +18,7 @@ use crate::{
         SessionOperation,
         extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
     },
-    app::views::transcript::conversation::TranscriptKind,
+    conversation::TranscriptKind,
 };
 
 use super::live_tests::support::{

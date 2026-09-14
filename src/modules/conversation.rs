@@ -3,14 +3,12 @@ use std::{
     sync::Arc,
 };
 
-use base64::Engine as _;
-use gpui::{Image, ImageFormat};
 use serde_json::Value;
 
 use crate::{
     agents::{CommonTool, PeerMessage},
-    app::ui::persistent_vec::PersistentVec,
     protocol::PromptImage,
+    utility::persistent_vec::PersistentVec,
 };
 
 #[cfg(test)]
@@ -27,6 +25,9 @@ pub(crate) use delivery::PendingReceipt;
 mod delivery_tests;
 #[path = "conversation/history.rs"]
 mod history;
+#[path = "conversation/images.rs"]
+mod images;
+pub(crate) use images::EncodedImage;
 #[path = "conversation/stream.rs"]
 mod stream;
 #[path = "conversation/tool_details.rs"]
@@ -145,7 +146,7 @@ pub(crate) struct TranscriptItem {
     pub kind: TranscriptKind,
     pub label: String,
     pub text: String,
-    pub images: Arc<Vec<Arc<Image>>>,
+    pub images: Arc<Vec<Arc<EncodedImage>>>,
     pub files: Arc<Vec<FileAttachment>>,
     pub stream_chunks: Arc<Vec<Arc<str>>>,
     pub streaming: bool,
@@ -296,10 +297,10 @@ impl ConversationState {
         self.push_local_user_with_images(message, decode_prompt_images(images), Some(resolution))
     }
 
-    pub(in crate::app) fn push_local_user_with_images(
+    pub(crate) fn push_local_user_with_images(
         &mut self,
         message: String,
-        images: Arc<Vec<Arc<Image>>>,
+        images: Arc<Vec<Arc<EncodedImage>>>,
         invocation: Option<String>,
     ) -> Arc<TranscriptItem> {
         let (message, files) = split_pasted_files(&message);
@@ -511,7 +512,7 @@ fn strings(value: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 #[cfg(test)]
-#[path = "conversation/tests.rs"]
+#[path = "conversation/conversation_tests.rs"]
 mod tests;
 
 #[cfg(test)]

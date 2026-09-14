@@ -25,7 +25,7 @@ use crate::{
         HarnessAccessMode,
         live_e2e_support::{self, TURN_TIMEOUT, TurnGate, new_turn_gate},
     },
-    app::views::transcript::conversation::{ConversationState, TranscriptItem, TranscriptKind},
+    conversation::{ConversationState, TranscriptItem, TranscriptKind},
     protocol::{ExtensionUiRequest, ExtensionUiResponse, PromptMode},
     runtime::ConfigurationStatus,
 };
@@ -191,9 +191,7 @@ fn queued_follow_up(app: &FarcasterApp, marker: &str) -> bool {
         .any(|message| message.contains(marker))
 }
 
-fn visible_prompt_queue(
-    app: &FarcasterApp,
-) -> crate::app::views::transcript::conversation::QueueState {
+fn visible_prompt_queue(app: &FarcasterApp) -> crate::conversation::QueueState {
     crate::app::composer::submissions::visible_prompt_queue(
         &app.snapshot.conversation.queue,
         &app.pending_submissions,

@@ -62,7 +62,7 @@ fn repeated_files_keep_history_without_summing_patch_counts() {
 
 #[test]
 fn native_multi_file_patch_shows_every_target_without_aggregate_counts() {
-    use crate::app::views::transcript::conversation::ConversationState;
+    use crate::conversation::ConversationState;
     use serde_json::json;
     let mut state = ConversationState::default();
     state.reduce(&json!({

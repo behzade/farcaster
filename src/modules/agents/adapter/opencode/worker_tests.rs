@@ -954,7 +954,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
 #[test]
 fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Result<(), String> {
     use crate::agents::{SessionEvent, SessionTransport};
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
     };
@@ -1072,7 +1072,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
 #[test]
 fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Result<(), String> {
     use crate::agents::{SessionCommand, SessionEvent, SessionTransport};
-    use crate::app::views::transcript::conversation::{ConversationState, TranscriptKind};
+    use crate::conversation::{ConversationState, TranscriptKind};
     use crate::modules::agents::adapter::main_session::{
         MainSessionMetadata, WorkerSessionTransport,
     };

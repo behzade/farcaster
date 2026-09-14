@@ -40,8 +40,8 @@ use crate::{
     app::{
         infrastructure::persistence::{StateStore, state_path},
         runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
-        views::transcript::conversation::TranscriptKind,
     },
+    conversation::TranscriptKind,
     sessions::SessionTarget,
 };
 
@@ -977,28 +977,19 @@ fn require_user_rows(
 }
 
 fn row_matches_prompt_image(
-    row: &crate::app::views::transcript::conversation::TranscriptItem,
+    row: &crate::conversation::TranscriptItem,
     expected: &PromptImage,
 ) -> bool {
-    let Some(format) = gpui::ImageFormat::from_mime_type(&expected.mime_type) else {
+    let Some(expected) = crate::conversation::EncodedImage::from_prompt(expected) else {
         return false;
     };
-    let Ok(bytes) = expected.bytes() else {
-        return false;
-    };
-    matches!(row.images.as_slice(), [image] if image.format() == format && image.bytes() == bytes.as_slice())
+    matches!(row.images.as_slice(), [image] if image.as_ref() == &expected)
 }
 
-fn image_summary(row: &crate::app::views::transcript::conversation::TranscriptItem) -> String {
+fn image_summary(row: &crate::conversation::TranscriptItem) -> String {
     row.images
         .iter()
-        .map(|image| {
-            format!(
-                "{}:{} bytes",
-                image.format().mime_type(),
-                image.bytes().len()
-            )
-        })
+        .map(|image| format!("{}:{} bytes", image.mime_type(), image.bytes().len()))
         .collect::<Vec<_>>()
         .join(", ")
 }

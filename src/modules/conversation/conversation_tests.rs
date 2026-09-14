@@ -154,7 +154,7 @@ fn saved_presentations_restore_compact_history_in_order() {
 #[test]
 fn pasted_files_and_images_survive_finalization_and_history() {
     let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
-    let image = Arc::new(Image::from_bytes(ImageFormat::Png, vec![1, 2, 3]));
+    let image = Arc::new(EncodedImage::new(vec![1, 2, 3], "image/png").unwrap());
     let message = json!({"role":"user", "content":[
         {"type":"text", "text":prompt},
         {"type":"image", "data":"AQID", "mimeType":"image/png"}
@@ -179,6 +179,41 @@ fn pasted_files_and_images_survive_finalization_and_history() {
     assert_eq!(state.items[0].text, optimistic.text);
     assert_eq!(state.items[0].files, optimistic.files);
     assert_eq!(state.items[0].images.len(), 1);
+}
+
+#[test]
+fn prompt_image_ingestion_canonicalizes_aliases_and_skips_invalid_payloads() {
+    let images = [
+        PromptImage::new("AQID".into(), "image/jpg".into()),
+        PromptImage::new("BAUG".into(), "image/tif".into()),
+        PromptImage::new("AQID".into(), "application/octet-stream".into()),
+        PromptImage::new("not base64".into(), "image/png".into()),
+        PromptImage::new(String::new(), "image/gif".into()),
+        PromptImage::from_file("/does/not/exist".into(), "image/unknown".into()),
+    ];
+    let mut local = ConversationState::default();
+    local.push_local_user_with_prompt_images("images".into(), &images, false);
+    assert_eq!(local.items[0].images.len(), 2);
+    assert_eq!(local.items[0].images[0].mime_type(), "image/jpeg");
+    assert_eq!(local.items[0].images[0].bytes(), [1, 2, 3]);
+    assert_eq!(local.items[0].images[1].mime_type(), "image/tiff");
+    assert_eq!(local.items[0].images[1].bytes(), [4, 5, 6]);
+
+    let cloned = local.clone();
+    assert!(Arc::ptr_eq(
+        &local.items[0].images[0],
+        &cloned.items[0].images[0]
+    ));
+
+    let mut history = ConversationState::default();
+    history.replace_history(&[json!({"role":"user", "content":[
+        {"type":"image", "data":"AQID", "mimeType":"image/jpg"},
+        {"type":"image", "data":"BAUG", "mimeType":"image/tif"},
+        {"type":"image", "data":"AQID", "mimeType":"application/octet-stream"},
+        {"type":"image", "data":"not base64", "mimeType":"image/png"},
+        {"type":"image", "data":"", "mimeType":"image/gif"}
+    ]})]);
+    assert_eq!(history.items[0].images, local.items[0].images);
 }
 
 #[test]

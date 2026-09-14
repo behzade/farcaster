@@ -6,7 +6,7 @@ pub(crate) struct PendingReceipt {
     pub id: String,
     pub mode: Option<PromptMode>,
     pub text: String,
-    pub images: Arc<Vec<Arc<Image>>>,
+    pub images: Arc<Vec<Arc<EncodedImage>>>,
     pub unknown: bool,
 }
 

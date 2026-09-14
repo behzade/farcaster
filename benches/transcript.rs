@@ -10,6 +10,8 @@ use std::{
 use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
+#[path = "../src/modules/agents/contract/backend.rs"]
+mod backend;
 #[path = "../src/app/reviews.rs"]
 mod reviews;
 
@@ -34,10 +36,12 @@ mod app {
 
     pub(crate) mod ui {
         pub(crate) use crate::{assets, change_tree, file_icons};
+        pub(crate) mod images {
+            include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/app/ui/images.rs"));
+        }
         pub(crate) mod keyboard {
             gpui::actions!(farcaster_bench, [CopySelection]);
         }
-        pub(crate) use crate::persistent_vec;
         pub(crate) use crate::primitives;
         pub(crate) use crate::theme;
     }
@@ -50,12 +54,6 @@ mod app {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/src/app/views/transcript/attachments.rs"
-                ));
-            }
-            pub(crate) mod conversation {
-                include!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/src/app/views/transcript/conversation.rs"
                 ));
             }
             pub(crate) mod list {
@@ -174,6 +172,7 @@ mod app {
 }
 
 mod agents {
+    pub(crate) use crate::backend::Backend;
     mod tool {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -243,8 +242,13 @@ mod assets;
 pub(crate) mod attachment_cards;
 #[path = "../src/app/infrastructure/performance.rs"]
 mod performance;
-#[path = "../src/app/ui/persistent_vec.rs"]
+#[path = "../src/modules/utility/persistent_vec.rs"]
 mod persistent_vec;
+pub(crate) mod utility {
+    pub(crate) use crate::persistent_vec;
+}
+#[path = "../src/modules/conversation.rs"]
+mod conversation;
 // Use the real transcript primitives without app-wide dialog dependencies.
 mod primitives {
     pub(crate) use crate::bench_button::*;
@@ -286,7 +290,7 @@ mod protocol;
 mod theme;
 
 use app::views::transcript::{
-    self as transcript, conversation, list as transcript_list, markdown as transcript_markdown,
+    self as transcript, list as transcript_list, markdown as transcript_markdown,
 };
 
 const WARMUP_FRAMES: usize = 10;

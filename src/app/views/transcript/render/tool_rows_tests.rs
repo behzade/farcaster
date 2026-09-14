@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::views::transcript::conversation::{ConversationState, ToolReview};
+use crate::conversation::{ConversationState, ToolReview};
 use serde_json::json;
 
 pub(super) fn write_item() -> TranscriptItem {

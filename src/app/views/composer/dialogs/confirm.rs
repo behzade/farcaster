@@ -4,13 +4,15 @@ use gpui::{
 };
 
 use super::selectable_dialog_text;
-use crate::app::{
-    FarcasterApp,
-    ui::{
-        primitives::{ButtonTone, button},
-        theme::{MONO_FONT_FAMILY, THEME},
+use crate::{
+    app::{
+        FarcasterApp,
+        ui::{
+            primitives::{ButtonTone, button},
+            theme::{MONO_FONT_FAMILY, THEME},
+        },
     },
-    views::transcript::conversation,
+    conversation,
 };
 
 #[derive(IntoElement)]

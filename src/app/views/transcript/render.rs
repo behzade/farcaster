@@ -16,7 +16,6 @@ use gpui_component::{
 };
 
 use crate::{
-    app::ui::persistent_vec::{Indexed, PersistentVec},
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
     },
@@ -25,11 +24,12 @@ use crate::{
         FarcasterApp,
         views::transcript::{
             attachments::ATTACHMENT_ROW_HEIGHT,
-            conversation::{self, TranscriptItem, TranscriptKind},
             list::{self, TranscriptListState, transcript_list_grouped},
             markdown::{MarkdownStateKey, TranscriptMarkdownCache},
         },
     },
+    conversation::{self, TranscriptItem, TranscriptKind},
+    utility::persistent_vec::{Indexed, PersistentVec},
 };
 
 #[path = "render/chunking.rs"]

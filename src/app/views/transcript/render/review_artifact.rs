@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::app::{
-    reviews::Review,
-    views::transcript::conversation::{ToolExecutionState, TranscriptItem},
+use crate::{
+    app::reviews::Review,
+    conversation::{ToolExecutionState, TranscriptItem},
 };
 
 #[derive(Clone, Deserialize)]
