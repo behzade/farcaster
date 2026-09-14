@@ -377,6 +377,16 @@ pub(in crate::modules::agents::adapter) fn configure_command(
     if profile.backend == Backend::Antigravity {
         super::super::antigravity::configure(command)?;
     }
+    if profile.backend == Backend::Cursor {
+        command.args([
+            "--sandbox",
+            if access_mode == HarnessAccessMode::Full {
+                "disabled"
+            } else {
+                "enabled"
+            },
+        ]);
+    }
     if access_mode == HarnessAccessMode::Full
         && let Some(argument) = profile.force_argument
     {

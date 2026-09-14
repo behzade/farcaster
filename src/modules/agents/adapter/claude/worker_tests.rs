@@ -175,6 +175,32 @@ fn session(command: &AgentLaunchConfig, project: &Path) -> ClaudeSession {
 }
 
 #[test]
+fn sandbox_startup_rejection_does_not_create_a_session() {
+    let (directory, mut command) = setup();
+    let script = &command.prefix_args[0];
+    std::fs::write(script, r#"#!/bin/sh
+IFS= read -r line
+id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+printf '{"type":"control_response","response":{"subtype":"error","request_id":"%s","error":"Sandbox unavailable"}}\n' "$id"
+exit 1
+"#).unwrap();
+    for access in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Auto] {
+        command.access_mode = access;
+        let launch = SessionLaunch {
+            harness: BACKEND,
+            session_id: Some(TEST_SESSION_ID.into()),
+            project: directory.path().to_owned(),
+            start: SessionStart::New,
+            wake: None,
+        };
+        let error = spawn_main(&command, &launch)
+            .err()
+            .expect("startup must fail");
+        assert!(error.contains("Sandbox unavailable"), "{error}");
+    }
+}
+
+#[test]
 fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() {
     let (directory, command) = setup();
     let script = command.prefix_args[0].clone();
@@ -390,6 +416,19 @@ fn cli_launch_and_image_envelopes_are_source_typed() {
         assert!(args.contains(&"--no-session-persistence"));
         assert!(args.contains(&"--permission-prompt-tool"));
         assert!(args.contains(&permission_mode));
+        let settings = args
+            .windows(2)
+            .find(|args| args[0] == "--settings")
+            .unwrap()[1];
+        let settings: serde_json::Value = serde_json::from_str(settings).unwrap();
+        assert_eq!(
+            settings["sandbox"]["enabled"],
+            access != HarnessAccessMode::Full
+        );
+        assert_eq!(
+            settings["sandbox"]["failIfUnavailable"],
+            access != HarnessAccessMode::Full
+        );
         assert!(!args.contains(&"--mcp-config"));
         assert_eq!(
             args.contains(&"--allow-dangerously-skip-permissions"),

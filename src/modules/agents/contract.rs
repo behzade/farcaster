@@ -516,6 +516,8 @@ pub(crate) enum HarnessAccessMode {
 pub(crate) enum SandboxState {
     #[default]
     Unmanaged,
+    // The previous mode remains effective until the queued change can start.
+    Pending(HarnessAccessMode),
     Checking,
     Active(HarnessAccessMode),
     Failed,

@@ -375,7 +375,7 @@ fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), Stri
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
     let session = temp.path().join("session.jsonl");
-    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["history-control".into()]);
     owner.start_process(Some(session));
     drive_process_until(&mut owner, |owner| {
@@ -387,32 +387,44 @@ fn access_mode_change_restarts_and_resumes_the_idle_session() -> Result<(), Stri
         "preserved history"
     );
 
-    let generation = owner.process_generation;
-    let transcript = owner.snapshot.conversation.items.clone();
-    let target = HarnessAccessMode::Full;
-    owner.apply_command(RuntimeCommand::SetAccessMode(target));
+    for target in [HarnessAccessMode::Full, HarnessAccessMode::Sandboxed] {
+        let generation = owner.process_generation;
+        let previous = owner.process_command.access_mode;
+        let transcript = owner.snapshot.conversation.items.clone();
+        owner.apply_command(RuntimeCommand::SetAccessMode(target));
 
-    assert_eq!(owner.process_generation, generation);
-    assert_eq!(
-        owner.process_command.access_mode,
-        HarnessAccessMode::Sandboxed
-    );
-    assert_eq!(owner.snapshot.access_mode, target);
-    assert!(!owner.access_mode_changes.is_idle());
+        assert_eq!(owner.process_generation, generation);
+        assert_eq!(owner.process_command.access_mode, previous);
+        assert_eq!(owner.snapshot.access_mode, target);
+        assert_eq!(
+            owner.snapshot.sandbox_state,
+            crate::agents::SandboxState::Pending(previous)
+        );
+        assert!(!owner.access_mode_changes.is_idle());
 
-    owner.access_mode_changes.make_due();
-    owner.apply_queued_access_mode_change();
-    assert_eq!(owner.snapshot.conversation.items, transcript);
-    drive_process_until(&mut owner, |owner| {
-        owner.startup_state_loaded && owner.startup_history_loaded
-    });
+        owner.access_mode_changes.make_due();
+        owner.apply_queued_access_mode_change();
+        assert!(events.try_iter().any(|event| matches!(event,
+            RuntimeEvent::Snapshot { snapshot, .. }
+                if snapshot.sandbox_state == crate::agents::SandboxState::Checking
+                    && snapshot.access_mode == target
+        )));
+        assert_eq!(owner.snapshot.conversation.items, transcript);
+        drive_process_until(&mut owner, |owner| {
+            owner.startup_state_loaded && owner.startup_history_loaded
+        });
 
-    assert!(owner.access_mode_changes.is_idle());
-    assert_eq!(owner.process_generation, generation + 1);
-    assert!(owner.process.is_some());
-    assert_eq!(owner.process_command.access_mode, target);
-    assert_eq!(owner.snapshot.access_mode, target);
-    assert_eq!(owner.snapshot.conversation.items, transcript);
+        assert!(owner.access_mode_changes.is_idle());
+        assert_eq!(owner.process_generation, generation + 1);
+        assert!(owner.process.is_some());
+        assert_eq!(owner.process_command.access_mode, target);
+        assert_eq!(owner.snapshot.access_mode, target);
+        assert_eq!(owner.snapshot.conversation.items, transcript);
+        assert_eq!(
+            owner.snapshot.sandbox_state,
+            crate::agents::SandboxState::Active(target)
+        );
+    }
     Ok(())
 }
 

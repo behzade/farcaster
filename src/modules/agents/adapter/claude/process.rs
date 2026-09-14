@@ -70,6 +70,14 @@ pub(super) fn configure(
         if resume { "resume" } else { "session-id" }
     ));
     command.arg(format!("--permission-mode={}", permission_mode(access)));
+    let sandboxed = access != HarnessAccessMode::Full;
+    command.arg("--settings").arg(
+        json!({"sandbox": {
+            "enabled": sandboxed,
+            "failIfUnavailable": sandboxed,
+        }})
+        .to_string(),
+    );
     if access == HarnessAccessMode::Full {
         command.arg("--allow-dangerously-skip-permissions");
     }

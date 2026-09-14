@@ -983,17 +983,21 @@ fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
 }
 
 #[test]
-fn full_access_uses_the_profile_escape_hatch() {
-    let mut command = std::process::Command::new("agent");
-    configure_command(&mut command, &PROFILE, HarnessAccessMode::Full)
-        .expect("test operation should succeed");
-    assert_eq!(
-        command
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        ["--force", "acp"]
-    );
+fn cursor_access_configures_sandbox_and_approvals() {
+    for (mode, expected) in [
+        (
+            HarnessAccessMode::Sandboxed,
+            vec!["--sandbox", "enabled", "acp"],
+        ),
+        (
+            HarnessAccessMode::Full,
+            vec!["--sandbox", "disabled", "--force", "acp"],
+        ),
+    ] {
+        let mut command = std::process::Command::new("agent");
+        configure_command(&mut command, &PROFILE, mode).expect("configure Cursor");
+        assert_eq!(command.get_args().collect::<Vec<_>>(), expected);
+    }
 }
 
 #[test]

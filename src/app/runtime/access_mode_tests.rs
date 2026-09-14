@@ -3,6 +3,39 @@ use crate::agents::Backend;
 use crate::runtime::tests::owner_without_process;
 
 #[test]
+fn sandbox_changes_show_pending_requested_mode_for_every_native_adapter() {
+    use crate::agents::SandboxState;
+    use HarnessAccessMode::{Full, Sandboxed};
+    for backend in Backend::ALL
+        .into_iter()
+        .filter(|backend| *backend != Backend::Pi)
+    {
+        for (current, requested) in [(Full, Sandboxed), (Sandboxed, Full)] {
+            let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+            owner.harness = Some(backend);
+            owner.snapshot.harness = Some(backend);
+            owner.process_command.access_mode = current;
+            conversation_mut(owner.active_snapshot_mut()).running = true;
+            owner.set_access_mode(requested);
+            assert_eq!(owner.snapshot.access_mode, requested, "{backend:?}");
+            assert_eq!(
+                owner.snapshot.sandbox_state,
+                SandboxState::Pending(current),
+                "{backend:?}"
+            );
+            assert_eq!(owner.process_command.access_mode, current);
+            owner.access_mode_changes.make_due();
+            owner.apply_queued_access_mode_change();
+            assert_eq!(owner.snapshot.sandbox_state, SandboxState::Pending(current));
+            // Selecting the effective mode again cancels the transition.
+            owner.set_access_mode(current);
+            assert_eq!(owner.snapshot.sandbox_state, SandboxState::Active(current));
+            assert!(owner.access_mode_changes.is_idle());
+        }
+    }
+}
+
+#[test]
 fn access_modes_reject_unsupported_and_recheck_queued_changes() {
     use HarnessAccessMode::{Auto, Full, Sandboxed};
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
@@ -107,7 +140,10 @@ fn sandbox_discovery_rechecks_every_restart_and_mode_changes_wait_for_idle()
     let generation = owner.process_generation;
     conversation_mut(owner.active_snapshot_mut()).running = true;
     owner.set_access_mode(HarnessAccessMode::Full);
-    assert_eq!(owner.snapshot.sandbox_state, SandboxState::Checking);
+    assert_eq!(
+        owner.snapshot.sandbox_state,
+        SandboxState::Pending(HarnessAccessMode::Sandboxed)
+    );
     owner.access_mode_changes.make_due();
     owner.apply_queued_access_mode_change();
     assert_eq!(owner.process_generation, generation);

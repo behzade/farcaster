@@ -9,6 +9,7 @@ pub(super) struct AccessModeChangeState {
     fallback_preference: Option<HarnessAccessMode>,
     apply_due: Option<Instant>,
     restart_pending: bool,
+    pub(super) applying: bool,
 }
 
 impl AccessModeChangeState {
@@ -79,6 +80,32 @@ impl AccessModeChangeState {
 }
 
 impl RuntimeOwner {
+    pub(super) fn sandbox_state(&self) -> crate::agents::SandboxState {
+        use crate::agents::SandboxState;
+
+        let requested = self.snapshot.access_mode;
+        if !self.snapshot.sandbox_controls_available() {
+            SandboxState::Unmanaged
+        } else if requested != self.process_command.access_mode {
+            SandboxState::Pending(self.process_command.access_mode)
+        } else if self.access_mode_changes.applying {
+            SandboxState::Checking
+        } else if self.active_snapshot().status == "Failed" {
+            SandboxState::Failed
+        } else if self.snapshot.sandbox_adapter.is_none() {
+            SandboxState::Active(requested)
+        } else {
+            match self
+                .process
+                .as_ref()
+                .and_then(|process| process.sandbox_mode())
+            {
+                Some(mode) if mode == requested => SandboxState::Active(mode),
+                _ => SandboxState::Checking,
+            }
+        }
+    }
+
     pub(super) fn reconcile_access_mode(&mut self) {
         if self.access_mode_changes.queued.is_some()
             || (self.process.is_some() && self.access_mode_changes.fallback_preference.is_none())

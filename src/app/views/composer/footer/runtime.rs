@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    Animation, AnimationExt as _, AnyElement, IntoElement as _, ParentElement as _, Styled as _,
+    Transformation, WeakEntity, div, percentage, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -10,6 +10,7 @@ use gpui_component::{
 use super::separator;
 use crate::app::FarcasterApp;
 use crate::{
+    agents::SandboxState,
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
     app::ui::theme::{MONO_FONT_FAMILY, THEME},
@@ -133,19 +134,34 @@ fn effort_label(level: &str) -> String {
 fn access_selector(
     selected: HarnessAccessMode,
     supported: Vec<HarnessAccessMode>,
-    state: crate::agents::SandboxState,
+    state: SandboxState,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let content = div()
         .flex()
         .items_center()
         .gap(px(5.0))
-        .text_color(access_mode_color(selected))
+        .text_color(match state {
+            SandboxState::Active(mode) => access_mode_color(mode),
+            _ => THEME.colors.muted,
+        })
         .child(app_icon(AppIcon::Shield, AppIconSize::Inline))
-        .child(sandbox_state_label(state));
+        .child(sandbox_state_label(state, selected))
+        .when(matches!(state, SandboxState::Pending(_)), |this| {
+            this.child(app_icon(AppIcon::Hourglass, AppIconSize::Inline))
+        })
+        .when(state == SandboxState::Checking, |this| {
+            this.child(
+                app_icon(AppIcon::SpinnerGap, AppIconSize::Inline).with_animation(
+                    "sandbox-applying",
+                    Animation::new(std::time::Duration::from_millis(800)).repeat(),
+                    |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                ),
+            )
+        });
     dropdown_content_button(
         "harness-access",
-        format!("Sandbox settings: {}", sandbox_state_label(state)),
+        sandbox_state_tooltip(state, selected),
         content,
         ButtonTone::Quiet,
         supported.len() > 1,
@@ -166,12 +182,26 @@ fn access_selector(
     .into_any_element()
 }
 
-fn sandbox_state_label(state: crate::agents::SandboxState) -> &'static str {
+fn sandbox_state_label(state: SandboxState, selected: HarnessAccessMode) -> &'static str {
     match state {
-        crate::agents::SandboxState::Unmanaged => "Sandbox: Not managed",
-        crate::agents::SandboxState::Checking => "Sandbox: Checking",
-        crate::agents::SandboxState::Failed => "Sandbox: Unavailable",
-        crate::agents::SandboxState::Active(mode) => access_mode_label(mode),
+        SandboxState::Unmanaged => "Sandbox: Not managed",
+        SandboxState::Pending(_) | SandboxState::Checking => access_mode_label(selected),
+        SandboxState::Failed => "Sandbox: Unavailable",
+        SandboxState::Active(mode) => access_mode_label(mode),
+    }
+}
+
+fn sandbox_state_tooltip(state: SandboxState, selected: HarnessAccessMode) -> String {
+    match state {
+        SandboxState::Pending(current) => format!(
+            "Currently {}. Waiting for the session to become idle to apply {}.",
+            access_mode_label(current),
+            access_mode_label(selected),
+        ),
+        SandboxState::Checking => {
+            format!("Applying {}…", access_mode_label(selected))
+        }
+        _ => format!("Sandbox settings: {}", sandbox_state_label(state, selected)),
     }
 }
 
