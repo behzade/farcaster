@@ -349,10 +349,11 @@ fn prompt_result_follows_submission_through_draft_promotion() {
             let draft = "draft:new";
             let path = PathBuf::from("/sessions/new");
             let session = session_target(&path);
+            let submission_id = "submission-new";
             let mut pending = HashMap::from([(
-                draft.to_owned(),
+                submission_id.to_owned(),
                 PendingSubmission {
-                    id: "submission-new".into(),
+                    id: submission_id.into(),
                     submitted_at: std::time::Instant::now(),
                     submitted_target: draft.into(),
                     mode: crate::protocol::PromptMode::Normal,
@@ -364,133 +365,320 @@ fn prompt_result_follows_submission_through_draft_promotion() {
                 },
             )]);
             if promoted_before_reply {
-                let submission = pending.remove(draft).expect("draft submission");
-                pending.insert(session.clone(), submission);
+                pending
+                    .get_mut(submission_id)
+                    .expect("draft submission")
+                    .submitted_target = session.clone();
             }
-            record_pending_prompt_result(&mut pending, draft, outcome, Some(path.clone()));
-            let key = if promoted_before_reply {
-                &session
-            } else {
-                draft
-            };
-            assert_eq!(pending[key].result, Some((outcome, Some(path))));
-            // An unrelated reply must not resolve or overwrite this submission.
-            record_pending_prompt_result(
+            record_pending_prompt_result_for_submission(
                 &mut pending,
+                Some(submission_id),
+                draft,
+                outcome,
+                Some(path.clone()),
+            );
+            assert_eq!(pending[submission_id].result, Some((outcome, Some(path))));
+            // An unrelated reply must not resolve or overwrite this submission.
+            record_pending_prompt_result_for_submission(
+                &mut pending,
+                Some("submission-other"),
                 "draft:other",
                 crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                 None,
             );
             assert_eq!(
-                pending[key].result.as_ref().map(|result| result.0),
+                pending[submission_id]
+                    .result
+                    .as_ref()
+                    .map(|result| result.0),
                 Some(outcome)
             );
-            assert_eq!(pending[key].text, "keep this on rejection");
+            assert_eq!(pending[submission_id].text, "keep this on rejection");
+        }
+    }
+}
+
+#[gpui::test]
+fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::unknown_activity_then_real_rejection_resolves_the_original_payload_once"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            // A session target keeps this fixture clear of draft persistence. The
+            // offline composer store is also a no-op, so this test cannot reach
+            // user state or start an agent process.
+            let submission_id = "submission-unknown";
+            let session = PathBuf::from("/sessions/unknown");
+            let target = session_target(&session);
+            let image = crate::app::composer::ComposerImage::from_prompt(
+            crate::protocol::PromptImage::new(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
+                "image/png".into(),
+            ),
+        )
+        .expect("valid image");
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.pending_submissions.insert(
+                        submission_id.into(),
+                        PendingSubmission {
+                            id: submission_id.into(),
+                            submitted_at: std::time::Instant::now(),
+                            submitted_target: target.clone(),
+                            mode: crate::protocol::PromptMode::Steer,
+                            text: "exact unresolved text".into(),
+                            images: vec![image.clone()],
+                            pastes: Vec::new(),
+                            append_on_failure: false,
+                            result: None,
+                        },
+                    );
+                });
+            });
+
+            for generation in 1..=2 {
+                let mut conversation = crate::conversation::ConversationState::default();
+                conversation.reduce(&serde_json::json!({
+                "type":"prompt_delivery",
+                "submissionId":submission_id,
+                "status":"unknown",
+                "message":{"role":"user", "content":[{"type":"text", "text":"exact unresolved text"}]},
+            }));
+                runtime.send_event(RuntimeEvent::Snapshot {
+                    generation,
+                    snapshot: Arc::new(RuntimeSnapshot {
+                        conversation: Arc::new(conversation),
+                        selected_session: Some(session.clone()),
+                        live_session: Some(session.clone()),
+                        ..RuntimeSnapshot::default()
+                    }),
+                });
+                cx.update(|_, cx| {
+                    app.update(cx, |app, cx| {
+                        app.drain_runtime(cx);
+                        let pending = &app.pending_submissions[submission_id];
+                        assert_eq!(pending.result, None);
+                        assert_eq!(pending.text, "exact unresolved text");
+                        assert_eq!(pending.images, [image.clone()]);
+                    });
+                });
+            }
+
+            runtime.send_event(RuntimeEvent::PromptResult {
+                submission_id: Some(submission_id.into()),
+                target: target.clone(),
+                outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                session: Some(session.clone()),
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(
+                        app.pending_submissions[submission_id].result,
+                        Some((
+                            crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+                            Some(session.clone())
+                        ))
+                    );
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|window, cx| {
+                {
+                    let state = app.read(cx);
+                    assert!(state.pending_submissions.is_empty());
+                    assert_eq!(
+                        state.composer_sessions.snapshot_for(&target).text,
+                        "exact unresolved text"
+                    );
+                    assert_eq!(state.composer_images[&target], [image.clone()]);
+                }
+                window.draw(cx).clear(cx);
+                let state = app.read(cx);
+                assert_eq!(state.composer_images[&target], [image]);
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::sessions::UsageSummary;
+    use std::time::SystemTime;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::child_activity_event_invalidates_and_renders_the_real_run_sidebar"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let root_path = PathBuf::from("/offline-root.jsonl");
+            let child_path = PathBuf::from("/offline-child.jsonl");
+            let make_session =
+                |id: &str, path: PathBuf, parent_session: Option<String>, running| {
+                    SessionSummary::from_cached(
+                        id.into(),
+                        path,
+                        project.to_path_buf(),
+                        id.into(),
+                        String::new(),
+                        String::new(),
+                        parent_session,
+                        SystemTime::now(),
+                        0,
+                        UsageSummary::default(),
+                        false,
+                        running,
+                        String::new(),
+                    )
+                };
+            let root = make_session("root", root_path.clone(), None, true);
+            let child = make_session("child", child_path.clone(), Some("root".into()), true);
+            let activity = AgentActivity::from_native_child(
+                "child".into(),
+                child_path.clone(),
+                "worker",
+                true,
+                None,
+            );
+            let activity_key = crate::agent_activity::agent_activity_key(&child_path);
+            let card_selector = "agent-card-/offline-child.jsonl";
+
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 1,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    selected_session: Some(root_path.clone()),
+                    live_session: Some(root_path.clone()),
+                    ..RuntimeSnapshot::default()
+                }),
+            });
+            runtime.send_event(RuntimeEvent::Sessions {
+                generation: 1,
+                sessions: vec![root.clone()],
+                all_sessions: vec![root.clone()],
+                activities: None,
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_run_sheet(window, cx);
+                    app.drain_runtime(cx);
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert!(cx.debug_bounds(card_selector).is_none());
+
+            runtime.send_event(RuntimeEvent::Sessions {
+                generation: 2,
+                sessions: vec![root.clone(), child.clone()],
+                all_sessions: vec![root.clone(), child.clone()],
+                activities: None,
+            });
+            runtime.send_event(RuntimeEvent::AgentActivityUpdated(activity.clone()));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+            });
+            assert!(
+                cx.debug_bounds(card_selector).is_some(),
+                "the projected active child must render in the run sidebar"
+            );
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert_eq!(
+                    app.agent_activities[&activity_key].lifecycle,
+                    crate::agent_activity::AgentLifecycle::Working
+                );
+                assert_eq!(
+                    app.snapshot.selected_session.as_deref(),
+                    Some(root_path.as_path())
+                );
+            });
+
+            let mut completed = activity;
+            completed.lifecycle = crate::agent_activity::AgentLifecycle::Completed(
+                crate::agent_activity::AgentOutcome::Complete,
+            );
+            runtime.send_event(RuntimeEvent::AgentActivityUpdated(completed));
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| app.drain_runtime(cx));
+                window.draw(cx).clear(cx);
+            });
+            assert!(
+                cx.debug_bounds(card_selector).is_none(),
+                "activity invalidation must remove a completed child from the collapsed section"
+            );
+        },
+    );
+}
+
+#[test]
+fn terminal_submission_cannot_be_overwritten_by_late_results() {
+    let target = "draft:accepted";
+    let submission_id = "submission-accepted";
+    for (terminal, late_results) in [
+        (
+            crate::agents::PromptOutcome::Accepted,
+            [
+                crate::agents::PromptOutcome::DeliveryUnknown,
+                crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            ],
+        ),
+        (
+            crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            [
+                crate::agents::PromptOutcome::DeliveryUnknown,
+                crate::agents::PromptOutcome::Accepted,
+            ],
+        ),
+    ] {
+        let mut pending = HashMap::from([(
+            submission_id.to_owned(),
+            PendingSubmission {
+                id: submission_id.into(),
+                submitted_at: std::time::Instant::now(),
+                submitted_target: target.into(),
+                mode: crate::protocol::PromptMode::Steer,
+                text: "terminal".into(),
+                images: Vec::new(),
+                pastes: Vec::new(),
+                append_on_failure: false,
+                result: None,
+            },
+        )]);
+        record_pending_prompt_result_for_submission(
+            &mut pending,
+            Some(submission_id),
+            target,
+            terminal,
+            None,
+        );
+        for late in late_results {
+            record_pending_prompt_result_for_submission(
+                &mut pending,
+                Some(submission_id),
+                target,
+                late,
+                None,
+            );
+            assert_eq!(
+                pending[submission_id].result,
+                Some((terminal, None)),
+                "{late:?} overwrote terminal result {terminal:?}"
+            );
         }
     }
 }
 
 #[test]
-fn unknown_activity_then_real_rejection_resolves_the_original_payload_once() {
-    let target = "draft:unknown";
-    let session = PathBuf::from("/sessions/unknown");
-    let image = crate::app::composer::ComposerImage::from_prompt(
-        crate::protocol::PromptImage::new(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=".into(),
-            "image/png".into(),
-        ),
-    )
-    .expect("valid image");
-    let mut pending = HashMap::from([(
-        target.to_owned(),
-        PendingSubmission {
-            id: "submission-unknown".into(),
-            submitted_at: std::time::Instant::now(),
-            submitted_target: target.into(),
-            mode: crate::protocol::PromptMode::Steer,
-            text: "exact unresolved text".into(),
-            images: vec![image.clone()],
-            pastes: Vec::new(),
-            append_on_failure: false,
-            result: None,
-        },
-    )]);
-
-    let mut conversation = crate::conversation::ConversationState::default();
-    for _ in 0..2 {
-        conversation.reduce(&serde_json::json!({
-            "type":"prompt_delivery",
-            "submissionId":"request:unknown",
-            "status":"unknown",
-            "message":{"role":"user", "content":[{"type":"text", "text":"exact unresolved text"}]},
-        }));
-        assert_eq!(pending[target].result, None);
-        assert_eq!(pending[target].text, "exact unresolved text");
-        assert_eq!(pending[target].images, [image.clone()]);
-    }
-
-    record_pending_prompt_result(
-        &mut pending,
-        target,
-        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-        Some(session.clone()),
-    );
-    let resolved =
-        crate::app::composer::submissions::take_resolved_pending_submissions(&mut pending);
-    assert!(pending.is_empty());
-    assert_eq!(resolved.len(), 1);
-    let (resolved_target, submission, outcome, resolved_session) = &resolved[0];
-    assert_eq!(resolved_target, target);
-    assert_eq!(submission.text, "exact unresolved text");
-    assert_eq!(submission.images, [image]);
-    assert_eq!(
-        *outcome,
-        crate::agents::PromptOutcome::RejectedBeforeAcceptance
-    );
-    assert_eq!(resolved_session.as_ref(), Some(&session));
-    assert!(
-        crate::app::composer::submissions::take_resolved_pending_submissions(&mut pending)
-            .is_empty()
-    );
-}
-
-#[test]
-fn accepted_submission_cannot_be_downgraded_by_a_late_unknown_or_rejection() {
-    let target = "draft:accepted";
-    let mut pending = HashMap::from([(
-        target.to_owned(),
-        PendingSubmission {
-            id: "submission-accepted".into(),
-            submitted_at: std::time::Instant::now(),
-            submitted_target: target.into(),
-            mode: crate::protocol::PromptMode::Steer,
-            text: "accepted".into(),
-            images: Vec::new(),
-            pastes: Vec::new(),
-            append_on_failure: false,
-            result: None,
-        },
-    )]);
-    record_pending_prompt_result(
-        &mut pending,
-        target,
-        crate::agents::PromptOutcome::Accepted,
-        None,
-    );
-    for late in [
-        crate::agents::PromptOutcome::DeliveryUnknown,
-        crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-    ] {
-        record_pending_prompt_result(&mut pending, target, late, None);
-    }
-    assert_eq!(
-        pending[target].result,
-        Some((crate::agents::PromptOutcome::Accepted, None))
-    );
-}
-
-#[test]
-fn prompt_results_never_fall_back_from_an_explicit_missing_id() {
+fn explicit_missing_submission_id_never_uses_legacy_target_fallback() {
     let target = "session:one";
     let make = |id: &str| PendingSubmission {
         id: id.into(),
@@ -513,23 +701,42 @@ fn prompt_results_never_fall_back_from_an_explicit_missing_id() {
         None,
     );
     assert!(pending.values().all(|pending| pending.result.is_none()));
-    record_pending_prompt_result(
+    record_pending_prompt_result_for_submission(
         &mut pending,
+        None,
         target,
         crate::agents::PromptOutcome::Accepted,
         None,
     );
     assert!(pending.values().all(|pending| pending.result.is_none()));
+}
 
-    pending.remove("old");
-    record_pending_prompt_result(
+#[test]
+fn legacy_prompt_result_without_id_resolves_one_unambiguous_target() {
+    let target = "session:one";
+    let mut pending = HashMap::from([(
+        "legacy".into(),
+        PendingSubmission {
+            id: "legacy".into(),
+            submitted_at: std::time::Instant::now(),
+            submitted_target: target.into(),
+            mode: crate::protocol::PromptMode::Steer,
+            text: "legacy prompt".into(),
+            images: Vec::new(),
+            pastes: Vec::new(),
+            append_on_failure: false,
+            result: None,
+        },
+    )]);
+    record_pending_prompt_result_for_submission(
         &mut pending,
+        None,
         target,
         crate::agents::PromptOutcome::Accepted,
         None,
     );
     assert_eq!(
-        pending["new"].result,
+        pending["legacy"].result,
         Some((crate::agents::PromptOutcome::Accepted, None))
     );
 }

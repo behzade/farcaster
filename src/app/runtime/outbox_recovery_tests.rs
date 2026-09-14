@@ -810,6 +810,8 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
     const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
     for mode in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
         for navigate in [false, true] {
+            // Mode/navigation context keeps matrix failures attributable.
+            let scene = format!("{mode:?} navigate={navigate}");
             let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
             let database = temp.path().join("state.sqlite3");
             let first_session = temp.path().join("first.jsonl");
@@ -854,11 +856,18 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                     "cancelled without a receipt".into(),
                 ),
             ));
-            assert!(owner.pending_prompt_id.is_none());
-            assert!(owner.pending_prompt_target.is_none());
-            assert!(!owner.normal_prompt_in_flight);
-            assert!(owner.process.is_some() && owner.snapshot.connected);
-            assert_eq!(StateStore::open_at(&database)?.unknown_prompts()?.len(), 1);
+            assert!(owner.pending_prompt_id.is_none(), "{scene}");
+            assert!(owner.pending_prompt_target.is_none(), "{scene}");
+            assert!(!owner.normal_prompt_in_flight, "{scene}");
+            assert!(
+                owner.process.is_some() && owner.snapshot.connected,
+                "{scene}"
+            );
+            assert_eq!(
+                StateStore::open_at(&database)?.unknown_prompts()?.len(),
+                1,
+                "unknown prompt persistence ({scene})"
+            );
             owner.apply_process_item(SessionEvent::Activity(
                 json!({"type":"agent_settled"}).into(),
             ));
@@ -881,8 +890,8 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
             let new_id = owner
                 .pending_prompt_id
                 .clone()
-                .expect("new request must not be blocked");
-            assert_ne!(old_id, new_id);
+                .unwrap_or_else(|| panic!("new request must not be blocked ({scene})"));
+            assert_ne!(old_id, new_id, "{scene}");
             let new_outbox = owner.pending_outbox_id.expect("new durable row");
             let rows_before = owner.snapshot.conversation.items.len();
             let new_image = owner
@@ -912,15 +921,20 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                     &old_id, mode, false,
                 )));
             }
-            assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
-            assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+            assert_eq!(
+                owner.pending_prompt_id.as_deref(),
+                Some(new_id.as_str()),
+                "{scene}"
+            );
+            assert_eq!(owner.pending_outbox_id, Some(new_outbox), "{scene}");
             // A same-session queued receipt admits its old row. A normal row
             // was already optimistic, while navigation must not project any
             // old row into the new session. No branch may consume the new row.
             let admits_old_row = !navigate && mode != PromptMode::Normal;
             assert_eq!(
                 owner.snapshot.conversation.items.len(),
-                rows_before + usize::from(admits_old_row)
+                rows_before + usize::from(admits_old_row),
+                "receipt projection ({scene})"
             );
             let user_images = owner
                 .snapshot
@@ -930,7 +944,7 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                 .filter(|item| item.kind == TranscriptKind::User)
                 .map(|item| item.images[0].clone())
                 .collect::<Vec<_>>();
-            assert_eq!(user_images.len(), if navigate { 1 } else { 2 });
+            assert_eq!(user_images.len(), if navigate { 1 } else { 2 }, "{scene}");
             assert!(
                 user_images
                     .iter()
@@ -950,8 +964,16 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                     _ => None,
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(outcomes, [crate::agents::PromptOutcome::DeliveryUnknown]);
-            assert_eq!(sent_messages(&sent), ["same text", "same text"]);
+            assert_eq!(
+                outcomes,
+                [crate::agents::PromptOutcome::DeliveryUnknown],
+                "late old receipt must stay retired ({scene})"
+            );
+            assert_eq!(
+                sent_messages(&sent),
+                ["same text", "same text"],
+                "both submissions must dispatch ({scene})"
+            );
             // Backend history need not carry app receipt IDs. Replacing it
             // clears the delivered row's ledger; an old event must still not
             // append its payload again or bind the new optimistic row.
@@ -965,9 +987,17 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                     "message":{"role":"user", "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
                 }).into()));
             }
-            assert_eq!(owner.snapshot.conversation.items.len(), history_rows);
-            assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
-            assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+            assert_eq!(
+                owner.snapshot.conversation.items.len(),
+                history_rows,
+                "old events must not re-append payloads ({scene})"
+            );
+            assert_eq!(
+                owner.pending_prompt_id.as_deref(),
+                Some(new_id.as_str()),
+                "{scene}"
+            );
+            assert_eq!(owner.pending_outbox_id, Some(new_outbox), "{scene}");
             owner.apply_process_item(SessionEvent::Response(prompt_response(
                 &new_id,
                 PromptMode::Normal,
@@ -975,12 +1005,18 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
             )));
             drop(owner);
             let reopened = StateStore::open_at(&database)?;
-            assert!(reopened.unknown_prompts()?.is_empty());
-            assert!(reopened.queued_prompts()?.is_empty());
+            assert!(
+                reopened.unknown_prompts()?.is_empty(),
+                "acknowledged work must not stay unknown ({scene})"
+            );
+            assert!(
+                reopened.queued_prompts()?.is_empty(),
+                "acknowledged work must not replay ({scene})"
+            );
             let saved = reopened.accepted_prompt_history(&second_session)?;
-            assert_eq!(saved.len(), 1);
-            assert_eq!(saved[0]["submissionId"], new_id);
-            assert_eq!(saved[0]["content"][1]["data"], GIF);
+            assert_eq!(saved.len(), 1, "{scene}");
+            assert_eq!(saved[0]["submissionId"], new_id, "{scene}");
+            assert_eq!(saved[0]["content"][1]["data"], GIF, "{scene}");
             let connection =
                 rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
             let (accepted_rows, delivered_rows, attachment, mime_type): (i64, i64, String, String) =
@@ -999,7 +1035,11 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                     )
                     .map_err(|error| error.to_string())?;
-            assert_eq!((accepted_rows, delivered_rows), (1, 1));
+            assert_eq!(
+                (accepted_rows, delivered_rows),
+                (1, 1),
+                "old receipt ledger expectation ({scene})"
+            );
             let png_bytes =
                 crate::protocol::PromptImage::new(PNG.into(), "image/png".into()).bytes()?;
             assert_eq!(attachment, format!("{:x}", Sha256::digest(png_bytes)));

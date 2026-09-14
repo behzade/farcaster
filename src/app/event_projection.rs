@@ -879,15 +879,6 @@ fn project_dialog_dismissal(
     }
 }
 
-fn record_pending_prompt_result(
-    pending: &mut HashMap<String, PendingSubmission>,
-    target: &str,
-    outcome: crate::agents::PromptOutcome,
-    session: Option<PathBuf>,
-) {
-    record_pending_prompt_result_for_submission(pending, None, target, outcome, session);
-}
-
 pub(in crate::app) fn record_pending_prompt_result_for_submission(
     pending: &mut HashMap<String, PendingSubmission>,
     submission_id: Option<&str>,

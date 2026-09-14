@@ -1803,9 +1803,31 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
     assert_eq!(next_pi.thinking_levels, vec!["high"]);
 }
 
+/// Startup sends steering configuration first, ahead of the state and history
+/// queries that can each deliver deferred prompts; the full sequence keeps every
+/// configuration and catalog query in one dispatch.
 #[test]
-fn startup_delivers_all_composer_steers_at_one_turn_boundary() {
-    assert_eq!(startup_commands()[0], SessionCommand::ConfigureSteering);
+fn startup_commands_send_configuration_before_state_and_history_queries() {
+    assert_eq!(
+        startup_commands()[..3],
+        [
+            SessionCommand::ConfigureSteering,
+            SessionCommand::LoadState,
+            SessionCommand::LoadHistory,
+        ]
+    );
+    for command in [
+        SessionCommand::LoadUsage,
+        SessionCommand::ListModels,
+        SessionCommand::ListReasoningLevels,
+        SessionCommand::ListModes,
+        SessionCommand::ListCommands,
+    ] {
+        assert!(
+            startup_commands().contains(&command),
+            "startup must dispatch {command:?}"
+        );
+    }
 }
 
 #[test]
@@ -1923,7 +1945,11 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
     }
 
     assert!(!owner.snapshot.history_preview);
-    assert_eq!(owner.snapshot.selected_session, Some(session));
+    assert_eq!(
+        owner.snapshot.selected_session,
+        Some(crate::sessions::normalize_session_path(&session)),
+        "reconnect must keep the canonicalized selected session"
+    );
     assert!(
         owner
             .snapshot
@@ -1985,79 +2011,35 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
 
 #[test]
 fn failed_resume_publishes_no_state_from_the_previous_process() {
-    let (event_tx, event_rx) = test_event_channel();
-    let (history_tx, _history_rx) = mpsc::channel();
-    let mut owner = RuntimeOwner {
-        project: std::env::temp_dir(),
-        harness: Some(Backend::Pi),
-        session_id: None,
-        process_command: AgentLaunchConfig {
-            program: PathBuf::from("/definitely/missing/farcaster-test-command"),
-            prefix_args: Vec::new(),
-            access_mode: HarnessAccessMode::default(),
-            app_proxy: None,
-            session_locator_root: None,
-        },
-        process: None,
-        snapshot: RuntimeSnapshot {
-            connected: true,
-            status: "old".into(),
-            selected_session: Some(PathBuf::from("/old")),
-            models: vec![Model {
-                id: "old".into(),
-                name: "Old".into(),
-                provider: "test".into(),
-                context_window: 0,
-                reasoning: false,
-                resolved_model: None,
-                access_modes: None,
-                efforts: None,
-            }],
-            thinking_levels: vec!["high".into()],
-            stats: json!({"old": true}),
-            commands: vec![SlashCommand {
-                name: "old".into(),
-                description: None,
-                source: crate::protocol::SlashCommandSource::Extension,
-            }],
-            stderr: "old stderr".into(),
-            auto_retry: true,
-            ..RuntimeSnapshot::default()
-        },
-        owns_session_catalog: false,
-        session_generation: 0,
-        session_refresh_due: None,
-        process_generation: 4,
-        retired_prompts: HashMap::new(),
-        pending_prompt_id: None,
-        pending_submission_id: None,
-        pending_prompt_result_emitted: false,
-        pending_queued_prompts: HashMap::new(),
-        pending_prompt_target: None,
-        pending_prompt_item: None,
-        pending_outbox_id: None,
-        pending_prompt_delivery_unknown: false,
-        pending_prompt_delivery_tracked: false,
-        title_generation: SessionTitleGeneration::default(),
-        transcript_changed_from: None,
-        event_tx,
-        history_tx,
-        history_generation: 1,
-        history_selection_generation: None,
-        document_refresh_generation: Some(1),
-        pending_document_refresh: None,
-        active_session: Some(PathBuf::from("/old")),
-        parked_snapshot: None,
-        deferred_prompt: None,
-        queued_prompts: VecDeque::new(),
-        normal_prompt_in_flight: false,
-        pending_session_controls: PendingSessionControls::default(),
-        access_mode_changes: AccessModeChangeState::default(),
-        startup_state_loaded: false,
-        startup_history_loaded: false,
-        state: None,
-        session_query: String::new(),
-    };
+    let (mut owner, event_rx) = owner_without_process(std::env::temp_dir());
+    owner.process_command.access_mode = HarnessAccessMode::default();
+    let snapshot = owner.active_snapshot_mut();
+    snapshot.status = "old".into();
+    snapshot.selected_session = Some(PathBuf::from("/old"));
+    snapshot.models = vec![Model {
+        id: "old".into(),
+        name: "Old".into(),
+        provider: "test".into(),
+        context_window: 0,
+        reasoning: false,
+        resolved_model: None,
+        access_modes: None,
+        efforts: None,
+    }];
+    snapshot.thinking_levels = vec!["high".into()];
+    snapshot.stats = json!({"old": true});
+    snapshot.commands = vec![SlashCommand {
+        name: "old".into(),
+        description: None,
+        source: crate::protocol::SlashCommandSource::Extension,
+    }];
+    snapshot.stderr = "old stderr".into();
+    snapshot.auto_retry = true;
+    owner.owns_session_catalog = false;
+    owner.process_generation = 4;
+    owner.history_generation = 1;
+    owner.document_refresh_generation = Some(1);
+    owner.active_session = Some(PathBuf::from("/old"));
     conversation_mut(&mut owner.snapshot).reduce(&json!({
         "type": "queue_update",
         "steering": ["old"],
@@ -2245,60 +2227,21 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
             wake: None,
         },
     )?;
-    let (event_tx, event_rx) = test_event_channel();
-    let (history_tx, _history_rx) = mpsc::channel();
+    let (mut owner, event_rx) = owner_without_process(temp.path().to_path_buf());
     let old_path = PathBuf::from("/old");
     let new_path = PathBuf::from("/new");
     let old_project = temp.path().to_path_buf();
     let new_project = temp.path().join("other-project");
     fs::create_dir(&new_project).map_err(|error| error.to_string())?;
-    let mut owner = RuntimeOwner {
-        project: old_project.clone(),
-        harness: Some(Backend::Pi),
-        session_id: None,
-        process_command,
-        process: Some(process),
-        snapshot: RuntimeSnapshot {
-            connected: true,
-            status: "Working".into(),
-            project: old_project.clone(),
-            selected_session: Some(old_path.clone()),
-            ..RuntimeSnapshot::default()
-        },
-        owns_session_catalog: false,
-        session_generation: 0,
-        session_refresh_due: None,
-        process_generation: 3,
-        retired_prompts: HashMap::new(),
-        pending_prompt_id: None,
-        pending_submission_id: None,
-        pending_prompt_result_emitted: false,
-        pending_queued_prompts: HashMap::new(),
-        pending_prompt_target: None,
-        pending_prompt_item: None,
-        pending_outbox_id: None,
-        pending_prompt_delivery_unknown: false,
-        pending_prompt_delivery_tracked: false,
-        title_generation: SessionTitleGeneration::default(),
-        transcript_changed_from: None,
-        event_tx,
-        history_tx,
-        history_generation: 1,
-        history_selection_generation: None,
-        document_refresh_generation: None,
-        pending_document_refresh: None,
-        active_session: Some(old_path.clone()),
-        parked_snapshot: None,
-        deferred_prompt: None,
-        queued_prompts: VecDeque::new(),
-        normal_prompt_in_flight: false,
-        pending_session_controls: PendingSessionControls::default(),
-        access_mode_changes: AccessModeChangeState::default(),
-        startup_state_loaded: false,
-        startup_history_loaded: false,
-        state: Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?),
-        session_query: String::new(),
-    };
+    owner.process_command = process_command;
+    owner.process = Some(process);
+    owner.snapshot.status = "Working".into();
+    owner.snapshot.selected_session = Some(old_path.clone());
+    owner.owns_session_catalog = false;
+    owner.process_generation = 3;
+    owner.history_generation = 1;
+    owner.active_session = Some(old_path.clone());
+    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
     conversation_mut(&mut owner.snapshot).running = true;
 
     owner.select_history(old_path.clone(), old_project);

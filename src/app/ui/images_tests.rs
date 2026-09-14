@@ -6,12 +6,20 @@ use super::{ImageCache, MAX_CACHED_IMAGES, from_preview, image};
 use crate::conversation::EncodedImage;
 
 #[test]
-fn composer_preview_round_trip_preserves_bytes_and_reuses_the_image() {
+fn preview_and_history_images_preserve_format_bytes_and_cache_identity() {
     let preview = Arc::new(Image::from_bytes(ImageFormat::Gif, vec![4, 5, 6]));
     let encoded = from_preview(preview.clone()).unwrap();
     assert_eq!(encoded.mime_type(), "image/gif");
     assert_eq!(encoded.bytes(), preview.bytes());
     assert!(Arc::ptr_eq(&image(&encoded), &preview));
+
+    // History arrives without a cached composer preview. Check the actual
+    // conversion on this path, using expectations independent of the cache.
+    let history = Arc::new(EncodedImage::new(vec![7, 8, 9], "image/jpg").unwrap());
+    let restored = image(&history);
+    assert_eq!(restored.format(), ImageFormat::Jpeg);
+    assert_eq!(restored.bytes(), [7, 8, 9]);
+    assert!(Arc::ptr_eq(&image(&history), &restored));
 }
 
 #[test]

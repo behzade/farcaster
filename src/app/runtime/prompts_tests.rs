@@ -1,7 +1,9 @@
 use super::*;
 use crate::agents::Backend;
+use crate::agents::{SessionEvent, SessionResponse, SessionResponsePayload};
 use crate::app::runtime::{RuntimeCommand, tests::owner_without_process};
 use serde_json::json;
+use std::{cell::RefCell, rc::Rc, sync::mpsc};
 
 const HARNESSES: [&str; 6] = [
     "codex-cli",
@@ -11,6 +13,85 @@ const HARNESSES: [&str; 6] = [
     "claude",
     "antigravity-acp",
 ];
+
+struct HeldAcks {
+    commands: Rc<RefCell<Vec<SessionCommand>>>,
+    next_id: usize,
+}
+
+impl HeldAcks {
+    fn new() -> Self {
+        Self {
+            commands: Rc::new(RefCell::new(Vec::new())),
+            next_id: 0,
+        }
+    }
+}
+
+impl crate::agents::SessionTransport for HeldAcks {
+    fn send(&mut self, command: SessionCommand) -> Result<String, String> {
+        self.commands.borrow_mut().push(command);
+        self.next_id += 1;
+        Ok(format!("held-{}", self.next_id))
+    }
+
+    fn respond(&mut self, _: crate::agents::extensions::ExtensionUiResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        None
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Running Claude session with a held-ack transport and a durable state store.
+/// The first dispatched input receives the `held-1` request id.
+fn held_acks_runtime(
+    temp: &std::path::Path,
+) -> Result<
+    (
+        RuntimeOwner,
+        mpsc::Receiver<RuntimeEvent>,
+        Rc<RefCell<Vec<SessionCommand>>>,
+    ),
+    String,
+> {
+    let (mut owner, events) = owner_without_process(temp.to_path_buf());
+    let transport = HeldAcks::new();
+    let commands = transport.commands.clone();
+    owner.process = Some(Box::new(transport));
+    owner.state = Some(crate::app::persistence::StateStore::open_at(
+        &temp.join("state.sqlite3"),
+    )?);
+    owner.harness = Some(Backend::Claude);
+    owner.active_session = Some(temp.join("session"));
+    owner.snapshot.selected_session = owner.active_session.clone();
+    owner.snapshot.session = Some(empty_session());
+    conversation_mut(&mut owner.snapshot).running = true;
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    Ok((owner, events, commands))
+}
+
+fn fail_delivery_receipt_writes(connection: &rusqlite::Connection) -> Result<(), String> {
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_delivery_receipt BEFORE INSERT ON session_events
+             WHEN json_extract(NEW.body,'$.type')='prompt_delivery_receipt'
+             BEGIN SELECT RAISE(FAIL,'delivery receipt fixture'); END;",
+        )
+        .map_err(|error| error.to_string())
+}
+
+fn allow_delivery_receipt_writes(connection: &rusqlite::Connection) -> Result<(), String> {
+    connection
+        .execute_batch("DROP TRIGGER fail_delivery_receipt;")
+        .map_err(|error| error.to_string())
+}
 
 fn empty_session_json() -> serde_json::Value {
     serde_json::json!({
@@ -29,52 +110,8 @@ fn empty_session() -> crate::protocol::SessionState {
 
 #[test]
 fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result<(), String> {
-    use crate::agents::extensions::ExtensionUiResponse;
-    use crate::agents::{SessionEvent, SessionResponse, SessionResponsePayload, SessionTransport};
-    use std::{cell::RefCell, rc::Rc};
-
-    struct HeldAcks {
-        commands: Rc<RefCell<Vec<SessionCommand>>>,
-        next_id: usize,
-    }
-
-    impl SessionTransport for HeldAcks {
-        fn send(&mut self, command: SessionCommand) -> Result<String, String> {
-            self.commands.borrow_mut().push(command);
-            self.next_id += 1;
-            Ok(format!("held-{}", self.next_id))
-        }
-
-        fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn poll(&mut self) -> Option<SessionEvent> {
-            None
-        }
-
-        fn close(&mut self) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let (mut owner, events) = owner_without_process(temp.path().into());
-    let commands = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(HeldAcks {
-        commands: commands.clone(),
-        next_id: 0,
-    }));
-    owner.state = Some(crate::app::persistence::StateStore::open_at(
-        &temp.path().join("state.sqlite3"),
-    )?);
-    owner.harness = Some(Backend::Claude);
-    owner.active_session = Some(temp.path().join("session"));
-    owner.snapshot.selected_session = owner.active_session.clone();
-    owner.snapshot.session = Some(empty_session());
-    conversation_mut(&mut owner.snapshot).running = true;
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
+    let (mut owner, events, commands) = held_acks_runtime(temp.path())?;
 
     for (submission_id, mode, message) in [
         ("steer-id", PromptMode::Steer, "steer now"),
@@ -151,13 +188,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
 
     let failure_connection = rusqlite::Connection::open(temp.path().join("state.sqlite3"))
         .map_err(|error| error.to_string())?;
-    failure_connection
-        .execute_batch(
-            "CREATE TRIGGER fail_delivery_receipt BEFORE INSERT ON session_events
-             WHEN json_extract(NEW.body,'$.type')='prompt_delivery_receipt'
-             BEGIN SELECT RAISE(FAIL,'delivery receipt fixture'); END;",
-        )
-        .map_err(|error| error.to_string())?;
+    fail_delivery_receipt_writes(&failure_connection)?;
     owner.apply_process_item(SessionEvent::Activity(
         json!({
             "type":"prompt_delivery",
@@ -174,9 +205,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             ..
         } if id == "later-id"
     )));
-    failure_connection
-        .execute_batch("DROP TRIGGER fail_delivery_receipt;")
-        .map_err(|error| error.to_string())?;
+    allow_delivery_receipt_writes(&failure_connection)?;
     owner.apply_response(SessionResponse::success(
         Some("held-3".into()),
         SessionResponsePayload::Prompt(PromptMode::FollowUp),
@@ -187,13 +216,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             .all(|event| !matches!(event, RuntimeEvent::PromptResult { .. }))
     );
     assert_eq!(owner.pending_prompt_id.as_deref(), Some("held-1"));
-    failure_connection
-        .execute_batch(
-            "CREATE TRIGGER fail_delivery_receipt BEFORE INSERT ON session_events
-             WHEN json_extract(NEW.body,'$.type')='prompt_delivery_receipt'
-             BEGIN SELECT RAISE(FAIL,'delivery receipt fixture'); END;",
-        )
-        .map_err(|error| error.to_string())?;
+    fail_delivery_receipt_writes(&failure_connection)?;
     owner.apply_process_item(SessionEvent::Activity(
         json!({
             "type":"prompt_delivery",
@@ -210,9 +233,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             ..
         } if id == "steer-id"
     )));
-    failure_connection
-        .execute_batch("DROP TRIGGER fail_delivery_receipt;")
-        .map_err(|error| error.to_string())?;
+    allow_delivery_receipt_writes(&failure_connection)?;
     owner.apply_response(SessionResponse::success(
         Some("held-1".into()),
         SessionResponsePayload::Prompt(PromptMode::Steer),
@@ -274,32 +295,21 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
             .is_empty(),
         "delivered held-1 and held-3 must not return as pending receipt history"
     );
+    Ok(())
+}
 
+/// A transport that fails after a known delivery must keep the accepted
+/// outcome for the composer and leave the durable row in the recoverable
+/// `sending` state (the delivery receipt cannot be persisted because the
+/// injected trigger fails).
+#[test]
+fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_row()
+-> Result<(), String> {
     let failure_temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let (mut failure_owner, failure_events) = owner_without_process(failure_temp.path().into());
-    failure_owner.process = Some(Box::new(HeldAcks {
-        commands: Rc::new(RefCell::new(Vec::new())),
-        next_id: 0,
-    }));
-    failure_owner.state = Some(crate::app::persistence::StateStore::open_at(
-        &failure_temp.path().join("state.sqlite3"),
-    )?);
-    failure_owner.harness = Some(Backend::Claude);
-    failure_owner.active_session = Some(failure_temp.path().join("session"));
-    failure_owner.snapshot.selected_session = failure_owner.active_session.clone();
-    failure_owner.snapshot.session = Some(empty_session());
-    conversation_mut(&mut failure_owner.snapshot).running = true;
-    failure_owner.startup_state_loaded = true;
-    failure_owner.startup_history_loaded = true;
+    let (mut failure_owner, failure_events, _commands) = held_acks_runtime(failure_temp.path())?;
     let cleanup_connection = rusqlite::Connection::open(failure_temp.path().join("state.sqlite3"))
         .map_err(|error| error.to_string())?;
-    cleanup_connection
-        .execute_batch(
-            "CREATE TRIGGER fail_delivery_receipt BEFORE INSERT ON session_events
-             WHEN json_extract(NEW.body,'$.type')='prompt_delivery_receipt'
-             BEGIN SELECT RAISE(FAIL,'delivery receipt fixture'); END;",
-        )
-        .map_err(|error| error.to_string())?;
+    fail_delivery_receipt_writes(&cleanup_connection)?;
     failure_owner.apply_command(RuntimeCommand::Prompt {
         submission_id: "delivered-primary".into(),
         target: "session:failure".into(),

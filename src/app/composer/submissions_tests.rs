@@ -303,114 +303,87 @@ fn composer_escape_is_owned_by_raw_events_and_held_input_never_dispatches() {
 }
 
 #[gpui::test]
-fn real_gpui_input_routes_distinct_escape_to_raw_dispatch_and_drops_repeat(
+fn real_app_escape_route_obeys_surface_overlay_focus_and_repeat_gates(
     cx: &mut gpui::TestAppContext,
 ) {
-    use gpui::{
-        AppContext as _, Focusable as _, InputEvent as _, InteractiveElement as _, IntoElement,
-        ParentElement as _, Render,
-    };
-    use gpui_component::input::{Textarea, TextareaState};
-
-    struct EscapeHarness {
-        input: gpui::Entity<TextareaState>,
-        armed: Option<(String, Instant)>,
-        running: bool,
-        pending: bool,
-        now: Instant,
-        actions: Vec<ComposerEscapeAction>,
-    }
-
-    impl Render for EscapeHarness {
-        fn render(
-            &mut self,
-            _: &mut gpui::Window,
-            cx: &mut gpui::Context<Self>,
-        ) -> impl IntoElement {
-            gpui::div()
-                .capture_key_down(cx.listener(|this, event, window, cx| {
-                    match composer_escape_key(event) {
-                        ComposerEscapeKeyAction::Ignore => return,
-                        ComposerEscapeKeyAction::Consume => {}
-                        ComposerEscapeKeyAction::Dispatch => {
-                            let (action, armed) = composer_escape(
-                                this.running,
-                                false,
-                                false,
-                                this.pending,
-                                "session:one",
-                                this.armed.as_ref(),
-                                this.now,
-                            );
-                            this.armed = armed;
-                            this.running = false;
-                            this.pending = false;
-                            this.actions.push(action);
-                        }
-                    }
-                    window.prevent_default();
-                    cx.stop_propagation();
-                }))
-                .child(
-                    gpui::div()
-                        .key_context("FarcasterComposer")
-                        .child(Textarea::new(&self.input)),
-                )
-        }
-    }
-
-    cx.update(|cx| {
-        gpui_component::init(cx);
-        cx.bind_keys(crate::app::ui::keybindings::bindings());
-    });
-    let (view, cx) = cx.add_window_view(|window, cx| {
-        let input = cx.new(|cx| TextareaState::new(window, cx));
-        input.read(cx).focus_handle(cx).focus(window, cx);
-        EscapeHarness {
-            input,
-            armed: None,
-            running: true,
-            pending: true,
-            now: Instant::now(),
-            actions: Vec::new(),
-        }
-    });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-
-    cx.simulate_keystrokes("escape");
-    let armed = cx.update(|_, cx| {
-        assert_eq!(view.read(cx).actions, [ComposerEscapeAction::ApplySteering]);
-        view.read(cx)
-            .armed
-            .clone()
-            .expect("first Escape arms abort")
-    });
-
-    cx.update(|window, cx| {
-        window.dispatch_event(
-            gpui::KeyDownEvent {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::real_app_escape_route_obeys_surface_overlay_focus_and_repeat_gates"
+        ),
+        cx,
+        |cx, app, runtime, _| {
+            let event = |is_held| gpui::KeyDownEvent {
                 keystroke: gpui::Keystroke::parse("escape").expect("test keystroke"),
-                is_held: true,
+                is_held,
                 prefer_character_input: false,
-            }
-            .to_platform_input(),
-            cx,
-        );
-    });
-    cx.update(|_, cx| {
-        assert_eq!(view.read(cx).actions, [ComposerEscapeAction::ApplySteering]);
-        assert_eq!(view.read(cx).armed.as_ref(), Some(&armed));
-    });
+            };
+            let route = |cx: &mut gpui::VisualTestContext,
+                         surface: crate::app::AppSurface,
+                         modal: bool,
+                         composer_focused: bool,
+                         is_held| {
+                cx.update(|window, cx| {
+                    app.update(cx, |app, cx| {
+                        app.surface = surface;
+                        app.composer_escape_armed = None;
+                        let mut conversation = crate::conversation::ConversationState::default();
+                        conversation.running = true;
+                        conversation.queue.steering.push("pending steer".into());
+                        Arc::make_mut(&mut app.snapshot).conversation = Arc::new(conversation);
+                        app.extension = Default::default();
+                        if modal {
+                            app.extension
+                                .apply(crate::protocol::ExtensionUiRequest::Input {
+                                    id: "modal".into(),
+                                    title: "Modal".into(),
+                                    placeholder: None,
+                                    timeout: None,
+                                });
+                        }
+                        if composer_focused {
+                            app.composer_focus.focus(window, cx);
+                        } else {
+                            app.search_focus.focus(window, cx);
+                        }
+                        let consumed = app.handle_composer_escape_key(&event(is_held), window, cx);
+                        (consumed, app.composer_escape_armed.is_some())
+                    })
+                })
+            };
 
-    cx.simulate_keystrokes("escape");
-    cx.update(|_, cx| {
-        assert_eq!(
-            view.read(cx).actions,
-            [
-                ComposerEscapeAction::ApplySteering,
-                ComposerEscapeAction::Abort
-            ]
-        );
-        assert!(view.read(cx).armed.is_none());
-    });
+            assert_eq!(
+                route(cx, crate::app::AppSurface::Chat, false, true, false),
+                (true, true),
+                "focused Chat must dispatch Escape and arm Abort"
+            );
+            assert!(matches!(
+                runtime.try_recv_command(),
+                Some(RuntimeCommand::ApplySteering)
+            ));
+            assert_eq!(
+                route(cx, crate::app::AppSurface::Chat, false, true, true),
+                (true, false),
+                "held Escape must be consumed without dispatch"
+            );
+            assert!(runtime.try_recv_command().is_none());
+            for surface in [
+                crate::app::AppSurface::Editor,
+                crate::app::AppSurface::Terminal,
+            ] {
+                assert_eq!(route(cx, surface, false, true, false), (false, false));
+            }
+            assert_eq!(
+                route(cx, crate::app::AppSurface::Chat, true, true, false),
+                (false, false),
+                "a modal owns Escape"
+            );
+            assert_eq!(
+                route(cx, crate::app::AppSurface::Chat, false, false, false),
+                (false, false),
+                "other app focus must not dispatch composer Escape"
+            );
+            assert!(runtime.try_recv_command().is_none());
+        },
+    );
 }

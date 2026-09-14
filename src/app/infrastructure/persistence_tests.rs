@@ -1260,7 +1260,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
 }
 
 #[test]
-fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
+fn schema_v1_migrates_to_current_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -1295,7 +1295,7 @@ fn schema_v1_migrates_to_v11_with_defaults_and_outbox_preserved()
 }
 
 #[test]
-fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
+fn schema_v2_migrates_to_current_with_defaults_and_outbox_preserved()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -1333,26 +1333,59 @@ fn schema_v2_migrates_to_v11_with_defaults_and_outbox_preserved()
 }
 
 #[test]
-fn schema_v3_migrates_to_v11_with_running_default() -> Result<(), Box<dyn std::error::Error>> {
+fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity()
+-> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
     let database = temp.path().join("gui.sqlite3");
     seed_legacy_database(&database, 2, &project)?;
-    Connection::open(&database)?.execute_batch(
+    let connection = Connection::open(&database)?;
+    connection.execute_batch(
         "ALTER TABLE drafts ADD COLUMN submitted INTEGER NOT NULL DEFAULT 0;
-         ALTER TABLE drafts ADD COLUMN session_path TEXT;
-         UPDATE meta SET value='3' WHERE key='schema_version';",
+         ALTER TABLE drafts ADD COLUMN session_path TEXT;",
     )?;
+    // v2 -> v3 predates the is_running column; a real v3 database carries a
+    // settled session row with no running state recorded.
+    let session_path = temp.path().canonicalize()?.join("v3-session.jsonl");
+    connection.execute(
+        "INSERT INTO sessions(
+           path, id, project, title, first_user_message, timestamp, parent_session,
+           modified_ms, file_size, message_count, input_tokens, output_tokens,
+           cache_read_tokens, cache_write_tokens, total_tokens, cost_micros,
+           search_text, settled_ms
+         ) VALUES(
+           ?1, 'v3-legacy', ?2, 'V3 Legacy', '', '2026-08-15T00:00:00Z', NULL,
+           CAST(unixepoch('now') AS INTEGER) * 1000 + 86400000, 0, 1, 0, 0, 0, 0, 0,
+           0, 'v3 legacy', NULL
+         )",
+        params![
+            session_path.to_string_lossy(),
+            project.canonicalize()?.to_string_lossy()
+        ],
+    )?;
+    connection.execute_batch("UPDATE meta SET value='3' WHERE key='schema_version';")?;
+    drop(connection);
 
     let store = StateStore::open_at(&database)?;
     assert_eq!(database_schema_version(&database)?, 16);
-    assert!(store.cached_sessions("")?.is_empty());
+    let cached = store.cached_sessions("")?;
+    assert_eq!(cached.len(), 1);
+    assert_eq!(cached[0].id, "v3-legacy");
+    assert_eq!(cached[0].title, "V3 Legacy");
+    assert!(
+        !cached[0].is_running,
+        "missing is_running must default to false"
+    );
+    // The default is on its own here: modified_ms is in the future, so only
+    // the is_running=0 default branch settles the row during the v9 backfill
+    // and the migrated catalog reports it archived rather than live.
+    assert!(cached[0].archived);
     Ok(())
 }
 
 #[test]
-fn schema_v4_migrates_to_v11_with_provisional_title_default()
+fn schema_v4_migrates_with_a_writable_provisional_title_column()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -1366,9 +1399,20 @@ fn schema_v4_migrates_to_v11_with_provisional_title_default()
          UPDATE meta SET value='4' WHERE key='schema_version';",
     )?;
 
-    let store = StateStore::open_at(&database)?;
+    // The migration itself adds provisional_title; prove the new column is the
+    // registry's title source by writing through it and reopening.
+    let mut store = StateStore::open_at(&database)?;
     assert_eq!(database_schema_version(&database)?, 16);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
+    let mut registry = store.load_registry()?;
+    registry.drafts[0].title = Some("Migrated column".into());
+    store.save_registry(&registry)?;
+    drop(store);
+
+    assert_eq!(
+        StateStore::open_at(&database)?.load_registry()?.drafts[0].title,
+        Some("Migrated column".into())
+    );
     Ok(())
 }
 

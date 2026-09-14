@@ -35,6 +35,73 @@ impl FarcasterApp {
         );
         drop(runtime_timing);
 
+        Self::from_bootstrap_state(
+            project,
+            repository_execution_allowed,
+            workgraph_updates,
+            worker_updates,
+            persisted,
+            runtime,
+            window,
+            cx,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_offline_for_test(
+        project: PathBuf,
+        runtime: RuntimeHandle,
+        workgraph_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<()>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let draft_id = format!("offline-test-{}", uuid::Uuid::new_v4().simple());
+        let draft = projects::DraftSession::with_id(
+            Some(crate::agents::Backend::Pi),
+            draft_id.clone(),
+            project.clone(),
+        );
+        let persisted = persisted::PersistedState {
+            registry: projects::Registry {
+                projects: vec![project.clone()],
+                drafts: vec![draft],
+                ..Default::default()
+            },
+            error: None,
+            session_order: Vec::new(),
+            session_folders: Default::default(),
+            selected_draft: draft_id.clone(),
+            preferred_harness: Some(crate::agents::Backend::Pi),
+            draft_session_ids: HashMap::new(),
+            composer_sessions: ComposerSessions::for_test(draft_target(&draft_id)),
+            submitted_drafts: HashMap::new(),
+            saved_proxy: None,
+            expand_transcript_folders: false,
+        };
+        Self::from_bootstrap_state(
+            project,
+            false,
+            workgraph_updates,
+            worker_updates,
+            persisted,
+            runtime,
+            window,
+            cx,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_bootstrap_state(
+        project: PathBuf,
+        repository_execution_allowed: bool,
+        workgraph_updates: async_channel::Receiver<()>,
+        worker_updates: async_channel::Receiver<()>,
+        persisted: persisted::PersistedState,
+        runtime: RuntimeHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let inputs = inputs::create(
             &persisted.composer_sessions,
             persisted.saved_proxy.as_deref(),

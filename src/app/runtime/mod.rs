@@ -78,6 +78,8 @@ mod worker_inputs;
 #[cfg(test)]
 use documents::reconcile_live_session_documents;
 pub(crate) use supervisor::RuntimeHandle;
+#[cfg(test)]
+pub(crate) use supervisor::TestRuntime;
 use supervisor::{SessionEventSender, SessionRuntimeHandle};
 #[cfg(test)]
 use supervisor::{

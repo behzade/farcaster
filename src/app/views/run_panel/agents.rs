@@ -56,6 +56,7 @@ impl FarcasterApp {
         Some(
             div()
                 .id(format!("agent-card-{activity_key}"))
+                .debug_selector(move || format!("agent-card-{activity_key}"))
                 .track_focus(&focus)
                 .role(Role::Button)
                 .aria_label(format!("Show {role} transcript: {state}"))

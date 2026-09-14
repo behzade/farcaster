@@ -32,7 +32,7 @@ static LIVE_CHILD_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 #[ignore = "runs a real selected harness/model through production child-worker routing"]
-fn live_e2e_child_creation_visibility_report_and_named_follow_up() -> Result<(), String> {
+fn live_e2e_child_creation_catalog_projection_reports_and_named_follow_up() -> Result<(), String> {
     let _serial = LIVE_CHILD_LOCK.lock().expect("live child test lock");
     let harness = selected_harness()?;
     let fixture = LiveChildFixture::new(harness)?;
@@ -46,11 +46,10 @@ fn live_e2e_child_creation_visibility_report_and_named_follow_up() -> Result<(),
         &first_gate,
         "initial child shell command",
     )?;
-    fixture.require_running_in_catalog_and_sidebar(&child)?;
+    fixture.require_running_catalog_projection(&child)?;
     first_gate.require_holding()?;
     first_gate.release()?;
-    fixture.require_report_once(&first_marker)?;
-    let original = fixture.require_settled_in_catalog_and_sidebar(&child, &first_marker)?;
+    let original = fixture.require_settled_catalog_projection(&child, &first_marker)?;
 
     let follow_up = marker("CHILD_FOLLOW_UP");
     let follow_gate = ShellGate::new(&fixture.project, "child-follow-up")?;
@@ -67,7 +66,7 @@ fn live_e2e_child_creation_visibility_report_and_named_follow_up() -> Result<(),
     let resumed = fixture.wait_snapshot(&child.id, TURN_TIMEOUT, |snapshot| {
         snapshot.status == WorkerStatus::Running && snapshot.session_locator.is_some()
     })?;
-    let reused_identity = fixture.require_catalog_and_sidebar(
+    let reused_identity = fixture.require_catalog_projection(
         &resumed,
         AgentLifecycle::Working,
         AgentSection::Active,
@@ -79,14 +78,13 @@ fn live_e2e_child_creation_visibility_report_and_named_follow_up() -> Result<(),
     }
     follow_gate.require_holding()?;
     follow_gate.release()?;
-    fixture.require_report_once(&follow_up)?;
-    fixture.require_settled_in_catalog_and_sidebar(&child, &follow_up)?;
-    Ok(())
+    fixture.require_settled_catalog_projection(&child, &follow_up)?;
+    fixture.finish_reports(&[("live-child", &first_marker), ("live-child", &follow_up)])
 }
 
 #[test]
 #[ignore = "requires the real selected harness/model to issue a native child input request"]
-fn live_e2e_child_needs_input_projects_to_catalog_and_sidebar() -> Result<(), String> {
+fn live_e2e_child_needs_input_projects_to_catalog_rows() -> Result<(), String> {
     let _serial = LIVE_CHILD_LOCK.lock().expect("live child test lock");
     let harness = selected_harness()?;
     crate::agents::live_e2e_support::require_native_input_support(harness)?;
@@ -148,14 +146,13 @@ fn live_e2e_child_needs_input_projects_to_catalog_and_sidebar() -> Result<(), St
         }
         NativeInputObservation::SettledWithoutRequest(limit) => return Err(limit),
     };
-    fixture.require_catalog_and_sidebar(
-        &pending,
-        AgentLifecycle::NeedsInput,
-        AgentSection::Active,
-    )
-    .map_err(|error| {
-        format!("native input reached the child pool, but catalog/sidebar projection failed: {error}")
-    })?;
+    fixture
+        .require_catalog_projection(&pending, AgentLifecycle::NeedsInput, AgentSection::Active)
+        .map_err(|error| {
+            format!(
+                "native input reached the child pool, but catalog row projection failed: {error}"
+            )
+        })?;
     Ok(())
 }
 
@@ -803,30 +800,33 @@ impl LiveChildFixture {
         Ok(true)
     }
 
-    fn require_report_once(&self, marker: &str) -> Result<(), String> {
-        let message = wait_until(TURN_TIMEOUT, "child parent report", || {
-            Ok(self
-                .parent
-                .try_recv()
-                .filter(|report| report.message.contains(marker)))
-        })?;
-        if message.from != "live-child" {
-            return Err(format!("unexpected child report sender: {}", message.from));
-        }
-        thread::sleep(Duration::from_millis(250));
-        if let Some(duplicate) = self.parent.try_recv() {
+    fn finish_reports(self, expected: &[(&str, &str)]) -> Result<(), String> {
+        // The pool publishes a turn's report before its Idle snapshot. Joining
+        // its worker threads also fences late events before we inspect the
+        // complete inbox; never discard unexpected reports or rely on a sleep.
+        drop(self.pool);
+        let reports = std::iter::from_fn(|| self.parent.try_recv()).collect::<Vec<_>>();
+        if reports.len() != expected.len() {
             return Err(format!(
-                "child reported more than once for one settled turn: {duplicate:?}"
+                "expected {} reports across settled child turns, got {reports:?}",
+                expected.len()
             ));
+        }
+        for (turn, (report, (sender, marker))) in reports.iter().zip(expected).enumerate() {
+            if report.from != *sender || !report.message.contains(*marker) {
+                return Err(format!(
+                    "child turn {turn} expected sender={sender:?} marker={marker:?}, got {report:?}"
+                ));
+            }
         }
         Ok(())
     }
 
-    fn require_running_in_catalog_and_sidebar(&self, child: &WorkerSnapshot) -> Result<(), String> {
+    fn require_running_catalog_projection(&self, child: &WorkerSnapshot) -> Result<(), String> {
         let running = self.wait_snapshot(&child.id, Duration::from_secs(30), |snapshot| {
             snapshot.status == WorkerStatus::Running && snapshot.session_locator.is_some()
         })?;
-        self.require_catalog_and_sidebar(&running, AgentLifecycle::Working, AgentSection::Active)?;
+        self.require_catalog_projection(&running, AgentLifecycle::Working, AgentSection::Active)?;
         Ok(())
     }
 
@@ -845,7 +845,7 @@ impl LiveChildFixture {
         Ok(())
     }
 
-    fn require_settled_in_catalog_and_sidebar(
+    fn require_settled_catalog_projection(
         &self,
         child: &WorkerSnapshot,
         marker: &str,
@@ -857,14 +857,14 @@ impl LiveChildFixture {
                     .as_deref()
                     .is_some_and(|output| output.contains(marker))
         })?;
-        self.require_catalog_and_sidebar(
+        self.require_catalog_projection(
             &settled,
             AgentLifecycle::Completed(AgentOutcome::Complete),
             AgentSection::Completed,
         )
     }
 
-    fn require_catalog_and_sidebar(
+    fn require_catalog_projection(
         &self,
         snapshot: &WorkerSnapshot,
         lifecycle: AgentLifecycle,
@@ -920,7 +920,7 @@ impl LiveChildFixture {
             || rows[0].3 != section
         {
             return Err(format!(
-                "sidebar did not select the live child row: rows={rows:?}, expected={section:?}"
+                "run-panel projection did not select the live child row: rows={rows:?}, expected={section:?}"
             ));
         }
         Ok(ChildIdentity {

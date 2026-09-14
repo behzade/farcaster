@@ -18,6 +18,25 @@ pub(crate) struct RuntimeHandle {
     join: Option<thread::JoinHandle<()>>,
 }
 
+#[cfg(test)]
+pub(crate) struct TestRuntime {
+    commands: mpsc::Receiver<RuntimeCommand>,
+    events: mpsc::Sender<RuntimeEvent>,
+    wake: async_channel::Sender<()>,
+}
+
+#[cfg(test)]
+impl TestRuntime {
+    pub(crate) fn send_event(&self, event: RuntimeEvent) {
+        self.events.send(event).expect("offline app event receiver");
+        let _ = self.wake.try_send(());
+    }
+
+    pub(crate) fn try_recv_command(&self) -> Option<RuntimeCommand> {
+        self.commands.try_recv().ok()
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct UiEventSender {
     pub(super) events: mpsc::Sender<RuntimeEvent>,
@@ -33,6 +52,28 @@ impl UiEventSender {
 }
 
 impl RuntimeHandle {
+    #[cfg(test)]
+    pub(crate) fn offline_for_test() -> (Self, TestRuntime) {
+        let (commands, command_rx) = mpsc::channel();
+        let (events_tx, events) = mpsc::channel();
+        let (wake_tx, wake) = async_channel::bounded(1);
+        (
+            Self {
+                session_targets: HashMap::new(),
+                commands,
+                events,
+                wake,
+                thread: thread::current(),
+                join: None,
+            },
+            TestRuntime {
+                commands: command_rx,
+                events: events_tx,
+                wake: wake_tx,
+            },
+        )
+    }
+
     pub(crate) fn spawn(
         project: PathBuf,
         draft: crate::projects::DraftSession,
