@@ -5,14 +5,19 @@ use crate::agents::Backend;
 fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() -> Result<(), String>
 {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
+    // Match persistence's canonical paths, including macOS /var -> /private/var.
+    let root = temp
+        .path()
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let database = root.join("state.sqlite3");
     let mut store = StateStore::open_at(&database)?;
     let make_session = |project: &str, id: &str, parent: Option<&str>| {
         SessionSummary::from_cached_for_harness(
             id.into(),
             Backend::Codex,
-            temp.path().join(project).join(id),
-            temp.path().join(project),
+            root.join(project).join(id),
+            root.join(project),
             id.into(),
             id.into(),
             String::new(),

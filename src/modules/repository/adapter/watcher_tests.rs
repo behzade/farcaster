@@ -135,10 +135,12 @@ fn nested_jujutsu_project_observes_shared_operations_and_git_commits() {
     use std::time::{Duration, Instant};
 
     let temp = tempfile::tempdir().expect("tempdir");
-    let workspace = temp.path().join("workspace");
+    // Match resolved watch targets, including macOS /var -> /private/var.
+    let root = temp.path().canonicalize().expect("canonical fixture root");
+    let workspace = root.join("workspace");
     let project = workspace.join("app");
     // The shared repository need not have a .jj component in its path.
-    let shared_repo = temp.path().join("shared-repo");
+    let shared_repo = root.join("shared-repo");
     fs::create_dir_all(shared_repo.join("op_heads/heads")).expect("test operation should succeed");
     fs::create_dir_all(workspace.join(".jj")).expect("test operation should succeed");
     fs::create_dir_all(workspace.join(".git/refs/heads")).expect("test operation should succeed");
