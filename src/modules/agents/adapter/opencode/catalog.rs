@@ -262,11 +262,13 @@ fn assistant_history_messages(value: &Value) -> Vec<Value> {
             Some("toolCall") => {
                 let mut tool_call = block.clone();
                 let reported_name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                let native = opencode_history_tool_native(block);
                 let (name, arguments) = super::tool::normalize_opencode_tool(
                     reported_name,
                     block.get("arguments").unwrap_or(&Value::Null),
+                    &native,
                 );
-                let metadata = opencode_history_tool_metadata(block, &name, &arguments);
+                let metadata = super::tool::opencode_tool_metadata(&name, &arguments, native);
                 tool_call["name"] = Value::String(name);
                 tool_call["arguments"] = arguments;
                 tool_call["toolMetadata"] =
@@ -283,12 +285,14 @@ fn assistant_history_messages(value: &Value) -> Vec<Value> {
                 };
                 let state = block.get("state").unwrap_or(&Value::Null);
                 let reported_name = block.get("name").and_then(Value::as_str).unwrap_or("tool");
+                let native = opencode_history_tool_native(block);
                 let (name, arguments) = super::tool::normalize_opencode_tool(
                     reported_name,
                     state.get("input").unwrap_or(&Value::Null),
+                    &native,
                 );
                 let is_error = opencode_tool_failed(state);
-                let metadata = opencode_history_tool_metadata(block, &name, &arguments);
+                let metadata = super::tool::opencode_tool_metadata(&name, &arguments, native);
                 content.push(json!({
                     "type": "toolCall",
                     "id": id,
@@ -328,17 +332,12 @@ fn assistant_history_messages(value: &Value) -> Vec<Value> {
     messages
 }
 
-fn opencode_history_tool_metadata(
-    block: &Value,
-    name: &str,
-    arguments: &Value,
-) -> crate::agents::ToolMetadata {
-    let native = block
+fn opencode_history_tool_native(block: &Value) -> Value {
+    block
         .get("toolMetadata")
         .and_then(|metadata| metadata.get("native"))
         .cloned()
-        .unwrap_or_else(|| block.clone());
-    super::tool::opencode_tool_metadata(name, arguments, native)
+        .unwrap_or_else(|| block.clone())
 }
 
 fn opencode_tool_failed(state: &Value) -> bool {

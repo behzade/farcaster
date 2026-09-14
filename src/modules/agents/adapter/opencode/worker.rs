@@ -962,6 +962,7 @@ impl OpenCodeWorkerSession {
                     let (name, _) = normalize_opencode_tool(
                         opencode_tool_name(&event.data).unwrap_or("tool"),
                         &Value::Null,
+                        &event.data,
                     );
                     self.active_tools.insert(
                         id,
@@ -1009,7 +1010,7 @@ impl OpenCodeWorkerSession {
                             continue;
                         }
                     };
-                    let (name, args) = normalize_opencode_tool(&tool.name, &args);
+                    let (name, args) = normalize_opencode_tool(&tool.name, &args, &tool.native);
                     let metadata = opencode_tool_metadata(&name, &args, tool.native.clone());
                     tool.name.clone_from(&name);
                     tool.args = Some(args.clone());
@@ -1035,6 +1036,7 @@ impl OpenCodeWorkerSession {
                     let (name, args) = normalize_opencode_tool(
                         reported_name,
                         event.data.get("input").unwrap_or(&Value::Null),
+                        &tool.native,
                     );
                     let metadata = opencode_tool_metadata(&name, &args, tool.native.clone());
                     tool.name.clone_from(&name);
@@ -1064,8 +1066,8 @@ impl OpenCodeWorkerSession {
                     let args = event
                         .data
                         .get("input")
-                        .map(|input| normalize_opencode_tool(name, input).1)
-                        .or_else(|| tool.args.clone());
+                        .or(tool.args.as_ref())
+                        .map(|input| normalize_opencode_tool(name, input, &tool.native).1);
                     if let Some(args) = &args {
                         tool.args = Some(args.clone());
                     }
@@ -1134,11 +1136,10 @@ impl OpenCodeWorkerSession {
                         return Some(finished);
                     };
                     merge_opencode_native(&mut tool.native, &event.data);
-                    let args = event
-                        .data
-                        .get("input")
-                        .map(|input| normalize_opencode_tool(&tool.name, input).1)
-                        .or(tool.args);
+                    let args =
+                        event.data.get("input").or(tool.args.as_ref()).map(|input| {
+                            normalize_opencode_tool(&tool.name, input, &tool.native).1
+                        });
                     let metadata = opencode_tool_metadata(
                         &tool.name,
                         args.as_ref().unwrap_or(&Value::Null),

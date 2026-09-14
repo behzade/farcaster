@@ -198,3 +198,35 @@ fn translates_failed_tool_results() {
     );
     assert_eq!(messages[1]["isError"], true);
 }
+
+#[test]
+fn restored_patch_has_a_file_edit_presentation() {
+    let messages = history_messages(&json!({
+        "type": "assistant",
+        "content": [{
+            "type": "tool", "id": "patch-1", "name": "patch",
+            "state": {
+                "status": "completed",
+                "input": {"patchText": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"},
+                "content": [{"type": "text", "text": "Success"}],
+                "metadata": {"files": [{
+                    "file": "src/main.rs",
+                    "patch": "@@ -1 +1,2 @@\n-old\n+new\n+extra\n",
+                    "status": "modified", "additions": 2, "deletions": 1
+                }]}
+            }
+        }]
+    }));
+    let mut conversation = crate::conversation::ConversationState::default();
+    conversation.replace_history(&messages);
+    let item = &conversation.items[0];
+    let presentation = item.tool_presentation.as_ref().expect("file edit row");
+    assert_eq!(presentation.path(), "src/main.rs");
+    assert_eq!(presentation.counts(), (2, 1));
+    assert_eq!(
+        item.tool_details.as_ref().unwrap().metadata.targets,
+        ["src/main.rs"]
+    );
+    assert!(!item.is_error);
+    assert!(!item.streaming);
+}

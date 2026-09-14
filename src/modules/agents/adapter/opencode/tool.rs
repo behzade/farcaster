@@ -1,8 +1,12 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::agents::{CommonTool, ToolCategory, ToolMetadata};
 
-pub(super) fn normalize_opencode_tool(name: &str, arguments: &Value) -> (String, Value) {
+pub(super) fn normalize_opencode_tool(
+    name: &str,
+    arguments: &Value,
+    native: &Value,
+) -> (String, Value) {
     let normalized_name = name.trim().to_ascii_lowercase();
     let common = CommonTool::from_name(&normalized_name).or(match normalized_name.as_str() {
         "read_file" => Some(CommonTool::Read),
@@ -31,6 +35,26 @@ pub(super) fn normalize_opencode_tool(name: &str, arguments: &Value) -> (String,
     } else if common == Some(CommonTool::Bash) {
         rename_argument(&mut normalized, "command", &["cmd"]);
     }
+    if matches!(common, Some(CommonTool::Edit | CommonTool::Write))
+        && let Some(files) = native
+            .pointer("/metadata/files")
+            .or_else(|| native.pointer("/state/metadata/files"))
+            .and_then(Value::as_array)
+    {
+        let changes = files
+            .iter()
+            .filter_map(|file| {
+                let path = file.get("file")?.as_str().filter(|path| !path.is_empty())?;
+                Some(json!({"path": path, "diff": file.get("patch")}))
+            })
+            .collect::<Vec<_>>();
+        if let Some(first) = changes.first() {
+            normalized
+                .entry("path")
+                .or_insert_with(|| first["path"].clone());
+            normalized.insert("changes".into(), Value::Array(changes));
+        }
+    }
     (canonical.into(), Value::Object(normalized))
 }
 
@@ -54,12 +78,24 @@ pub(super) fn opencode_tool_metadata(name: &str, arguments: &Value, native: Valu
         "task" | "agent" | "delegate" => (ToolCategory::Delegate, Some("Delegate"), &[]),
         _ => (ToolCategory::Other, None, &[]),
     };
-    let targets = keys
+    let mut targets = keys
         .iter()
         .filter_map(|key| arguments.get(*key).and_then(Value::as_str))
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    if category == ToolCategory::Change
+        && let Some(changes) = arguments.get("changes").and_then(Value::as_array)
+    {
+        for path in changes
+            .iter()
+            .filter_map(|change| change.get("path").and_then(Value::as_str))
+        {
+            if !path.is_empty() && !targets.iter().any(|target| target == path) {
+                targets.push(path.to_owned());
+            }
+        }
+    }
     let native_title = native
         .get("title")
         .or_else(|| native.pointer("/metadata/title"))
