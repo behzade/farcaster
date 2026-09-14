@@ -56,8 +56,9 @@ fn metadata_keeps_native_input_and_does_not_guess_custom_intent() {
 #[test]
 fn completed_patch_files_become_shared_edits_in_live_and_restored_tools() {
     let input = json!({"patchText": "*** Begin Patch\n*** Update File: a.rs\n@@\n-old\n+new\n*** End Patch"});
+    let diff = "--- a.rs\n+++ a.rs\n@@ -1 +1 @@\n-old\n+new\n";
     let files = json!([
-        {"file": "a.rs", "patch": "@@ -1 +1 @@\n-old\n+new\n"},
+        {"file": "a.rs", "patch": format!("Index: a.rs\n===================================================================\n{diff}")},
         {"file": "b.rs", "patch": "@@ -0,0 +1 @@\n+added\n"}
     ]);
     for native in [
@@ -73,7 +74,7 @@ fn completed_patch_files_become_shared_edits_in_live_and_restored_tools() {
         assert_eq!(
             args["changes"],
             json!([
-                {"path": "a.rs", "diff": files[0]["patch"]},
+                {"path": "a.rs", "diff": diff},
                 {"path": "b.rs", "diff": files[1]["patch"]}
             ])
         );

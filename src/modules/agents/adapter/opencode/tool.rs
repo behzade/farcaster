@@ -45,7 +45,11 @@ pub(super) fn normalize_opencode_tool(
             .iter()
             .filter_map(|file| {
                 let path = file.get("file")?.as_str().filter(|path| !path.is_empty())?;
-                Some(json!({"path": path, "diff": file.get("patch")}))
+                let diff = file
+                    .get("patch")
+                    .and_then(Value::as_str)
+                    .map(strip_patch_preamble);
+                Some(json!({"path": path, "diff": diff}))
             })
             .collect::<Vec<_>>();
         if let Some(first) = changes.first() {
@@ -56,6 +60,19 @@ pub(super) fn normalize_opencode_tool(
         }
     }
     (canonical.into(), Value::Object(normalized))
+}
+
+// OpenCode prefixes unified diffs with an Index line and a separator.
+fn strip_patch_preamble(diff: &str) -> &str {
+    if let Some((index, rest)) = diff.split_once('\n')
+        && index.starts_with("Index: ")
+        && let Some((separator, patch)) = rest.split_once('\n')
+        && separator.trim_end_matches('\r')
+            == "==================================================================="
+    {
+        return patch;
+    }
+    diff
 }
 
 pub(super) fn opencode_tool_metadata(name: &str, arguments: &Value, native: Value) -> ToolMetadata {
