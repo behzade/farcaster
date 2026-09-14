@@ -9,7 +9,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         zlog::warn!("{source}: {error}");
-        self.extension.push_notification(
+        self.extensions.active.push_notification(
             format!("workspace:{source}"),
             format!("{source}: {error}"),
             crate::protocol::NotifyTone::Error,
@@ -26,24 +26,26 @@ impl FarcasterApp {
     ) -> bool {
         if status == "Done" {
             if starts_recent_completion(
-                self.run_statuses.get(&target).map(String::as_str),
+                self.activity.run_statuses.get(&target).map(String::as_str),
                 &status,
                 force_recent,
             ) {
-                self.run_statuses.insert(target.clone(), status);
-                self.recent_completions.insert(target, Instant::now());
+                self.activity.run_statuses.insert(target.clone(), status);
+                self.activity
+                    .recent_completions
+                    .insert(target, Instant::now());
                 return true;
             }
-            if self.recent_completions.contains_key(&target) {
-                self.run_statuses.insert(target, status);
+            if self.activity.recent_completions.contains_key(&target) {
+                self.activity.run_statuses.insert(target, status);
                 return true;
             }
-            self.run_statuses.remove(&target);
-            self.recent_completions.remove(&target);
+            self.activity.run_statuses.remove(&target);
+            self.activity.recent_completions.remove(&target);
             return false;
         }
-        self.recent_completions.remove(&target);
-        self.run_statuses.insert(target, status);
+        self.activity.recent_completions.remove(&target);
+        self.activity.run_statuses.insert(target, status);
         false
     }
 
@@ -54,20 +56,20 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.runtime_generation = generation;
-        self.extension.reset();
-        self.parked_extension = None;
-        self.background_jobs.clear();
-        self.restored_dialog_id = None;
-        self.dismissed_restored_dialog_id = None;
-        self.notification_expiries.clear();
-        self.pending_dialog_setup = false;
-        self.pending_title = Some((generation, "Farcaster".into()));
-        self.pending_editor_text = None;
-        self.dialog_return_focus = None;
-        self.overlays.sessions = false;
-        self.overlays.run = false;
-        self.sheet_return_focus = None;
-        self.overlays.pending_setup = false;
+        self.extensions.active.reset();
+        self.extensions.parked = None;
+        self.activity.background_jobs.clear();
+        self.extensions.restored_dialog_id = None;
+        self.extensions.dismissed_restored_dialog_id = None;
+        self.extensions.notification_expiries.clear();
+        self.extensions.pending_dialog_setup = false;
+        self.extensions.pending_title = Some((generation, "Farcaster".into()));
+        self.extensions.pending_editor_text = None;
+        self.extensions.dialog_return_focus = None;
+        self.overlays.view.sessions = false;
+        self.overlays.view.run = false;
+        self.overlays.sheet_return_focus = None;
+        self.overlays.view.pending_setup = false;
         if !preserve_submission {
             self.reset_transcript_ui(cx);
         }
@@ -81,26 +83,29 @@ impl FarcasterApp {
         let Some(id) = request.dialog_id().map(str::to_owned) else {
             return;
         };
-        if self.restored_dialog_id.as_deref() == Some(id.as_str()) {
+        if self.extensions.restored_dialog_id.as_deref() == Some(id.as_str()) {
             return;
         }
         self.clear_restored_dialog();
-        if self.dismissed_restored_dialog_id.as_deref() == Some(id.as_str()) {
+        if self.extensions.dismissed_restored_dialog_id.as_deref() == Some(id.as_str()) {
             return;
         }
-        self.dismissed_restored_dialog_id = None;
-        if self.extension.dialog.is_some() {
+        self.extensions.dismissed_restored_dialog_id = None;
+        if self.extensions.active.dialog.is_some() {
             return;
         }
-        if matches!(self.extension.apply(request), ExtensionEffect::DialogOpened) {
-            self.restored_dialog_id = Some(id);
-            self.pending_dialog_setup = true;
+        if matches!(
+            self.extensions.active.apply(request),
+            ExtensionEffect::DialogOpened
+        ) {
+            self.extensions.restored_dialog_id = Some(id);
+            self.extensions.pending_dialog_setup = true;
         }
     }
 
     pub(in crate::app) fn clear_restored_dialog(&mut self) {
-        if let Some(id) = self.restored_dialog_id.take() {
-            let _ = self.extension.cancel(&id);
+        if let Some(id) = self.extensions.restored_dialog_id.take() {
+            let _ = self.extensions.active.cancel(&id);
         }
     }
 
@@ -110,11 +115,13 @@ impl FarcasterApp {
         generation: u64,
         _cx: &mut Context<Self>,
     ) {
-        match self.extension.apply(request) {
-            ExtensionEffect::DialogOpened => self.pending_dialog_setup = true,
-            ExtensionEffect::SetTitle(title) => self.pending_title = Some((generation, title)),
+        match self.extensions.active.apply(request) {
+            ExtensionEffect::DialogOpened => self.extensions.pending_dialog_setup = true,
+            ExtensionEffect::SetTitle(title) => {
+                self.extensions.pending_title = Some((generation, title))
+            }
             ExtensionEffect::SetEditorText(text) => {
-                self.pending_editor_text = Some((generation, text))
+                self.extensions.pending_editor_text = Some((generation, text))
             }
             ExtensionEffect::PersistError(_) | ExtensionEffect::None => {}
             ExtensionEffect::Diagnostic(message) => {
@@ -126,7 +133,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn reset_transcript_ui(&mut self, cx: &mut Context<Self>) {
-        self.transcript_view.update(cx, |transcript, cx| {
+        self.views.transcript.update(cx, |transcript, cx| {
             transcript.reset();
             cx.notify();
         });
@@ -138,7 +145,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((path, project)) = self.system_notification_targets.get(tag).cloned() {
+        if let Some((path, project)) = self.activity.system_notification_targets.get(tag).cloned() {
             self.select_session(path, project, window, cx);
         }
     }
@@ -155,7 +162,9 @@ impl FarcasterApp {
             |(path, _)| format!("{SYSTEM_NOTIFICATION_TAG}:{}", path.display()),
         );
         if let Some(target) = target {
-            self.system_notification_targets.insert(tag.clone(), target);
+            self.activity
+                .system_notification_targets
+                .insert(tag.clone(), target);
         }
         cx.show_system_notification(SystemNotification {
             tag: tag.into(),

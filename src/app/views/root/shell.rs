@@ -1,17 +1,13 @@
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ObjectFit, ParentElement as _,
-    Styled as _, StyledImage as _, WeakEntity, div, img,
-    prelude::FluentBuilder as _,
+    Styled as _, StyledImage as _, WeakEntity, div, img, prelude::FluentBuilder as _,
 };
 
 use super::{super::FarcasterApp, draft};
 use crate::app::{
     AppSurface,
     ui::{
-        layout::{
-            LayoutMode, composer_bottom_clearance, shows_left_inline,
-            shows_right_inline,
-        },
+        layout::{LayoutMode, composer_bottom_clearance, shows_left_inline, shows_right_inline},
         theme::THEME,
     },
 };
@@ -39,15 +35,15 @@ impl FarcasterApp {
                     .id("chat-body")
                     .flex_1()
                     .min_h_0()
-                    .child(self.transcript_view.clone())
+                    .child(self.views.transcript.clone())
                     .into_any_element()
             } else {
                 draft::render_body(
-                    self.composer_view.clone(),
+                    self.views.composer.clone(),
                     editable_draft_project.map(|project| {
                         draft::render_heading(project, entity.clone()).into_any_element()
                     }),
-                    self.composer_focus.clone(),
+                    self.composer.focus.clone(),
                     viewport_height,
                 )
                 .into_any_element()
@@ -62,7 +58,7 @@ impl FarcasterApp {
                         .pt(THEME.space.sm)
                         .pb(composer_bottom_clearance(viewport_height))
                         .flex_none()
-                        .child(self.composer_view.clone()),
+                        .child(self.views.composer.clone()),
                 )
             })
             .into_any_element()
@@ -75,22 +71,32 @@ impl FarcasterApp {
         viewport_height: gpui::Pixels,
         request_focused: bool,
     ) -> AnyElement {
-        let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
+        let native_surface = matches!(
+            self.workspace.surface,
+            AppSurface::Editor | AppSurface::Terminal
+        );
         let native_surface_covered = native_surface
-            && self.native_surface_covered
+            && self.workspace.native_surface_covered
             && self.native_workspace_covered_by_overlay();
         let main = if native_surface_covered {
             div()
                 .size_full()
                 .min_h_0()
-                .when_some(self.native_surface_snapshot.clone(), |surface, snapshot| {
-                    surface.child(img(snapshot).size_full().object_fit(ObjectFit::Fill))
-                })
+                .when_some(
+                    self.workspace.native_surface_snapshot.clone(),
+                    |surface, snapshot| {
+                        surface.child(img(snapshot).size_full().object_fit(ObjectFit::Fill))
+                    },
+                )
                 .into_any_element()
         } else {
-            match self.surface {
-                AppSurface::Editor if self.editor.is_some() => self.render_editor_surface(),
-                AppSurface::Terminal if self.terminal.is_some() => self.render_terminal_workspace(),
+            match self.workspace.surface {
+                AppSurface::Editor if self.workspace.editor.view.is_some() => {
+                    self.render_editor_surface()
+                }
+                AppSurface::Terminal if self.workspace.terminal.view.is_some() => {
+                    self.render_terminal_workspace()
+                }
                 _ => self.render_chat_main(entity.clone(), viewport_height),
             }
         };
@@ -103,7 +109,7 @@ impl FarcasterApp {
             .flex_col()
             .child(self.render_workspace_bar(entity.clone(), mode))
             .child(div().relative().flex_1().min_h_0().child(main).when(
-                native_surface && self.extension.dialog.is_some(),
+                native_surface && self.extensions.active.dialog.is_some(),
                 |center| {
                     center.child(
                         div()
@@ -141,7 +147,8 @@ impl FarcasterApp {
                         .border_r(THEME.border)
                         .border_color(THEME.colors.border)
                         .child(
-                            self.session_rail_view
+                            self.views
+                                .session_rail
                                 .clone()
                                 .cached(gpui::StyleRefinement::default().size_full()),
                         )
@@ -165,12 +172,13 @@ impl FarcasterApp {
                         .border_l(THEME.border)
                         .border_color(THEME.colors.border)
                         .child(
-                            if self.workgraph_inspector_issue.is_some()
+                            if self.views.workgraph_inspector_issue.is_some()
                                 && self.visible_review().is_none()
                             {
-                                self.workgraph_detail_view.clone().into_any_element()
+                                self.views.workgraph_detail.clone().into_any_element()
                             } else {
-                                self.run_panel_view
+                                self.views
+                                    .run_panel
                                     .clone()
                                     .cached(gpui::StyleRefinement::default().size_full())
                                     .into_any_element()

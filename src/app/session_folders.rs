@@ -120,10 +120,10 @@ impl FarcasterApp {
         folder: Option<u64>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.session_folders.folder_for(session) == folder {
+        if self.sessions.folders.folder_for(session) == folder {
             return true;
         }
-        let mut next = self.session_folders.clone();
+        let mut next = self.sessions.folders.clone();
         next.assign(session, folder);
         self.save_session_folders(next, cx)
     }
@@ -135,12 +135,12 @@ impl FarcasterApp {
     ) -> bool {
         match StateStore::open().and_then(|store| store.save_session_folders(&next)) {
             Ok(()) => {
-                self.session_folders = next;
+                self.sessions.folders = next;
                 self.notify_session_rail(cx);
                 true
             }
             Err(error) => {
-                self.sessions_error = Some(error);
+                self.sessions.error = Some(error);
                 self.notify_session_rail(cx);
                 false
             }
@@ -154,28 +154,28 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let name = id
-            .and_then(|id| self.session_folders.folders.iter().find(|f| f.id == id))
+            .and_then(|id| self.sessions.folders.folders.iter().find(|f| f.id == id))
             .map(|f| f.name.clone())
             .unwrap_or_default();
-        self.editing_session_title = None;
-        self.editing_folder = Some(FolderEdit { id, session: None });
-        self.session_title_input.update(cx, |input, cx| {
+        self.sessions.editing_title = None;
+        self.sessions.editing_folder = Some(FolderEdit { id, session: None });
+        self.sessions.title_input.update(cx, |input, cx| {
             input.set_placeholder("Folder name", window, cx);
             input.set_value(name.clone(), window, cx);
             input.set_selected_range(0..name.len(), cx);
         });
-        self.pending_session_title_focus = true;
+        self.sessions.pending_title_focus = true;
         self.notify_session_rail(cx);
         cx.notify();
     }
 
     pub(in crate::app) fn commit_folder_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(FolderEdit { id, session }) = self.editing_folder.take() else {
+        let Some(FolderEdit { id, session }) = self.sessions.editing_folder.take() else {
             return;
         };
-        let name = self.session_title_input.read(cx).value().trim().to_owned();
+        let name = self.sessions.title_input.read(cx).value().trim().to_owned();
         if !name.is_empty() {
-            let mut next = self.session_folders.clone();
+            let mut next = self.sessions.folders.clone();
             if let Some(id) = id {
                 if let Some(folder) = next.folders.iter_mut().find(|f| f.id == id) {
                     folder.name = name;

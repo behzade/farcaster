@@ -11,7 +11,7 @@ impl FarcasterApp {
     pub(in crate::app) fn copy_selection(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = copy_text(
             self.transcript_selected_text(window, cx),
-            self.composer.read(cx).selected_value().to_string(),
+            self.composer.input.read(cx).selected_value().to_string(),
         ) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
@@ -23,7 +23,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let native = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
+        let native = matches!(
+            self.workspace.surface,
+            AppSurface::Editor | AppSurface::Terminal
+        );
         if !paste && !native {
             self.copy_selection(window, cx);
             return;

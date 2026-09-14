@@ -572,7 +572,7 @@ fn session_context_menu(
                         let Some(app) = move_entity.upgrade() else {
                             return menu;
                         };
-                        let folders = &app.read(cx).session_folders;
+                        let folders = &app.read(cx).sessions.folders;
                         let current =
                             folders.destination(app_session_id, kind == SessionRailKind::Archived);
                         for (destination, label) in folders.destinations() {

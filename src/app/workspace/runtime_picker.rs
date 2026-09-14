@@ -30,7 +30,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.runtime_picker.open = open;
+        self.workspace.runtime_picker.open = open;
         if open {
             if let Some(harness) = self.snapshot.harness {
                 self.send(
@@ -41,48 +41,50 @@ impl FarcasterApp {
                     cx,
                 );
             }
-            self.runtime_picker.highlighted = 0;
-            self.runtime_picker.scroll = gpui::UniformListScrollHandle::new();
-            self.runtime_picker.provider =
+            self.workspace.runtime_picker.highlighted = 0;
+            self.workspace.runtime_picker.scroll = gpui::UniformListScrollHandle::new();
+            self.workspace.runtime_picker.provider =
                 self.snapshot.session_identity().provider.map(str::to_owned);
             if let Some(selected) = self.snapshot.session_identity().model {
-                self.runtime_picker.highlighted = self
+                self.workspace.runtime_picker.highlighted = self
                     .snapshot
                     .models
                     .iter()
                     .filter(|model| model.provider == selected.provider)
                     .position(|model| model.id == selected.id)
                     .unwrap_or(0);
-                self.runtime_picker.scroll.scroll_to_item(
-                    self.runtime_picker.highlighted,
+                self.workspace.runtime_picker.scroll.scroll_to_item(
+                    self.workspace.runtime_picker.highlighted,
                     gpui::ScrollStrategy::Center,
                 );
             }
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search models…"));
-            self.runtime_picker.subscription =
+            self.workspace.runtime_picker.subscription =
                 Some(cx.subscribe(&input, |app, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
-                        app.runtime_picker.highlighted = 0;
-                        app.runtime_picker
+                        app.workspace.runtime_picker.highlighted = 0;
+                        app.workspace
+                            .runtime_picker
                             .scroll
                             .scroll_to_item(0, gpui::ScrollStrategy::Top);
                     }
                     cx.notify();
                 }));
             let focus = input.read(cx).focus_handle(cx);
-            self.runtime_picker.search = Some(input);
+            self.workspace.runtime_picker.search = Some(input);
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         } else {
             if self
+                .workspace
                 .runtime_picker
                 .search
                 .as_ref()
                 .is_some_and(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx))
             {
-                self.composer_focus.focus(window, cx);
+                self.composer.focus.focus(window, cx);
             }
-            self.runtime_picker.subscription = None;
-            self.runtime_picker.search = None;
+            self.workspace.runtime_picker.subscription = None;
+            self.workspace.runtime_picker.search = None;
         }
         cx.notify();
     }
@@ -92,7 +94,7 @@ impl FarcasterApp {
         window: &Window,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
-        let Some(search) = self.runtime_picker.search.as_ref() else {
+        let Some(search) = self.workspace.runtime_picker.search.as_ref() else {
             return div().into_any_element();
         };
         let entity = cx.entity().downgrade();
@@ -105,6 +107,7 @@ impl FarcasterApp {
         providers.sort();
         providers.dedup();
         let provider = self
+            .workspace
             .runtime_picker
             .provider
             .as_ref()
@@ -161,7 +164,7 @@ impl FarcasterApp {
         let keyboard_models = models.clone();
         let search_focus = search.read(cx).focus_handle(cx);
         let selected_id = selected.map(|model| (model.provider.clone(), model.id.clone()));
-        let highlighted = self.runtime_picker.highlighted;
+        let highlighted = self.workspace.runtime_picker.highlighted;
         // Only the results pane grows. The outer scroll is a fallback for short windows.
         let (width, height, list_height) = layout::dimensions(
             f32::from(window.viewport_size().width),
@@ -194,8 +197,8 @@ impl FarcasterApp {
                 cx.stop_propagation();
                 let _ = keyboard_entity.update(cx, |app, cx| {
                     let last = keyboard_models.len() - 1;
-                    let current = app.runtime_picker.highlighted.min(last);
-                    app.runtime_picker.highlighted = match key {
+                    let current = app.workspace.runtime_picker.highlighted.min(last);
+                    app.workspace.runtime_picker.highlighted = match key {
                         "up" => current.saturating_sub(1),
                         "down" => (current + 1).min(last),
                         _ => current,
@@ -203,8 +206,8 @@ impl FarcasterApp {
                     if key == "enter" {
                         app.select_model(&keyboard_models[current], cx);
                     }
-                    app.runtime_picker.scroll.scroll_to_item(
-                        app.runtime_picker.highlighted,
+                    app.workspace.runtime_picker.scroll.scroll_to_item(
+                        app.workspace.runtime_picker.highlighted,
                         gpui::ScrollStrategy::Center,
                     );
                     cx.notify();
@@ -236,12 +239,16 @@ impl FarcasterApp {
                                 menu = menu.item(PopupMenuItem::new(provider.clone()).on_click(
                                     move |_, window, cx| {
                                         let _ = entity.update(cx, |app, cx| {
-                                            app.runtime_picker.provider = Some(provider.clone());
-                                            app.runtime_picker.highlighted = 0;
-                                            app.runtime_picker
+                                            app.workspace.runtime_picker.provider =
+                                                Some(provider.clone());
+                                            app.workspace.runtime_picker.highlighted = 0;
+                                            app.workspace
+                                                .runtime_picker
                                                 .scroll
                                                 .scroll_to_item(0, gpui::ScrollStrategy::Top);
-                                            if let Some(search) = &app.runtime_picker.search {
+                                            if let Some(search) =
+                                                &app.workspace.runtime_picker.search
+                                            {
                                                 search.update(cx, |input, cx| {
                                                     input.set_value("", window, cx)
                                                 });
@@ -305,7 +312,7 @@ impl FarcasterApp {
                 })
                 .h(px(list_height))
                 .flex_none()
-                .track_scroll(&self.runtime_picker.scroll)
+                .track_scroll(&self.workspace.runtime_picker.scroll)
                 .into_any_element()
             })
             .when(levels.iter().any(Option::is_some), |panel| {

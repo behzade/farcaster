@@ -30,7 +30,7 @@ pub(super) fn spawn(
             if weak
                 .update(cx, |this, cx| {
                     this.refresh_workgraph_sidebar(cx);
-                    this.workgraph_view.update(cx, |view, cx| view.refresh(cx));
+                    this.views.workgraph.update(cx, |view, cx| view.refresh(cx));
                 })
                 .is_err()
             {
@@ -76,7 +76,7 @@ pub(super) fn start_performance_monitor(
                     .await;
                 if weak
                     .update(cx, |this, cx| {
-                        if this.performance_monitor.as_mut().is_some_and(
+                        if this.lifecycle.performance_monitor.as_mut().is_some_and(
                             crate::app::infrastructure::performance::PerformanceMonitor::sample_if_due,
                         ) {
                             this.notify_run_panel(cx);

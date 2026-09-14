@@ -41,7 +41,7 @@ impl FarcasterApp {
         focused: bool,
         cx: &App,
     ) -> AnyElement {
-        if self.extension.dialog.is_some() {
+        if self.extensions.active.dialog.is_some() {
             return div()
                 .w_full()
                 .flex_none()
@@ -52,7 +52,7 @@ impl FarcasterApp {
                 .into_any_element();
         }
 
-        let composer = self.composer.read(cx);
+        let composer = self.composer.input.read(cx);
         let composer_text = composer.value().to_string();
         let composer_cursor = composer.cursor().min(composer_text.len());
         let composer_value = composer_text.trim().to_owned();
@@ -82,8 +82,8 @@ impl FarcasterApp {
         );
         let visible_queue = crate::app::composer::submissions::visible_prompt_queue(
             &self.snapshot.conversation.queue,
-            &self.pending_submissions,
-            self.composer_sessions.current_target(),
+            &self.composer.pending_submissions,
+            self.composer.sessions.current_target(),
         );
         let restored_receipts = if self.snapshot.history_preview {
             self.snapshot.conversation.pending_receipts()
@@ -91,15 +91,15 @@ impl FarcasterApp {
             Vec::new()
         };
         let mention_query = file_mentions::query_at_cursor(
-            &self.composer.read(cx).value(),
-            self.composer.read(cx).cursor(),
+            &self.composer.input.read(cx).value(),
+            self.composer.input.read(cx).cursor(),
         );
         let file_suggestions = mention_query
             .as_ref()
-            .map(|query| file_mentions::matches(&self.composer_project_files, &query.text))
+            .map(|query| file_mentions::matches(&self.composer.project_files, &query.text))
             .unwrap_or_default();
-        let widgets_above = widgets::render("above", &self.extension.above_widgets);
-        let widgets_below = widgets::render("below", &self.extension.below_widgets);
+        let widgets_above = widgets::render("above", &self.extensions.active.above_widgets);
+        let widgets_below = widgets::render("below", &self.extensions.active.below_widgets);
         let mention_selection = suggestion_selection.min(file_suggestions.len().saturating_sub(1));
         let command_selection =
             suggestion_selection.min(command_suggestion_count.saturating_sub(1));
@@ -110,13 +110,13 @@ impl FarcasterApp {
         };
         let actions = self.render_composer_actions(entity.clone(), primary_action);
         let input = editor::ComposerInput::new(
-            self.composer.clone(),
+            self.composer.input.clone(),
             entity.clone(),
             suggestion_count,
             actions,
         );
 
-        let composer_focus = self.composer_focus.clone();
+        let composer_focus = self.composer.focus.clone();
         let composer = div()
             .relative()
             .w_full()
@@ -204,7 +204,7 @@ impl FarcasterApp {
         suggestion_count: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.composer_view.update(cx, |view, cx| {
+        self.views.composer.update(cx, |view, cx| {
             view.select_previous_suggestion(suggestion_count, cx)
         })
     }
@@ -214,7 +214,7 @@ impl FarcasterApp {
         suggestion_count: usize,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.composer_view.update(cx, |view, cx| {
+        self.views.composer.update(cx, |view, cx| {
             view.select_next_suggestion(suggestion_count, cx)
         })
     }

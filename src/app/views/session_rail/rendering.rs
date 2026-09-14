@@ -77,7 +77,7 @@ pub(super) fn active_session_drop_target(
             cx.stop_propagation();
             let target = end_target(drag, window.mouse_position());
             let _ = entity.update(cx, |this, cx| {
-                this.session_drop_target = target.map(|id| (id, ReorderPosition::After));
+                this.sessions.drop_target = target.map(|id| (id, ReorderPosition::After));
                 this.complete_session_row_drop(drag, SessionRailKind::Project, window, cx);
             });
         })

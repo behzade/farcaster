@@ -27,7 +27,7 @@ impl FarcasterApp {
         let available = import_harnesses();
         let harness = available
             .into_iter()
-            .find(|harness| Some(*harness) == self.preferred_harness);
+            .find(|harness| Some(*harness) == self.sessions.preferred_harness);
         let dialog = SessionImportDialog {
             focus: cx.focus_handle(),
             return_focus: window.focused(cx),
@@ -39,7 +39,7 @@ impl FarcasterApp {
             error: None,
         };
         dialog.focus.focus(window, cx);
-        self.session_import = Some(dialog);
+        self.sessions.import = Some(dialog);
         self.preview_session_import(cx);
         cx.notify();
     }
@@ -49,7 +49,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.session_import.take() else {
+        let Some(dialog) = self.sessions.import.take() else {
             return;
         };
         self.restore_overlay_focus(dialog.return_focus, &dialog.focus, window, cx);
@@ -63,7 +63,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         {
-            let Some(dialog) = self.session_import.as_mut() else {
+            let Some(dialog) = self.sessions.import.as_mut() else {
                 return;
             };
             if dialog.harness == Some(harness) && (dialog.loading || dialog.error.is_none()) {
@@ -79,7 +79,7 @@ impl FarcasterApp {
         path: PathBuf,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.session_import.as_mut() else {
+        let Some(dialog) = self.sessions.import.as_mut() else {
             return;
         };
         if !dialog.selected.remove(&path) {
@@ -93,7 +93,7 @@ impl FarcasterApp {
         selected: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.session_import.as_mut() else {
+        let Some(dialog) = self.sessions.import.as_mut() else {
             return;
         };
         dialog.selected = if selected {
@@ -113,7 +113,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let sessions = self.session_import.as_ref().map(|dialog| {
+        let sessions = self.sessions.import.as_ref().map(|dialog| {
             dialog
                 .candidates
                 .iter()
@@ -135,7 +135,7 @@ impl FarcasterApp {
         sessions: Vec<SessionSummary>,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.session_import.as_mut() else {
+        let Some(dialog) = self.sessions.import.as_mut() else {
             return;
         };
         if dialog.preview_generation != generation || dialog.harness != Some(harness) {
@@ -158,7 +158,7 @@ impl FarcasterApp {
         message: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.session_import.as_mut() else {
+        let Some(dialog) = self.sessions.import.as_mut() else {
             return;
         };
         if dialog.preview_generation != generation || dialog.harness != Some(harness) {
@@ -172,9 +172,9 @@ impl FarcasterApp {
     }
 
     fn preview_session_import(&mut self, cx: &mut Context<Self>) {
-        self.session_import_generation = self.session_import_generation.saturating_add(1);
-        let Some((harness, generation)) = self.session_import.as_mut().map(|dialog| {
-            dialog.preview_generation = self.session_import_generation;
+        self.sessions.import_generation = self.sessions.import_generation.saturating_add(1);
+        let Some((harness, generation)) = self.sessions.import.as_mut().map(|dialog| {
+            dialog.preview_generation = self.sessions.import_generation;
             dialog.loading = dialog.harness.is_some();
             dialog.error = dialog
                 .harness

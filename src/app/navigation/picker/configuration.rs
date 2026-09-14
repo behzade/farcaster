@@ -160,7 +160,8 @@ impl FarcasterApp {
             PickerScope::Efforts(model) => effort_picker_rows(&self.snapshot, &model, commands),
             PickerScope::ArchivedSessions => {
                 let mut sessions = self
-                    .all_sessions
+                    .sessions
+                    .all
                     .iter()
                     .filter(|session| session.archived && session.parent_session.is_none())
                     .collect::<Vec<_>>();

@@ -63,9 +63,9 @@ pub(super) fn repository_header(
     let refresh = entity.clone();
     let clear = entity.clone();
     let commit = entity.clone();
-    let selected_count = app.repository.edits.selection.paths.len();
-    let enabled = app.repository.execution_allowed;
-    let syncing = app.repository.sync.action;
+    let selected_count = app.project.repository.edits.selection.paths.len();
+    let enabled = app.project.repository.execution_allowed;
+    let syncing = app.project.repository.sync.action;
     let count = snapshot.map_or(0, |snapshot| {
         snapshot
             .changes
@@ -107,7 +107,9 @@ pub(super) fn repository_header(
                         Button::new(id)
                             .icon(icon)
                             .with_size(Size::Small)
-                            .disabled(syncing.is_some() || app.repository.edits.pending.is_some())
+                            .disabled(
+                                syncing.is_some() || app.project.repository.edits.pending.is_some(),
+                            )
                             .accessibility_label(label)
                             .tooltip(label)
                     };
@@ -167,8 +169,8 @@ pub(super) fn repository_header(
                     .gap(THEME.space.sm)
                     .text_size(THEME.type_scale.caption)
                     .child(working_copy_totals(
-                        app.repository.additions,
-                        app.repository.deletions,
+                        app.project.repository.additions,
+                        app.project.repository.deletions,
                     ))
                     .child(div().flex_1())
                     .child(
@@ -206,13 +208,13 @@ fn repository_actions(
     panel: WeakEntity<RunPanelView>,
     filtering: bool,
 ) -> impl IntoElement {
-    let project = app.repository.project.clone();
-    let enabled = app.repository.execution_allowed;
-    let syncing = app.repository.sync.action;
+    let project = app.project.repository.project.clone();
+    let enabled = app.project.repository.execution_allowed;
+    let syncing = app.project.repository.sync.action;
     let identity = snapshot.map(|snapshot| snapshot.identity.clone());
     let kind = snapshot.map(|snapshot| snapshot.location.kind);
     let (git, jj) = RepositoryBackend::available_backends();
-    let active = selected_backend(kind, app.repository.preference, git, jj);
+    let active = selected_backend(kind, app.project.repository.preference, git, jj);
     dropdown_button("repository-actions", "⋯", ButtonTone::Quiet, true)
         .dropdown_caret(false)
         .accessibility_label("Repository actions")

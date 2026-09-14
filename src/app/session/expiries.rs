@@ -12,51 +12,65 @@ const RECENT_COMPLETION_LIFETIME: Duration = Duration::from_secs(10 * 60);
 impl FarcasterApp {
     pub(in crate::app) fn sync_notification_expiries(&mut self, cx: &mut Context<Self>) {
         let pending = self
-            .extension
+            .extensions
+            .active
             .notifications
             .iter()
             .chain(
-                self.parked_extension
+                self.extensions
+                    .parked
                     .iter()
                     .flat_map(|extension| extension.notifications.iter()),
             )
             .map(|notification| (notification.id.clone(), notification.expires_at))
             .collect::<HashSet<_>>();
-        self.notification_expiries
+        self.extensions
+            .notification_expiries
             .retain(|notification, _| pending.contains(notification));
         for (id, expires_at) in pending {
             let notification = (id.clone(), expires_at);
-            if self.notification_expiries.contains_key(&notification) {
+            if self
+                .extensions
+                .notification_expiries
+                .contains_key(&notification)
+            {
                 continue;
             }
             let wait = expires_at.saturating_duration_since(Instant::now());
             let task = cx.spawn(async move |weak, cx| {
                 cx.background_executor().timer(wait).await;
                 let _ = weak.update(cx, |this, cx| {
-                    let removed = this.extension.remove_notification(&id, expires_at)
-                        | this.parked_extension.as_mut().is_some_and(|extension| {
+                    let removed = this.extensions.active.remove_notification(&id, expires_at)
+                        | this.extensions.parked.as_mut().is_some_and(|extension| {
                             extension.remove_notification(&id, expires_at)
                         });
                     if removed {
-                        this.notification_expiries.remove(&(id, expires_at));
+                        this.extensions
+                            .notification_expiries
+                            .remove(&(id, expires_at));
                         cx.notify();
                     }
                 });
             });
-            self.notification_expiries.insert(notification, task);
+            self.extensions
+                .notification_expiries
+                .insert(notification, task);
         }
     }
 
     pub(in crate::app) fn sync_recent_completion_expiries(&mut self, cx: &mut Context<Self>) {
-        self.recent_completion_expiries
+        self.activity
+            .recent_completion_expiries
             .retain(|target, (completed_at, _)| {
-                self.recent_completions.get(target) == Some(completed_at)
+                self.activity.recent_completions.get(target) == Some(completed_at)
             });
         let pending = self
+            .activity
             .recent_completions
             .iter()
             .filter(|(target, completed_at)| {
-                self.recent_completion_expiries
+                self.activity
+                    .recent_completion_expiries
                     .get(*target)
                     .is_none_or(|(scheduled_at, _)| scheduled_at != *completed_at)
             })
@@ -70,17 +84,20 @@ impl FarcasterApp {
                 cx.background_executor().timer(wait).await;
                 let _ = weak.update(cx, |this, cx| {
                     if expire_recent_completion(
-                        &mut this.recent_completions,
-                        &mut this.run_statuses,
+                        &mut this.activity.recent_completions,
+                        &mut this.activity.run_statuses,
                         &task_target,
                         completed_at,
                     ) {
-                        this.recent_completion_expiries.remove(&task_target);
+                        this.activity
+                            .recent_completion_expiries
+                            .remove(&task_target);
                         this.notify_session_rail(cx);
                     }
                 });
             });
-            self.recent_completion_expiries
+            self.activity
+                .recent_completion_expiries
                 .insert(target, (completed_at, task));
         }
     }

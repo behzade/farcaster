@@ -10,7 +10,7 @@ impl FarcasterApp {
         delta: f32,
         cx: &mut Context<Self>,
     ) {
-        let size = f32::from(self.transcript_view.read(cx).font_size) + delta;
+        let size = f32::from(self.views.transcript.read(cx).font_size) + delta;
         self.set_transcript_font_size(size, cx);
     }
 
@@ -22,21 +22,21 @@ impl FarcasterApp {
             *TRANSCRIPT_FONT_SIZE_RANGE.start(),
             *TRANSCRIPT_FONT_SIZE_RANGE.end(),
         );
-        if gpui::px(size) == self.transcript_view.read(cx).font_size {
+        if gpui::px(size) == self.views.transcript.read(cx).font_size {
             return;
         }
         match StateStore::open().and_then(|store| store.save_transcript_font_size(size)) {
             Ok(()) => {
-                self.transcript_view.update(cx, |transcript, cx| {
+                self.views.transcript.update(cx, |transcript, cx| {
                     transcript.font_size = gpui::px(size);
                     transcript.list.remeasure_items(0..transcript.rows.len());
                     cx.notify();
                 });
-                self.settings_transcript_error = None;
+                self.settings.transcript_error = None;
             }
             Err(error) => {
                 zlog::error!("{error}");
-                self.settings_transcript_error = Some(error);
+                self.settings.transcript_error = Some(error);
             }
         }
         cx.notify();
@@ -49,8 +49,8 @@ impl FarcasterApp {
         path: &std::path::Path,
         cx: &mut Context<Self>,
     ) {
-        let expanded = self.expand_transcript_folders;
-        self.transcript_view.update(cx, |transcript, cx| {
+        let expanded = self.settings.expand_transcript_folders;
+        self.views.transcript.update(cx, |transcript, cx| {
             transcript.list.pause_following_tail();
             transcript
                 .file_trees
@@ -75,7 +75,8 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> Option<String> {
-        self.transcript_view
+        self.views
+            .transcript
             .read(cx)
             .list
             .clone()
@@ -89,7 +90,7 @@ impl FarcasterApp {
     ) -> TranscriptRowUpdate {
         let _timing =
             crate::app::infrastructure::performance::Timing::new("transcript.project_rows");
-        let transcript = self.transcript_view.read(cx);
+        let transcript = self.views.transcript.read(cx);
         update_conversation_rows(
             &transcript.rows,
             &self.snapshot.conversation,
@@ -99,7 +100,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn jump_to_latest(&mut self, cx: &mut Context<Self>) {
-        self.transcript_view.update(cx, |transcript, cx| {
+        self.views.transcript.update(cx, |transcript, cx| {
             transcript.following = true;
             transcript.unseen = 0;
             transcript.list.scroll_to_end();
@@ -113,7 +114,7 @@ impl FarcasterApp {
         expanded: bool,
         cx: &mut Context<Self>,
     ) {
-        self.transcript_view.update(cx, |transcript, cx| {
+        self.views.transcript.update(cx, |transcript, cx| {
             if expanded {
                 transcript.list.pause_following_tail();
             }
@@ -136,7 +137,7 @@ impl FarcasterApp {
             crate::app::infrastructure::performance::OperationKind::ComposerHistory,
             self.snapshot.conversation.items.len(),
         );
-        let target = self.composer_sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_target().to_owned();
         let mut user_count = 0;
         let mut last_user = "";
         for item in &self.snapshot.conversation.items {
@@ -145,7 +146,7 @@ impl FarcasterApp {
                 last_user = &item.text;
             }
         }
-        if self.composer_history_marker.as_ref().is_some_and(
+        if self.composer.history_marker.as_ref().is_some_and(
             |(saved_target, saved_count, saved_last)| {
                 saved_target == &target && *saved_count == user_count && saved_last == last_user
             },
@@ -160,8 +161,8 @@ impl FarcasterApp {
             .filter(|item| item.kind == TranscriptKind::User && !item.is_error)
             .map(|item| item.text.clone())
             .collect::<Vec<_>>();
-        self.composer_sessions.sync_history(&target, &history);
-        self.composer_history_marker = Some((target, user_count, last_user.to_owned()));
+        self.composer.sessions.sync_history(&target, &history);
+        self.composer.history_marker = Some((target, user_count, last_user.to_owned()));
     }
 
     pub(in crate::app) fn apply_transcript_rows(
@@ -170,7 +171,8 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let items = self.snapshot.conversation.items.clone();
-        self.transcript_view
+        self.views
+            .transcript
             .update(cx, |transcript, _| transcript.apply_rows(update, &items))
     }
 
@@ -181,7 +183,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let conversation = self.snapshot.conversation.clone();
-        self.transcript_view.update(cx, |transcript, cx| {
+        self.views.transcript.update(cx, |transcript, cx| {
             let rows = update_conversation_rows(
                 &transcript.rows,
                 &conversation,

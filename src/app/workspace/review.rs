@@ -61,9 +61,16 @@ impl ActiveReview {
 
 impl FarcasterApp {
     pub(in crate::app) fn visible_review(&self) -> Option<&ActiveReview> {
-        self.active_review.as_ref().filter(|review| {
-            review.is_visible(self.surface, self.composer_sessions.current_target())
-        })
+        self.workspace
+            .editor
+            .active_review
+            .as_ref()
+            .filter(|review| {
+                review.is_visible(
+                    self.workspace.surface,
+                    self.composer.sessions.current_target(),
+                )
+            })
     }
 
     pub(crate) fn open_review_editor(
@@ -123,7 +130,9 @@ impl FarcasterApp {
         let resolved = resolve_path(&active.project, &location.path);
         let project = active.project.clone();
         let list_id = navigation.list_id;
-        self.active_review
+        self.workspace
+            .editor
+            .active_review
             .as_mut()
             .expect("visible review")
             .inspecting = Some(index);
@@ -135,7 +144,7 @@ impl FarcasterApp {
                 return;
             }
         };
-        if self.overlays.run {
+        if self.overlays.view.run {
             self.close_sheet(window, cx);
         }
         self.activate_editor_tab(
@@ -151,11 +160,11 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn close_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.active_review = None;
-        if self.overlays.run {
+        self.workspace.editor.active_review = None;
+        if self.overlays.view.run {
             self.close_sheet(window, cx);
         }
-        if let Some(editor) = self.editor.clone() {
+        if let Some(editor) = self.workspace.editor.view.clone() {
             editor.update(cx, |editor, cx| editor.focus(window, cx));
         }
         self.notify_run_panel(cx);

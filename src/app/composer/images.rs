@@ -29,14 +29,16 @@ impl ComposerImage {
 
 impl FarcasterApp {
     pub(crate) fn has_composer_images(&self) -> bool {
-        self.composer_images
-            .get(self.composer_sessions.current_target())
+        self.composer
+            .images
+            .get(self.composer.sessions.current_target())
             .is_some_and(|images| !images.is_empty())
     }
 
     pub(crate) fn current_composer_images(&self) -> &[ComposerImage] {
-        self.composer_images
-            .get(self.composer_sessions.current_target())
+        self.composer
+            .images
+            .get(self.composer.sessions.current_target())
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
@@ -49,8 +51,9 @@ impl FarcasterApp {
         if images.is_empty() {
             return false;
         }
-        let target = self.composer_sessions.current_target().to_owned();
-        self.composer_images
+        let target = self.composer.sessions.current_target().to_owned();
+        self.composer
+            .images
             .entry(target.clone())
             .or_default()
             .extend(images);
@@ -60,13 +63,13 @@ impl FarcasterApp {
     }
 
     pub(crate) fn remove_composer_image(&mut self, index: usize, cx: &mut Context<Self>) {
-        let target = self.composer_sessions.current_target().to_owned();
-        if let Some(images) = self.composer_images.get_mut(&target)
+        let target = self.composer.sessions.current_target().to_owned();
+        if let Some(images) = self.composer.images.get_mut(&target)
             && index < images.len()
         {
             images.remove(index);
             if images.is_empty() {
-                self.composer_images.remove(&target);
+                self.composer.images.remove(&target);
             }
             self.save_composer_attachments(&target);
             self.notify_composer(cx);

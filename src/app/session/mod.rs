@@ -1,5 +1,8 @@
 use super::*;
 
+mod app_state;
+pub(in crate::app) use app_state::{ActivityState, SessionState};
+
 pub(in crate::app) mod activity;
 pub(super) mod archive;
 pub(super) mod deletion;

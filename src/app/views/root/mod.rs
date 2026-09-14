@@ -26,27 +26,27 @@ impl Render for FarcasterApp {
 
         let mode = layout_mode(window.viewport_size().width);
         let entity = cx.entity().downgrade();
-        let key_context = if self.surface == AppSurface::Chat
+        let key_context = if self.workspace.surface == AppSurface::Chat
             && !self.native_workspace_covered_by_overlay()
             && self.keyboard_overlay_focus(window, cx).is_none()
         {
             crate::app::CHAT_INPUT_CONTEXT
         } else if self.native_workspace_covered_by_overlay()
-            || matches!(self.surface, AppSurface::Chat | AppSurface::Work)
+            || matches!(self.workspace.surface, AppSurface::Chat | AppSurface::Work)
         {
             APP_INPUT_CONTEXT
         } else {
             NATIVE_INPUT_CONTEXT
         };
-        let work_active = self.surface == AppSurface::Work;
+        let work_active = self.workspace.surface == AppSurface::Work;
         let main = self.render_workspace_main(
             entity.clone(),
             mode,
             window.viewport_size().height,
             self.composer_region_focused(window, cx),
         );
-        let session_rail_width = self.session_rail_view.read(cx).width();
-        let run_panel_width = self.run_panel_view.read(cx).width();
+        let session_rail_width = self.views.session_rail.read(cx).width();
+        let run_panel_width = self.views.run_panel.read(cx).width();
         let shell = self.render_inline_shell(
             entity.clone(),
             mode,
@@ -61,7 +61,7 @@ impl Render for FarcasterApp {
             .bg(THEME.colors.canvas)
             .font(ui_font())
             .key_context(key_context)
-            .track_focus(&self.chat_navigation.focus)
+            .track_focus(&self.navigation.chat.focus)
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 if this.handle_composer_escape_key(event, window, cx) {
                     window.prevent_default();
@@ -71,11 +71,12 @@ impl Render for FarcasterApp {
                 this.capture_chat_navigation(event, window, cx);
             }))
             .on_key_down(cx.listener(|this, event, window, cx| {
-                if this.extension.dialog.is_some() && this.dialog_focus.contains_focused(window, cx)
+                if this.extensions.active.dialog.is_some()
+                    && this.extensions.dialog_focus.contains_focused(window, cx)
                 {
                     crate::app::ui::focus::traverse_tab(
                         event,
-                        Some(&this.dialog_focus),
+                        Some(&this.extensions.dialog_focus),
                         window,
                         cx,
                     );

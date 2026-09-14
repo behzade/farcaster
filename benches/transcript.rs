@@ -85,6 +85,10 @@ mod app {
     }
 
     pub(crate) struct FarcasterApp {
+        pub(crate) settings: SettingsState,
+    }
+
+    pub(crate) struct SettingsState {
         pub(crate) expand_transcript_folders: bool,
     }
 

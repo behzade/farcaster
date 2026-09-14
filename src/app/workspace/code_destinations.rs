@@ -74,7 +74,7 @@ pub(super) fn cycle_destination(
 
 impl FarcasterApp {
     pub(in crate::app) fn cycle_code_destination(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let Some(dialog) = self.send_to_chat.as_mut() else {
+        let Some(dialog) = self.workspace.send_to_chat.as_mut() else {
             return;
         };
         // The open picker's list owns navigation until it is confirmed or cancelled.
@@ -91,7 +91,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.send_to_chat.as_ref() else {
+        let Some(dialog) = self.workspace.send_to_chat.as_ref() else {
             return;
         };
         let mut rows = vec![PickerRow::new(
@@ -126,7 +126,8 @@ impl FarcasterApp {
                 ListEvent::Confirm(_) => {
                     let id = handles.confirmed_id.borrow_mut().take();
                     cx.defer_in(window, move |this, window, cx| {
-                        if let (Some(dialog), Some(id)) = (this.send_to_chat.as_mut(), id) {
+                        if let (Some(dialog), Some(id)) = (this.workspace.send_to_chat.as_mut(), id)
+                        {
                             if id == "new" {
                                 dialog.destination = None;
                             } else if let Ok(index) = id.parse::<usize>()
@@ -158,7 +159,11 @@ impl FarcasterApp {
             );
             list.focus(window, cx);
         });
-        self.send_to_chat.as_mut().expect("open capture").picker = Some(DestinationPicker {
+        self.workspace
+            .send_to_chat
+            .as_mut()
+            .expect("open capture")
+            .picker = Some(DestinationPicker {
             list,
             _subscription: subscription,
         });
@@ -170,7 +175,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(dialog) = self.send_to_chat.as_mut() {
+        if let Some(dialog) = self.workspace.send_to_chat.as_mut() {
             dialog.picker = None;
             dialog.input.read(cx).focus_handle(cx).focus(window, cx);
             cx.notify();

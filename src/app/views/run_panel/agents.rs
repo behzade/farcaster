@@ -23,7 +23,7 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         let activity_key = crate::agent_activity::agent_activity_key(&session.path);
-        let focus = self.agent_row_focus.get(&activity_key)?.clone();
+        let focus = self.activity.row_focus.get(&activity_key)?.clone();
         let path = session.path.clone();
         let project = session.project.clone();
         let key_path = path.clone();

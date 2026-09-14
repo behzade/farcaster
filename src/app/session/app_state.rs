@@ -1,0 +1,38 @@
+use crate::app::*;
+
+pub(in crate::app) struct SessionState {
+    pub(in crate::app) visible: Vec<SessionSummary>,
+    pub(in crate::app) all: Vec<SessionSummary>,
+    pub(in crate::app) order: Vec<i64>,
+    pub(in crate::app) folders: session_folders::SessionFolders,
+    pub(in crate::app) editing_folder: Option<session_folders::FolderEdit>,
+    pub(in crate::app) drop_target: Option<(i64, ui::primitives::ReorderPosition)>,
+    pub(in crate::app) drafts: Vec<projects::DraftSession>,
+    pub(in crate::app) draft_session_ids: HashMap<String, i64>,
+    pub(in crate::app) selected_draft: Option<String>,
+    pub(in crate::app) preferred_harness: Option<Backend>,
+    pub(in crate::app) submitted_drafts: HashMap<String, Option<PathBuf>>,
+    pub(in crate::app) error: Option<String>,
+    pub(in crate::app) project_filter: Option<PathBuf>,
+    pub(in crate::app) generation: u64,
+    pub(in crate::app) title_input: Entity<InputState>,
+    pub(in crate::app) editing_title: Option<SessionTitleEdit>,
+    pub(in crate::app) pending_titles: HashMap<PathBuf, String>,
+    pub(in crate::app) pending_title_focus: bool,
+    pub(in crate::app) pending_archive: Option<session::archive::PendingArchive>,
+    pub(in crate::app) pending_delete: Option<session::deletion::PendingDelete>,
+    pub(in crate::app) import: Option<session::import::SessionImportDialog>,
+    pub(in crate::app) import_generation: u64,
+    pub(in crate::app) archived_expanded: bool,
+    pub(in crate::app) _title_subscription: Subscription,
+}
+
+pub(in crate::app) struct ActivityState {
+    pub(in crate::app) agents: HashMap<String, AgentActivity>,
+    pub(in crate::app) row_focus: HashMap<String, FocusHandle>,
+    pub(in crate::app) background_jobs: Vec<BackgroundJob>,
+    pub(in crate::app) run_statuses: HashMap<String, String>,
+    pub(in crate::app) recent_completions: HashMap<String, Instant>,
+    pub(in crate::app) recent_completion_expiries: HashMap<String, (Instant, Task<()>)>,
+    pub(in crate::app) system_notification_targets: HashMap<String, (PathBuf, PathBuf)>,
+}

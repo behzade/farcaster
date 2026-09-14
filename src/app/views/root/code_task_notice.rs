@@ -13,7 +13,7 @@ use crate::app::{
 
 impl FarcasterApp {
     pub(super) fn render_code_task_notice(&self, entity: WeakEntity<Self>) -> Option<AnyElement> {
-        let message = self.code_tasks.notice_message()?;
+        let message = self.workspace.code_tasks.notice_message()?;
         let dismiss = entity.clone();
         Some(
             div()

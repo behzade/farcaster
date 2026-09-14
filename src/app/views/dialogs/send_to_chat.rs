@@ -19,6 +19,7 @@ pub(in crate::app::views) fn render(
     cx: &gpui::App,
 ) -> AnyElement {
     let dialog = app
+        .workspace
         .send_to_chat
         .as_ref()
         .expect("visible Send to chat dialog");

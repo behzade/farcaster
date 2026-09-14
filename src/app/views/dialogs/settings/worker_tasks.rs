@@ -11,7 +11,7 @@ use gpui_component::{
 };
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let editor = &app.worker_profile_editor;
+    let editor = &app.workspace.worker_profile_editor;
     let editing = editor.edit.is_some();
     let reload = entity.clone();
     div()
@@ -64,7 +64,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
 }
 
 fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let editor = &app.worker_profile_editor;
+    let editor = &app.workspace.worker_profile_editor;
     let editing = editor.edit.is_some();
     let add = entity.clone();
     let mut rail = div()
@@ -83,9 +83,9 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
                 !editing,
                 move |_, cx| {
                     let _ = entity.update(cx, |this, cx| {
-                        this.worker_profile_editor.selected = index;
-                        this.worker_profile_editor.selected_model = 0;
-                        this.worker_profile_editor.error = None;
+                        this.workspace.worker_profile_editor.selected = index;
+                        this.workspace.worker_profile_editor.selected_model = 0;
+                        this.workspace.worker_profile_editor.error = None;
                         cx.notify();
                     });
                 },
@@ -113,7 +113,7 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
 }
 
 fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
-    let editor = &app.worker_profile_editor;
+    let editor = &app.workspace.worker_profile_editor;
     let editing = editor.edit.is_some();
     let mut detail = div()
         .flex_1()
@@ -167,7 +167,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         );
         for (index, model) in profile.models.iter().enumerate() {
             let select = entity.clone();
-            let catalog = editor.catalog(model.harness, &app.project);
+            let catalog = editor.catalog(model.harness, &app.project.path);
             let name = catalog
                 .models
                 .iter()
@@ -192,7 +192,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                     .disabled(editing)
                     .on_click(move |_, _, cx| {
                         let _ = select.update(cx, |this, cx| {
-                            this.worker_profile_editor.selected_model = index;
+                            this.workspace.worker_profile_editor.selected_model = index;
                             cx.notify();
                         });
                     })
@@ -289,10 +289,10 @@ fn route(
     entity: WeakEntity<FarcasterApp>,
     target: WorkerRouteTarget,
 ) -> AnyElement {
-    let editor = &app.worker_profile_editor;
+    let editor = &app.workspace.worker_profile_editor;
     let profile = &editor.profiles[target.profile];
     let route = &profile.models[target.model];
-    let catalog = editor.catalog(route.harness, &app.project);
+    let catalog = editor.catalog(route.harness, &app.project.path);
     let enabled = editor.edit.is_none();
     let harnesses = crate::agents::backend_statuses()
         .into_iter()

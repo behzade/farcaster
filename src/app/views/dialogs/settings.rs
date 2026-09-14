@@ -25,7 +25,7 @@ pub(in crate::app::views) fn render(
     modal(
         "settings",
         "Settings",
-        &app.sheet_focus,
+        &app.overlays.sheet_focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
             let _ = dismiss.update(cx, |this, cx| this.close_sheet(window, cx));
@@ -61,16 +61,16 @@ pub(in crate::app::views) fn render(
                         .gap(gpui::px(24.0))
                         .p(gpui::px(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
-                        .child(transcript_font_size(app.transcript_view.read(cx).font_size, entity.clone()))
+                        .child(transcript_font_size(app.views.transcript.read(cx).font_size, entity.clone()))
                         .child(toggle_setting(
                             "transcript-folders-toggle",
                             "Expand changed folders in transcript",
                             "Start change folders expanded. Your manual folder choices stay as you left them.",
-                            app.expand_transcript_folders,
+                            app.settings.expand_transcript_folders,
                             entity.clone(),
                             FarcasterApp::toggle_settings_transcript_folders,
                         ))
-                        .when_some(app.settings_transcript_error.clone(), |content, error| {
+                        .when_some(app.settings.transcript_error.clone(), |content, error| {
                             content.child(feedback(
                                 "settings-transcript-error",
                                 error,
@@ -94,7 +94,7 @@ pub(in crate::app::views) fn render(
                             entity.clone(),
                             FarcasterApp::toggle_settings_builtin_mcp,
                         ))
-                        .when_some(app.settings_mcp_error.clone(), |content, error| {
+                        .when_some(app.settings.mcp_error.clone(), |content, error| {
                             content.child(feedback(
                                 "settings-mcp-error",
                                 error,
@@ -118,7 +118,7 @@ pub(in crate::app::views) fn render(
                                         .child(
                                             div()
                                                 .flex_1()
-                                                .child(Input::new(&app.network_proxy_input)),
+                                                .child(Input::new(&app.settings.network_proxy_input)),
                                         )
                                         .child(button(
                                             "clear-network-proxy",
@@ -132,7 +132,7 @@ pub(in crate::app::views) fn render(
                                             },
                                         )),
                                 )
-                                .when_some(app.network_proxy_error.clone(), |content, error| {
+                                .when_some(app.settings.network_proxy_error.clone(), |content, error| {
                                     content.child(feedback(
                                         "settings-proxy-error",
                                         error,

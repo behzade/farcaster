@@ -43,23 +43,25 @@ impl FarcasterApp {
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
-        let search_focus = self.search_focus.clone();
+        let search_focus = self.navigation.search_focus.clone();
         let selected_root = self.selected_rail_root().map(|session| session.id.clone());
-        let live_root =
-            root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
-                .map(|session| session.id.clone());
-        let waiting_roots = roots_waiting_for_descendants(&self.all_sessions);
+        let live_root = root_session_for_path(
+            &self.sessions.visible,
+            self.snapshot.live_session.as_deref(),
+        )
+        .map(|session| session.id.clone());
+        let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
         let lists = session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
         );
-        let counts = subagent_counts(&self.all_sessions);
+        let counts = subagent_counts(&self.sessions.all);
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
-        let last_active_row = if self.session_folders.folders.is_empty() {
+        let last_active_row = if self.sessions.folders.folders.is_empty() {
             active_rows
                 .last()
                 .map(|item| (active_entry_count - 1, item.app_session_id()))
@@ -67,10 +69,10 @@ impl FarcasterApp {
             None
         };
         let active_drop_list = session_list.clone();
-        let active_rows = folder_rows(active_rows, &self.session_folders);
+        let active_rows = folder_rows(active_rows, &self.sessions.folders);
         let session_shortcuts =
             visible_session_shortcuts(active_rows.iter().filter_map(FolderRow::session));
-        let editing_folder = self.editing_folder.map(|edit| edit.id);
+        let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
         reconcile_list_rows(
             &session_list,
             session_list_rows,
@@ -84,20 +86,21 @@ impl FarcasterApp {
                 .collect(),
         );
 
-        let selected_draft = self.selected_draft.clone();
-        let submitted_drafts = self.submitted_drafts.clone();
+        let selected_draft = self.sessions.selected_draft.clone();
+        let submitted_drafts = self.sessions.submitted_drafts.clone();
         let active_selected_root = selected_root.clone();
         let active_live_root = live_root.clone();
         let active_live_status = self.snapshot.live_status.clone();
-        let active_run_statuses = self.run_statuses.clone();
+        let active_run_statuses = self.activity.run_statuses.clone();
         let active_waiting_roots = waiting_roots.clone();
         let active_row_entity = entity.clone();
         let active_editing_path = self
-            .editing_session_title
+            .sessions
+            .editing_title
             .as_ref()
             .map(|edit| edit.path.clone());
-        let active_title_input = self.session_title_input.clone();
-        let active_drop_target = self.session_drop_target;
+        let active_title_input = self.sessions.title_input.clone();
+        let active_drop_target = self.sessions.drop_target;
         let active_list = list(session_list, move |index, _, _| {
             match active_rows.get(index) {
                 Some(FolderRow::Session(ActiveSessionItem::Draft(draft))) => {
@@ -176,17 +179,19 @@ impl FarcasterApp {
         .size_full();
 
         let archived_expanded =
-            !session_drag_active && self.archived_sessions_expanded && archived_entry_count > 0;
+            !session_drag_active && self.sessions.archived_expanded && archived_entry_count > 0;
         let archived_session_rail_style =
             inactive_rail_style(archived_expanded, archived_entry_count, true);
         let archived_session_rail = self
-            .archived_session_rail_view
+            .views
+            .archived_session_rail
             .clone()
             .cached(archived_session_rail_style);
         let projects = self.available_projects();
         let project_filter_entity = entity.clone();
         let filter_label = self
-            .session_project_filter
+            .sessions
+            .project_filter
             .as_deref()
             .map(project_label)
             .unwrap_or_else(|| "All".into());
@@ -256,7 +261,7 @@ impl FarcasterApp {
                             .on_click(move |_, window, cx| search_focus.focus(window, cx))
                             .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
                             .child(
-                                Input::new(&self.search)
+                                Input::new(&self.navigation.search)
                                     .flex_1()
                                     .min_w_0()
                                     .appearance(false),
@@ -306,7 +311,7 @@ impl FarcasterApp {
                             ),
                     ),
             )
-            .when_some(self.sessions_error.clone(), |rail, error| {
+            .when_some(self.sessions.error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
             })
             .child(
@@ -327,7 +332,7 @@ impl FarcasterApp {
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
                     .when(
-                        session_drag_active && !self.session_folders.folders.is_empty(),
+                        session_drag_active && !self.sessions.folders.folders.is_empty(),
                         |lists| {
                             let entity = entity.clone();
                             lists.child(folder_drop_target(
@@ -369,7 +374,7 @@ impl FarcasterApp {
             .when(
                 active_entry_count == 0
                     && archived_entry_count == 0
-                    && self.sessions_error.is_none(),
+                    && self.sessions.error.is_none(),
                 |rail| {
                     rail.child(
                         div()

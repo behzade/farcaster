@@ -1,4 +1,7 @@
+mod app_state;
 mod state;
+
+pub(in crate::app) use app_state::ExtensionState;
 
 use std::{
     collections::{BTreeMap, VecDeque},

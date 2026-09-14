@@ -40,7 +40,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
         match startup_trust(project) {
@@ -51,14 +51,14 @@ impl FarcasterApp {
                 {
                     self.send(command, cx);
                 } else {
-                    self.pending_project_trust_command = Some(command);
+                    self.project.pending_trust_command = Some(command);
                 }
             }
             result => {
                 self.open_project_trust(window, cx);
-                self.project_trust_project = Some(project.to_path_buf());
-                self.project_trust_error = result.err();
-                self.pending_project_trust_command = Some(command);
+                self.project.trust_project = Some(project.to_path_buf());
+                self.project.trust_error = result.err();
+                self.project.pending_trust_command = Some(command);
             }
         }
     }
@@ -70,10 +70,11 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let project = self
-            .project_trust_project
+            .project
+            .trust_project
             .clone()
-            .unwrap_or_else(|| self.project.clone());
-        let backend = self.project_trust_backend.clone();
+            .unwrap_or_else(|| self.project.path.clone());
+        let backend = self.project.trust_backend.clone();
         let applied = match backend {
             Some(backend) => crate::agents::apply_project_trust(backend, &project, choice),
             None => apply(&project, choice),
@@ -84,14 +85,15 @@ impl FarcasterApp {
                     self.set_repository_project_execution(project.clone(), applied.trusted, cx);
                 }
                 let scope = applied.saved_path.map_or_else(
-                    || self.project.display().to_string(),
+                    || self.project.path.display().to_string(),
                     |path| path.display().to_string(),
                 );
-                self.project_trust_error = None;
-                self.project_trust_project = None;
-                self.project_trust_backend = None;
+                self.project.trust_error = None;
+                self.project.trust_project = None;
+                self.project.trust_backend = None;
                 let pending = self
-                    .pending_project_trust_command
+                    .project
+                    .pending_trust_command
                     .take()
                     .map(restart_session_after_trust);
                 self.close_sheet(window, cx);
@@ -115,7 +117,7 @@ impl FarcasterApp {
                 }
             }
             Err(error) => {
-                self.project_trust_error = Some(error);
+                self.project.trust_error = Some(error);
                 cx.notify();
             }
         }
@@ -126,14 +128,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if cancel_pending_command(&mut self.pending_project_trust_command)
-            && let Some((_, timing)) = self.pending_session_switch.take()
+        if cancel_pending_command(&mut self.project.pending_trust_command)
+            && let Some((_, timing)) = self.lifecycle.pending_session_switch.take()
         {
             timing.cancel();
         }
-        self.project_trust_error = None;
-        self.project_trust_project = None;
-        self.project_trust_backend = None;
+        self.project.trust_error = None;
+        self.project.trust_project = None;
+        self.project.trust_backend = None;
         self.close_sheet(window, cx);
     }
 
@@ -153,7 +155,7 @@ impl FarcasterApp {
                     window,
                     cx,
                 );
-                self.project_trust_error = result.err();
+                self.project.trust_error = result.err();
                 false
             }
         }
@@ -167,8 +169,8 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.open_project_trust(window, cx);
-        self.project_trust_project = Some(project);
-        self.project_trust_backend = Some(backend);
+        self.project.trust_project = Some(project);
+        self.project.trust_backend = Some(backend);
     }
 }
 

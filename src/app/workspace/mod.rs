@@ -2,6 +2,9 @@ use std::time::Duration;
 
 use super::*;
 
+mod app_state;
+pub(in crate::app) use app_state::{EditorState, SettingsState, TerminalState, WorkspaceState};
+
 const NATIVE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(in crate::app) mod code_tasks;

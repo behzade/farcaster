@@ -35,7 +35,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.overlays.run {
+        if self.overlays.view.run {
             self.close_sheet(window, cx);
         }
         let project = self.workspace_project();
@@ -99,7 +99,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.execution_allowed {
+        if !self.project.repository.execution_allowed {
             self.notify_workspace_error(
                 "Neovim",
                 "Trust this project before opening Neovim.".to_owned(),
@@ -107,15 +107,20 @@ impl FarcasterApp {
             );
             return;
         }
-        self.editor_request_generation = self.editor_request_generation.wrapping_add(1);
+        self.workspace.editor.request_generation =
+            self.workspace.editor.request_generation.wrapping_add(1);
 
         let project = project.canonicalize().unwrap_or(project);
-        let target = self.composer_sessions.current_target().to_owned();
+        let target = self.composer.sessions.current_target().to_owned();
         let tab = *self
-            .session_editor_tabs
+            .workspace
+            .editor
+            .session_tabs
             .entry(target.clone())
             .or_insert_with(new_session_tab);
         let Some(editor) = self
+            .workspace
+            .editor
             .project_editors
             .get(&(project.clone(), tab))
             .filter(|editor| editor.read(cx).is_alive(cx))
@@ -127,27 +132,27 @@ impl FarcasterApp {
         self.retain_workspace_draft(cx);
         // Reusing the native terminal must not unmap/remap it: both file jumps
         // and repeated Open editor commands come through this path.
-        let switching_editor = self.editor.as_ref() != Some(&editor);
+        let switching_editor = self.workspace.editor.view.as_ref() != Some(&editor);
         if switching_editor {
             self.hide_editor(cx);
         }
-        if switching_editor || self.surface != AppSurface::Editor {
-            self.editor_return_focus = window.focused(cx);
+        if switching_editor || self.workspace.surface != AppSurface::Editor {
+            self.workspace.editor.return_focus = window.focused(cx);
         }
         let review_request = matches!(
             &editor_target,
             EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
         );
-        self.editor = Some(editor.clone());
+        self.workspace.editor.view = Some(editor.clone());
         self.hide_terminal(cx);
         // Startup prompts can block remote requests until the user responds.
         // Show the terminal before waiting so those prompts remain accessible.
-        self.editor_ready = true;
+        self.workspace.editor.ready = true;
         self.reveal_native_center_surface(AppSurface::Editor, window, cx);
-        let generation = self.editor_request_generation;
+        let generation = self.workspace.editor.request_generation;
         match &editor_target {
             EditorTarget::Review(review) => {
-                self.active_review = Some(super::review::ActiveReview::new(
+                self.workspace.editor.active_review = Some(super::review::ActiveReview::new(
                     generation,
                     target.clone(),
                     project,
@@ -155,7 +160,7 @@ impl FarcasterApp {
                 ));
             }
             EditorTarget::ReviewLocation { .. } => {
-                if let Some(review) = self.active_review.as_mut() {
+                if let Some(review) = self.workspace.editor.active_review.as_mut() {
                     review.pending = Some(generation);
                     review.error = None;
                 }
@@ -172,7 +177,7 @@ impl FarcasterApp {
                         Err(error) => Err(error.clone()),
                         Ok(None) => Err("Editor returned no review locations".into()),
                     };
-                    if let Some(review) = this.active_review.as_mut()
+                    if let Some(review) = this.workspace.editor.active_review.as_mut()
                         && review.target == target
                         && review.complete(generation, completion)
                     {
@@ -180,8 +185,8 @@ impl FarcasterApp {
                         cx.notify();
                     }
                 }
-                if this.editor.as_ref() != Some(&editor)
-                    || this.composer_sessions.current_target() != target
+                if this.workspace.editor.view.as_ref() != Some(&editor)
+                    || this.composer.sessions.current_target() != target
                 {
                     return;
                 }
@@ -189,12 +194,14 @@ impl FarcasterApp {
                 zlog::warn!("Neovim session-view request failed for {target}: {error}");
                 if !editor_completion_is_current(
                     generation,
-                    this.editor_request_generation,
+                    this.workspace.editor.request_generation,
                     tab,
-                    this.session_editor_tabs
-                        .get(this.composer_sessions.current_target())
+                    this.workspace
+                        .editor
+                        .session_tabs
+                        .get(this.composer.sessions.current_target())
                         .copied(),
-                    this.surface,
+                    this.workspace.surface,
                 ) {
                     return;
                 }
@@ -220,25 +227,28 @@ impl FarcasterApp {
             Ok(editor) => {
                 let editor = cx.new(|_| editor);
                 let key = (project, tab);
-                self.project_editors.insert(key.clone(), editor.clone());
+                self.workspace
+                    .editor
+                    .project_editors
+                    .insert(key.clone(), editor.clone());
                 let monitored = editor.clone();
                 self.monitor_native_process(window, cx, move |this, _window, cx| {
-                    if this.project_editors.get(&key) != Some(&monitored) {
+                    if this.workspace.editor.project_editors.get(&key) != Some(&monitored) {
                         return false;
                     }
                     if monitored.read(cx).is_alive(cx) {
                         return true;
                     }
-                    this.project_editors.remove(&key);
-                    if this.editor.as_ref() != Some(&monitored) {
+                    this.workspace.editor.project_editors.remove(&key);
+                    if this.workspace.editor.view.as_ref() != Some(&monitored) {
                         return false;
                     }
-                    if this.surface == AppSurface::Editor {
+                    if this.workspace.surface == AppSurface::Editor {
                         this.close_editor(cx);
                     } else {
-                        this.editor = None;
-                        this.editor_ready = false;
-                        this.editor_return_focus = None;
+                        this.workspace.editor.view = None;
+                        this.workspace.editor.ready = false;
+                        this.workspace.editor.return_focus = None;
                         this.request_repository_refresh(cx);
                     }
                     false
@@ -253,15 +263,15 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn hide_editor(&self, cx: &mut Context<Self>) {
-        if let Some(editor) = self.editor.as_ref() {
+        if let Some(editor) = self.workspace.editor.view.as_ref() {
             editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
     }
 
     pub(in crate::app) fn restore_editor_visibility(&self, cx: &mut Context<Self>) {
-        if self.surface == AppSurface::Editor
-            && self.editor_ready
-            && let Some(editor) = self.editor.as_ref()
+        if self.workspace.surface == AppSurface::Editor
+            && self.workspace.editor.ready
+            && let Some(editor) = self.workspace.editor.view.as_ref()
         {
             editor.update(cx, |editor, cx| editor.set_visible(true, cx));
         }
@@ -269,10 +279,12 @@ impl FarcasterApp {
 
     pub(in crate::app) fn close_editor(&mut self, cx: &mut Context<Self>) {
         self.hide_editor(cx);
-        self.editor = None;
-        self.editor_ready = false;
+        self.workspace.editor.view = None;
+        self.workspace.editor.ready = false;
         let focus = self
-            .editor_return_focus
+            .workspace
+            .editor
+            .return_focus
             .take()
             .unwrap_or_else(|| self.chat_composer_focus(cx));
         self.enter_chat_surface(focus, cx);

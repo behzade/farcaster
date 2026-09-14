@@ -1,0 +1,41 @@
+use crate::app::*;
+
+pub(in crate::app) struct WorkspaceState {
+    pub(in crate::app) editor: EditorState,
+    pub(in crate::app) terminal: TerminalState,
+    pub(in crate::app) native_surface_snapshot: Option<Arc<RenderImage>>,
+    pub(in crate::app) native_surface_covered: bool,
+    pub(in crate::app) surface: AppSurface,
+    pub(in crate::app) session_surfaces: HashMap<String, AppSurface>,
+    pub(in crate::app) worker_profile_editor: workspace::worker_tasks::WorkerProfileEditor,
+    pub(in crate::app) runtime_picker: workspace::runtime_picker::RuntimePickerState,
+    pub(in crate::app) send_to_chat: Option<workspace::send_to_chat::SendToChat>,
+    pub(in crate::app) send_to_chat_capture: Option<Task<()>>,
+    pub(in crate::app) code_tasks: workspace::code_tasks::CodeTasks,
+}
+
+pub(in crate::app) struct EditorState {
+    pub(in crate::app) view: Option<Entity<NvimEditor>>,
+    pub(in crate::app) active_review: Option<workspace::review::ActiveReview>,
+    pub(in crate::app) project_editors: HashMap<(PathBuf, u64), Entity<NvimEditor>>,
+    pub(in crate::app) session_tabs: HashMap<String, u64>,
+    pub(in crate::app) ready: bool,
+    pub(in crate::app) request_generation: u64,
+    pub(in crate::app) return_focus: Option<FocusHandle>,
+}
+
+pub(in crate::app) struct TerminalState {
+    pub(in crate::app) view: Option<Entity<Terminal>>,
+    pub(in crate::app) project: Option<PathBuf>,
+    pub(in crate::app) project_terminals: HashMap<PathBuf, Entity<Terminal>>,
+}
+
+pub(in crate::app) struct SettingsState {
+    pub(in crate::app) network_proxy_input: Entity<InputState>,
+    pub(in crate::app) network_proxy_error: Option<String>,
+    pub(in crate::app) proxy_save: Option<Task<()>>,
+    pub(in crate::app) mcp_error: Option<String>,
+    pub(in crate::app) expand_transcript_folders: bool,
+    pub(in crate::app) transcript_error: Option<String>,
+    pub(in crate::app) _network_proxy_subscription: Subscription,
+}

@@ -92,7 +92,7 @@ impl ProjectTrustView {
                 cx,
             )
         });
-        let focus = app.read(cx).composer_focus.clone();
+        let focus = app.read(cx).composer.focus.clone();
         *self.notification_app.borrow_mut() = Some(app.downgrade());
         self.app = Some(app);
         cx.notify();

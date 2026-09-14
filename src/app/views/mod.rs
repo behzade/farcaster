@@ -1,3 +1,4 @@
+mod app_state;
 mod attachments;
 mod composer;
 pub(in crate::app) mod dialogs;
@@ -11,6 +12,7 @@ mod usage;
 pub(super) mod workgraph;
 mod workspace;
 
+pub(in crate::app) use app_state::{AppOverlays, AppViews};
 pub(super) use regions::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
     WorkGraphDetailView,

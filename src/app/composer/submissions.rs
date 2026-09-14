@@ -39,7 +39,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.can_submit() || self.pending_project_trust_command.is_some() {
+        if !self.can_submit() || self.project.pending_trust_command.is_some() {
             return;
         }
         let Some(backend) = self.snapshot.harness else {
@@ -53,25 +53,27 @@ impl FarcasterApp {
             cx.notify();
             return;
         };
-        let project = self.project.clone();
+        let project = self.project.path.clone();
         if !self.ensure_backend_trust(backend, &project, window, cx) {
             return;
         }
         self.capture_composer_session(cx);
-        let target = self.composer_sessions.current_target().to_owned();
-        let editor_text = self.composer.read(cx).value().to_string();
+        let target = self.composer.sessions.current_target().to_owned();
+        let editor_text = self.composer.input.read(cx).value().to_string();
         let (mode, allow_while_running) =
             submission_delivery(&value, mode, &self.snapshot.commands);
         let show_in_transcript = !self.snapshot.conversation.running;
         let images = self
-            .composer_images
+            .composer
+            .images
             .get(&target)
             .into_iter()
             .flatten()
             .map(|image| image.prompt.clone())
             .collect::<Vec<PromptImage>>();
         let pastes = self
-            .composer_pastes
+            .composer
+            .pastes
             .get(&target)
             .cloned()
             .unwrap_or_default();
@@ -89,7 +91,7 @@ impl FarcasterApp {
         let inactive_session = inactive_session_for_target(
             &target,
             self.snapshot.selected_session.as_deref(),
-            &self.sessions,
+            &self.sessions.visible,
         );
         let submission_id = uuid::Uuid::new_v4().to_string();
         match self.runtime.send(RuntimeCommand::Prompt {
@@ -108,9 +110,9 @@ impl FarcasterApp {
                 }
                 self.begin_draft_submission(&target, &value);
                 self.notify_session_rail(cx);
-                self.composer_sessions.record_submission(&target, &value);
-                let pending_images = self.composer_images.remove(&target).unwrap_or_default();
-                let pending_pastes = self.composer_pastes.remove(&target).unwrap_or_default();
+                self.composer.sessions.record_submission(&target, &value);
+                let pending_images = self.composer.images.remove(&target).unwrap_or_default();
+                let pending_pastes = self.composer.pastes.remove(&target).unwrap_or_default();
                 let transcript_images = show_in_transcript.then(|| {
                     Arc::new(
                         pending_images
@@ -121,7 +123,7 @@ impl FarcasterApp {
                             .collect(),
                     )
                 });
-                self.pending_submissions.insert(
+                self.composer.pending_submissions.insert(
                     submission_id.clone(),
                     PendingSubmission {
                         id: submission_id,
@@ -136,9 +138,10 @@ impl FarcasterApp {
                     },
                 );
                 if self
-                    .composer_sessions
+                    .composer
+                    .sessions
                     .clear_submitted_text(&target, &editor_text)
-                    && self.composer_sessions.current_target() == target
+                    && self.composer.sessions.current_target() == target
                 {
                     self.apply_composer_snapshot(ComposerSnapshot::default(), window, cx);
                 }
@@ -188,17 +191,17 @@ impl FarcasterApp {
     }
 
     pub(crate) fn handle_composer_escape(&mut self, cx: &mut Context<Self>) {
-        let target = self.composer_sessions.current_target();
+        let target = self.composer.sessions.current_target();
         let (action, arm) = composer_escape(
             self.snapshot.conversation.running,
             !self.snapshot.conversation.queue.steering.is_empty(),
             !self.snapshot.conversation.queue.follow_up.is_empty(),
-            has_pending_submission(&self.pending_submissions, target),
+            has_pending_submission(&self.composer.pending_submissions, target),
             target,
-            self.composer_escape_armed.as_ref(),
+            self.composer.escape_armed.as_ref(),
             Instant::now(),
         );
-        self.composer_escape_armed = arm;
+        self.composer.escape_armed = arm;
         match action {
             ComposerEscapeAction::ApplySteering => self.send(RuntimeCommand::ApplySteering, cx),
             ComposerEscapeAction::Abort => self.send(RuntimeCommand::Abort, cx),
@@ -213,10 +216,10 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> bool {
         let key_action = composer_escape_key(event);
-        let owns_escape = self.surface == crate::app::AppSurface::Chat
+        let owns_escape = self.workspace.surface == crate::app::AppSurface::Chat
             && !self.native_workspace_covered_by_overlay()
             && self.keyboard_overlay_focus(window, cx).is_none()
-            && self.composer_focus.contains_focused(window, cx)
+            && self.composer.focus.contains_focused(window, cx)
             && key_action != ComposerEscapeKeyAction::Ignore;
         if !owns_escape {
             return false;
@@ -232,7 +235,7 @@ impl FarcasterApp {
     }
 
     pub(crate) fn submit_follow_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let value = self.composer.read(cx).value().trim().to_owned();
+        let value = self.composer.input.read(cx).value().trim().to_owned();
         if !value.is_empty() || self.has_composer_attachments() {
             let mode = prompt_mode_for_follow_up(self.snapshot.conversation.running);
             self.submit(value, mode, window, cx);
@@ -244,7 +247,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let completed = take_resolved_pending_submissions(&mut self.pending_submissions);
+        let completed = take_resolved_pending_submissions(&mut self.composer.pending_submissions);
         for (target, pending, outcome, session) in completed {
             if !restores_composer(outcome) {
                 self.save_composer_attachments(&target);
@@ -254,24 +257,26 @@ impl FarcasterApp {
             let restored = if pending.append_on_failure {
                 self.capture_composer_session(cx);
                 Some(
-                    self.composer_sessions
+                    self.composer
+                        .sessions
                         .append_to_draft(&target, &pending.text),
                 )
             } else {
-                self.composer_sessions
+                self.composer
+                    .sessions
                     .restore_submitted_text(&target, pending.text.clone())
             };
             if !pending.images.is_empty() {
-                let images = self.composer_images.entry(target.clone()).or_default();
+                let images = self.composer.images.entry(target.clone()).or_default();
                 images.splice(0..0, pending.images.clone());
             }
             if !pending.pastes.is_empty() {
-                let pastes = self.composer_pastes.entry(target.clone()).or_default();
+                let pastes = self.composer.pastes.entry(target.clone()).or_default();
                 pastes.splice(0..0, pending.pastes.clone());
             }
             self.save_composer_attachments(&target);
             if let Some(snapshot) = restored
-                && self.composer_sessions.current_target() == target
+                && self.composer.sessions.current_target() == target
             {
                 self.apply_composer_snapshot(snapshot, window, cx);
             }
@@ -279,10 +284,10 @@ impl FarcasterApp {
                 &pending.text,
                 !pending.images.is_empty() || !pending.pastes.is_empty(),
                 &target,
-                self.composer_sessions.current_target(),
+                self.composer.sessions.current_target(),
                 session.as_deref(),
             ) {
-                self.composer_sessions.promote(&target, session_key.clone());
+                self.composer.sessions.promote(&target, session_key.clone());
                 self.promote_center_surface(&target, &session_key);
                 self.promote_composer_images(&target, &session_key);
                 self.promote_composer_pastes(&target, &session_key);

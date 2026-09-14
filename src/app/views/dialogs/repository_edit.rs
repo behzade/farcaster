@@ -21,6 +21,7 @@ pub(in crate::app::views) fn render(
     cx: &gpui::App,
 ) -> AnyElement {
     let pending = app
+        .project
         .repository
         .edits
         .pending

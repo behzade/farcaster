@@ -94,7 +94,7 @@ impl DirtyRegions {
     fn observe(&mut self, app: &FarcasterApp, event: &RuntimeEvent) {
         match event {
             RuntimeEvent::Snapshot { snapshot, .. } => {
-                let roots = SessionRootIndex::new(&app.sessions);
+                let roots = SessionRootIndex::new(&app.sessions.visible);
                 self.rail |= session_rail_snapshot_changed(&roots, &app.snapshot, snapshot);
                 self.archived_rail |=
                     inactive_session_rail_snapshot_changed(&roots, &app.snapshot, snapshot);
@@ -128,14 +128,14 @@ impl DirtyRegions {
                 target, session, ..
             } => {
                 self.rail |= session_event_affects_active_rail(
-                    &app.drafts,
-                    &app.submitted_drafts,
-                    &app.sessions,
+                    &app.sessions.drafts,
+                    &app.sessions.submitted_drafts,
+                    &app.sessions.visible,
                     target,
                     session.as_deref(),
                 );
                 self.archived_rail |= archive::session_event_affects_archived_rail(
-                    &app.sessions,
+                    &app.sessions.visible,
                     target,
                     session.as_deref(),
                 );
@@ -152,14 +152,14 @@ impl DirtyRegions {
             } => {
                 self.root = true;
                 self.rail |= session_event_affects_active_rail(
-                    &app.drafts,
-                    &app.submitted_drafts,
-                    &app.sessions,
+                    &app.sessions.drafts,
+                    &app.sessions.submitted_drafts,
+                    &app.sessions.visible,
                     target,
                     session.as_deref(),
                 );
                 self.archived_rail |= archive::session_event_affects_archived_rail(
-                    &app.sessions,
+                    &app.sessions.visible,
                     target,
                     session.as_deref(),
                 );
@@ -209,11 +209,12 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self
+            .lifecycle
             .pending_session_switch
             .as_ref()
             .is_some_and(|(path, _)| snapshot.selected_session.as_deref() == Some(path.as_path()))
         {
-            drop(self.pending_session_switch.take());
+            drop(self.lifecycle.pending_session_switch.take());
         }
         let session_changed = generation > self.runtime_generation;
         let transcript_preselected =
@@ -235,23 +236,27 @@ impl FarcasterApp {
         } else {
             self.project_transcript_rows(&snapshot, cx)
         };
-        let count = row_update.row_count(self.transcript_view.read(cx).rows.len());
-        self.transcript_view
+        let count = row_update.row_count(self.views.transcript.read(cx).rows.len());
+        self.views
+            .transcript
             .update(cx, |transcript, _| transcript.update_count(count));
         if snapshot.history_preview && !self.snapshot.history_preview {
             dirty.root = true;
-            park_extension_for_history(&mut self.extension, &mut self.parked_extension);
-            self.pending_dialog_setup = self.extension.dialog.is_some();
-            if self.extension.dialog.is_none() {
-                self.dialog_return_focus = None;
+            park_extension_for_history(&mut self.extensions.active, &mut self.extensions.parked);
+            self.extensions.pending_dialog_setup = self.extensions.active.dialog.is_some();
+            if self.extensions.active.dialog.is_none() {
+                self.extensions.dialog_return_focus = None;
             }
         } else if !snapshot.history_preview && self.snapshot.history_preview {
             dirty.root = true;
             self.clear_restored_dialog();
-            restore_extension_after_history(&mut self.extension, &mut self.parked_extension);
-            self.pending_dialog_setup = self.extension.dialog.is_some();
-            if self.extension.dialog.is_none() {
-                self.dialog_return_focus = None;
+            restore_extension_after_history(
+                &mut self.extensions.active,
+                &mut self.extensions.parked,
+            );
+            self.extensions.pending_dialog_setup = self.extensions.active.dialog.is_some();
+            if self.extensions.active.dialog.is_none() {
+                self.extensions.dialog_return_focus = None;
             }
         }
         self.snapshot = snapshot;
@@ -269,61 +274,64 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
-        self.session_generation = generation;
+        self.sessions.generation = generation;
         self.reconcile_pending_session_titles(&mut sessions, &mut all_sessions);
         let catalog_changed = session_catalog_changed(
-            &self.sessions,
-            &self.all_sessions,
-            self.sessions_error.as_deref(),
+            &self.sessions.visible,
+            &self.sessions.all,
+            self.sessions.error.as_deref(),
             &sessions,
             &all_sessions,
         );
         let archived_catalog_changed = inactive_session_catalog_changed(
-            &self.sessions,
-            &self.all_sessions,
+            &self.sessions.visible,
+            &self.sessions.all,
             &sessions,
             &all_sessions,
         );
         let run_catalog_changed = run_panel_sessions_changed(
-            &self.all_sessions,
+            &self.sessions.all,
             &all_sessions,
             self.snapshot.selected_session.as_deref(),
         );
         let composer_usage_changed = composer_usage_sessions_changed(
-            &self.all_sessions,
+            &self.sessions.all,
             &all_sessions,
             self.snapshot.selected_session.as_deref(),
         );
         let previous_workgraph_session = self.active_workgraph_session();
         let visible_activities_changed = run_panel_activities_changed(
-            &self.agent_activities,
+            &self.activity.agents,
             activities.as_ref(),
-            &self.all_sessions,
+            &self.sessions.all,
             self.snapshot.selected_session.as_deref(),
         );
         for session in &all_sessions {
             projects::add_visible(
-                &mut self.projects,
-                &self.excluded_projects,
+                &mut self.project.registered,
+                &self.project.excluded,
                 session.project.clone(),
             );
         }
-        self.sessions_error = None;
-        self.sessions = sessions;
-        self.all_sessions = all_sessions;
+        self.sessions.error = None;
+        self.sessions.visible = sessions;
+        self.sessions.all = all_sessions;
         if let Some((activities, _exhaustive)) = activities {
             for activity in activities.into_values() {
                 dirty.run |= merge_agent_activity(
-                    &mut self.agent_activities,
+                    &mut self.activity.agents,
                     activity,
                     ActivityUpdateSource::Catalog,
                 );
             }
         }
-        let agent_ids = agent_focus_keys(&self.all_sessions, &self.agent_activities);
-        self.agent_row_focus.retain(|id, _| agent_ids.contains(id));
+        let agent_ids = agent_focus_keys(&self.sessions.all, &self.activity.agents);
+        self.activity
+            .row_focus
+            .retain(|id, _| agent_ids.contains(id));
         for id in agent_ids {
-            self.agent_row_focus
+            self.activity
+                .row_focus
                 .entry(id)
                 .or_insert_with(|| cx.focus_handle());
         }
@@ -350,6 +358,7 @@ impl FarcasterApp {
             .or(self.snapshot.live_session.as_ref())
             .is_some_and(|path| paths.contains(path));
         let deleted_draft_ids = self
+            .sessions
             .drafts
             .iter()
             .filter(|draft| {
@@ -359,85 +368,100 @@ impl FarcasterApp {
                     .is_some_and(|path| paths.contains(path))
             })
             .map(|draft| draft.id.clone())
-            .chain(self.submitted_drafts.iter().filter_map(|(id, path)| {
-                path.as_ref()
-                    .is_some_and(|path| paths.contains(path))
-                    .then_some(id.clone())
-            }))
+            .chain(
+                self.sessions
+                    .submitted_drafts
+                    .iter()
+                    .filter_map(|(id, path)| {
+                        path.as_ref()
+                            .is_some_and(|path| paths.contains(path))
+                            .then_some(id.clone())
+                    }),
+            )
             .collect::<HashSet<_>>();
         for path in paths.iter() {
             let target = session_target(path);
-            self.session_editor_tabs.remove(&target);
-            self.composer_sessions.remove(&target);
-            self.session_surfaces.remove(&target);
-            self.composer_images.remove(&target);
-            self.composer_pastes.remove(&target);
-            self.pending_submissions
+            self.workspace.editor.session_tabs.remove(&target);
+            self.composer.sessions.remove(&target);
+            self.workspace.session_surfaces.remove(&target);
+            self.composer.images.remove(&target);
+            self.composer.pastes.remove(&target);
+            self.composer
+                .pending_submissions
                 .retain(|_, pending| pending.submitted_target != target);
-            self.run_statuses.remove(&target);
-            self.recent_completions.remove(&target);
-            self.recent_completion_expiries.remove(&target);
+            self.activity.run_statuses.remove(&target);
+            self.activity.recent_completions.remove(&target);
+            self.activity.recent_completion_expiries.remove(&target);
         }
         for id in &deleted_draft_ids {
             let target = draft_target(id);
-            self.session_editor_tabs.remove(&target);
-            self.composer_sessions.remove(&target);
-            self.session_surfaces.remove(&target);
-            self.composer_images.remove(&target);
-            self.composer_pastes.remove(&target);
-            self.pending_submissions
+            self.workspace.editor.session_tabs.remove(&target);
+            self.composer.sessions.remove(&target);
+            self.workspace.session_surfaces.remove(&target);
+            self.composer.images.remove(&target);
+            self.composer.pastes.remove(&target);
+            self.composer
+                .pending_submissions
                 .retain(|_, pending| pending.submitted_target != target);
-            self.submitted_drafts.remove(id);
-            self.draft_session_ids.remove(id);
-            self.run_statuses.remove(&target);
-            self.recent_completions.remove(&target);
-            self.recent_completion_expiries.remove(&target);
+            self.sessions.submitted_drafts.remove(id);
+            self.sessions.draft_session_ids.remove(id);
+            self.activity.run_statuses.remove(&target);
+            self.activity.recent_completions.remove(&target);
+            self.activity.recent_completion_expiries.remove(&target);
         }
         if !deleted_draft_ids.is_empty() {
-            self.drafts
+            self.sessions
+                .drafts
                 .retain(|draft| !deleted_draft_ids.contains(&draft.id));
             if self
+                .sessions
                 .selected_draft
                 .as_ref()
                 .is_some_and(|id| deleted_draft_ids.contains(id))
             {
-                self.selected_draft = None;
+                self.sessions.selected_draft = None;
             }
             self.save_project_registry();
         }
-        self.system_notification_targets
+        self.activity
+            .system_notification_targets
             .retain(|_, (path, _)| !paths.contains(path));
         if self
+            .lifecycle
             .pending_session_switch
             .as_ref()
             .is_some_and(|(path, _)| paths.contains(path))
         {
-            drop(self.pending_session_switch.take());
+            drop(self.lifecycle.pending_session_switch.take());
         }
         if selected_was_deleted && generation >= self.runtime_generation {
-            let current_target = self.composer_sessions.current_target().to_owned();
-            let (next_target, next_draft) =
-                match project_registry::new_draft(self.project.clone(), self.preferred_harness) {
-                    Ok(draft) => (draft_target(&draft.id), Some(draft)),
-                    Err(error) => {
-                        self.sessions_error = Some(error);
-                        (project_target(&self.project), None)
-                    }
-                };
+            let current_target = self.composer.sessions.current_target().to_owned();
+            let (next_target, next_draft) = match project_registry::new_draft(
+                self.project.path.clone(),
+                self.sessions.preferred_harness,
+            ) {
+                Ok(draft) => (draft_target(&draft.id), Some(draft)),
+                Err(error) => {
+                    self.sessions.error = Some(error);
+                    (project_target(&self.project.path), None)
+                }
+            };
             let composer = self
-                .composer_sessions
+                .composer
+                .sessions
                 .discard_and_switch(&current_target, next_target.clone());
             self.hide_native_workspace_surfaces(cx);
-            if self.surface != AppSurface::Work {
+            if self.workspace.surface != AppSurface::Work {
                 self.set_surface(AppSurface::Chat, cx);
             }
             self.reset_session_ui(generation, false, cx);
-            self.pending_composer_restore = Some((next_target, composer));
-            self.selected_draft = next_draft.as_ref().map(|draft| draft.id.clone());
+            self.composer.pending_restore = Some((next_target, composer));
+            self.sessions.selected_draft = next_draft.as_ref().map(|draft| draft.id.clone());
             if let Some(draft) = next_draft {
-                self.draft_session_ids
+                self.sessions
+                    .draft_session_ids
                     .insert(draft.id.clone(), draft.app_session_id);
-                self.drafts.push(draft.clone());
+                self.sessions.drafts.push(draft.clone());
                 self.save_project_registry();
                 self.send(
                     RuntimeCommand::NewSession {
@@ -474,38 +498,47 @@ impl FarcasterApp {
             let source_target = session_target(source);
             let target_target = session_target(target);
             if source_target != target_target {
-                self.composer_sessions
+                self.composer
+                    .sessions
                     .promote(&source_target, target_target.clone());
             }
             self.promote_center_surface(&source_target, &target_target);
-            if let Some(images) = self.composer_images.remove(&source_target) {
-                self.composer_images.insert(target_target.clone(), images);
+            if let Some(images) = self.composer.images.remove(&source_target) {
+                self.composer.images.insert(target_target.clone(), images);
             }
             self.promote_composer_pastes(&source_target, &target_target);
-            if let Some(status) = self.run_statuses.remove(&source_target) {
-                self.run_statuses.insert(target_target.clone(), status);
+            if let Some(status) = self.activity.run_statuses.remove(&source_target) {
+                self.activity
+                    .run_statuses
+                    .insert(target_target.clone(), status);
             }
-            if let Some(completion) = self.recent_completions.remove(&source_target) {
-                self.recent_completions
+            if let Some(completion) = self.activity.recent_completions.remove(&source_target) {
+                self.activity
+                    .recent_completions
                     .insert(target_target.clone(), completion);
             }
-            if let Some(expiry) = self.recent_completion_expiries.remove(&source_target) {
-                self.recent_completion_expiries
+            if let Some(expiry) = self
+                .activity
+                .recent_completion_expiries
+                .remove(&source_target)
+            {
+                self.activity
+                    .recent_completion_expiries
                     .insert(target_target.clone(), expiry);
             }
-            for draft in &mut self.drafts {
+            for draft in &mut self.sessions.drafts {
                 if draft.session_path.as_deref() == Some(source.as_path()) {
                     draft.session_path = Some(target.clone());
                     draft.project = target_project.clone();
                 }
             }
-            for session_path in self.submitted_drafts.values_mut().flatten() {
+            for session_path in self.sessions.submitted_drafts.values_mut().flatten() {
                 if session_path == source {
                     *session_path = target.clone();
                 }
             }
         }
-        for (session, project) in self.system_notification_targets.values_mut() {
+        for (session, project) in self.activity.system_notification_targets.values_mut() {
             if let Some(target) = paths.get(session) {
                 *session = target.clone();
                 *project = target_project.clone();
@@ -542,7 +575,7 @@ impl FarcasterApp {
             self.apply_extension_request(request, generation, cx);
             dirty.root = true;
             dirty.composer = true;
-        } else if let Some(extension) = self.parked_extension.as_mut() {
+        } else if let Some(extension) = self.extensions.parked.as_mut() {
             let _ = extension.apply(request);
         } else {
             self.apply_extension_request(request, generation, cx);
@@ -567,13 +600,16 @@ impl FarcasterApp {
             session.clone(),
         );
         if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
-            self.run_statuses.insert(target.clone(), "Failed".into());
+            self.activity
+                .run_statuses
+                .insert(target.clone(), "Failed".into());
         } else if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
-            self.run_statuses
+            self.activity
+                .run_statuses
                 .insert(target.clone(), "Delivery unknown".into());
         }
         record_pending_prompt_result_for_submission(
-            &mut self.pending_submissions,
+            &mut self.composer.pending_submissions,
             submission_id.as_deref(),
             &target,
             outcome,
@@ -614,13 +650,13 @@ impl FarcasterApp {
                 sessions,
                 all_sessions,
                 activities,
-            } if generation >= self.session_generation => {
+            } if generation >= self.sessions.generation => {
                 self.project_sessions(generation, sessions, all_sessions, activities, dirty, cx);
             }
             RuntimeEvent::SessionUpdated(mut session) => {
                 self.reconcile_pending_session_titles(&mut [], std::slice::from_mut(&mut session));
                 dirty.archived_rail |= archive::session_event_affects_archived_rail(
-                    &self.all_sessions,
+                    &self.sessions.all,
                     "",
                     Some(&session.path),
                 );
@@ -637,32 +673,33 @@ impl FarcasterApp {
                     true,
                 );
                 merge_agent_activity(
-                    &mut self.agent_activities,
+                    &mut self.activity.agents,
                     activity,
                     ActivityUpdateSource::Metadata,
                 );
                 let activity_key = crate::agent_activity::agent_activity_key(&session.path);
-                self.agent_row_focus
+                self.activity
+                    .row_focus
                     .entry(activity_key)
                     .or_insert_with(|| cx.focus_handle());
                 projects::add_visible(
-                    &mut self.projects,
-                    &self.excluded_projects,
+                    &mut self.project.registered,
+                    &self.project.excluded,
                     session.project.clone(),
                 );
                 dirty.composer |= self.snapshot.selected_session.as_ref() == Some(&session.path);
-                update_session_row(&mut self.all_sessions, session.clone());
+                update_session_row(&mut self.sessions.all, session.clone());
                 dirty.archived_rail |= archive::session_event_affects_archived_rail(
-                    &self.all_sessions,
+                    &self.sessions.all,
                     "",
                     Some(&session.path),
                 );
-                let query = self.search.read(cx).value();
+                let query = self.navigation.search.read(cx).value();
                 if query.trim().is_empty() {
-                    update_session_row(&mut self.sessions, session);
+                    update_session_row(&mut self.sessions.visible, session);
                 } else {
-                    self.sessions = crate::sessions::filter_session_tree(
-                        self.all_sessions.clone(),
+                    self.sessions.visible = crate::sessions::filter_session_tree(
+                        self.sessions.all.clone(),
                         query.trim(),
                     );
                 }
@@ -677,27 +714,29 @@ impl FarcasterApp {
                     crate::agent_activity::agent_activity_key(&activity.session_path);
                 let activity_path = activity.session_path.clone();
                 dirty.run |= merge_agent_activity(
-                    &mut self.agent_activities,
+                    &mut self.activity.agents,
                     activity,
                     ActivityUpdateSource::Native,
                 );
-                self.agent_row_focus
+                self.activity
+                    .row_focus
                     .entry(activity_key)
                     .or_insert_with(|| cx.focus_handle());
                 dirty.run |= self
-                    .all_sessions
+                    .sessions
+                    .all
                     .iter()
                     .find(|session| {
                         crate::sessions::normalize_session_path(&session.path)
                             == crate::sessions::normalize_session_path(&activity_path)
                     })
                     .and_then(|session| {
-                        root_session_for_path(&self.all_sessions, Some(&session.path))
+                        root_session_for_path(&self.sessions.all, Some(&session.path))
                     })
                     .is_some_and(|root| {
                         self.snapshot.selected_session.as_deref() == Some(root.path.as_path())
                             || root_session_for_path(
-                                &self.all_sessions,
+                                &self.sessions.all,
                                 self.snapshot.selected_session.as_deref(),
                             )
                             .is_some_and(|selected| selected.id == root.id)
@@ -714,10 +753,10 @@ impl FarcasterApp {
             RuntimeEvent::SessionsFailed {
                 generation,
                 message,
-            } if generation >= self.session_generation => {
-                self.session_generation = generation;
-                let changed = self.sessions_error.as_deref() != Some(message.as_str());
-                self.sessions_error = Some(message);
+            } if generation >= self.sessions.generation => {
+                self.sessions.generation = generation;
+                let changed = self.sessions.error.as_deref() != Some(message.as_str());
+                self.sessions.error = Some(message);
                 dirty.rail |= changed;
                 dirty.run |= changed;
             }
@@ -733,11 +772,11 @@ impl FarcasterApp {
                     generation,
                     self.runtime_generation,
                     &id,
-                    &mut self.extension,
-                    self.parked_extension.as_mut(),
-                    &mut self.restored_dialog_id,
-                    &mut self.dismissed_restored_dialog_id,
-                    &mut self.pending_dialog_setup,
+                    &mut self.extensions.active,
+                    self.extensions.parked.as_mut(),
+                    &mut self.extensions.restored_dialog_id,
+                    &mut self.extensions.dismissed_restored_dialog_id,
+                    &mut self.extensions.pending_dialog_setup,
                 ) {
                     dirty.root = true;
                     dirty.composer = true;
@@ -766,7 +805,7 @@ impl FarcasterApp {
             } => {
                 if status == "Stopped" {
                     let session_key = session.as_deref().map(session_target);
-                    for (key, pending) in &mut self.pending_submissions {
+                    for (key, pending) in &mut self.composer.pending_submissions {
                         if pending.submitted_target == target || Some(key) == session_key.as_ref() {
                             pending.result.get_or_insert((
                                 crate::agents::PromptOutcome::RejectedBeforeAcceptance,
@@ -775,7 +814,12 @@ impl FarcasterApp {
                         }
                     }
                     if let Some(path) = session.as_deref() {
-                        for row in self.sessions.iter_mut().chain(self.all_sessions.iter_mut()) {
+                        for row in self
+                            .sessions
+                            .visible
+                            .iter_mut()
+                            .chain(self.sessions.all.iter_mut())
+                        {
                             if row.path == path {
                                 row.is_running = false;
                             }
@@ -786,8 +830,10 @@ impl FarcasterApp {
                     dirty.composer = true;
                     dirty.run = true;
                 }
-                self.code_tasks.associate(&target, session.as_deref());
-                dirty.root |= self.code_tasks.notice_message().is_some();
+                self.workspace
+                    .code_tasks
+                    .associate(&target, session.as_deref());
+                dirty.root |= self.workspace.code_tasks.notice_message().is_some();
                 if status == "Stopped" {
                     self.code_task_result(&target, false, session.as_deref(), cx);
                 }
@@ -946,7 +992,7 @@ impl FarcasterApp {
         );
         let _timing = crate::app::infrastructure::performance::Timing::new("runtime.drain_events");
         let mut dirty = DirtyRegions {
-            run: self.performance_monitor.as_mut().is_some_and(
+            run: self.lifecycle.performance_monitor.as_mut().is_some_and(
                 crate::app::infrastructure::performance::PerformanceMonitor::sample_if_due,
             ),
             ..DirtyRegions::default()

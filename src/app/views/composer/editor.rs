@@ -45,7 +45,7 @@ impl RenderOnce for ComposerInput {
                 crate::app::composer::highlighting::decorations(
                     &self.composer.read(cx).value(),
                     &app.snapshot.commands,
-                    &app.composer_project_files,
+                    &app.composer.project_files,
                 )
             })
             .unwrap_or_default();
@@ -144,7 +144,7 @@ impl RenderOnce for ComposerInput {
                     return;
                 }
                 let _ = focus_entity.update(cx, |this, cx| {
-                    this.composer_focus.focus(window, cx);
+                    this.composer.focus.focus(window, cx);
                 });
             })
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {

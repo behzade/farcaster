@@ -139,7 +139,7 @@ pub(super) fn render(
     let project = project.unwrap_or_default();
     let expand = entity
         .upgrade()
-        .is_some_and(|entity| entity.read(cx).expand_transcript_folders);
+        .is_some_and(|entity| entity.read(cx).settings.expand_transcript_folders);
     let default_state = ChangeTreeState::with_default(&project, expand);
     let rows = change_tree::rows(
         files

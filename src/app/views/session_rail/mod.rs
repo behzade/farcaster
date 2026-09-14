@@ -59,7 +59,9 @@ enum VisibleSessionTarget {
 impl VisibleSessionTarget {
     fn from_row(row: folders::FolderRow) -> Option<Self> {
         match row {
-            folders::FolderRow::Session(ActiveSessionItem::Draft(draft)) => Some(Self::Draft(draft)),
+            folders::FolderRow::Session(ActiveSessionItem::Draft(draft)) => {
+                Some(Self::Draft(draft))
+            }
             folders::FolderRow::Session(ActiveSessionItem::Session(item)) => {
                 Some(Self::Persisted(item.session))
             }
@@ -151,10 +153,10 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let lists = session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
         );
         if let Some(draft) = first_unsubmitted_draft(&lists.active).cloned() {
             self.select_visible_session(VisibleSessionTarget::Draft(draft), window, cx);
@@ -183,7 +185,7 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let sessions = self.numbered_session_targets();
-        let selected_id = root_session_for_path(&self.sessions, Some(&path))
+        let selected_id = root_session_for_path(&self.sessions.visible, Some(&path))
             .map(|session| session.app_session_id);
         let replacement = selected_id
             .and_then(|id| {
@@ -206,13 +208,17 @@ impl FarcasterApp {
     ) {
         let sessions = self.visible_session_targets();
         let selected_id = self
+            .sessions
             .selected_draft
             .as_deref()
-            .and_then(|id| self.drafts.iter().find(|draft| draft.id == id))
+            .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
             .map(|draft| draft.app_session_id)
             .or_else(|| {
-                root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                    .map(|session| session.app_session_id)
+                root_session_for_path(
+                    &self.sessions.visible,
+                    self.snapshot.selected_session.as_deref(),
+                )
+                .map(|session| session.app_session_id)
             });
         let selected = selected_id.and_then(|selected_id| {
             sessions
@@ -264,22 +270,22 @@ impl FarcasterApp {
 
     fn numbered_session_targets(&self) -> Vec<VisibleSessionTarget> {
         let mut targets = self.visible_session_targets();
-        targets.retain(|target| {
-            !matches!(target, VisibleSessionTarget::Draft(draft) if !draft.submitted)
-        });
+        targets.retain(
+            |target| !matches!(target, VisibleSessionTarget::Draft(draft) if !draft.submitted),
+        );
         targets
     }
 
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
         folders::folder_rows(
             session_rail_lists(
-                &self.sessions,
-                &self.drafts,
-                self.session_project_filter.as_deref(),
-                &self.session_order,
+                &self.sessions.visible,
+                &self.sessions.drafts,
+                self.sessions.project_filter.as_deref(),
+                &self.sessions.order,
             )
             .active,
-            &self.session_folders,
+            &self.sessions.folders,
         )
         .into_iter()
         .filter_map(VisibleSessionTarget::from_row)
@@ -291,7 +297,8 @@ impl FarcasterApp {
         pointer_x: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.session_rail_view
+        self.views
+            .session_rail
             .update(cx, |view, _| view.begin_resize(pointer_x));
         cx.notify();
     }
@@ -301,7 +308,7 @@ impl FarcasterApp {
         pointer_x: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let changed = self.session_rail_view.update(cx, |view, cx| {
+        let changed = self.views.session_rail.update(cx, |view, cx| {
             let changed = view.update_resize(pointer_x);
             if changed {
                 cx.notify();
@@ -315,7 +322,8 @@ impl FarcasterApp {
 
     pub(super) fn finish_session_rail_resize(&mut self, cx: &mut gpui::Context<Self>) {
         if self
-            .session_rail_view
+            .views
+            .session_rail
             .update(cx, |view, _| view.finish_resize())
         {
             cx.notify();
@@ -323,7 +331,7 @@ impl FarcasterApp {
     }
 
     pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {
-        self.session_drop_target = None;
+        self.sessions.drop_target = None;
         self.notify_session_rail(cx);
     }
 
@@ -334,14 +342,14 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let next = Some((target, position));
-        if self.session_drop_target != next {
-            self.session_drop_target = next;
+        if self.sessions.drop_target != next {
+            self.sessions.drop_target = next;
             self.notify_session_rail(cx);
         }
     }
 
     pub(super) fn clear_session_drop_target(&mut self, cx: &mut gpui::Context<Self>) {
-        self.session_drop_target = None;
+        self.sessions.drop_target = None;
         self.notify_session_rail(cx);
     }
 
@@ -360,19 +368,19 @@ impl FarcasterApp {
             self.clear_session_drop_target(cx);
             return;
         }
-        let Some((target, position)) = self.session_drop_target.take() else {
+        let Some((target, position)) = self.sessions.drop_target.take() else {
             self.clear_session_drop_target(cx);
             return;
         };
-        let target_folder = self.session_folders.folder_for(target);
+        let target_folder = self.sessions.folders.folder_for(target);
         if !self.assign_session_folder(drag.app_session_id, target_folder, cx) {
             return;
         }
         let visible = session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
         )
         .active
         .iter()
@@ -380,19 +388,24 @@ impl FarcasterApp {
         .collect::<Vec<_>>();
         if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
         {
-            let all = session_rail_lists(&self.sessions, &self.drafts, None, &self.session_order)
-                .active
-                .iter()
-                .map(ActiveSessionItem::app_session_id)
-                .collect::<Vec<_>>();
+            let all = session_rail_lists(
+                &self.sessions.visible,
+                &self.sessions.drafts,
+                None,
+                &self.sessions.order,
+            )
+            .active
+            .iter()
+            .map(ActiveSessionItem::app_session_id)
+            .collect::<Vec<_>>();
             let active_order = merge_visible_session_order(&all, &order);
             let active_ids = all.into_iter().collect::<HashSet<_>>();
-            self.session_order.retain(|id| !active_ids.contains(id));
-            self.session_order.extend(active_order);
+            self.sessions.order.retain(|id| !active_ids.contains(id));
+            self.sessions.order.extend(active_order);
             if let Err(error) =
-                crate::app::project::registry::save_app_session_order(&self.session_order)
+                crate::app::project::registry::save_app_session_order(&self.sessions.order)
             {
-                self.sessions_error = Some(error);
+                self.sessions.error = Some(error);
             }
         }
         self.notify_session_rail(cx);
@@ -405,7 +418,7 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        self.session_drop_target = None;
+        self.sessions.drop_target = None;
         let Some(path) = drag.path.clone() else {
             self.notify_session_rail(cx);
             return;
@@ -424,9 +437,9 @@ impl FarcasterApp {
         project: Option<PathBuf>,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.session_project_filter != project {
-            self.session_project_filter = project;
-            self.archived_sessions_expanded = false;
+        if self.sessions.project_filter != project {
+            self.sessions.project_filter = project;
+            self.sessions.archived_expanded = false;
             self.notify_session_rail(cx);
         }
     }

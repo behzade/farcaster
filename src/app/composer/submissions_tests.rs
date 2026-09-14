@@ -325,29 +325,30 @@ fn real_app_escape_route_obeys_surface_overlay_focus_and_repeat_gates(
                          is_held| {
                 cx.update(|window, cx| {
                     app.update(cx, |app, cx| {
-                        app.surface = surface;
-                        app.composer_escape_armed = None;
+                        app.workspace.surface = surface;
+                        app.composer.escape_armed = None;
                         let mut conversation = crate::conversation::ConversationState::default();
                         conversation.running = true;
                         conversation.queue.steering.push("pending steer".into());
                         Arc::make_mut(&mut app.snapshot).conversation = Arc::new(conversation);
-                        app.extension = Default::default();
+                        app.extensions.active = Default::default();
                         if modal {
-                            app.extension
-                                .apply(crate::protocol::ExtensionUiRequest::Input {
+                            app.extensions.active.apply(
+                                crate::protocol::ExtensionUiRequest::Input {
                                     id: "modal".into(),
                                     title: "Modal".into(),
                                     placeholder: None,
                                     timeout: None,
-                                });
+                                },
+                            );
                         }
                         if composer_focused {
-                            app.composer_focus.focus(window, cx);
+                            app.composer.focus.focus(window, cx);
                         } else {
-                            app.search_focus.focus(window, cx);
+                            app.navigation.search_focus.focus(window, cx);
                         }
                         let consumed = app.handle_composer_escape_key(&event(is_held), window, cx);
-                        (consumed, app.composer_escape_armed.is_some())
+                        (consumed, app.composer.escape_armed.is_some())
                     })
                 })
             };

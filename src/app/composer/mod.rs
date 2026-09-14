@@ -1,5 +1,8 @@
 use super::*;
 
+mod app_state;
+pub(in crate::app) use app_state::ComposerState;
+
 pub(in crate::app) mod attachments;
 
 pub(in crate::app) mod completion;

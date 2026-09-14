@@ -21,46 +21,51 @@ fn dialog_lifecycle_action(pending: bool, has_dialog: bool) -> DialogLifecycleAc
 impl FarcasterApp {
     pub(super) fn prepare_root_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resolve_pending_submission(window, cx);
-        let native_surface = matches!(self.surface, AppSurface::Editor | AppSurface::Terminal);
+        let native_surface = matches!(
+            self.workspace.surface,
+            AppSurface::Editor | AppSurface::Terminal
+        );
 
-        if self.post_render_focus.is_some() {
+        if self.overlays.post_render_focus.is_some() {
             cx.defer_in(window, |this, window, cx| {
                 this.apply_post_render_focus(window, cx);
             });
         }
-        if self.pending_session_title_focus {
-            self.pending_session_title_focus = false;
-            let focus = self.session_title_input.read(cx).focus_handle(cx);
+        if self.sessions.pending_title_focus {
+            self.sessions.pending_title_focus = false;
+            let focus = self.sessions.title_input.read(cx).focus_handle(cx);
             cx.defer_in(window, move |_, window, cx| focus.focus(window, cx));
         }
-        if self.overlays.pending_setup {
-            self.overlays.pending_setup = false;
-            let focus = self.sheet_focus.clone();
+        if self.overlays.view.pending_setup {
+            self.overlays.view.pending_setup = false;
+            let focus = self.overlays.sheet_focus.clone();
             cx.defer_in(window, move |this, window, cx| {
                 if this.keyboard_overlay_focus(window, cx).as_ref() == Some(&focus) {
                     focus.focus(window, cx);
                 }
             });
         }
-        let dialog_lifecycle =
-            dialog_lifecycle_action(self.pending_dialog_setup, self.extension.dialog.is_some());
+        let dialog_lifecycle = dialog_lifecycle_action(
+            self.extensions.pending_dialog_setup,
+            self.extensions.active.dialog.is_some(),
+        );
         if dialog_lifecycle == DialogLifecycleAction::RestoreFocus {
-            self.pending_dialog_setup = false;
+            self.extensions.pending_dialog_setup = false;
             cx.defer_in(window, |this, window, cx| {
-                if this.extension.dialog.is_none() {
+                if this.extensions.active.dialog.is_none() {
                     this.advance_or_restore_dialog(window, cx);
                 }
             });
         }
         if dialog_lifecycle == DialogLifecycleAction::Setup {
-            if self.dialog_return_focus.is_none() {
-                self.dialog_return_focus = window.focused(cx);
+            if self.extensions.dialog_return_focus.is_none() {
+                self.extensions.dialog_return_focus = window.focused(cx);
             }
             if native_surface {
                 self.cover_native_workspace_surface(cx);
             }
-            self.pending_dialog_setup = false;
-            let dialog = self.extension.dialog.as_ref();
+            self.extensions.pending_dialog_setup = false;
+            let dialog = self.extensions.active.dialog.as_ref();
             let prefill = match dialog {
                 Some(ExtensionUiRequest::Editor { prefill, .. }) => {
                     prefill.clone().unwrap_or_default()
@@ -74,15 +79,16 @@ impl FarcasterApp {
             let dialog_id = dialog
                 .and_then(ExtensionUiRequest::dialog_id)
                 .map(str::to_owned);
-            let input = self.dialog_input.clone();
+            let input = self.extensions.dialog_input.clone();
             let focus = if uses_textarea {
                 input.read(cx).focus_handle(cx)
             } else {
-                self.dialog_focus.clone()
+                self.extensions.dialog_focus.clone()
             };
-            let composer_slot_owns = self.composer_focus.is_focused(window)
-                || self.dialog_focus.contains_focused(window, cx)
+            let composer_slot_owns = self.composer.focus.is_focused(window)
+                || self.extensions.dialog_focus.contains_focused(window, cx)
                 || self
+                    .extensions
                     .dialog_input
                     .read(cx)
                     .focus_handle(cx)
@@ -90,7 +96,8 @@ impl FarcasterApp {
             cx.defer_in(window, move |this, window, cx| {
                 if dialog_id.is_none()
                     || this
-                        .extension
+                        .extensions
+                        .active
                         .dialog
                         .as_ref()
                         .and_then(ExtensionUiRequest::dialog_id)
@@ -108,31 +115,31 @@ impl FarcasterApp {
                 }
             });
         }
-        if self.native_surface_covered && !self.native_workspace_covered_by_overlay() {
+        if self.workspace.native_surface_covered && !self.native_workspace_covered_by_overlay() {
             self.restore_active_native_workspace_surface(window, cx);
         }
-        if let Some((generation, title)) = self.pending_title.take() {
+        if let Some((generation, title)) = self.extensions.pending_title.take() {
             cx.defer_in(window, move |this, window, _| {
                 if this.runtime_generation == generation {
                     window.set_window_title(&title);
                 }
             });
         }
-        if let Some((generation, text)) = self.pending_editor_text.take() {
+        if let Some((generation, text)) = self.extensions.pending_editor_text.take() {
             cx.defer_in(window, move |this, window, cx| {
                 if this.runtime_generation == generation {
                     let snapshot =
                         crate::app::composer::sessions::ComposerSnapshot::new(text, 0, 0..0);
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
-                    this.composer_sessions.capture_current(snapshot);
+                    this.composer.sessions.capture_current(snapshot);
                 }
             });
         }
-        if let Some((target, snapshot)) = self.pending_composer_restore.take() {
+        if let Some((target, snapshot)) = self.composer.pending_restore.take() {
             cx.defer_in(window, move |this, window, cx| {
-                if this.composer_sessions.current_target() == target {
+                if this.composer.sessions.current_target() == target {
                     this.apply_composer_snapshot(snapshot.clone(), window, cx);
-                    this.composer_sessions.capture_current(snapshot);
+                    this.composer.sessions.capture_current(snapshot);
                 }
             });
         }

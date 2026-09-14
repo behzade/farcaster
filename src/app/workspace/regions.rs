@@ -19,23 +19,23 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn notify_session_rail_shell(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.session_rail_view, cx);
+        Self::notify_region(&self.views.session_rail, cx);
     }
 
     pub(in crate::app) fn notify_archived_session_rail(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.archived_session_rail_view, cx);
+        Self::notify_region(&self.views.archived_session_rail, cx);
     }
 
     pub(in crate::app) fn notify_transcript(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.transcript_view, cx);
+        Self::notify_region(&self.views.transcript, cx);
     }
 
     pub(in crate::app) fn notify_composer(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.composer_view, cx);
+        Self::notify_region(&self.views.composer, cx);
     }
 
     pub(in crate::app) fn notify_run_panel(&self, cx: &mut Context<Self>) {
-        Self::notify_region(&self.run_panel_view, cx);
+        Self::notify_region(&self.views.run_panel, cx);
     }
 
     pub(in crate::app) fn send(&mut self, command: RuntimeCommand, cx: &mut Context<Self>) {

@@ -424,7 +424,7 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
         .expect("valid image");
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
-                    app.pending_submissions.insert(
+                    app.composer.pending_submissions.insert(
                         submission_id.into(),
                         PendingSubmission {
                             id: submission_id.into(),
@@ -461,7 +461,7 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
                 cx.update(|_, cx| {
                     app.update(cx, |app, cx| {
                         app.drain_runtime(cx);
-                        let pending = &app.pending_submissions[submission_id];
+                        let pending = &app.composer.pending_submissions[submission_id];
                         assert_eq!(pending.result, None);
                         assert_eq!(pending.text, "exact unresolved text");
                         assert_eq!(pending.images, [image.clone()]);
@@ -479,7 +479,7 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
                 app.update(cx, |app, cx| {
                     app.drain_runtime(cx);
                     assert_eq!(
-                        app.pending_submissions[submission_id].result,
+                        app.composer.pending_submissions[submission_id].result,
                         Some((
                             crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                             Some(session.clone())
@@ -491,16 +491,16 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
             cx.update(|window, cx| {
                 {
                     let state = app.read(cx);
-                    assert!(state.pending_submissions.is_empty());
+                    assert!(state.composer.pending_submissions.is_empty());
                     assert_eq!(
-                        state.composer_sessions.snapshot_for(&target).text,
+                        state.composer.sessions.snapshot_for(&target).text,
                         "exact unresolved text"
                     );
-                    assert_eq!(state.composer_images[&target], [image.clone()]);
+                    assert_eq!(state.composer.images[&target], [image.clone()]);
                 }
                 window.draw(cx).clear(cx);
                 let state = app.read(cx);
-                assert_eq!(state.composer_images[&target], [image]);
+                assert_eq!(state.composer.images[&target], [image]);
             });
         },
     );
@@ -593,7 +593,7 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
             cx.update(|_, cx| {
                 let app = app.read(cx);
                 assert_eq!(
-                    app.agent_activities[&activity_key].lifecycle,
+                    app.activity.agents[&activity_key].lifecycle,
                     crate::agent_activity::AgentLifecycle::Working
                 );
                 assert_eq!(

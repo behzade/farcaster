@@ -23,27 +23,29 @@ impl FarcasterApp {
         cx: &Context<Self>,
     ) -> gpui::Div {
         let task_notice = self.render_code_task_notice(entity.clone());
-        let has_notices = !self.extension.notifications.is_empty() || task_notice.is_some();
-        let workgraph_focus = self.workgraph_view.read(cx).focus_handle();
-        let sessions_sheet = self.overlays.sessions.then(|| {
+        let has_notices = !self.extensions.active.notifications.is_empty() || task_notice.is_some();
+        let workgraph_focus = self.views.workgraph.read(cx).focus_handle();
+        let sessions_sheet = self.overlays.view.sessions.then(|| {
             panel_sheet(
                 "sessions",
                 "Sessions",
-                &self.sheet_focus,
+                &self.overlays.sheet_focus,
                 entity.clone(),
-                self.session_rail_view
+                self.views
+                    .session_rail
                     .clone()
                     .cached(gpui::StyleRefinement::default().size_full())
                     .into_any_element(),
             )
         });
-        let run_sheet = self.overlays.run.then(|| {
+        let run_sheet = self.overlays.view.run.then(|| {
             let reviewing = self.visible_review().is_some();
-            let inspecting = self.workgraph_inspector_issue.is_some() && !reviewing;
+            let inspecting = self.views.workgraph_inspector_issue.is_some() && !reviewing;
             let content = if inspecting {
-                self.workgraph_detail_view.clone().into_any_element()
+                self.views.workgraph_detail.clone().into_any_element()
             } else {
-                self.run_panel_view
+                self.views
+                    .run_panel
                     .clone()
                     .cached(gpui::StyleRefinement::default().size_full())
                     .into_any_element()
@@ -57,7 +59,7 @@ impl FarcasterApp {
                 } else {
                     "Session details"
                 },
-                &self.sheet_focus,
+                &self.overlays.sheet_focus,
                 entity.clone(),
                 content,
             )
@@ -85,7 +87,7 @@ impl FarcasterApp {
                             .h(gpui::px(620.0))
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
-                            .child(self.workgraph_view.clone())
+                            .child(self.views.workgraph.clone())
                             .child(
                                 div()
                                     .absolute()
@@ -106,18 +108,18 @@ impl FarcasterApp {
                     },
                 ))
             })
-            .when(self.overlays.project_trust, |root| {
+            .when(self.overlays.view.project_trust, |root| {
                 root.child(dialogs::project_trust::render(self, entity.clone()))
             })
-            .when(self.overlays.settings, |root| {
+            .when(self.overlays.view.settings, |root| {
                 root.child(dialogs::settings::render(self, entity.clone(), cx))
             })
-            .when(self.overlays.keybindings, |root| {
+            .when(self.overlays.view.keybindings, |root| {
                 let close = entity.clone();
                 root.child(modal(
                     "keybindings-help",
                     "Keyboard shortcuts",
-                    &self.sheet_focus,
+                    &self.overlays.sheet_focus,
                     OVERLAY_KEY_CONTEXT,
                     move |window, cx| {
                         let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
@@ -132,23 +134,23 @@ impl FarcasterApp {
             })
             .when_some(sessions_sheet, |root, sheet| root.child(sheet))
             .when_some(run_sheet, |root, sheet| root.child(sheet))
-            .when(self.pending_archive.is_some(), |root| {
+            .when(self.sessions.pending_archive.is_some(), |root| {
                 root.child(dialogs::archive_confirmation::render(self, entity.clone()))
             })
             .when(
-                self.send_to_chat.is_some() && !self.overlays.project_trust,
+                self.workspace.send_to_chat.is_some() && !self.overlays.view.project_trust,
                 |root| root.child(dialogs::send_to_chat::render(self, entity.clone(), cx)),
             )
-            .when(self.pending_delete.is_some(), |root| {
+            .when(self.sessions.pending_delete.is_some(), |root| {
                 root.child(dialogs::delete_confirmation::render(self, entity.clone()))
             })
-            .when(self.session_import.is_some(), |root| {
+            .when(self.sessions.import.is_some(), |root| {
                 root.child(dialogs::session_import::render(self, entity.clone()))
             })
-            .when(self.repository.pending_jj_init.is_some(), |root| {
+            .when(self.project.repository.pending_jj_init.is_some(), |root| {
                 root.child(dialogs::jj_init_confirmation::render(self, entity.clone()))
             })
-            .when(self.repository.edits.pending.is_some(), |root| {
+            .when(self.project.repository.edits.pending.is_some(), |root| {
                 root.child(dialogs::repository_edit::render(self, entity.clone(), cx))
             })
             .when_some(
@@ -167,7 +169,7 @@ impl FarcasterApp {
                         .flex_col()
                         .gap(THEME.space.xs)
                         .children(task_notice)
-                        .children(self.extension.notifications.iter().enumerate().map(
+                        .children(self.extensions.active.notifications.iter().enumerate().map(
                             |(index, notice)| {
                                 feedback(
                                     ("notification", index),
@@ -184,7 +186,7 @@ impl FarcasterApp {
                         )),
                 )
             })
-            .when(self.pending_quit.is_some(), |root| {
+            .when(self.lifecycle.pending_quit.is_some(), |root| {
                 root.child(dialogs::quit_confirmation::render(self, entity.clone()))
             })
     }

@@ -47,8 +47,9 @@ impl FarcasterApp {
     }
 
     pub(crate) fn current_composer_pastes(&self) -> &[ComposerPaste] {
-        self.composer_pastes
-            .get(self.composer_sessions.current_target())
+        self.composer
+            .pastes
+            .get(self.composer.sessions.current_target())
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
@@ -63,8 +64,9 @@ impl FarcasterApp {
         let Some(paste) = store_long_paste(&text).ok().flatten() else {
             return false;
         };
-        let target = self.composer_sessions.current_target().to_owned();
-        self.composer_pastes
+        let target = self.composer.sessions.current_target().to_owned();
+        self.composer
+            .pastes
             .entry(target.clone())
             .or_default()
             .push(paste);
@@ -74,14 +76,14 @@ impl FarcasterApp {
     }
 
     pub(crate) fn remove_composer_paste(&mut self, index: usize, cx: &mut Context<Self>) {
-        let target = self.composer_sessions.current_target().to_owned();
-        if let Some(pastes) = self.composer_pastes.get_mut(&target)
+        let target = self.composer.sessions.current_target().to_owned();
+        if let Some(pastes) = self.composer.pastes.get_mut(&target)
             && index < pastes.len()
         {
             let paste = pastes.remove(index);
             let _ = std::fs::remove_file(paste.path);
             if pastes.is_empty() {
-                self.composer_pastes.remove(&target);
+                self.composer.pastes.remove(&target);
             }
             self.save_composer_attachments(&target);
             self.notify_composer(cx);
@@ -105,8 +107,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn promote_composer_pastes(&mut self, from: &str, to: &str) {
-        if let Some(pastes) = self.composer_pastes.remove(from) {
-            self.composer_pastes
+        if let Some(pastes) = self.composer.pastes.remove(from) {
+            self.composer
+                .pastes
                 .entry(to.to_owned())
                 .or_default()
                 .extend(pastes);

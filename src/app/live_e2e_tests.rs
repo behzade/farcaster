@@ -136,9 +136,9 @@ fn submission_diagnostics(
 ) {
     let details = cx.update(|_, cx| {
         let app = app.read(cx);
-        let target = app.composer_sessions.current_target();
+        let target = app.composer.sessions.current_target();
         let visible_queue = visible_prompt_queue(app);
-        let composer = app.composer.read(cx).value().to_owned();
+        let composer = app.composer.input.read(cx).value().to_owned();
         let rows = markers
             .iter()
             .map(|marker| user_rows(app, marker).len())
@@ -146,7 +146,7 @@ fn submission_diagnostics(
         format!(
             "composer={composer:?} can_submit={} pending={} running={} status={} steering={:?} follow_up={:?} user_rows={rows:?}",
             app.can_submit(),
-            app.pending_submissions.values().any(|pending|
+            app.composer.pending_submissions.values().any(|pending|
                 pending.submitted_target == target && pending.result.is_none()
             ),
             app.snapshot.conversation.running,
@@ -194,8 +194,8 @@ fn queued_follow_up(app: &FarcasterApp, marker: &str) -> bool {
 fn visible_prompt_queue(app: &FarcasterApp) -> crate::conversation::QueueState {
     crate::app::composer::submissions::visible_prompt_queue(
         &app.snapshot.conversation.queue,
-        &app.pending_submissions,
-        app.composer_sessions.current_target(),
+        &app.composer.pending_submissions,
+        app.composer.sessions.current_target(),
     )
 }
 
@@ -213,8 +213,8 @@ fn has_exact_queued_inputs(
 }
 
 fn current_pending_submission_is(app: &FarcasterApp, text: &str) -> bool {
-    app.pending_submissions.values().any(|pending| {
-        pending.submitted_target == app.composer_sessions.current_target()
+    app.composer.pending_submissions.values().any(|pending| {
+        pending.submitted_target == app.composer.sessions.current_target()
             && pending.result.is_none()
             && pending.text.trim_end() == text
     })
@@ -225,8 +225,8 @@ fn exact_pending_submission(
     mode: PromptMode,
     submitted_text: &str,
 ) -> Option<(String, String)> {
-    let target = app.composer_sessions.current_target();
-    let mut matches = app.pending_submissions.values().filter(|pending| {
+    let target = app.composer.sessions.current_target();
+    let mut matches = app.composer.pending_submissions.values().filter(|pending| {
         pending.submitted_target == target
             && pending.mode == mode
             && pending.text.trim_end() == submitted_text
@@ -264,10 +264,11 @@ fn wait_for_exact_queue(
                     "steering={:?} follow_up={:?} pending={} can_submit={}",
                     visible_queue.steering,
                     visible_queue.follow_up,
-                    app.pending_submissions
+                    app.composer
+                        .pending_submissions
                         .values()
                         .any(|pending| pending.submitted_target
-                            == app.composer_sessions.current_target()
+                            == app.composer.sessions.current_target()
                             && pending.result.is_none()),
                     app.can_submit(),
                 ),
@@ -540,7 +541,7 @@ fn wait_for_gate_tool(
             (
                 app.snapshot.connected,
                 has_gate_tool(app, gate),
-                app.extension.dialog.clone(),
+                app.extensions.active.dialog.clone(),
             )
         });
         // A projected tool row can precede the shell process. Do not let the
@@ -562,7 +563,7 @@ fn wait_for_gate_tool(
         // Exercise the rendered dialog's actual keyboard path. Do not inject
         // an ExtensionResponse or approve any command other than this gate.
         cx.update(|window, cx| {
-            let dialog_focus = app.read(cx).dialog_focus.clone();
+            let dialog_focus = app.read(cx).extensions.dialog_focus.clone();
             dialog_focus.focus(window, cx);
             window.draw(cx).clear(cx);
         });
@@ -577,7 +578,7 @@ fn wait_for_gate_tool(
 
 fn focus_composer(cx: &mut VisualTestContext, app: &gpui::Entity<FarcasterApp>) {
     cx.update(|window, cx| {
-        let composer_focus = app.read(cx).composer_focus.clone();
+        let composer_focus = app.read(cx).composer.focus.clone();
         composer_focus.focus(window, cx);
         window.draw(cx).clear(cx);
     });
@@ -870,7 +871,7 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
         let (steer_submission_id, steer_raw_text) = cx.update(|_, cx| {
             let app = app.read(cx);
             assert!(
-                app.composer.read(cx).value().is_empty(),
+                app.composer.input.read(cx).value().is_empty(),
                 "Enter did not clear the composer for the steering submission"
             );
             let pending = exact_pending_submission(app, PromptMode::Steer, &steer_message)
@@ -896,7 +897,7 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
         let queued_submission_id = cx.update(|_, cx| {
             let app = app.read(cx);
             assert!(
-                app.composer.read(cx).value().is_empty(),
+                app.composer.input.read(cx).value().is_empty(),
                 "Tab did not clear the composer for the follow-up submission"
             );
             let queued_pending =
@@ -931,7 +932,7 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
         phase("first:escape-dispatched");
         distinct_escape(cx);
         assert!(
-            cx.update(|_, cx| app.read(cx).composer_escape_armed.is_some()),
+            cx.update(|_, cx| app.read(cx).composer.escape_armed.is_some()),
             "first Escape did not arm Abort after ApplySteering"
         );
         // Keep the gate closed: an ordinary completion cannot explain these
@@ -959,7 +960,7 @@ fn live_e2e_ui_first_escape_applies_steer_and_queue(cx: &mut TestAppContext) {
             user_rows(app, &steer).len() == 1 && user_rows(app, &queued).len() == 1
         })?;
         assert!(
-            cx.update(|_, cx| app.read(cx).composer.read(cx).value().is_empty()),
+            cx.update(|_, cx| app.read(cx).composer.input.read(cx).value().is_empty()),
             "composer retained delivered steering or queue text"
         );
         Ok(())
@@ -1000,12 +1001,12 @@ fn live_e2e_ui_held_escape_does_not_double_apply(cx: &mut TestAppContext) {
         focus_composer(cx, app);
         phase("held:first-escape-dispatched");
         distinct_escape(cx);
-        let armed = cx.update(|_, cx| app.read(cx).composer_escape_armed.clone());
+        let armed = cx.update(|_, cx| app.read(cx).composer.escape_armed.clone());
         assert!(armed.is_some(), "first distinct Escape did not arm Abort");
         phase("held:repeat-escape-dispatched");
         held_escape(cx);
         assert_eq!(
-            cx.update(|_, cx| app.read(cx).composer_escape_armed.clone()),
+            cx.update(|_, cx| app.read(cx).composer.escape_armed.clone()),
             armed,
             "held Escape changed the real app abort arm"
         );
@@ -1049,7 +1050,7 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
         assert!(
             cx.update(|_, cx| {
                 let app = app.read(cx);
-                app.composer.read(cx).value().is_empty()
+                app.composer.input.read(cx).value().is_empty()
             }),
             "Enter did not clear the composer for the abort-test steer"
         );
@@ -1073,7 +1074,7 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
         assert!(
             cx.update(|_, cx| {
                 let app = app.read(cx);
-                app.composer.read(cx).value().is_empty()
+                app.composer.input.read(cx).value().is_empty()
             }),
             "Tab did not clear the composer for the abort-test follow-up"
         );
@@ -1102,7 +1103,7 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
         phase("abort:second-escape-dispatched");
         distinct_escape(cx);
         assert!(
-            cx.update(|_, cx| app.read(cx).composer_escape_armed.is_none()),
+            cx.update(|_, cx| app.read(cx).composer.escape_armed.is_none()),
             "second distinct Escape did not consume the real app abort arm"
         );
         // The gate stays closed until this assertion has observed the native
@@ -1182,7 +1183,7 @@ fn live_e2e_ui_second_escape_aborts_steer_and_queue(cx: &mut TestAppContext) {
             "a cancelled queue follow-up gained or lost a transcript receipt after the confirmed stop"
         );
         assert!(
-            cx.update(|_, cx| app.read(cx).composer.read(cx).value().is_empty()),
+            cx.update(|_, cx| app.read(cx).composer.input.read(cx).value().is_empty()),
             "composer retained text after the post-abort normal delivery"
         );
         Ok(())

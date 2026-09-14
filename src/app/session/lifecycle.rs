@@ -25,20 +25,20 @@ impl FarcasterApp {
             self.dismiss_surface(window, cx);
             return;
         }
-        if self.surface == AppSurface::Work {
+        if self.workspace.surface == AppSurface::Work {
             self.show_chat_surface(window, cx);
             return;
         }
-        if self.surface == AppSurface::Editor {
+        if self.workspace.surface == AppSurface::Editor {
             self.close_editor(cx);
             return;
         }
-        if self.surface == AppSurface::Terminal {
+        if self.workspace.surface == AppSurface::Terminal {
             self.close_terminal(window, cx);
             return;
         }
         match current_close_target(
-            self.selected_draft.as_deref(),
+            self.sessions.selected_draft.as_deref(),
             self.snapshot.selected_session.as_deref(),
         ) {
             CurrentCloseTarget::Draft(id) => self.discard_draft(&id, window, cx),
@@ -56,7 +56,8 @@ impl FarcasterApp {
     ) -> Option<SessionTarget> {
         let path = crate::sessions::normalize_session_path(path);
         let target = self
-            .all_sessions
+            .sessions
+            .all
             .iter()
             .find(|session| session.path == path)
             .map(SessionSummary::target)
@@ -67,7 +68,7 @@ impl FarcasterApp {
                     .filter(|target| target.path == path)
             });
         if target.is_none() {
-            self.sessions_error = Some(
+            self.sessions.error = Some(
                 "The session's harness identity is unavailable; refresh sessions and try again"
                     .into(),
             );
@@ -111,14 +112,15 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
         let _timing =
             crate::app::infrastructure::performance::Timing::new("switch.session_request");
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
-            && self.selected_draft.is_none()
+            && self.sessions.selected_draft.is_none()
             && self
+                .lifecycle
                 .pending_session_switch
                 .as_ref()
                 .is_none_or(|(pending, _)| pending == &path)
@@ -126,24 +128,26 @@ impl FarcasterApp {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
-        let previous_root =
-            root_session_for_path(&self.sessions, self.snapshot.selected_session.as_deref())
-                .map(|session| session.id.clone());
+        let previous_root = root_session_for_path(
+            &self.sessions.visible,
+            self.snapshot.selected_session.as_deref(),
+        )
+        .map(|session| session.id.clone());
         let Some(target) = self.backend_target_for_path(&path, cx) else {
             return;
         };
-        let next_root =
-            root_session_for_path(&self.sessions, Some(&path)).map(|session| session.id.clone());
+        let next_root = root_session_for_path(&self.sessions.visible, Some(&path))
+            .map(|session| session.id.clone());
         self.switch_composer_target(session_target(&path), window, cx);
-        self.selected_draft = None;
+        self.sessions.selected_draft = None;
         self.select_project(project.clone(), cx);
         if restore_center {
             self.restore_center_surface(project.clone(), window, cx);
         }
-        if let Some((_, timing)) = self.pending_session_switch.take() {
+        if let Some((_, timing)) = self.lifecycle.pending_session_switch.take() {
             timing.cancel();
         }
-        self.pending_session_switch = Some((
+        self.lifecycle.pending_session_switch = Some((
             path.clone(),
             crate::app::infrastructure::performance::Timing::new("switch.session_total"),
         ));
@@ -176,14 +180,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() || self.workspace_switch_blocked() {
+        if self.project.pending_trust_command.is_some() || self.workspace_switch_blocked() {
             return;
         }
         let Some(target) = self.backend_target_for_path(&path, cx) else {
             return;
         };
         if !crate::agents::supports_session_fork(target.harness) {
-            self.sessions_error = Some(format!(
+            self.sessions.error = Some(format!(
                 "Forking {} sessions is not supported",
                 target.harness
             ));
@@ -191,7 +195,7 @@ impl FarcasterApp {
             return;
         }
         self.reset_run_panel_scroll(cx);
-        self.selected_draft = None;
+        self.sessions.selected_draft = None;
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project.clone(), window, cx);
         self.send_project_command(
@@ -231,34 +235,37 @@ impl FarcasterApp {
     ) {
         if folder.is_some_and(|id| {
             !self
-                .session_folders
+                .sessions
+                .folders
                 .folders
                 .iter()
                 .any(|folder| folder.id == id)
         }) {
-            self.sessions_error = Some("This folder no longer exists".into());
+            self.sessions.error = Some("This folder no longer exists".into());
             self.notify_session_rail(cx);
             return;
         }
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
         self.reset_run_panel_scroll(cx);
-        let draft = match project_registry::new_draft(project.clone(), self.preferred_harness) {
-            Ok(draft) => draft,
-            Err(error) => {
-                self.sessions_error = Some(error);
-                self.notify_session_rail(cx);
-                cx.notify();
-                return;
-            }
-        };
+        let draft =
+            match project_registry::new_draft(project.clone(), self.sessions.preferred_harness) {
+                Ok(draft) => draft,
+                Err(error) => {
+                    self.sessions.error = Some(error);
+                    self.notify_session_rail(cx);
+                    cx.notify();
+                    return;
+                }
+            };
         let draft_key = draft_target(&draft.id);
         self.switch_composer_target(draft_key, window, cx);
-        self.selected_draft = Some(draft.id.clone());
-        self.draft_session_ids
+        self.sessions.selected_draft = Some(draft.id.clone());
+        self.sessions
+            .draft_session_ids
             .insert(draft.id.clone(), draft.app_session_id);
-        self.drafts.push(draft.clone());
+        self.sessions.drafts.push(draft.clone());
         if let Some(folder) = folder {
             self.assign_session_folder(draft.app_session_id, Some(folder), cx);
         }
@@ -275,11 +282,12 @@ impl FarcasterApp {
         );
         self.select_project(project.clone(), cx);
         self.restore_center_surface(project, window, cx);
-        self.search
+        self.navigation
+            .search
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.close_sessions_sheet_after_selection(window, cx);
         self.show_chat_surface(window, cx);
-        self.composer_focus.focus(window, cx);
+        self.composer.focus.focus(window, cx);
         self.notify_session_rail(cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);
@@ -322,14 +330,16 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
-        if self.selected_draft.as_deref() == Some(id.as_str()) && !self.snapshot.history_preview {
+        if self.sessions.selected_draft.as_deref() == Some(id.as_str())
+            && !self.snapshot.history_preview
+        {
             self.close_sessions_sheet_after_selection(window, cx);
             return;
         }
-        let command = if let Some(Some(path)) = self.submitted_drafts.get(&id).cloned() {
+        let command = if let Some(Some(path)) = self.sessions.submitted_drafts.get(&id).cloned() {
             let Some(target) = self.backend_target_for_path(&path, cx) else {
                 return;
             };
@@ -341,12 +351,13 @@ impl FarcasterApp {
             }
         } else {
             let Some(draft_harness) = self
+                .sessions
                 .drafts
                 .iter()
                 .find(|draft| draft.id == id)
                 .map(|draft| draft.harness)
             else {
-                self.sessions_error = Some("The draft's harness identity is unavailable".into());
+                self.sessions.error = Some("The draft's harness identity is unavailable".into());
                 self.notify_session_rail(cx);
                 return;
             };
@@ -358,7 +369,7 @@ impl FarcasterApp {
         };
         self.reset_run_panel_scroll(cx);
         self.switch_composer_target(draft_target(&id), window, cx);
-        self.selected_draft = Some(id);
+        self.sessions.selected_draft = Some(id);
         self.select_project(project.clone(), cx);
         if restore_center {
             self.restore_center_surface(project.clone(), window, cx);
@@ -378,27 +389,28 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
-        let was_selected = self.selected_draft.as_deref() == Some(id);
+        let was_selected = self.sessions.selected_draft.as_deref() == Some(id);
         let target = draft_target(id);
-        self.composer_images.remove(&target);
-        self.composer_pastes.remove(&target);
-        self.session_surfaces.remove(&target);
-        self.session_editor_tabs.remove(&target);
-        self.drafts.retain(|draft| draft.id != id);
-        self.draft_session_ids.remove(id);
-        self.submitted_drafts.remove(id);
-        self.run_statuses.remove(&target);
-        self.recent_completions.remove(&target);
-        self.recent_completion_expiries.remove(&target);
+        self.composer.images.remove(&target);
+        self.composer.pastes.remove(&target);
+        self.workspace.session_surfaces.remove(&target);
+        self.workspace.editor.session_tabs.remove(&target);
+        self.sessions.drafts.retain(|draft| draft.id != id);
+        self.sessions.draft_session_ids.remove(id);
+        self.sessions.submitted_drafts.remove(id);
+        self.activity.run_statuses.remove(&target);
+        self.activity.recent_completions.remove(&target);
+        self.activity.recent_completion_expiries.remove(&target);
         if was_selected {
-            self.selected_draft = None;
-            if let Some(session) = self.sessions.first().cloned() {
+            self.sessions.selected_draft = None;
+            if let Some(session) = self.sessions.visible.first().cloned() {
                 self.select_project(session.project.clone(), cx);
                 let snapshot = self
-                    .composer_sessions
+                    .composer
+                    .sessions
                     .discard_and_switch(&target, session_target(&session.path));
                 self.apply_composer_snapshot(snapshot, window, cx);
                 self.restore_center_surface(session.project.clone(), window, cx);
@@ -415,14 +427,15 @@ impl FarcasterApp {
                 );
             } else {
                 let snapshot = self
-                    .composer_sessions
-                    .discard_and_switch(&target, project_target(&self.project));
+                    .composer
+                    .sessions
+                    .discard_and_switch(&target, project_target(&self.project.path));
                 self.apply_composer_snapshot(snapshot, window, cx);
-                self.restore_center_surface(self.project.clone(), window, cx);
+                self.restore_center_surface(self.project.path.clone(), window, cx);
             }
         } else {
-            let current = self.composer_sessions.current_target().to_owned();
-            let _ = self.composer_sessions.discard_and_switch(&target, current);
+            let current = self.composer.sessions.current_target().to_owned();
+            let _ = self.composer.sessions.discard_and_switch(&target, current);
         }
         self.save_project_registry();
         self.notify_session_rail(cx);
@@ -438,15 +451,16 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
         let Some(session) = self
-            .all_sessions
+            .sessions
+            .all
             .iter()
             .find(|session| session.path == path)
         else {
-            self.sessions_error = Some("The session is no longer available to move".to_owned());
+            self.sessions.error = Some("The session is no longer available to move".to_owned());
             self.notify_session_rail(cx);
             return;
         };
@@ -454,7 +468,7 @@ impl FarcasterApp {
             return;
         }
         if !crate::agents::supports_session_move(session.harness) {
-            self.sessions_error = Some(format!(
+            self.sessions.error = Some(format!(
                 "Moving {} sessions between projects is not supported",
                 session.harness
             ));
@@ -462,7 +476,7 @@ impl FarcasterApp {
             return;
         }
         if self.session_family_has_active_work(&path) {
-            self.sessions_error = Some(
+            self.sessions.error = Some(
                 "Wait for the session family to finish before moving it to another project"
                     .to_owned(),
             );
@@ -492,13 +506,14 @@ impl FarcasterApp {
     ) {
         if let Some(session) = self
             .sessions
+            .visible
             .iter_mut()
             .find(|session| session.path == path)
         {
             session.archived = archived;
         }
-        if !self.sessions.iter().any(|session| session.archived) {
-            self.archived_sessions_expanded = false;
+        if !self.sessions.visible.iter().any(|session| session.archived) {
+            self.sessions.archived_expanded = false;
         }
         self.send(RuntimeCommand::SetSessionArchived { path, archived }, cx);
         self.notify_session_rail(cx);

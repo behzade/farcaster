@@ -30,7 +30,7 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         focused: bool,
     ) -> AnyElement {
-        let Some(dialog) = self.extension.dialog.as_ref() else {
+        let Some(dialog) = self.extensions.active.dialog.as_ref() else {
             return div().into_any_element();
         };
         if dialog.dialog_id().is_none() {
@@ -71,7 +71,7 @@ impl FarcasterApp {
                     title.clone(),
                     placeholder.clone(),
                     false,
-                    self.dialog_input.clone(),
+                    self.extensions.dialog_input.clone(),
                     entity.clone(),
                 );
                 (view.title().clone(), view.into_any_element())
@@ -82,7 +82,7 @@ impl FarcasterApp {
                     title.clone(),
                     prefill.clone(),
                     true,
-                    self.dialog_input.clone(),
+                    self.extensions.dialog_input.clone(),
                     entity.clone(),
                 );
                 (view.title().clone(), view.into_any_element())
@@ -92,14 +92,14 @@ impl FarcasterApp {
 
         let cancel_button_entity = entity.clone();
         let key_entity = entity;
-        let key_focus = self.dialog_focus.clone();
+        let key_focus = self.extensions.dialog_focus.clone();
         let keyboard_dialog = dialog.clone();
 
         div()
             .id("extension-composer-request")
             .role(Role::Group)
             .aria_label(title.clone())
-            .track_focus(&self.dialog_focus)
+            .track_focus(&self.extensions.dialog_focus)
             .key_context(OVERLAY_KEY_CONTEXT)
             .capture_key_down(move |event: &KeyDownEvent, window, cx| {
                 if event.keystroke.modifiers.modified() || !key_focus.contains_focused(window, cx) {

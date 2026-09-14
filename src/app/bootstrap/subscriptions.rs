@@ -15,11 +15,11 @@ pub(super) fn create(
 ) -> BootstrapSubscriptions {
     cx.on_app_quit(|this, cx| {
         this.capture_composer_session(cx);
-        let target = this.composer_sessions.current_target().to_owned();
-        let composer = this.composer_sessions.current();
+        let target = this.composer.sessions.current_target().to_owned();
+        let composer = this.composer.sessions.current();
         // Apply session-switch cleanup only after quit is confirmed.
         if this.sync_current_draft(&composer, &target) {
-            this.composer_sessions.remove(&target);
+            this.composer.sessions.remove(&target);
         }
         async {}
     })
@@ -50,11 +50,11 @@ pub(super) fn create(
         &inputs.network_proxy,
         window,
         |this, _, event: &InputEvent, _, cx| {
-            if this.overlays.settings {
+            if this.overlays.view.settings {
                 match event {
                     InputEvent::Change => this.schedule_settings_proxy_save(cx),
                     InputEvent::Blur | InputEvent::PressEnter { .. }
-                        if this.settings_proxy_save.is_some() =>
+                        if this.settings.proxy_save.is_some() =>
                     {
                         this.save_settings_proxy(cx)
                     }
@@ -83,21 +83,22 @@ fn subscribe_composer(
         window,
         |this, state, event: &InputEvent, window, cx| match event {
             InputEvent::Change => {
-                this.composer_view.update(cx, |view, _| {
+                this.views.composer.update(cx, |view, _| {
                     view.reset_suggestion_selection();
                 });
-                this.composer_sessions.exit_history();
+                this.composer.sessions.exit_history();
                 let snapshot = input_snapshot(state.read(cx));
                 let has_mention =
                     file_mentions::query_at_cursor(&snapshot.text, snapshot.cursor).is_some();
-                this.composer_sessions.capture_current(snapshot);
+                this.composer.sessions.capture_current(snapshot);
                 if has_mention {
                     this.request_composer_project_files(cx);
                 }
                 this.notify_composer(cx);
             }
             InputEvent::Blur => {
-                this.composer_sessions
+                this.composer
+                    .sessions
                     .capture_current(input_snapshot(state.read(cx)));
             }
             InputEvent::PressEnter { shift: false, .. } => {
@@ -106,8 +107,8 @@ fn subscribe_composer(
                 if let Some(completion) = composer_completion::resolve_for_harness(
                     &value,
                     input.cursor(),
-                    &this.composer_project_files,
-                    this.composer_view.read(cx).suggestion_selection(),
+                    &this.composer.project_files,
+                    this.views.composer.read(cx).suggestion_selection(),
                     &this.snapshot.commands,
                     this.active_harness(),
                 ) {
@@ -118,7 +119,7 @@ fn subscribe_composer(
                     if let Some(value) = submitted_value {
                         this.submit(value, this.enter_mode(), window, cx);
                     } else {
-                        this.composer_focus.focus(window, cx);
+                        this.composer.focus.focus(window, cx);
                     }
                 } else {
                     let value = value.trim().to_owned();

@@ -73,15 +73,15 @@ impl PendingRepositoryEdit {
 
 impl FarcasterApp {
     pub(in crate::app) fn clear_repository_selection(&mut self, cx: &mut Context<Self>) {
-        if self.repository.edits.pending.is_none() {
-            self.repository.edits.selection.paths.clear();
+        if self.project.repository.edits.pending.is_none() {
+            self.project.repository.edits.selection.paths.clear();
             self.notify_run_panel(cx);
         }
     }
 
     pub(in crate::app) fn toggle_repository_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        if self.repository.edits.pending.is_none() {
-            self.repository.edits.selection.toggle(path);
+        if self.project.repository.edits.pending.is_none() {
+            self.project.repository.edits.selection.toggle(path);
             self.notify_run_panel(cx);
         }
     }
@@ -93,21 +93,21 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.execution_allowed
-            || self.repository.sync.action.is_some()
-            || self.repository.edits.pending.is_some()
+        if !self.project.repository.execution_allowed
+            || self.project.repository.sync.action.is_some()
+            || self.project.repository.edits.pending.is_some()
         {
             return;
         }
         let (Some(backend), Some(snapshot)) = (
-            self.repository.backend.clone(),
-            self.repository.snapshot.clone(),
+            self.project.repository.backend.clone(),
+            self.project.repository.snapshot.clone(),
         ) else {
             return;
         };
         let selected = path
             .map(|path| BTreeSet::from([path]))
-            .unwrap_or_else(|| self.repository.edits.selection.paths.clone());
+            .unwrap_or_else(|| self.project.repository.edits.selection.paths.clone());
         if selected.is_empty() {
             return;
         }
@@ -129,9 +129,10 @@ impl FarcasterApp {
         } else {
             focus.focus(window, cx);
         }
-        self.repository.edits.generation = self.repository.edits.generation.saturating_add(1);
-        let generation = self.repository.edits.generation;
-        self.repository.edits.pending = Some(PendingRepositoryEdit {
+        self.project.repository.edits.generation =
+            self.project.repository.edits.generation.saturating_add(1);
+        let generation = self.project.repository.edits.generation;
+        self.project.repository.edits.pending = Some(PendingRepositoryEdit {
             focus,
             input,
             action,
@@ -148,10 +149,10 @@ impl FarcasterApp {
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| {
-                if this.repository.edits.generation != generation {
+                if this.project.repository.edits.generation != generation {
                     return;
                 }
-                let Some(pending) = this.repository.edits.pending.as_mut() else {
+                let Some(pending) = this.project.repository.edits.pending.as_mut() else {
                     return;
                 };
                 match result {
@@ -178,6 +179,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self
+            .project
             .repository
             .edits
             .pending
@@ -186,10 +188,11 @@ impl FarcasterApp {
         {
             return;
         }
-        let Some(pending) = self.repository.edits.pending.take() else {
+        let Some(pending) = self.project.repository.edits.pending.take() else {
             return;
         };
-        self.repository.edits.generation = self.repository.edits.generation.saturating_add(1);
+        self.project.repository.edits.generation =
+            self.project.repository.edits.generation.saturating_add(1);
         self.restore_overlay_focus(pending.return_focus, &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         self.notify_run_panel(cx);
@@ -201,13 +204,15 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.execution_allowed || self.repository.sync.action.is_some() {
+        if !self.project.repository.execution_allowed
+            || self.project.repository.sync.action.is_some()
+        {
             return;
         }
-        let Some(backend) = self.repository.backend.clone() else {
+        let Some(backend) = self.project.repository.backend.clone() else {
             return;
         };
-        let Some(pending) = self.repository.edits.pending.as_mut() else {
+        let Some(pending) = self.project.repository.edits.pending.as_mut() else {
             return;
         };
         if !pending.can_apply(cx) {
@@ -219,19 +224,19 @@ impl FarcasterApp {
         let action = pending.action;
         let message = pending.input.read(cx).value().to_string();
         pending.applying = true;
-        let generation = self.repository.edits.generation;
+        let generation = self.project.repository.edits.generation;
         cx.notify();
         let task =
             cx.background_spawn(async move { backend.apply_edit(&review, action, &message) });
         cx.spawn_in(window, async move |weak, cx| {
             let result = task.await;
             let _ = weak.update_in(cx, |this, window, cx| {
-                if this.repository.edits.generation != generation { return; }
-                let Some(pending) = this.repository.edits.pending.as_mut() else { return; };
+                if this.project.repository.edits.generation != generation { return; }
+                let Some(pending) = this.project.repository.edits.pending.as_mut() else { return; };
                 pending.applying = false;
                 match result {
                     Ok(()) => {
-                        this.repository.edits.selection = Default::default();
+                        this.project.repository.edits.selection = Default::default();
                         this.close_repository_edit(window, cx);
                     }
                     Err(error) => { pending.error = Some(format!("{error}\nClose this review and inspect the refreshed changes before trying again.")); }

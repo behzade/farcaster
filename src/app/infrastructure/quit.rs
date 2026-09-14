@@ -40,17 +40,17 @@ pub(super) fn install_window(window: &Window, cx: &App) {
 
 impl FarcasterApp {
     pub(crate) fn request_application_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(pending) = &self.pending_quit {
+        if let Some(pending) = &self.lifecycle.pending_quit {
             pending.focus.focus(window, cx);
             return;
         }
 
         let active = application_has_active_work(
-            &self.run_statuses,
+            &self.activity.run_statuses,
             &self.snapshot,
-            &self.pending_submissions,
-            &self.all_sessions,
-            &self.background_jobs,
+            &self.composer.pending_submissions,
+            &self.sessions.all,
+            &self.activity.background_jobs,
         );
         if !active {
             cx.quit();
@@ -63,7 +63,7 @@ impl FarcasterApp {
             return_focus: window.focused(cx),
         };
         pending.focus.focus(window, cx);
-        self.pending_quit = Some(pending);
+        self.lifecycle.pending_quit = Some(pending);
         cx.notify();
     }
 
@@ -72,7 +72,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(pending) = self.pending_quit.take() else {
+        let Some(pending) = self.lifecycle.pending_quit.take() else {
             return;
         };
         self.restore_overlay_focus(pending.return_focus, &pending.focus, window, cx);
@@ -81,7 +81,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn confirm_application_quit(&mut self, cx: &mut Context<Self>) {
-        if self.pending_quit.take().is_some() {
+        if self.lifecycle.pending_quit.take().is_some() {
             cx.quit();
         }
     }

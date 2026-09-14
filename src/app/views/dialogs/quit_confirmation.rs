@@ -22,7 +22,7 @@ pub(in crate::app::views) fn render(
     confirmation_modal(
         "quit-application",
         "Exit Farcaster?",
-        &app.pending_quit.as_ref().expect("visible confirmation").focus,
+        &app.lifecycle.pending_quit.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
         on_cancel.clone(),
         on_confirm.clone(),

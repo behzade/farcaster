@@ -14,13 +14,13 @@ pub(in crate::app::views) fn render(
     app: &FarcasterApp,
     entity: WeakEntity<FarcasterApp>,
 ) -> Option<AnyElement> {
-    let preview = app.image_preview.as_ref()?.clone();
+    let preview = app.overlays.image_preview.as_ref()?.clone();
     let close = entity.clone();
     Some(
         modal(
             "image-preview",
             "Image preview",
-            &app.image_preview_focus,
+            &app.overlays.image_preview_focus,
             crate::app::OVERLAY_KEY_CONTEXT,
             move |window, cx| {
                 let _ = close.update(cx, |this, cx| this.close_image_preview(window, cx));

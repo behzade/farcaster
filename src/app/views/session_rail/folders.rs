@@ -126,7 +126,7 @@ pub(super) fn folder_header(
         row = folder_drop_target(row, move |drag, window, cx| {
             let _ = drop_entity.update(cx, |this, cx| {
                 this.begin_folder_edit(None, window, cx);
-                if let Some(edit) = &mut this.editing_folder {
+                if let Some(edit) = &mut this.sessions.editing_folder {
                     edit.session = Some(drag.app_session_id);
                 }
                 this.clear_session_drop_target(cx);
@@ -177,7 +177,7 @@ pub(super) fn folder_header(
             .item(
                 PopupMenuItem::new("Delete folder").on_click(move |_, _, cx| {
                     let _ = delete.update(cx, |this, cx| {
-                        let mut next = this.session_folders.clone();
+                        let mut next = this.sessions.folders.clone();
                         next.remove(id);
                         this.save_session_folders(next, cx);
                     });

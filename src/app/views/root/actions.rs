@@ -84,7 +84,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         this.remove_project_from_picker(&action.path, window, cx);
     }))
     .on_action(cx.listener(|this, _: &FocusSessionSearch, window, cx| {
-        this.search_focus.focus(window, cx);
+        this.navigation.search_focus.focus(window, cx);
     }))
     .on_action(cx.listener(|this, _: &FocusComposer, window, cx| {
         if !this.center_surface_switch_blocked() {
@@ -125,11 +125,11 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         this.switch_relative_session(1, window, cx);
     }))
     .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
-        this.archived_sessions_expanded = !this.archived_sessions_expanded;
+        this.sessions.archived_expanded = !this.sessions.archived_expanded;
         this.notify_session_rail(cx);
     }))
     .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
-        let value = this.composer.read(cx).value().trim().to_owned();
+        let value = this.composer.input.read(cx).value().trim().to_owned();
         if !value.is_empty() || this.has_composer_attachments() {
             this.submit(value, this.enter_mode(), window, cx);
         }
@@ -152,28 +152,34 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         this.toggle_workgraph_surface(window, cx);
     }))
     .on_action(cx.listener(|this, _: &WorkPreviousIssue, _, cx| {
-        this.workgraph_view
+        this.views
+            .workgraph
             .update(cx, |view, cx| view.move_selection(-1, cx));
     }))
     .on_action(cx.listener(|this, _: &WorkNextIssue, _, cx| {
-        this.workgraph_view
+        this.views
+            .workgraph
             .update(cx, |view, cx| view.move_selection(1, cx));
     }))
     .on_action(cx.listener(|this, _: &WorkFocusSearch, window, cx| {
-        this.workgraph_view
+        this.views
+            .workgraph
             .update(cx, |view, cx| view.focus_search(window, cx));
     }))
     .on_action(cx.listener(|this, _: &WorkCreateIssue, window, cx| {
-        this.workgraph_view
+        this.views
+            .workgraph
             .update(cx, |view, cx| view.start_create(window, cx));
     }))
     .on_action(cx.listener(|this, _: &crate::app::WorkBack, window, cx| {
-        this.workgraph_view
+        this.views
+            .workgraph
             .update(cx, |view, cx| view.back_to_plans(window, cx));
     }))
     .on_action(cx.listener(|this, _: &WorkDismiss, window, cx| {
         let handled = this
-            .workgraph_view
+            .views
+            .workgraph
             .update(cx, |view, cx| view.dismiss_work_state(window, cx));
         if !handled {
             this.show_chat_surface(window, cx);

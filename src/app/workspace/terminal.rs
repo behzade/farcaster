@@ -23,7 +23,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.execution_allowed {
+        if !self.project.repository.execution_allowed {
             self.notify_workspace_error(
                 "Terminal",
                 "Trust this project before opening its terminal.".to_owned(),
@@ -34,6 +34,8 @@ impl FarcasterApp {
 
         let project = project.canonicalize().unwrap_or(project);
         let cached = self
+            .workspace
+            .terminal
             .project_terminals
             .get(&project)
             .filter(|terminal| terminal.read(cx).is_alive())
@@ -54,7 +56,9 @@ impl FarcasterApp {
                     return;
                 }
             };
-            self.project_terminals
+            self.workspace
+                .terminal
+                .project_terminals
                 .insert(project.clone(), terminal.clone());
             let monitored = terminal.downgrade();
             let monitored_project = project.clone();
@@ -62,15 +66,24 @@ impl FarcasterApp {
                 let Some(monitored) = monitored.upgrade() else {
                     return false;
                 };
-                if this.project_terminals.get(&monitored_project) != Some(&monitored) {
+                if this
+                    .workspace
+                    .terminal
+                    .project_terminals
+                    .get(&monitored_project)
+                    != Some(&monitored)
+                {
                     return false;
                 }
                 if monitored.read(cx).is_alive() {
                     return true;
                 }
-                if this.terminal.as_ref() != Some(&monitored) {
-                    this.project_terminals.remove(&monitored_project);
-                } else if this.surface == AppSurface::Terminal {
+                if this.workspace.terminal.view.as_ref() != Some(&monitored) {
+                    this.workspace
+                        .terminal
+                        .project_terminals
+                        .remove(&monitored_project);
+                } else if this.workspace.surface == AppSurface::Terminal {
                     this.close_terminal(window, cx);
                 } else {
                     this.clear_terminal_process();
@@ -82,28 +95,28 @@ impl FarcasterApp {
 
         self.retain_workspace_draft(cx);
         self.hide_terminal(cx);
-        self.terminal = Some(terminal);
-        self.terminal_project = Some(project);
+        self.workspace.terminal.view = Some(terminal);
+        self.workspace.terminal.project = Some(project);
         self.hide_editor(cx);
         self.reveal_native_center_surface(AppSurface::Terminal, window, cx);
     }
 
     fn clear_terminal_process(&mut self) {
-        if let Some(project) = self.terminal_project.take() {
-            self.project_terminals.remove(&project);
+        if let Some(project) = self.workspace.terminal.project.take() {
+            self.workspace.terminal.project_terminals.remove(&project);
         }
-        self.terminal = None;
+        self.workspace.terminal.view = None;
     }
 
     pub(in crate::app) fn hide_terminal(&self, cx: &mut Context<Self>) {
-        if let Some(terminal) = self.terminal.as_ref() {
+        if let Some(terminal) = self.workspace.terminal.view.as_ref() {
             terminal.update(cx, |terminal, _| terminal.set_visible(false));
         }
     }
 
     pub(in crate::app) fn restore_terminal_visibility(&self, cx: &mut Context<Self>) {
-        if self.surface == AppSurface::Terminal
-            && let Some(terminal) = self.terminal.as_ref()
+        if self.workspace.surface == AppSurface::Terminal
+            && let Some(terminal) = self.workspace.terminal.view.as_ref()
         {
             terminal.update(cx, |terminal, _| terminal.set_visible(true));
         }

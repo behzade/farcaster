@@ -117,17 +117,17 @@ impl FarcasterApp {
     ) {
         let entity = cx.entity().downgrade();
         let window_id = window.window_handle().window_id();
-        self.chat_navigation.return_shortcut =
+        self.navigation.chat.return_shortcut =
             Some(cx.intercept_keystrokes(move |event, window, cx| {
                 if window.window_handle().window_id() != window_id {
                     return;
                 }
                 let consumed = entity
                     .update(cx, |this, cx| {
-                        if this.chat_navigation.activation_focus != window.focused(cx) {
-                            this.chat_navigation.activation.clear();
+                        if this.navigation.chat.activation_focus != window.focused(cx) {
+                            this.navigation.chat.activation.clear();
                         }
-                        let result = this.chat_navigation.activation.key(
+                        let result = this.navigation.chat.activation.key(
                             &event.keystroke.key,
                             event.keystroke.modifiers,
                             Instant::now(),
@@ -137,20 +137,20 @@ impl FarcasterApp {
                                 return false;
                             }
                             ActivatedKey::Pending => {
-                                this.chat_navigation.activation_focus = window.focused(cx);
-                                this.chat_navigation.activation_blur =
-                                    this.chat_navigation.activation_focus.clone().map(|focus| {
+                                this.navigation.chat.activation_focus = window.focused(cx);
+                                this.navigation.chat.activation_blur =
+                                    this.navigation.chat.activation_focus.clone().map(|focus| {
                                         cx.on_blur(&focus, window, |this, _, cx| {
-                                            this.chat_navigation.activation.clear();
+                                            this.navigation.chat.activation.clear();
                                             this.notify_composer(cx);
                                         })
                                     });
-                                let deadline = this.chat_navigation.activation.deadline;
+                                let deadline = this.navigation.chat.activation.deadline;
                                 cx.spawn(async move |weak, cx| {
                                     cx.background_executor().timer(ACTIVATION_TIMEOUT).await;
                                     let _ = weak.update(cx, |this, cx| {
-                                        if this.chat_navigation.activation.deadline == deadline {
-                                            this.chat_navigation.activation.clear();
+                                        if this.navigation.chat.activation.deadline == deadline {
+                                            this.navigation.chat.activation.clear();
                                             this.notify_composer(cx);
                                         }
                                     });
@@ -177,18 +177,18 @@ impl FarcasterApp {
             }));
         cx.observe_window_activation(window, |this, window, cx| {
             if !window.is_window_active() {
-                this.chat_navigation.activation.clear();
+                this.navigation.chat.activation.clear();
                 this.notify_composer(cx);
             }
         })
         .detach();
         cx.on_focus_lost(window, |this, window, cx| {
-            if !this.chat_navigation.focus.contains_focused(window, cx) {
+            if !this.navigation.chat.focus.contains_focused(window, cx) {
                 this.recover_keyboard_focus(window, cx);
             }
         })
         .detach();
-        cx.on_focus(&self.composer_focus, window, |this, _, cx| {
+        cx.on_focus(&self.composer.focus, window, |this, _, cx| {
             this.notify_composer(cx);
         })
         .detach();
@@ -199,35 +199,35 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.chat_navigation.activation.clear();
-        if self.repository.edits.pending.is_some() {
+        self.navigation.chat.activation.clear();
+        if self.project.repository.edits.pending.is_some() {
             self.close_repository_edit(window, cx);
-            if self.repository.edits.pending.is_some() {
+            if self.project.repository.edits.pending.is_some() {
                 return;
             }
         }
-        if self.send_to_chat.is_some() {
+        if self.workspace.send_to_chat.is_some() {
             self.close_send_to_chat(window, cx);
         }
-        if self.image_preview.is_some() {
+        if self.overlays.image_preview.is_some() {
             self.close_image_preview(window, cx);
         }
-        if self.repository.pending_jj_init.is_some() {
+        if self.project.repository.pending_jj_init.is_some() {
             self.close_jj_init_confirmation(window, cx);
         }
-        if self.picker.is_some() {
+        if self.navigation.picker.is_some() {
             self.close_picker(window, cx);
         }
-        self.pending_archive = None;
-        self.pending_delete = None;
-        self.session_import = None;
-        if self.overlays.project_trust {
+        self.sessions.pending_archive = None;
+        self.sessions.pending_delete = None;
+        self.sessions.import = None;
+        if self.overlays.view.project_trust {
             self.dismiss_project_trust(window, cx);
         }
-        if self.overlays.sessions
-            || self.overlays.run
-            || self.overlays.keybindings
-            || self.overlays.settings
+        if self.overlays.view.sessions
+            || self.overlays.view.run
+            || self.overlays.view.keybindings
+            || self.overlays.view.settings
         {
             self.close_sheet(window, cx);
         }
@@ -244,16 +244,17 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.surface == AppSurface::Chat && !self.native_workspace_covered_by_overlay() {
+        if self.workspace.surface == AppSurface::Chat && !self.native_workspace_covered_by_overlay()
+        {
             super::focus::traverse_tab(event, None, window, cx);
         }
     }
 
     fn scroll_transcript(&mut self, scroll: Scroll, window: &mut Window, cx: &mut Context<Self>) {
-        let list = &self.transcript_view.read(cx).list;
+        let list = &self.views.transcript.read(cx).list;
         let distance = match scroll {
             Scroll::Start => {
-                self.transcript_view.update(cx, |transcript, cx| {
+                self.views.transcript.update(cx, |transcript, cx| {
                     transcript.list.scroll_to_start();
                     transcript.following = false;
                     cx.notify();
@@ -266,7 +267,7 @@ impl FarcasterApp {
             }
             Scroll::Pages(pages) => list.viewport_height() * pages,
         };
-        list.scroll_by(distance, window, self.transcript_view.entity_id());
+        list.scroll_by(distance, window, self.views.transcript.entity_id());
     }
 
     fn execute_navigation_command(

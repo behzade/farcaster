@@ -69,7 +69,7 @@ impl Render for ComposerView {
             self.suggestion_selection,
             &self.footer_scroll,
             &self.status_scroll,
-            app.chat_navigation.activation.hint(),
+            app.navigation.chat.activation.hint(),
             app.composer_region_focused(window, cx),
             cx,
         )

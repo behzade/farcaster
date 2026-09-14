@@ -16,35 +16,40 @@ use crate::{
 
 impl FarcasterApp {
     pub(in crate::app) fn available_projects(&self) -> Vec<PathBuf> {
-        available_projects(&self.projects, &self.project)
+        available_projects(&self.project.registered, &self.project.path)
     }
 
     pub(in crate::app) fn selected_draft_is_empty_and_unsubmitted(&self) -> bool {
         self.snapshot.conversation.items.is_empty()
             && self
+                .sessions
                 .selected_draft
                 .as_ref()
-                .is_some_and(|id| !self.submitted_drafts.contains_key(id))
+                .is_some_and(|id| !self.sessions.submitted_drafts.contains_key(id))
     }
 
     pub(in crate::app) fn editable_draft_project(&self) -> Option<PathBuf> {
-        let id = self.selected_draft.as_deref()?;
+        let id = self.sessions.selected_draft.as_deref()?;
         let target = draft_target(id);
-        if self.composer_sessions.current_target() != target
-            || self.submitted_drafts.contains_key(id)
-            || has_pending_submission(&self.pending_submissions, &target)
+        if self.composer.sessions.current_target() != target
+            || self.sessions.submitted_drafts.contains_key(id)
+            || has_pending_submission(&self.composer.pending_submissions, &target)
         {
             return None;
         }
-        self.drafts.iter().find(|draft| draft.id == id).map_or_else(
-            || Some(self.project.clone()),
-            |draft| draft.can_change_project().then(|| draft.project.clone()),
-        )
+        self.sessions
+            .drafts
+            .iter()
+            .find(|draft| draft.id == id)
+            .map_or_else(
+                || Some(self.project.path.clone()),
+                |draft| draft.can_change_project().then(|| draft.project.clone()),
+            )
     }
 
     pub(in crate::app) fn active_harness(&self) -> Option<Backend> {
-        if let Some(id) = self.selected_draft.as_deref()
-            && let Some(draft) = self.drafts.iter().find(|draft| draft.id == id)
+        if let Some(id) = self.sessions.selected_draft.as_deref()
+            && let Some(draft) = self.sessions.drafts.iter().find(|draft| draft.id == id)
         {
             return draft.harness;
         }
@@ -52,7 +57,8 @@ impl FarcasterApp {
             .selected_session
             .as_deref()
             .and_then(|path| {
-                self.all_sessions
+                self.sessions
+                    .all
                     .iter()
                     .find(|session| session.path == path)
             })
@@ -61,16 +67,17 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn editable_draft_harness(&self) -> Option<Option<Backend>> {
-        let id = self.selected_draft.as_deref()?;
+        let id = self.sessions.selected_draft.as_deref()?;
         let target = draft_target(id);
-        if self.composer_sessions.current_target() != target
-            || self.submitted_drafts.contains_key(id)
-            || has_pending_submission(&self.pending_submissions, &target)
+        if self.composer.sessions.current_target() != target
+            || self.sessions.submitted_drafts.contains_key(id)
+            || has_pending_submission(&self.composer.pending_submissions, &target)
         {
             return None;
         }
         Some(
-            self.drafts
+            self.sessions
+                .drafts
                 .iter()
                 .find(|draft| draft.id == id)
                 .map_or_else(|| self.snapshot.harness, |draft| draft.harness),
@@ -83,7 +90,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(id) = self.selected_draft.clone() else {
+        let Some(id) = self.sessions.selected_draft.clone() else {
             return;
         };
         if self.editable_draft_harness().is_none() {
@@ -92,23 +99,29 @@ impl FarcasterApp {
         if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
             .and_then(|store| store.save_preferred_harness(harness))
         {
-            self.sessions_error = Some(error);
+            self.sessions.error = Some(error);
             self.notify_session_rail(cx);
             cx.notify();
             return;
         }
-        if !self.drafts.iter().any(|draft| draft.id == id) {
+        if !self.sessions.drafts.iter().any(|draft| draft.id == id) {
             let mut draft =
-                DraftSession::with_id(self.snapshot.harness, id.clone(), self.project.clone());
-            draft.app_session_id = self.draft_session_ids.get(&id).copied().unwrap_or_default();
-            self.drafts.insert(0, draft);
+                DraftSession::with_id(self.snapshot.harness, id.clone(), self.project.path.clone());
+            draft.app_session_id = self
+                .sessions
+                .draft_session_ids
+                .get(&id)
+                .copied()
+                .unwrap_or_default();
+            self.sessions.drafts.insert(0, draft);
         }
         let draft = self
+            .sessions
             .drafts
             .iter_mut()
             .find(|draft| draft.id == id)
             .expect("selected draft was materialized");
-        self.preferred_harness = Some(harness);
+        self.sessions.preferred_harness = Some(harness);
         if !draft.change_harness(Some(harness.clone())) {
             return;
         }
@@ -135,23 +148,24 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_project_trust_command.is_some() {
+        if self.project.pending_trust_command.is_some() {
             return;
         }
-        let Some(id) = self.selected_draft.clone() else {
+        let Some(id) = self.sessions.selected_draft.clone() else {
             return;
         };
         let target = draft_target(&id);
-        if self.submitted_drafts.contains_key(&id)
-            || has_pending_submission(&self.pending_submissions, &target)
+        if self.sessions.submitted_drafts.contains_key(&id)
+            || has_pending_submission(&self.composer.pending_submissions, &target)
         {
             return;
         }
-        let changed = if let Some(draft) = self.drafts.iter_mut().find(|draft| draft.id == id) {
-            draft.change_project(project.clone())
-        } else {
-            self.composer_sessions.current_target() == target && self.project != project
-        };
+        let changed =
+            if let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) {
+                draft.change_project(project.clone())
+            } else {
+                self.composer.sessions.current_target() == target && self.project.path != project
+            };
         if !changed {
             return;
         }
@@ -161,9 +175,12 @@ impl FarcasterApp {
             RuntimeCommand::NewSession {
                 id,
                 harness: self
+                    .sessions
                     .drafts
                     .iter()
-                    .find(|draft| draft.id == self.selected_draft.as_deref().unwrap_or_default())
+                    .find(|draft| {
+                        draft.id == self.sessions.selected_draft.as_deref().unwrap_or_default()
+                    })
                     .map(|draft| draft.harness)
                     .unwrap_or_else(|| self.active_harness().to_owned()),
                 project: project.clone(),
@@ -179,14 +196,14 @@ impl FarcasterApp {
     /// Workspace processes may hold unsaved work even with an empty composer.
     /// Keep this sticky for the draft's lifetime, not just while a surface is visible.
     pub(in crate::app) fn retain_workspace_draft(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected_draft.as_deref() else {
+        let Some(id) = self.sessions.selected_draft.as_deref() else {
             return;
         };
-        let target = self.composer_sessions.current_target().to_owned();
-        if target != draft_target(id) || !self.composer_sessions.retain_current() {
+        let target = self.composer.sessions.current_target().to_owned();
+        if target != draft_target(id) || !self.composer.sessions.retain_current() {
             return;
         }
-        let composer = self.composer_sessions.current();
+        let composer = self.composer.sessions.current();
         self.sync_current_draft(&composer, &target);
         self.notify_session_rail(cx);
     }
@@ -196,41 +213,45 @@ impl FarcasterApp {
         composer: &crate::app::composer::sessions::ComposerSnapshot,
         target: &str,
     ) -> bool {
-        let Some(id) = self.selected_draft.as_deref() else {
+        let Some(id) = self.sessions.selected_draft.as_deref() else {
             return false;
         };
         if target != draft_target(id)
-            || self.submitted_drafts.contains_key(id)
-            || has_pending_submission(&self.pending_submissions, target)
+            || self.sessions.submitted_drafts.contains_key(id)
+            || has_pending_submission(&self.composer.pending_submissions, target)
         {
             return false;
         }
         let has_content = draft_has_content(composer)
             || self
-                .composer_images
+                .composer
+                .images
                 .get(target)
                 .is_some_and(|images| !images.is_empty())
             || self
-                .composer_pastes
+                .composer
+                .pastes
                 .get(target)
                 .is_some_and(|pastes| !pastes.is_empty());
         let app_session_id = self
+            .sessions
             .draft_session_ids
             .get(id)
             .copied()
             .or_else(|| {
-                self.drafts
+                self.sessions
+                    .drafts
                     .iter()
                     .find(|draft| draft.id == id)
                     .map(|draft| draft.app_session_id)
             })
             .unwrap_or_default();
-        let retain = has_content || self.composer_sessions.is_retained(target);
+        let retain = has_content || self.composer.sessions.is_retained(target);
         let changed = sync_materialized_draft(
-            &mut self.drafts,
+            &mut self.sessions.drafts,
             id,
             app_session_id,
-            &self.project,
+            &self.project.path,
             self.snapshot.harness,
             retain,
         );
@@ -238,8 +259,8 @@ impl FarcasterApp {
             self.save_project_registry();
         }
         if !has_content {
-            self.composer_images.remove(target);
-            self.composer_pastes.remove(target);
+            self.composer.images.remove(target);
+            self.composer.pastes.remove(target);
         }
         !retain
     }
@@ -248,17 +269,30 @@ impl FarcasterApp {
         let Some(id) = draft_id(target) else {
             return;
         };
-        self.submitted_drafts.entry(id.to_owned()).or_default();
-        self.run_statuses
+        self.sessions
+            .submitted_drafts
+            .entry(id.to_owned())
+            .or_default();
+        self.activity
+            .run_statuses
             .insert(target.to_owned(), "Working".into());
-        if !self.drafts.iter().any(|draft| draft.id == id) {
-            let app_session_id = self.draft_session_ids.get(id).copied().unwrap_or_default();
-            let mut draft =
-                DraftSession::with_id(self.snapshot.harness, id.to_owned(), self.project.clone());
+        if !self.sessions.drafts.iter().any(|draft| draft.id == id) {
+            let app_session_id = self
+                .sessions
+                .draft_session_ids
+                .get(id)
+                .copied()
+                .unwrap_or_default();
+            let mut draft = DraftSession::with_id(
+                self.snapshot.harness,
+                id.to_owned(),
+                self.project.path.clone(),
+            );
             draft.app_session_id = app_session_id;
-            self.drafts.insert(0, draft);
+            self.sessions.drafts.insert(0, draft);
         }
         let draft = self
+            .sessions
             .drafts
             .iter_mut()
             .find(|draft| draft.id == id)
@@ -277,12 +311,16 @@ impl FarcasterApp {
         session: Option<PathBuf>,
     ) {
         let session = session.map(|path| normalize_session_path(&path));
-        let Some(id) = establish_submission(&mut self.submitted_drafts, target, accepted, session)
-        else {
+        let Some(id) = establish_submission(
+            &mut self.sessions.submitted_drafts,
+            target,
+            accepted,
+            session,
+        ) else {
             return;
         };
-        let association = self.submitted_drafts.get(&id).cloned().flatten();
-        if update_persisted_submission(&mut self.drafts, &id, association.as_deref()) {
+        let association = self.sessions.submitted_drafts.get(&id).cloned().flatten();
+        if update_persisted_submission(&mut self.sessions.drafts, &id, association.as_deref()) {
             self.save_project_registry();
         }
         if let Some(path) = association {
@@ -298,6 +336,7 @@ impl FarcasterApp {
     ) {
         if status == "Done"
             && self
+                .activity
                 .run_statuses
                 .get(&target)
                 .is_some_and(|status| status == "Failed")
@@ -305,23 +344,37 @@ impl FarcasterApp {
             return;
         }
         let session = session.map(|path| normalize_session_path(&path));
-        if status == "Working" && has_pending_submission(&self.pending_submissions, &target) {
-            establish_submission(&mut self.submitted_drafts, &target, true, session.clone());
+        if status == "Working"
+            && has_pending_submission(&self.composer.pending_submissions, &target)
+        {
+            establish_submission(
+                &mut self.sessions.submitted_drafts,
+                &target,
+                true,
+                session.clone(),
+            );
         }
-        let associated_path =
-            fill_session_association(&mut self.submitted_drafts, &target, session.as_deref());
+        let associated_path = fill_session_association(
+            &mut self.sessions.submitted_drafts,
+            &target,
+            session.as_deref(),
+        );
         if preserve_submission_working_status(
             &target,
             associated_path.as_deref().or(session.as_deref()),
             &status,
-            &self.pending_submissions,
-            &self.run_statuses,
+            &self.composer.pending_submissions,
+            &self.activity.run_statuses,
         ) {
             status = "Working".into();
         }
         if let Some(id) = draft_id(&target)
-            && self.submitted_drafts.contains_key(id)
-            && update_persisted_submission(&mut self.drafts, id, associated_path.as_deref())
+            && self.sessions.submitted_drafts.contains_key(id)
+            && update_persisted_submission(
+                &mut self.sessions.drafts,
+                id,
+                associated_path.as_deref(),
+            )
         {
             self.save_project_registry();
         }
@@ -331,9 +384,9 @@ impl FarcasterApp {
                 .and(session.as_deref())
                 .map(std::path::Path::to_path_buf)
         }) {
-            self.run_statuses.remove(&target);
-            self.recent_completions.remove(&target);
-            self.recent_completion_expiries.remove(&target);
+            self.activity.run_statuses.remove(&target);
+            self.activity.recent_completions.remove(&target);
+            self.activity.recent_completion_expiries.remove(&target);
             self.record_run_status(session_target(&path), status, false);
             return;
         }
@@ -347,8 +400,11 @@ impl FarcasterApp {
     #[must_use = "draft promotion must invalidate the session rail"]
     pub(in crate::app) fn reconcile_submitted_drafts(&mut self, cx: &mut Context<Self>) -> bool {
         let promotions = reconciliation_candidates(
-            &self.submitted_drafts,
-            self.sessions.iter().map(|session| session.path.as_path()),
+            &self.sessions.submitted_drafts,
+            self.sessions
+                .visible
+                .iter()
+                .map(|session| session.path.as_path()),
         );
         let promoted = !promotions.is_empty();
         for (id, path) in promotions {
@@ -361,27 +417,29 @@ impl FarcasterApp {
         self.capture_composer_session(cx);
         let draft_key = draft_target(id);
         let session_key = session_target(path);
-        self.composer_sessions
+        self.composer
+            .sessions
             .promote(&draft_key, session_key.clone());
         self.promote_center_surface(&draft_key, &session_key);
         self.promote_composer_images(&draft_key, &session_key);
         self.promote_composer_pastes(&draft_key, &session_key);
-        for pending in self.pending_submissions.values_mut() {
+        for pending in self.composer.pending_submissions.values_mut() {
             if pending.submitted_target == draft_key {
                 pending.submitted_target.clone_from(&session_key);
             }
         }
         self.canonicalize_draft_status(id, path);
-        self.submitted_drafts.remove(id);
-        self.draft_session_ids.remove(id);
-        self.drafts.retain(|draft| draft.id != id);
-        clear_promoted_selection(&mut self.selected_draft, id);
+        self.sessions.submitted_drafts.remove(id);
+        self.sessions.draft_session_ids.remove(id);
+        self.sessions.drafts.retain(|draft| draft.id != id);
+        clear_promoted_selection(&mut self.sessions.selected_draft, id);
         self.save_project_registry();
     }
 
     pub(in crate::app) fn promote_composer_images(&mut self, from: &str, to: &str) {
-        if let Some(images) = self.composer_images.remove(from) {
-            self.composer_images
+        if let Some(images) = self.composer.images.remove(from) {
+            self.composer
+                .images
                 .entry(to.to_owned())
                 .or_default()
                 .extend(images);
@@ -390,8 +448,8 @@ impl FarcasterApp {
 
     fn canonicalize_draft_status(&mut self, id: &str, path: &std::path::Path) {
         transfer_draft_status(
-            &mut self.run_statuses,
-            &mut self.recent_completions,
+            &mut self.activity.run_statuses,
+            &mut self.activity.recent_completions,
             id,
             path,
         );

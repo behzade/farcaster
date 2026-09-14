@@ -65,7 +65,7 @@ pub(in crate::app::views) fn render(
     let runtime = Popover::new("runtime-popover")
         .anchor(gpui::Anchor::BottomLeft)
         .appearance(false)
-        .open(app.runtime_picker.open)
+        .open(app.workspace.runtime_picker.open)
         .trigger(
             dropdown_content_button(
                 "select-runtime",

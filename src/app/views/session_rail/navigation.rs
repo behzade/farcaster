@@ -48,9 +48,10 @@ fn session_step(
 impl FarcasterApp {
     pub(super) fn selected_rail_root(&self) -> Option<&SessionSummary> {
         selected_root(
-            &self.sessions,
+            &self.sessions.visible,
             self.snapshot.selected_session.as_deref(),
-            self.pending_session_switch
+            self.lifecycle
+                .pending_session_switch
                 .as_ref()
                 .map(|(path, _)| path.as_path()),
         )
@@ -62,22 +63,25 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.surface != AppSurface::Chat || self.keyboard_overlay_focus(window, cx).is_some() {
+        if self.workspace.surface != AppSurface::Chat
+            || self.keyboard_overlay_focus(window, cx).is_some()
+        {
             return;
         }
         let active = self.visible_session_targets();
         let archived = session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
         )
         .archived;
         // A held key may advance again before the runtime publishes the selection.
         let selected = self
+            .sessions
             .selected_draft
             .as_ref()
-            .and_then(|id| self.drafts.iter().find(|draft| &draft.id == id))
+            .and_then(|id| self.sessions.drafts.iter().find(|draft| &draft.id == id))
             .map(|draft| draft.app_session_id)
             .or_else(|| {
                 self.selected_rail_root()
@@ -116,15 +120,15 @@ impl FarcasterApp {
             ),
         }
         if let Some(index) = archived_index {
-            self.archived_sessions_expanded |= index >= INACTIVE_PREVIEW_LIMIT;
-            self.archived_session_rail_view.update(cx, |view, cx| {
+            self.sessions.archived_expanded |= index >= INACTIVE_PREVIEW_LIMIT;
+            self.views.archived_session_rail.update(cx, |view, cx| {
                 view.reveal = Some(key);
                 cx.notify();
             });
         } else {
             // The expanded archive occupies the active list's space.
-            self.archived_sessions_expanded = false;
-            self.session_rail_view.update(cx, |view, cx| {
+            self.sessions.archived_expanded = false;
+            self.views.session_rail.update(cx, |view, cx| {
                 view.reveal = Some(key);
                 cx.notify();
             });

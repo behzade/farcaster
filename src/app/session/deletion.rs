@@ -19,13 +19,13 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(family) = archived_root_family_for_path(&self.all_sessions, &path) else {
-            self.sessions_error = Some("Only an archived root session can be deleted".to_owned());
+        let Some(family) = archived_root_family_for_path(&self.sessions.all, &path) else {
+            self.sessions.error = Some("Only an archived root session can be deleted".to_owned());
             self.notify_session_rail(cx);
             return;
         };
         if self.session_family_has_active_work(&path) {
-            self.sessions_error =
+            self.sessions.error =
                 Some("Wait for the session family to finish before deleting it".to_owned());
             self.notify_session_rail(cx);
             return;
@@ -42,7 +42,7 @@ impl FarcasterApp {
             return_focus: window.focused(cx),
         };
         pending.focus.focus(window, cx);
-        self.pending_delete = Some(pending);
+        self.sessions.pending_delete = Some(pending);
         cx.notify();
     }
 
@@ -55,9 +55,10 @@ impl FarcasterApp {
             return;
         };
         self.sessions
+            .visible
             .retain(|session| !pending.family_paths.contains(&session.path));
-        if !self.sessions.iter().any(|session| session.archived) {
-            self.archived_sessions_expanded = false;
+        if !self.sessions.visible.iter().any(|session| session.archived) {
+            self.sessions.archived_expanded = false;
         }
         self.notify_session_rail(cx);
         self.send(
@@ -71,7 +72,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<PendingDelete> {
-        let pending = self.pending_delete.take()?;
+        let pending = self.sessions.pending_delete.take()?;
         self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();

@@ -38,7 +38,7 @@ impl FarcasterApp {
             next_app_session_id: None,
         };
         pending.focus.focus(window, cx);
-        self.pending_archive = Some(pending);
+        self.sessions.pending_archive = Some(pending);
         cx.notify();
     }
 
@@ -50,7 +50,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.request_session_archive(path, true, window, cx);
-        if let Some(pending) = self.pending_archive.as_mut() {
+        if let Some(pending) = self.sessions.pending_archive.as_mut() {
             pending.next_app_session_id = next_app_session_id;
         } else if let Some(id) = next_app_session_id {
             self.select_visible_app_session(id, window, cx);
@@ -76,7 +76,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(PathBuf, Option<i64>)> {
-        let pending = self.pending_archive.take()?;
+        let pending = self.sessions.pending_archive.take()?;
         self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();

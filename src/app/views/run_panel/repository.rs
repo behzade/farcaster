@@ -40,7 +40,7 @@ impl FarcasterApp {
         panel: WeakEntity<RunPanelView>,
         browser: &RepositoryView<'_>,
     ) -> AnyElement {
-        let snapshot = self.repository.snapshot.as_ref();
+        let snapshot = self.project.repository.snapshot.as_ref();
         let header = repository_header(
             self,
             snapshot,
@@ -58,7 +58,7 @@ impl FarcasterApp {
             .gap(THEME.space.xs)
             .child(header)
             .when(
-                self.repository.loading && !self.repository.initialized,
+                self.project.repository.loading && !self.project.repository.initialized,
                 |section| {
                     section.child(
                         div()
@@ -71,7 +71,7 @@ impl FarcasterApp {
                 },
             )
             .when_some(
-                self.repository.preference_error.as_deref(),
+                self.project.repository.preference_error.as_deref(),
                 |section, error| {
                     section.child(repository_notice(
                         &format!("Backend choice was not saved: {}", bounded_message(error)),
@@ -80,7 +80,7 @@ impl FarcasterApp {
                 },
             )
             .when_some(
-                self.repository.watcher_error.as_deref(),
+                self.project.repository.watcher_error.as_deref(),
                 |section, error| {
                     section.child(repository_error_notice(
                         "Auto-refresh unavailable. Use Refresh to try again.",
@@ -89,20 +89,26 @@ impl FarcasterApp {
                     ))
                 },
             )
-            .when_some(self.repository.sync.error.as_deref(), |section, error| {
-                section.child(repository_notice(
-                    &format!("Repository sync failed: {}", bounded_message(error)),
-                    THEME.colors.error,
-                ))
-            })
-            .when_some(self.repository.error.as_deref(), |section, error| {
-                let message = if self.repository.snapshot.is_some() {
-                    "Could not refresh changes. Showing the previous result."
-                } else {
-                    "Could not read this repository. Check the project folder and refresh."
-                };
-                section.child(repository_error_notice(message, error, THEME.colors.error))
-            })
+            .when_some(
+                self.project.repository.sync.error.as_deref(),
+                |section, error| {
+                    section.child(repository_notice(
+                        &format!("Repository sync failed: {}", bounded_message(error)),
+                        THEME.colors.error,
+                    ))
+                },
+            )
+            .when_some(
+                self.project.repository.error.as_deref(),
+                |section, error| {
+                    let message = if self.project.repository.snapshot.is_some() {
+                        "Could not refresh changes. Showing the previous result."
+                    } else {
+                        "Could not read this repository. Check the project folder and refresh."
+                    };
+                    section.child(repository_error_notice(message, error, THEME.colors.error))
+                },
+            )
             .when_some(snapshot, |section, snapshot| {
                 section
                     .child(
@@ -119,7 +125,7 @@ impl FarcasterApp {
                         browser,
                     ))
             })
-            .when(!self.repository.execution_allowed, |section| {
+            .when(!self.project.repository.execution_allowed, |section| {
                 section.child(
                     div()
                         .id("repository-disabled")
@@ -130,10 +136,10 @@ impl FarcasterApp {
                 )
             })
             .when(
-                self.repository.execution_allowed
-                    && self.repository.snapshot.is_none()
-                    && self.repository.error.is_none()
-                    && self.repository.initialized,
+                self.project.repository.execution_allowed
+                    && self.project.repository.snapshot.is_none()
+                    && self.project.repository.error.is_none()
+                    && self.project.repository.initialized,
                 |section| {
                     section.child(
                         div()
@@ -165,7 +171,7 @@ impl FarcasterApp {
                 )
             }),
             browser.query,
-            &self.repository.project,
+            &self.project.repository.project,
             browser.state,
         );
         div()
@@ -185,7 +191,7 @@ impl FarcasterApp {
                         depth,
                         open,
                     } => {
-                        let project = self.repository.project.clone();
+                        let project = self.project.repository.project.clone();
                         let path = path.clone();
                         let panel = panel.clone();
                         let accessible = format!(
@@ -247,15 +253,21 @@ impl FarcasterApp {
         change: &WorkingCopyChange,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
-        let focus = self.repository.row_focus.get(&change.target.key)?.clone();
+        let focus = self
+            .project
+            .repository
+            .row_focus
+            .get(&change.target.key)?
+            .clone();
         let click_entity = entity.clone();
         let click_path = change.target.absolute_path();
         let key_entity = entity.clone();
         let key_path = change.target.absolute_path();
         let row_id = repository_row_id(&change.target.key);
         let action_group: gpui::SharedString = format!("repository-actions-{row_id}").into();
-        let selecting = !self.repository.edits.selection.paths.is_empty();
+        let selecting = !self.project.repository.edits.selection.paths.is_empty();
         let selected = self
+            .project
             .repository
             .edits
             .selection
@@ -264,9 +276,9 @@ impl FarcasterApp {
         let select_entity = entity.clone();
         let select_path = change.relative_path.clone();
         let discard_path = change.relative_path.clone();
-        let editable = self.repository.execution_allowed
-            && self.repository.sync.action.is_none()
-            && self.repository.edits.pending.is_none()
+        let editable = self.project.repository.execution_allowed
+            && self.project.repository.sync.action.is_none()
+            && self.project.repository.edits.pending.is_none()
             && change.kind != crate::repository::ChangeKind::Conflict;
         let full_path = format!("{} · ⌥ Open diff", display_change_path(change));
         let (filename, _) = file_path_labels(&change.relative_path);

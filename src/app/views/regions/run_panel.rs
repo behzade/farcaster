@@ -120,7 +120,7 @@ impl Render for RunPanelView {
                 );
             self.search = Some(input);
         }
-        let project = app.read(cx).repository.project.clone();
+        let project = app.read(cx).project.repository.project.clone();
         if self.search_project.as_ref() != Some(&project) {
             self.search_project = Some(project.clone());
             self.search
@@ -131,6 +131,7 @@ impl Render for RunPanelView {
         }
         let count = app
             .read(cx)
+            .project
             .repository
             .snapshot
             .as_ref()

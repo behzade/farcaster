@@ -62,11 +62,11 @@ pub(in crate::app) fn session_has_live_work(
 impl super::FarcasterApp {
     pub(super) fn session_family_has_active_work(&self, path: &Path) -> bool {
         session_family_has_active_work(
-            &self.all_sessions,
+            &self.sessions.all,
             path,
-            &self.run_statuses,
+            &self.activity.run_statuses,
             &self.snapshot,
-            &self.pending_submissions,
+            &self.composer.pending_submissions,
         )
     }
 }

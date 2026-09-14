@@ -178,13 +178,14 @@ fn fill_file_mention(
     cx: &mut App,
 ) {
     let _ = entity.update(cx, |this, cx| {
-        let (text, cursor) = file_mentions::insert(&this.composer.read(cx).value(), &query, &path);
+        let (text, cursor) =
+            file_mentions::insert(&this.composer.input.read(cx).value(), &query, &path);
         this.apply_composer_snapshot(
             ComposerSnapshot::new(text, cursor, cursor..cursor),
             window,
             cx,
         );
-        this.composer_focus.focus(window, cx);
+        this.composer.focus.focus(window, cx);
     });
 }
 
@@ -196,7 +197,7 @@ fn fill_command(
     cx: &mut App,
 ) {
     let _ = entity.update(cx, |this, cx| {
-        let composer = this.composer.read(cx);
+        let composer = this.composer.input.read(cx);
         let (text, cursor) =
             user_invocations::complete(&composer.value(), composer.cursor(), sigil, &name);
         this.apply_composer_snapshot(
@@ -204,6 +205,6 @@ fn fill_command(
             window,
             cx,
         );
-        this.composer_focus.focus(window, cx);
+        this.composer.focus.focus(window, cx);
     });
 }

@@ -7,7 +7,7 @@ impl FarcasterApp {
         div()
             .size_full()
             .min_h_0()
-            .children(self.terminal.clone())
+            .children(self.workspace.terminal.view.clone())
             .into_any_element()
     }
 }

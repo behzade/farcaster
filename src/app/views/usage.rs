@@ -11,9 +11,9 @@ pub(super) struct ComposerUsage {
 }
 
 pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
-    let root = root_session_for_path(&app.all_sessions, app.snapshot.selected_session.as_deref());
+    let root = root_session_for_path(&app.sessions.all, app.snapshot.selected_session.as_deref());
     let descendants = root
-        .map(|root| descendant_sessions_for_root(&app.all_sessions, root))
+        .map(|root| descendant_sessions_for_root(&app.sessions.all, root))
         .unwrap_or_default();
     let mut aggregate = root.map(|root| root.usage).unwrap_or_default();
     for (session, _) in &descendants {

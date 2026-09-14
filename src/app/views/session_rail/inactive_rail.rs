@@ -30,23 +30,25 @@ impl FarcasterApp {
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
         let selected_root = self.selected_rail_root().map(|session| session.id.clone());
-        let live_root =
-            root_session_for_path(&self.sessions, self.snapshot.live_session.as_deref())
-                .map(|session| session.id.clone());
-        let waiting_roots = roots_waiting_for_descendants(&self.all_sessions);
+        let live_root = root_session_for_path(
+            &self.sessions.visible,
+            self.snapshot.live_session.as_deref(),
+        )
+        .map(|session| session.id.clone());
+        let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
         let lists = session_rail_lists(
-            &self.sessions,
-            &self.drafts,
-            self.session_project_filter.as_deref(),
-            &self.session_order,
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
         );
         let (rows, expanded) = match kind {
-            SessionRailKind::Archived => (lists.archived, self.archived_sessions_expanded),
+            SessionRailKind::Archived => (lists.archived, self.sessions.archived_expanded),
             SessionRailKind::Project => unreachable!("active sessions use the main rail"),
         };
         let count = rows.len();
         let expanded = expanded && count > 0;
-        let counts = subagent_counts(&self.all_sessions);
+        let counts = subagent_counts(&self.sessions.all);
         reconcile_list_rows(
             &list_state,
             list_rows,
@@ -61,19 +63,20 @@ impl FarcasterApp {
                 let badge = inactive_session_badge(
                     kind,
                     item,
-                    &self.run_statuses,
+                    &self.activity.run_statuses,
                     live_root.as_deref(),
                     &self.snapshot.live_status,
                     &waiting_roots,
                 );
                 let editing = self
-                    .editing_session_title
+                    .sessions
+                    .editing_title
                     .as_ref()
                     .is_some_and(|edit| edit.path == item.session.path);
                 SessionRow::new(
                     item,
                     SessionRowInput {
-                        title_editor: editing.then(|| self.session_title_input.clone()),
+                        title_editor: editing.then(|| self.sessions.title_input.clone()),
                         subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
                         row_height: THEME.controls.archived_preview_row,
                         ..SessionRowInput::standard(selected, badge)
@@ -84,12 +87,13 @@ impl FarcasterApp {
             .collect::<Vec<_>>();
         let row_entity = entity.clone();
         let editing_path = self
-            .editing_session_title
+            .sessions
+            .editing_title
             .as_ref()
             .map(|edit| edit.path.clone());
-        let title_input = self.session_title_input.clone();
+        let title_input = self.sessions.title_input.clone();
         let live_status = self.snapshot.live_status.clone();
-        let run_statuses = self.run_statuses.clone();
+        let run_statuses = self.activity.run_statuses.clone();
         let rows_list = list(list_state, move |index, _, _| match rows.get(index) {
             Some(item) => {
                 let selected = selected_root.as_deref() == Some(item.session.id.as_str());
@@ -135,7 +139,7 @@ impl FarcasterApp {
                         "Archived sessions",
                         move |_, cx| {
                             let _ = toggle_entity.update(cx, |this, cx| {
-                                this.archived_sessions_expanded = !this.archived_sessions_expanded;
+                                this.sessions.archived_expanded = !this.sessions.archived_expanded;
                                 this.notify_session_rail(cx);
                             });
                         },

@@ -208,7 +208,11 @@ impl FarcasterApp {
         execution_allowed: bool,
         cx: &mut Context<Self>,
     ) {
-        if self.repository.select_project(project, execution_allowed) {
+        if self
+            .project
+            .repository
+            .select_project(project, execution_allowed)
+        {
             self.request_repository_refresh(cx);
         }
     }
@@ -220,17 +224,21 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if preference == BackendPreference::Jujutsu {
-            if self.repository.jj_init_in_flight {
+            if self.project.repository.jj_init_in_flight {
                 return;
             }
             let location = self
+                .project
                 .repository
                 .snapshot
                 .as_ref()
                 .map(|snapshot| Ok(Some(snapshot.location.clone())))
                 .unwrap_or_else(|| {
-                    RepositoryBackend::discover(&self.repository.project, BackendPreference::Auto)
-                        .map(|backend| backend.map(|backend| backend.location().clone()))
+                    RepositoryBackend::discover(
+                        &self.project.repository.project,
+                        BackendPreference::Auto,
+                    )
+                    .map(|backend| backend.map(|backend| backend.location().clone()))
                 });
             match location.and_then(|location| {
                 location
@@ -244,18 +252,18 @@ impl FarcasterApp {
                     let pending = PendingJjInit {
                         focus: cx.focus_handle(),
                         repository: location.workspace_root.clone(),
-                        project: self.repository.project.clone(),
+                        project: self.project.repository.project.clone(),
                         return_focus: window.focused(cx),
                     };
                     self.cover_native_workspace_surface(cx);
                     pending.focus.focus(window, cx);
-                    self.repository.pending_jj_init = Some(pending);
+                    self.project.repository.pending_jj_init = Some(pending);
                     cx.notify();
                     return;
                 }
                 Ok(Some((_, false)) | None) => {}
                 Err(error) => {
-                    self.repository.error = Some(error.to_string());
+                    self.project.repository.error = Some(error.to_string());
                     self.notify_run_panel(cx);
                     return;
                 }
@@ -270,16 +278,16 @@ impl FarcasterApp {
         refresh_unchanged: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.select_preference(preference) {
+        if !self.project.repository.select_preference(preference) {
             if refresh_unchanged {
-                self.repository.clear_observation();
+                self.project.repository.clear_observation();
                 self.request_repository_refresh(cx);
             }
             return;
         }
-        self.composer_project_files.clear();
-        self.composer_project_files_project = None;
-        self.composer_project_files_loading = None;
+        self.composer.project_files.clear();
+        self.composer.project_files_project = None;
+        self.composer.project_files_loading = None;
         self.persist_repository_preferences(cx);
         self.request_repository_refresh(cx);
     }
@@ -289,7 +297,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<PendingJjInit> {
-        let pending = self.repository.pending_jj_init.take()?;
+        let pending = self.project.repository.pending_jj_init.take()?;
         self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
         cx.notify();
@@ -302,16 +310,16 @@ impl FarcasterApp {
         };
         let repository = pending.repository;
         let project = pending.project;
-        self.repository.jj_init_in_flight = true;
+        self.project.repository.jj_init_in_flight = true;
         let task =
             cx.background_spawn(async move { RepositoryBackend::init_jj_colocated(&repository) });
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| {
-                if this.repository.project != project {
+                if this.project.repository.project != project {
                     return;
                 }
-                this.repository.jj_init_in_flight = false;
+                this.project.repository.jj_init_in_flight = false;
                 match result {
                     Ok(()) => this.apply_repository_backend_preference(
                         BackendPreference::Jujutsu,
@@ -319,7 +327,7 @@ impl FarcasterApp {
                         cx,
                     ),
                     Err(error) => {
-                        this.repository.error =
+                        this.project.repository.error =
                             Some(format!("Jujutsu initialization failed: {error}"));
                         this.notify_run_panel(cx);
                     }
@@ -334,35 +342,35 @@ impl FarcasterApp {
         action: RepositorySyncAction,
         cx: &mut Context<Self>,
     ) {
-        if !self.repository.execution_allowed
-            || self.repository.sync.action.is_some()
-            || self.repository.edits.pending.is_some()
+        if !self.project.repository.execution_allowed
+            || self.project.repository.sync.action.is_some()
+            || self.project.repository.edits.pending.is_some()
         {
             return;
         }
         let (Some(backend), Some(snapshot)) = (
-            self.repository.backend.clone(),
-            self.repository.snapshot.clone(),
+            self.project.repository.backend.clone(),
+            self.project.repository.snapshot.clone(),
         ) else {
             return;
         };
-        self.repository.sync.action = Some(action);
-        self.repository.sync.error = None;
-        let generation = self.repository.sync.generation;
+        self.project.repository.sync.action = Some(action);
+        self.project.repository.sync.error = None;
+        let generation = self.project.repository.sync.generation;
         self.notify_run_panel(cx);
         let task = cx.background_spawn(async move { backend.sync(&snapshot, action) });
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| {
-                if this.repository.sync.generation != generation
-                    || this.repository.sync.action != Some(action)
+                if this.project.repository.sync.generation != generation
+                    || this.project.repository.sync.action != Some(action)
                 {
                     return;
                 }
-                this.repository.sync.action = None;
-                this.repository.sync.error = result.err().map(|error| error.to_string());
+                this.project.repository.sync.action = None;
+                this.project.repository.sync.error = result.err().map(|error| error.to_string());
                 this.notify_run_panel(cx);
-                if this.repository.sync.error.is_none() {
+                if this.project.repository.sync.error.is_none() {
                     this.request_repository_refresh(cx);
                 }
             });
@@ -371,17 +379,17 @@ impl FarcasterApp {
     }
 
     pub(crate) fn request_repository_refresh(&mut self, cx: &mut Context<Self>) {
-        if !self.repository.execution_allowed {
-            self.repository.clear_observation();
+        if !self.project.repository.execution_allowed {
+            self.project.repository.clear_observation();
             self.notify_run_panel(cx);
             return;
         }
-        let notify = !self.repository.initialized && !self.repository.loading;
-        self.repository.loading = true;
-        if !self.repository.initialized {
-            self.repository.error = None;
+        let notify = !self.project.repository.initialized && !self.project.repository.loading;
+        self.project.repository.loading = true;
+        if !self.project.repository.initialized {
+            self.project.repository.error = None;
         }
-        let generation = self.repository.refresh.request();
+        let generation = self.project.repository.refresh.request();
         if notify {
             self.notify_run_panel(cx);
         }
@@ -391,8 +399,8 @@ impl FarcasterApp {
     }
 
     fn start_repository_refresh(&mut self, generation: u64, cx: &mut Context<Self>) {
-        let project = self.repository.project.clone();
-        let preference = self.repository.preference;
+        let project = self.project.repository.project.clone();
+        let preference = self.project.repository.preference;
         let task = cx.background_spawn(async move {
             RepositoryBackend::discover(&project, preference).map(|backend| {
                 backend.map(|backend| {
@@ -409,40 +417,45 @@ impl FarcasterApp {
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| {
-                let Some(completion) = this.repository.refresh.finish(generation) else {
+                let Some(completion) = this.project.repository.refresh.finish(generation) else {
                     return;
                 };
-                let mut display_changed = completion.publish && !this.repository.initialized;
+                let mut display_changed =
+                    completion.publish && !this.project.repository.initialized;
                 if completion.publish {
-                    this.repository.initialized = true;
+                    this.project.repository.initialized = true;
                     match result {
                         Ok(Some((backend, Ok((snapshot, additions, deletions))))) => {
-                            let observation_changed =
-                                this.repository.snapshot.as_ref().is_none_or(|current| {
-                                    !displayed_snapshot_eq(current, &snapshot)
-                                }) || this.repository.additions != additions
-                                    || this.repository.deletions != deletions;
+                            let observation_changed = this
+                                .project
+                                .repository
+                                .snapshot
+                                .as_ref()
+                                .is_none_or(|current| !displayed_snapshot_eq(current, &snapshot))
+                                || this.project.repository.additions != additions
+                                || this.project.repository.deletions != deletions;
                             if observation_changed {
-                                this.repository.row_focus.retain(|key, _| {
+                                this.project.repository.row_focus.retain(|key, _| {
                                     snapshot
                                         .changes
                                         .iter()
                                         .any(|change| &change.target.key == key)
                                 });
                                 for change in &snapshot.changes {
-                                    this.repository
+                                    this.project
+                                        .repository
                                         .row_focus
                                         .entry(change.target.key.clone())
                                         .or_insert_with(|| cx.focus_handle());
                                 }
                             }
                             let location = snapshot.location.clone();
-                            this.repository.edits.selection.retain(&snapshot);
-                            this.repository.backend = Some(backend);
-                            this.repository.snapshot = Some(snapshot);
-                            this.repository.additions = additions;
-                            this.repository.deletions = deletions;
-                            display_changed |= this.repository.error.take().is_some();
+                            this.project.repository.edits.selection.retain(&snapshot);
+                            this.project.repository.backend = Some(backend);
+                            this.project.repository.snapshot = Some(snapshot);
+                            this.project.repository.additions = additions;
+                            this.project.repository.deletions = deletions;
+                            display_changed |= this.project.repository.error.take().is_some();
                             display_changed |= this.install_repository_watcher(location, cx);
                             if observation_changed {
                                 display_changed = true;
@@ -452,38 +465,39 @@ impl FarcasterApp {
                         Ok(Some((backend, Err(error)))) => {
                             let location = backend.location().clone();
                             if this
+                                .project
                                 .repository
                                 .snapshot
                                 .as_ref()
                                 .is_some_and(|snapshot| snapshot.location != location)
                             {
-                                this.repository.backend = None;
-                                this.repository.snapshot = None;
-                                this.repository.additions = None;
-                                this.repository.deletions = None;
-                                this.repository.row_focus.clear();
+                                this.project.repository.backend = None;
+                                this.project.repository.snapshot = None;
+                                this.project.repository.additions = None;
+                                this.project.repository.deletions = None;
+                                this.project.repository.row_focus.clear();
                                 display_changed = true;
                             }
-                            this.repository.backend = Some(backend);
-                            if this.repository.snapshot.is_some() {
+                            this.project.repository.backend = Some(backend);
+                            if this.project.repository.snapshot.is_some() {
                                 display_changed |= this.install_repository_watcher(location, cx);
                             } else {
                                 display_changed |= this.install_repository_discovery_watcher(cx);
                             }
                             let error = error.to_string();
                             display_changed |=
-                                this.repository.error.as_deref() != Some(error.as_str());
-                            this.repository.error = Some(error);
+                                this.project.repository.error.as_deref() != Some(error.as_str());
+                            this.project.repository.error = Some(error);
                         }
                         Ok(None) => {
-                            let had_observation = this.repository.backend.is_some()
-                                || this.repository.snapshot.is_some();
-                            this.repository.backend = None;
-                            this.repository.snapshot = None;
-                            this.repository.additions = None;
-                            this.repository.deletions = None;
-                            display_changed |= this.repository.error.take().is_some();
-                            this.repository.row_focus.clear();
+                            let had_observation = this.project.repository.backend.is_some()
+                                || this.project.repository.snapshot.is_some();
+                            this.project.repository.backend = None;
+                            this.project.repository.snapshot = None;
+                            this.project.repository.additions = None;
+                            this.project.repository.deletions = None;
+                            display_changed |= this.project.repository.error.take().is_some();
+                            this.project.repository.row_focus.clear();
                             display_changed |= this.install_repository_discovery_watcher(cx);
                             if had_observation {
                                 display_changed = true;
@@ -491,20 +505,20 @@ impl FarcasterApp {
                             }
                         }
                         Err(error) => {
-                            if this.repository.snapshot.is_none() {
+                            if this.project.repository.snapshot.is_none() {
                                 display_changed |= this.install_repository_discovery_watcher(cx);
                             }
                             let error = error.to_string();
                             display_changed |=
-                                this.repository.error.as_deref() != Some(error.as_str());
-                            this.repository.error = Some(error);
+                                this.project.repository.error.as_deref() != Some(error.as_str());
+                            this.project.repository.error = Some(error);
                         }
                     }
                 }
                 if let Some(next) = completion.next {
                     this.start_repository_refresh(next, cx);
                 } else {
-                    this.repository.loading = false;
+                    this.project.repository.loading = false;
                 }
                 if display_changed {
                     this.notify_run_panel(cx);
@@ -515,10 +529,10 @@ impl FarcasterApp {
     }
 
     fn invalidate_repository_file_mentions(&mut self, cx: &mut Context<Self>) {
-        self.composer_project_files.clear();
-        self.composer_project_files_project = None;
-        self.composer_project_files_loading = None;
-        let input = self.composer.read(cx);
+        self.composer.project_files.clear();
+        self.composer.project_files_project = None;
+        self.composer.project_files_loading = None;
+        let input = self.composer.input.read(cx);
         let has_active_mention =
             crate::app::composer::file_mentions::query_at_cursor(&input.value(), input.cursor())
                 .is_some();
@@ -530,21 +544,21 @@ impl FarcasterApp {
     }
 
     fn persist_repository_preferences(&mut self, cx: &mut Context<Self>) {
-        if self.repository.preference_save_in_flight {
-            self.repository.preference_save_pending = true;
+        if self.project.repository.preference_save_in_flight {
+            self.project.repository.preference_save_pending = true;
             return;
         }
-        self.repository.preference_save_in_flight = true;
-        let preferences = self.repository.preferences.clone();
+        self.project.repository.preference_save_in_flight = true;
+        let preferences = self.project.repository.preferences.clone();
         let task = cx.background_spawn(async move {
             crate::repository::save_preferences(&StateStore::open()?, &preferences)
         });
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| {
-                this.repository.preference_save_in_flight = false;
-                this.repository.preference_error = result.err();
-                let rerun = std::mem::take(&mut this.repository.preference_save_pending);
+                this.project.repository.preference_save_in_flight = false;
+                this.project.repository.preference_error = result.err();
+                let rerun = std::mem::take(&mut this.project.repository.preference_save_pending);
                 if rerun {
                     this.persist_repository_preferences(cx);
                 }

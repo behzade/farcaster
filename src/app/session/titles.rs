@@ -17,18 +17,18 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editing_folder = None;
-        self.editing_session_title = Some(SessionTitleEdit {
+        self.sessions.editing_folder = None;
+        self.sessions.editing_title = Some(SessionTitleEdit {
             path,
             project,
             original: title.clone(),
         });
-        self.session_title_input.update(cx, |input, cx| {
+        self.sessions.title_input.update(cx, |input, cx| {
             input.set_placeholder("Session name", window, cx);
             input.set_value(title.clone(), window, cx);
             input.set_selected_range(0..title.len(), cx);
         });
-        self.pending_session_title_focus = true;
+        self.sessions.pending_title_focus = true;
         self.notify_session_rail(cx);
         cx.notify();
     }
@@ -38,14 +38,14 @@ impl FarcasterApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.editing_folder.is_some() {
+        if self.sessions.editing_folder.is_some() {
             self.commit_folder_edit(cx);
             return;
         }
-        let Some(edit) = self.editing_session_title.take() else {
+        let Some(edit) = self.sessions.editing_title.take() else {
             return;
         };
-        let title = self.session_title_input.read(cx).value().trim().to_owned();
+        let title = self.sessions.title_input.read(cx).value().trim().to_owned();
         if title.is_empty() || title == edit.original {
             self.notify_session_rail(cx);
             cx.notify();
@@ -62,11 +62,12 @@ impl FarcasterApp {
         let Some(target) = self.backend_target_for_path(&edit.path, cx) else {
             return;
         };
-        self.pending_session_titles
+        self.sessions
+            .pending_titles
             .insert(edited_path.clone(), title.clone());
         set_session_title(
-            &mut self.sessions,
-            &mut self.all_sessions,
+            &mut self.sessions.visible,
+            &mut self.sessions.all,
             &edited_path,
             &title,
         );
@@ -90,7 +91,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn cancel_session_title_edit(&mut self, cx: &mut Context<Self>) {
-        if self.editing_folder.take().is_some() || self.editing_session_title.take().is_some() {
+        if self.sessions.editing_folder.take().is_some()
+            || self.sessions.editing_title.take().is_some()
+        {
             self.notify_session_rail(cx);
             cx.notify();
         }
@@ -101,13 +104,13 @@ impl FarcasterApp {
         sessions: &mut [SessionSummary],
         all_sessions: &mut [SessionSummary],
     ) {
-        self.pending_session_titles.retain(|path, pending_title| {
+        self.sessions.pending_titles.retain(|path, pending_title| {
             !all_sessions.iter().chain(sessions.iter()).any(|session| {
                 normalize_session_path(&session.path) == *path && session.title == *pending_title
             })
         });
 
-        for (path, title) in &self.pending_session_titles {
+        for (path, title) in &self.sessions.pending_titles {
             set_session_title(sessions, all_sessions, path, title);
         }
     }

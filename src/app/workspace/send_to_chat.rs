@@ -99,13 +99,19 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.surface != AppSurface::Editor
+        if self.workspace.surface != AppSurface::Editor
             || self.native_workspace_covered_by_overlay()
-            || self.send_to_chat_capture.is_some()
+            || self.workspace.send_to_chat_capture.is_some()
         {
             return;
         }
-        let Some(editor) = self.editor.clone().filter(|_| self.editor_ready) else {
+        let Some(editor) = self
+            .workspace
+            .editor
+            .view
+            .clone()
+            .filter(|_| self.workspace.editor.ready)
+        else {
             return;
         };
         let settings = TaskSettings {
@@ -115,19 +121,19 @@ impl FarcasterApp {
             effort: self.snapshot.session_identity().effort.map(str::to_owned),
             access_mode: self.snapshot.access_mode_for_new_session(),
         };
-        let target = self.composer_sessions.current_target().to_owned();
-        let generation = self.editor_request_generation;
+        let target = self.composer.sessions.current_target().to_owned();
+        let generation = self.workspace.editor.request_generation;
         let return_focus = window.focused(cx);
         let capture = editor.update(cx, |editor, cx| editor.capture_code(cx));
-        self.send_to_chat_capture = Some(cx.spawn_in(window, async move |weak, cx| {
+        self.workspace.send_to_chat_capture = Some(cx.spawn_in(window, async move |weak, cx| {
             let result = capture.await;
             let _ = weak.update_in(cx, |this, window, cx| {
-                this.send_to_chat_capture = None;
+                this.workspace.send_to_chat_capture = None;
                 // Never open a late capture over another session, editor, or modal.
-                if this.composer_sessions.current_target() != target
-                    || this.editor_request_generation != generation
-                    || this.editor.as_ref() != Some(&editor)
-                    || this.surface != AppSurface::Editor
+                if this.composer.sessions.current_target() != target
+                    || this.workspace.editor.request_generation != generation
+                    || this.workspace.editor.view.as_ref() != Some(&editor)
+                    || this.workspace.surface != AppSurface::Editor
                     || this.native_workspace_covered_by_overlay()
                     || window.focused(cx) != return_focus
                 {
@@ -169,8 +175,8 @@ impl FarcasterApp {
                     harness: settings.harness.clone(),
                 };
                 let destinations =
-                    destinations::choices(&settings.project, current, &this.all_sessions);
-                this.send_to_chat = Some(SendToChat {
+                    destinations::choices(&settings.project, current, &this.sessions.all);
+                this.workspace.send_to_chat = Some(SendToChat {
                     focus: cx.focus_handle(),
                     input,
                     context,
@@ -195,6 +201,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self
+            .workspace
             .send_to_chat
             .as_ref()
             .is_some_and(|dialog| dialog.picker.is_some())
@@ -202,7 +209,7 @@ impl FarcasterApp {
             self.close_code_destination_picker(window, cx);
             return;
         }
-        let Some(dialog) = self.send_to_chat.take() else {
+        let Some(dialog) = self.workspace.send_to_chat.take() else {
             return;
         };
         self.restore_overlay_focus(dialog.return_focus, &dialog.focus, window, cx);
@@ -215,14 +222,14 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dialog) = self.send_to_chat.as_mut() else {
+        let Some(dialog) = self.workspace.send_to_chat.as_mut() else {
             return;
         };
         dialog.error = None;
         if dialog.picker.is_some() {
             return;
         }
-        if dialog.target != self.composer_sessions.current_target() {
+        if dialog.target != self.composer.sessions.current_target() {
             self.send_to_chat_error(
                 "Return to the original session to use this code capture.".into(),
                 cx,
@@ -244,7 +251,7 @@ impl FarcasterApp {
     }
 
     pub(super) fn send_to_chat_error(&mut self, message: String, cx: &mut Context<Self>) {
-        if let Some(dialog) = self.send_to_chat.as_mut() {
+        if let Some(dialog) = self.workspace.send_to_chat.as_mut() {
             dialog.error = Some(message);
             cx.notify();
         }

@@ -144,7 +144,8 @@ impl PickerState {
 
 impl FarcasterApp {
     pub(in crate::app) fn picker_focus(&self, cx: &gpui::App) -> Option<gpui::FocusHandle> {
-        self.picker
+        self.navigation
+            .picker
             .as_ref()
             .map(|picker| picker.list.read(cx).focus_handle(cx))
     }
@@ -159,39 +160,41 @@ impl FarcasterApp {
             return;
         }
         if self
+            .navigation
             .picker
             .as_ref()
             .is_some_and(|picker| picker.scope != scope && picker.has_ancestor(&scope))
         {
-            let mut page = self.picker.take().expect("picker has history");
+            let mut page = self.navigation.picker.take().expect("picker has history");
             while page.scope != scope {
                 page = page.pop_previous().expect("requested ancestor exists");
             }
             page.list.update(cx, |list, cx| list.focus(window, cx));
-            self.picker = Some(page);
+            self.navigation.picker = Some(page);
             cx.notify();
             return;
         }
         self.cover_native_workspace_surface(cx);
-        if self.picker.is_none() {
-            let sheet_open = self.overlays.sessions
-                || self.overlays.run
-                || self.overlays.keybindings
-                || self.overlays.settings;
-            self.picker_return_focus = if sheet_open {
-                self.sheet_return_focus
+        if self.navigation.picker.is_none() {
+            let sheet_open = self.overlays.view.sessions
+                || self.overlays.view.run
+                || self.overlays.view.keybindings
+                || self.overlays.view.settings;
+            self.navigation.picker_return_focus = if sheet_open {
+                self.overlays
+                    .sheet_return_focus
                     .clone()
                     .or_else(|| Some(self.chat_composer_focus(cx)))
             } else {
                 window.focused(cx)
             };
             if sheet_open {
-                self.overlays.sessions = false;
-                self.overlays.run = false;
-                self.overlays.keybindings = false;
-                self.overlays.settings = false;
-                self.overlays.pending_setup = false;
-                self.sheet_return_focus = None;
+                self.overlays.view.sessions = false;
+                self.overlays.view.run = false;
+                self.overlays.view.keybindings = false;
+                self.overlays.view.settings = false;
+                self.overlays.view.pending_setup = false;
+                self.overlays.sheet_return_focus = None;
             }
         }
         let (rows, commands) = self.picker_rows(scope.clone());
@@ -242,6 +245,7 @@ impl FarcasterApp {
             list.focus(window, cx);
         });
         let previous = self
+            .navigation
             .picker
             .take()
             .filter(|_| scope != PickerScope::Actions)
@@ -252,7 +256,7 @@ impl FarcasterApp {
                     Some(Box::new(page))
                 }
             });
-        self.picker = Some(PickerState {
+        self.navigation.picker = Some(PickerState {
             scope,
             list,
             commands,
@@ -264,10 +268,10 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(picker) = self.picker.take() else {
+        let Some(picker) = self.navigation.picker.take() else {
             return;
         };
-        let target = self.picker_return_focus.take();
+        let target = self.navigation.picker_return_focus.take();
         let focus = picker.list.read(cx).focus_handle(cx);
         self.restore_overlay_focus(target, &focus, window, cx);
         self.restore_active_native_workspace_surface(window, cx);
@@ -275,7 +279,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn picker_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(picker) = self.picker.as_ref() else {
+        let Some(picker) = self.navigation.picker.as_ref() else {
             return;
         };
         if !picker.query.borrow().is_empty() {
@@ -291,15 +295,20 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.picker.is_none() {
+        if self.navigation.picker.is_none() {
             return;
         }
-        if let Some(previous) = self.picker.as_mut().and_then(PickerState::pop_previous) {
+        if let Some(previous) = self
+            .navigation
+            .picker
+            .as_mut()
+            .and_then(PickerState::pop_previous)
+        {
             previous.list.update(cx, |list, cx| list.focus(window, cx));
-            self.picker = Some(previous);
+            self.navigation.picker = Some(previous);
             cx.notify();
         } else if matches!(
-            self.picker.as_ref().map(|picker| &picker.scope),
+            self.navigation.picker.as_ref().map(|picker| &picker.scope),
             Some(PickerScope::Actions)
         ) {
             self.close_picker(window, cx);
@@ -314,7 +323,7 @@ impl FarcasterApp {
         entity: WeakEntity<Self>,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let picker = self.picker.as_ref()?;
+        let picker = self.navigation.picker.as_ref()?;
         let list = picker.list.clone();
         let focus = list.read(cx).focus_handle(cx);
         let back_label = match picker.previous.as_ref().map(|page| &page.scope) {
@@ -399,6 +408,7 @@ impl FarcasterApp {
 
     fn execute_picker_row(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(command) = self
+            .navigation
             .picker
             .as_ref()
             .and_then(|picker| picker.commands.get(id))
@@ -490,7 +500,7 @@ impl FarcasterApp {
             PickerCommand::ChangeDraftProject(project) => {
                 self.close_picker(window, cx);
                 self.change_draft_project(project, window, cx);
-                self.composer_focus.focus(window, cx);
+                self.composer.focus.focus(window, cx);
             }
             PickerCommand::MoveSession { path, project } => {
                 self.close_picker(window, cx);
@@ -522,7 +532,7 @@ impl FarcasterApp {
                     Some("ctrl-g shift-n".into()),
                     "neovim editor selection background new chat",
                 )
-                .disabled(self.surface != crate::app::AppSurface::Editor),
+                .disabled(self.workspace.surface != crate::app::AppSurface::Editor),
                 picker_row(
                     &mut commands,
                     "action:harness",
@@ -637,47 +647,50 @@ impl FarcasterApp {
                     intent,
                     ProjectPickerIntent::NewSession | ProjectPickerIntent::NewSessionInFolder(_)
                 ) && self.snapshot.selected_session.is_some())
-                .then_some(self.project.as_path());
-                let mut rows =
-                    ordered_projects(&self.projects, &self.all_sessions, open_session_project)
-                        .into_iter()
-                        .filter(|project| project_is_available_for_intent(&intent, project))
-                        .enumerate()
-                        .map(|(index, project)| {
-                            let command = match &intent {
-                                ProjectPickerIntent::NewSession => PickerCommand::NewSession {
-                                    project: project.clone(),
-                                    folder: None,
-                                },
-                                ProjectPickerIntent::NewSessionInFolder(folder) => {
-                                    PickerCommand::NewSession {
-                                        project: project.clone(),
-                                        folder: Some(*folder),
-                                    }
-                                }
-                                ProjectPickerIntent::ChangeDraft => {
-                                    PickerCommand::ChangeDraftProject(project.clone())
-                                }
-                                ProjectPickerIntent::MoveSession { path, .. } => {
-                                    PickerCommand::MoveSession {
-                                        path: path.clone(),
-                                        project: project.clone(),
-                                    }
-                                }
-                            };
-                            picker_row(
-                                &mut commands,
-                                &format!("project:{index}"),
-                                command,
-                                AppIcon::Folder,
-                                &project_label(&project),
-                                Some(project.display().to_string()),
-                                None,
-                                "project folder checkout",
-                            )
-                            .removable_project(project)
-                        })
-                        .collect::<Vec<_>>();
+                .then_some(self.project.path.as_path());
+                let mut rows = ordered_projects(
+                    &self.project.registered,
+                    &self.sessions.all,
+                    open_session_project,
+                )
+                .into_iter()
+                .filter(|project| project_is_available_for_intent(&intent, project))
+                .enumerate()
+                .map(|(index, project)| {
+                    let command = match &intent {
+                        ProjectPickerIntent::NewSession => PickerCommand::NewSession {
+                            project: project.clone(),
+                            folder: None,
+                        },
+                        ProjectPickerIntent::NewSessionInFolder(folder) => {
+                            PickerCommand::NewSession {
+                                project: project.clone(),
+                                folder: Some(*folder),
+                            }
+                        }
+                        ProjectPickerIntent::ChangeDraft => {
+                            PickerCommand::ChangeDraftProject(project.clone())
+                        }
+                        ProjectPickerIntent::MoveSession { path, .. } => {
+                            PickerCommand::MoveSession {
+                                path: path.clone(),
+                                project: project.clone(),
+                            }
+                        }
+                    };
+                    picker_row(
+                        &mut commands,
+                        &format!("project:{index}"),
+                        command,
+                        AppIcon::Folder,
+                        &project_label(&project),
+                        Some(project.display().to_string()),
+                        None,
+                        "project folder checkout",
+                    )
+                    .removable_project(project)
+                })
+                .collect::<Vec<_>>();
                 rows.push(picker_row(
                     &mut commands,
                     "project:new",
@@ -692,7 +705,8 @@ impl FarcasterApp {
             }
             PickerScope::Sessions => {
                 let mut entries = self
-                    .all_sessions
+                    .sessions
+                    .all
                     .iter()
                     .filter(|session| session.parent_session.is_none())
                     .map(|session| {
@@ -705,7 +719,8 @@ impl FarcasterApp {
                         )
                     })
                     .chain(
-                        self.drafts
+                        self.sessions
+                            .drafts
                             .iter()
                             .filter(|draft| draft.session_path.is_none())
                             .map(|draft| {

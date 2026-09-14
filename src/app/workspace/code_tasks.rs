@@ -67,7 +67,7 @@ impl FarcasterApp {
     ) {
         let target = destination.target;
         if crate::app::composer::submissions::has_pending_submission(
-            &self.pending_submissions,
+            &self.composer.pending_submissions,
             &target,
         ) {
             self.send_to_chat_error(
@@ -106,7 +106,7 @@ impl FarcasterApp {
         if let Some(path) = crate::app::composer::submissions::inactive_session_for_target(
             &target,
             chat.session.as_deref(),
-            &self.all_sessions,
+            &self.sessions.all,
         ) {
             self.set_session_active(path, cx);
         }
@@ -130,13 +130,13 @@ impl FarcasterApp {
         let draft = project_registry::new_draft(settings.project.clone(), settings.harness)
             .and_then(|draft| {
                 let mut registry = crate::projects::Registry {
-                    projects: self.projects.clone(),
-                    excluded_projects: self.excluded_projects.clone(),
-                    drafts: self.drafts.clone(),
+                    projects: self.project.registered.clone(),
+                    excluded_projects: self.project.excluded.clone(),
+                    drafts: self.sessions.drafts.clone(),
                 };
                 registry.drafts.insert(0, draft.clone());
                 project_registry::save(&registry)?;
-                self.drafts = registry.drafts;
+                self.sessions.drafts = registry.drafts;
                 Ok(draft)
             });
         let draft = match draft {
@@ -147,7 +147,8 @@ impl FarcasterApp {
             }
         };
         let target = draft_target(&draft.id);
-        self.draft_session_ids
+        self.sessions
+            .draft_session_ids
             .insert(draft.id.clone(), draft.app_session_id);
         let chat = TaskChat {
             submission_id: uuid::Uuid::new_v4().to_string(),
@@ -164,7 +165,8 @@ impl FarcasterApp {
         }) {
             Ok(()) => self.track_code_submission(chat, message, cx),
             Err(_) => {
-                self.composer_sessions
+                self.composer
+                    .sessions
                     .restore_submitted_text(&target, message);
                 self.show_code_task_notice(chat, Some(false), cx);
             }
@@ -176,9 +178,9 @@ impl FarcasterApp {
     fn track_code_submission(&mut self, chat: TaskChat, message: String, cx: &mut Context<Self>) {
         let target = &chat.target;
         self.begin_draft_submission(target, &message);
-        self.composer_sessions.record_submission(target, &message);
+        self.composer.sessions.record_submission(target, &message);
         let submission_id = chat.submission_id.clone();
-        self.pending_submissions.insert(
+        self.composer.pending_submissions.insert(
             submission_id.clone(),
             PendingSubmission {
                 id: submission_id,
@@ -192,7 +194,10 @@ impl FarcasterApp {
                 result: None,
             },
         );
-        self.code_tasks.pending.insert(target.clone(), chat.clone());
+        self.workspace
+            .code_tasks
+            .pending
+            .insert(target.clone(), chat.clone());
         self.show_code_task_notice(chat, None, cx);
     }
 
@@ -203,8 +208,8 @@ impl FarcasterApp {
         session: Option<&std::path::Path>,
         cx: &mut Context<Self>,
     ) {
-        self.code_tasks.associate(target, session);
-        let Some(chat) = self.code_tasks.pending.remove(target) else {
+        self.workspace.code_tasks.associate(target, session);
+        let Some(chat) = self.workspace.code_tasks.pending.remove(target) else {
             return;
         };
         self.show_code_task_notice(chat, Some(accepted), cx);
@@ -222,7 +227,7 @@ impl FarcasterApp {
                 let _ = weak.update(cx, |this, cx| this.dismiss_code_task_notice(cx));
             })
         });
-        self.code_tasks.notice = Some(TaskNotice {
+        self.workspace.code_tasks.notice = Some(TaskNotice {
             chat,
             result,
             _expiry: expiry,
@@ -231,7 +236,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn dismiss_code_task_notice(&mut self, cx: &mut Context<Self>) {
-        self.code_tasks.notice = None;
+        self.workspace.code_tasks.notice = None;
         cx.notify();
     }
 
@@ -240,7 +245,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(notice) = self.code_tasks.notice.take() else {
+        let Some(notice) = self.workspace.code_tasks.notice.take() else {
             return;
         };
         let chat = notice.chat;

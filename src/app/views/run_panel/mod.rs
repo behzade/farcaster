@@ -91,15 +91,15 @@ impl FarcasterApp {
         browser: &RepositoryView<'_>,
     ) -> impl IntoElement {
         let root = root_session_for_path(
-            &self.all_sessions,
+            &self.sessions.all,
             self.snapshot.selected_session.as_deref(),
         );
         let mut active = Vec::new();
         let mut completed = Vec::new();
         let mut limited = Vec::new();
         for (activity, depth, session, section) in run_panel_agent_rows(
-            &self.all_sessions,
-            &self.agent_activities,
+            &self.sessions.all,
+            &self.activity.agents,
             self.snapshot.selected_session.as_deref(),
         ) {
             match section {
@@ -145,10 +145,11 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .gap(THEME.space.sm)
-            .child(self.workgraph_sidebar_view.clone())
-            .when_some(self.performance_monitor.as_ref(), |run, monitor| {
-                run.child(render_performance(&monitor.summary))
-            })
+            .child(self.views.workgraph_sidebar.clone())
+            .when_some(
+                self.lifecycle.performance_monitor.as_ref(),
+                |run, monitor| run.child(render_performance(&monitor.summary)),
+            )
             .when(!active.is_empty(), |run| {
                 run.child(
                     inspector_section()
@@ -161,14 +162,14 @@ impl FarcasterApp {
                         })),
                 )
             })
-            .when(!self.background_jobs.is_empty(), |run| {
+            .when(!self.activity.background_jobs.is_empty(), |run| {
                 run.child(
                     inspector_section()
                         .child(section_heading(format!(
                             "Background jobs ({})",
-                            self.background_jobs.len()
+                            self.activity.background_jobs.len()
                         )))
-                        .children(self.background_jobs.iter().map(background_job_row)),
+                        .children(self.activity.background_jobs.iter().map(background_job_row)),
                 )
             })
             .when(!completed.is_empty(), |run| {
@@ -280,7 +281,7 @@ impl FarcasterApp {
                 )
             })
             .child(activity)
-            .when(self.repository.backend.is_some(), |run| {
+            .when(self.project.repository.backend.is_some(), |run| {
                 run.child(self.render_repository(entity.clone(), run_panel.clone(), browser))
             });
         panel()

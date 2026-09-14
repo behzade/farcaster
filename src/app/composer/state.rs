@@ -7,25 +7,27 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.chat_navigation.activation.clear();
-        let current = input_snapshot(self.composer.read(cx));
-        let current_target = self.composer_sessions.current_target().to_owned();
+        self.navigation.chat.activation.clear();
+        let current = input_snapshot(self.composer.input.read(cx));
+        let current_target = self.composer.sessions.current_target().to_owned();
         let discard = self.sync_current_draft(&current, &current_target);
         let snapshot = if discard {
-            self.session_surfaces.remove(&current_target);
-            self.session_editor_tabs.remove(&current_target);
-            self.composer_sessions
+            self.workspace.session_surfaces.remove(&current_target);
+            self.workspace.editor.session_tabs.remove(&current_target);
+            self.composer
+                .sessions
                 .discard_and_switch(&current_target, target)
         } else {
             self.capture_center_surface();
-            self.composer_sessions.switch_to(target, current)
+            self.composer.sessions.switch_to(target, current)
         };
         self.apply_composer_snapshot(snapshot, window, cx);
     }
 
     pub(in crate::app) fn capture_composer_session(&mut self, cx: &mut Context<Self>) {
-        self.composer_sessions
-            .capture_current(input_snapshot(self.composer.read(cx)));
+        self.composer
+            .sessions
+            .capture_current(input_snapshot(self.composer.input.read(cx)));
     }
 
     pub(in crate::app) fn apply_composer_snapshot(
@@ -36,7 +38,7 @@ impl FarcasterApp {
     ) {
         let range = snapshot.restore_range();
         let text = snapshot.text;
-        self.composer.update(cx, |input, cx| {
+        self.composer.input.update(cx, |input, cx| {
             input.set_value(text, window, cx);
             input.set_selected_range(range, cx);
         });
@@ -48,8 +50,8 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let current = input_snapshot(self.composer.read(cx));
-        match self.composer_sessions.navigate_history(key, current) {
+        let current = input_snapshot(self.composer.input.read(cx));
+        match self.composer.sessions.navigate_history(key, current) {
             HistoryNavigation::PassThrough => false,
             HistoryNavigation::Handled(snapshot) => {
                 if let Some(snapshot) = snapshot {

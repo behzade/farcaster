@@ -246,7 +246,7 @@ impl FarcasterApp {
         edit: WorkerModelEdit,
         cx: &mut Context<Self>,
     ) {
-        let editor = &mut self.worker_profile_editor;
+        let editor = &mut self.workspace.worker_profile_editor;
         if editor.edit.is_some() {
             return;
         }
@@ -275,10 +275,10 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn load_worker_profile_settings(&mut self) -> Result<(), String> {
-        self.worker_profile_editor = WorkerProfileEditor::default();
+        self.workspace.worker_profile_editor = WorkerProfileEditor::default();
         let store = crate::app::persistence::StateStore::open()?;
         let profiles = store.load_worker_profiles()?.profiles;
-        self.worker_profile_editor = WorkerProfileEditor {
+        self.workspace.worker_profile_editor = WorkerProfileEditor {
             saved: profiles.clone(),
             profiles,
             catalogs: store.load_configuration_catalogs()?,
@@ -293,10 +293,10 @@ impl FarcasterApp {
             .and_then(|store| store.load_configuration_catalogs())
         {
             Ok(catalogs) => {
-                self.worker_profile_editor.catalogs = catalogs;
-                self.worker_profile_editor.error = None;
+                self.workspace.worker_profile_editor.catalogs = catalogs;
+                self.workspace.worker_profile_editor.error = None;
             }
-            Err(error) => self.worker_profile_editor.error = Some(error),
+            Err(error) => self.workspace.worker_profile_editor.error = Some(error),
         }
         cx.notify();
     }
@@ -307,20 +307,21 @@ impl FarcasterApp {
         choice: WorkerRouteChoice,
         cx: &mut Context<Self>,
     ) {
-        if self.worker_profile_editor.edit.is_none()
-            && let Some(route) = self.worker_profile_editor.route_mut(target)
+        if self.workspace.worker_profile_editor.edit.is_none()
+            && let Some(route) = self.workspace.worker_profile_editor.route_mut(target)
         {
             let previous = route.clone();
             apply_choice(route, choice);
             let valid = route.validate().is_ok();
-            let result = self.worker_profile_editor.persist_route(target);
+            let result = self.workspace.worker_profile_editor.persist_route(target);
             if valid && result.is_err() {
                 *self
+                    .workspace
                     .worker_profile_editor
                     .route_mut(target)
                     .expect("persisting a route preserves its identity") = previous;
             }
-            self.worker_profile_editor.error = result.err();
+            self.workspace.worker_profile_editor.error = result.err();
         }
         cx.notify();
     }
@@ -331,10 +332,11 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.worker_profile_editor.edit.is_some() {
+        if self.workspace.worker_profile_editor.edit.is_some() {
             return;
         }
-        let current = profile.and_then(|index| self.worker_profile_editor.profiles.get(index));
+        let current =
+            profile.and_then(|index| self.workspace.worker_profile_editor.profiles.get(index));
         let name = current
             .map(|profile| profile.name.clone())
             .unwrap_or_default();
@@ -352,13 +354,13 @@ impl FarcasterApp {
                 .placeholder("When should the agent choose this worker?")
         });
         input.read(cx).focus_handle(cx).focus(window, cx);
-        self.worker_profile_editor.edit = Some(WorkerProfileEdit::Name {
+        self.workspace.worker_profile_editor.edit = Some(WorkerProfileEdit::Name {
             profile,
             input,
             description,
         });
         self.subscribe_worker_profile_inputs(window, cx);
-        self.worker_profile_editor.error = None;
+        self.workspace.worker_profile_editor.error = None;
         cx.notify();
     }
 
@@ -368,10 +370,10 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.worker_profile_editor.edit.is_some() {
+        if self.workspace.worker_profile_editor.edit.is_some() {
             return;
         }
-        let Some(route) = self.worker_profile_editor.route_mut(target) else {
+        let Some(route) = self.workspace.worker_profile_editor.route_mut(target) else {
             return;
         };
         let values = [
@@ -382,9 +384,10 @@ impl FarcasterApp {
         let inputs =
             values.map(|value| cx.new(|cx| InputState::new(window, cx).default_value(value)));
         inputs[0].read(cx).focus_handle(cx).focus(window, cx);
-        self.worker_profile_editor.edit = Some(WorkerProfileEdit::Custom { target, inputs });
+        self.workspace.worker_profile_editor.edit =
+            Some(WorkerProfileEdit::Custom { target, inputs });
         self.subscribe_worker_profile_inputs(window, cx);
-        self.worker_profile_editor.error = None;
+        self.workspace.worker_profile_editor.error = None;
         cx.notify();
     }
 
@@ -394,22 +397,22 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if self.save_worker_profile_edit(cx) {
-            self.worker_profile_editor.edit = None;
-            self.worker_profile_editor.subscriptions.clear();
-            self.sheet_focus.focus(window, cx);
+            self.workspace.worker_profile_editor.edit = None;
+            self.workspace.worker_profile_editor.subscriptions.clear();
+            self.overlays.sheet_focus.focus(window, cx);
             cx.notify();
         }
     }
 
     fn subscribe_worker_profile_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let inputs = match &self.worker_profile_editor.edit {
+        let inputs = match &self.workspace.worker_profile_editor.edit {
             Some(WorkerProfileEdit::Name {
                 input, description, ..
             }) => vec![input.clone(), description.clone()],
             Some(WorkerProfileEdit::Custom { inputs, .. }) => inputs.to_vec(),
             None => return,
         };
-        self.worker_profile_editor.subscriptions = inputs
+        self.workspace.worker_profile_editor.subscriptions = inputs
             .iter()
             .map(|input| {
                 cx.subscribe_in(input, window, |this, _, event: &InputEvent, _, cx| {
@@ -422,7 +425,7 @@ impl FarcasterApp {
     }
 
     fn save_worker_profile_edit(&mut self, cx: &mut Context<Self>) -> bool {
-        let editor = &mut self.worker_profile_editor;
+        let editor = &mut self.workspace.worker_profile_editor;
         let previous = editor.profiles.clone();
         let selected = editor.selected;
         let selected_model = editor.selected_model;
@@ -480,7 +483,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn delete_worker_profile(&mut self, cx: &mut Context<Self>) {
-        let editor = &mut self.worker_profile_editor;
+        let editor = &mut self.workspace.worker_profile_editor;
         if editor.edit.is_some() {
             return;
         }

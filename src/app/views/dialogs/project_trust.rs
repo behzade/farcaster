@@ -17,10 +17,11 @@ pub(in crate::app::views) fn render(
 ) -> AnyElement {
     let close = entity.clone();
     let project = app
-        .project_trust_project
+        .project
+        .trust_project
         .as_deref()
-        .unwrap_or(app.project.as_path());
-    let backend = app.project_trust_backend;
+        .unwrap_or(app.project.path.as_path());
+    let backend = app.project.trust_backend;
     let title = backend.map_or_else(
         || "Farcaster project trust".to_owned(),
         |backend| {
@@ -34,7 +35,7 @@ pub(in crate::app::views) fn render(
         .and_then(crate::agents::project_trust_description)
         .unwrap_or(projects::TRUST_DESCRIPTION);
     let editable_backend = (backend.is_none()
-        && app.pending_project_trust_command.is_none()
+        && app.project.pending_trust_command.is_none()
         && crate::agents::project_trust_description(app.snapshot.harness).is_some())
     .then_some(app.snapshot.harness)
     .flatten();
@@ -54,7 +55,7 @@ pub(in crate::app::views) fn render(
     modal(
         "project-trust",
         title,
-        &app.sheet_focus,
+        &app.overlays.sheet_focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
             let _ = close.update(cx, |this, cx| this.dismiss_project_trust(window, cx));
@@ -112,7 +113,7 @@ pub(in crate::app::views) fn render(
                             .text_color(THEME.colors.subtle)
                             .child(saved),
                     )
-                    .when_some(app.project_trust_error.clone(), |content, error| {
+                    .when_some(app.project.trust_error.clone(), |content, error| {
                         content.child(
                             div()
                                 .text_color(THEME.colors.error)
@@ -132,7 +133,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
-                            .child(if app.pending_project_trust_command.is_some() {
+                            .child(if app.project.pending_trust_command.is_some() {
                                 "Choose a decision to continue opening this project, or close to cancel."
                             } else if backend.is_some() {
                                 "Restart Farcaster after changing this decision."

@@ -17,7 +17,7 @@ pub(in crate::app::views) fn render(
     app: &FarcasterApp,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let dialog = app.session_import.as_ref().expect("visible import");
+    let dialog = app.sessions.import.as_ref().expect("visible import");
     let dismiss = entity.clone();
     let harness = dialog.harness.clone();
     let harness_name = agents::backend_display_name(harness);
