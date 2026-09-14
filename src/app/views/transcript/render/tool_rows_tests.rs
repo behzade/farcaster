@@ -55,7 +55,11 @@ fn live_activity_keeps_its_row_except_when_a_single_item_becomes_a_group() {
         if before.len() == 1 && state.items.len() > 1 {
             assert!(!rows[0].same_position(&previous_row), "{event}");
             let states = std::collections::HashMap::from([(previous_row.disclosure_key(), true)]);
-            assert!(super::super::resolved_expanded(rows[0], &state.items, &states));
+            assert!(super::super::resolved_expanded(
+                rows[0],
+                &state.items,
+                &states
+            ));
         } else {
             assert!(rows[0].same_position(&previous_row), "{event}");
             assert_eq!(rows[0].disclosure_key(), previous_row.disclosure_key());

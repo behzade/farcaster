@@ -3,29 +3,29 @@ use super::*;
 #[test]
 fn catalog_comes_from_the_checked_in_fragments() {
     assert_eq!(
-            commands()
-                .into_iter()
-                .map(|command| (command.name, command.description))
-                .collect::<Vec<_>>(),
-            [
-                (
-                    "commit".into(),
-                    Some("Commit your changes as whole files".into())
-                ),
-                (
-                    "simplify".into(),
-                    Some("Refine your implementation without changing behavior".into())
-                ),
-                (
-                    "simplify-commit".into(),
-                    Some("Simplify your changes, then commit them".into())
-                ),
-                (
-                    "show".into(),
-                    Some("Show relevant files and line ranges with concise notes.".into())
-                )
-            ]
-        );
+        commands()
+            .into_iter()
+            .map(|command| (command.name, command.description))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "commit".into(),
+                Some("Commit your changes as whole files".into())
+            ),
+            (
+                "simplify".into(),
+                Some("Refine your implementation without changing behavior".into())
+            ),
+            (
+                "simplify-commit".into(),
+                Some("Simplify your changes, then commit them".into())
+            ),
+            (
+                "show".into(),
+                Some("Show relevant files and line ranges with concise notes.".into())
+            )
+        ]
+    );
 }
 
 #[test]
