@@ -347,13 +347,33 @@ pub(in crate::app) fn pending_prompt_queue(
             .then_with(|| left.id.cmp(&right.id))
     });
     for submission in submissions {
-        match submission.mode {
-            PromptMode::Steer => queue.steering.push(submission.text.clone()),
-            PromptMode::FollowUp => queue.follow_up.push(submission.text.clone()),
-            PromptMode::Normal => {}
-        }
+        let messages = match submission.mode {
+            PromptMode::Steer => &mut queue.steering,
+            PromptMode::FollowUp => &mut queue.follow_up,
+            PromptMode::Normal => continue,
+        };
+        messages.push(pending_queue_preview(submission));
     }
     queue
+}
+
+// Presentation only: retain attachment information without changing the payload
+// used for delivery or acknowledgement.
+fn pending_queue_preview(submission: &PendingSubmission) -> String {
+    let mut parts = Vec::new();
+    match submission.images.len() {
+        0 => {}
+        1 => parts.push("1 image".to_owned()),
+        count => parts.push(format!("{count} images")),
+    }
+    parts.extend(submission.pastes.iter().map(ComposerPaste::file_name));
+    if parts.is_empty() {
+        return submission.text.clone();
+    }
+    if !submission.text.trim().is_empty() {
+        parts.push(submission.text.clone());
+    }
+    parts.join(" · ")
 }
 
 /// The queue shown by the production composer. Native queue state and local

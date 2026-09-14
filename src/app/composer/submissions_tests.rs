@@ -102,6 +102,30 @@ fn unresolved_queue_keeps_submission_order_and_equal_text() {
 }
 
 #[test]
+fn attachment_only_submissions_are_visible_in_both_queue_modes() {
+    let image = ComposerImage {
+        prompt: PromptImage::new(String::new(), "image/png".into()),
+        preview: Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, Vec::new())),
+        byte_len: 0,
+    };
+    for mode in [PromptMode::Steer, PromptMode::FollowUp] {
+        let submission = PendingSubmission {
+            mode,
+            text: String::new(),
+            images: vec![image.clone()],
+            ..pending()
+        };
+        let pending = std::collections::HashMap::from([(submission.id.clone(), submission)]);
+        let queue = pending_prompt_queue(&pending, "session:compacting");
+        let entries = match mode {
+            PromptMode::Steer => queue.steering,
+            _ => queue.follow_up,
+        };
+        assert_eq!(entries, ["1 image"]);
+    }
+}
+
+#[test]
 fn visible_queue_is_the_native_queue_plus_each_local_submission() {
     let mut local = pending();
     local.id = "local-steer".into();

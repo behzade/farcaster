@@ -60,9 +60,13 @@ pub(super) fn queued_message_preview(message: &str) -> String {
         || message.to_owned(),
         |peer| format!("{}: {}", peer.from, peer.message),
     );
+    let message = message.trim();
+    if message.is_empty() {
+        return "Queued message".to_owned();
+    }
     match message.split_once(['\r', '\n']) {
         Some((first, _)) => format!("{}…", first.trim_end()),
-        None => message,
+        None => message.to_owned(),
     }
 }
 
