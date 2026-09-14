@@ -11,7 +11,7 @@ All six adapters support session resume, images, stopping runs, queued follow-up
 | Cursor | Yes | No | No | No | Yes | No |
 | OpenCode | Yes | Yes | Yes | Yes | Yes | Yes |
 | Antigravity | No | No | No | No | Yes | No |
-| Claude | Yes | No | No | No | Yes | Yes |
+| Claude | Yes | No | Yes | No | Yes | Yes |
 
 Other differences:
 
@@ -22,6 +22,7 @@ Other differences:
 
 Usage notes:
 
+- Pi's sandbox controls require an adapter for the Pi extension. Currently only one exists for `pi-nono`.
 - Claude uses `claude -p`. Anthropic's guidance has been mixed on whether this usage counts toward subscription limits or separate limits.
 - Antigravity's terms of service are unclear about using its harness in third-party apps. Use it at your own risk.
 

@@ -81,6 +81,4 @@ These keys require focus in the composer:
 | Shift+Tab | Previous suggestion or move focus backward. |
 | Ctrl+N / Ctrl+P | Next/previous suggestion when visible. |
 | Up / Down | Previous/next suggestion or move through text. Up on the first line opens prompt history; Down on the last line moves forward through it. |
-| Esc | Apply queued steering; otherwise press twice to abort. |
-
-In dialogs, Tab / Shift+Tab move focus and Esc closes. In the action picker, Tab / Shift+Tab or Ctrl+N / Ctrl+P select items; Enter chooses one.
+| Esc | Send pending steering and follow-ups; press twice to abort. |
