@@ -23,6 +23,44 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
 }
 
 #[test]
+fn unsupported_cached_backends_do_not_block_supported_sessions() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let parent = store.update_session_metadata(&metadata("legacy"))?;
+    let mut child = metadata("supported-child");
+    child.parent_session = Some("legacy".into());
+    let child = store.update_session_metadata(&child)?;
+    store.update_session_metadata(&metadata("unrelated"))?;
+    for harness in ["claude-acp", "future-backend"] {
+        store
+            .connection
+            .execute(
+                "UPDATE sessions SET harness=?1 WHERE id=?2",
+                params![harness, parent.app_session_id],
+            )
+            .map_err(|error| error.to_string())?;
+        let sessions = store.cached_sessions("")?;
+        assert_eq!(sessions.len(), 2);
+        let restored = sessions
+            .iter()
+            .find(|session| session.id == child.id)
+            .expect("supported child remains visible");
+        assert_eq!(restored.parent_app_session_id, Some(parent.app_session_id));
+        assert_eq!(restored.parent_harness, None);
+        let saved: String = store
+            .connection
+            .query_row(
+                "SELECT harness FROM sessions WHERE id=?1",
+                [parent.app_session_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        assert_eq!(saved, harness);
+    }
+    Ok(())
+}
+
+#[test]
 fn metadata_readback_failure_rolls_back_the_update() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;

@@ -24,11 +24,6 @@ use super::super::contract::{
 pub(super) fn program() -> std::path::PathBuf {
     std::env::var_os("FARCASTER_OPENCODE_PATH")
         .map(std::path::PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| std::path::PathBuf::from(home).join(".opencode/bin/opencode"))
-                .filter(|path| path.is_file())
-        })
         .unwrap_or_else(|| "opencode".into())
 }
 

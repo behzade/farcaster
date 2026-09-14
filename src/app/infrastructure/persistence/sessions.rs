@@ -38,12 +38,20 @@ impl StateStore {
             ))
             .map_err(|error| format!("prepare cached sessions: {error}"))?;
         let rows = statement
-            .query_map([id], row_to_session)
+            .query_map([id], |row| {
+                let harness = row.get::<_, String>(17)?;
+                if harness.parse::<Backend>().is_err() {
+                    // Keep data from removed backends without letting it prevent
+                    // supported sessions from loading.
+                    return Ok(None);
+                }
+                row_to_session(row).map(Some)
+            })
             .map_err(|error| format!("query cached sessions: {error}"))?;
         let sessions = rows
             .map(|row| row.map_err(|error| format!("decode cached session: {error}")))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(sessions)
+        Ok(sessions.into_iter().flatten().collect())
     }
 
     pub(crate) fn update_session_metadata(
@@ -662,9 +670,10 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     .with_app_session_id(id);
     session.parent_session = row.get(6)?;
     session.parent_app_session_id = row.get(23)?;
-    session.parent_harness = row
-        .get::<_, Option<Backend>>(22)?
-        .or_else(|| session.parent_session.as_ref().map(|_| session.harness));
+    session.parent_harness = match row.get::<_, Option<String>>(22)? {
+        Some(harness) => harness.parse().ok(),
+        None => session.parent_session.as_ref().map(|_| session.harness),
+    };
     if let (Some(provider), Some(model)) = (provider, model) {
         session.model = Some((provider, model));
         session.thinking_level = effort;
