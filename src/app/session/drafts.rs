@@ -7,7 +7,7 @@ use super::FarcasterApp;
 use crate::{
     app::composer::{
         sessions::{draft_target, session_target},
-        submissions::has_pending_submission,
+        submissions::{PendingSubmission, has_pending_submission},
     },
     projects::{self, DraftSession},
     runtime::RuntimeCommand,
@@ -294,7 +294,7 @@ impl FarcasterApp {
         &mut self,
         target: String,
         session: Option<PathBuf>,
-        status: String,
+        mut status: String,
     ) {
         if status == "Done"
             && self
@@ -310,6 +310,15 @@ impl FarcasterApp {
         }
         let associated_path =
             fill_session_association(&mut self.submitted_drafts, &target, session.as_deref());
+        if preserve_submission_working_status(
+            &target,
+            associated_path.as_deref().or(session.as_deref()),
+            &status,
+            &self.pending_submissions,
+            &self.run_statuses,
+        ) {
+            status = "Working".into();
+        }
         if let Some(id) = draft_id(&target)
             && self.submitted_drafts.contains_key(id)
             && update_persisted_submission(&mut self.drafts, id, associated_path.as_deref())
@@ -510,6 +519,31 @@ fn clear_promoted_selection(selected_draft: &mut Option<String>, promoted_id: &s
     if selected_draft.as_deref() == Some(promoted_id) {
         *selected_draft = None;
     }
+}
+
+// Idle startup snapshots must not overwrite an unresolved draft send's
+// optimistic Working badge, including after its session identity is promoted.
+fn preserve_submission_working_status(
+    target: &str,
+    session: Option<&std::path::Path>,
+    status: &str,
+    pending: &HashMap<String, PendingSubmission>,
+    statuses: &HashMap<String, String>,
+) -> bool {
+    if status != "Done" || draft_id(target).is_none() {
+        return false;
+    }
+    let session_key = session.map(session_target);
+    statuses
+        .get(target)
+        .or_else(|| session_key.as_ref().and_then(|key| statuses.get(key)))
+        .is_some_and(|previous| previous == "Working")
+        && pending.values().any(|submission| {
+            submission.result.is_none()
+                && submission.mode == crate::protocol::PromptMode::Normal
+                && (submission.submitted_target == target
+                    || Some(&submission.submitted_target) == session_key.as_ref())
+        })
 }
 
 fn transfer_draft_status(

@@ -2,6 +2,60 @@ use super::*;
 use crate::agents::Backend;
 
 #[test]
+fn startup_idle_preserves_only_the_unresolved_draft_submission() {
+    use crate::{agents::PromptOutcome, protocol::PromptMode};
+
+    let target = draft_target("starting");
+    let path = PathBuf::from("/sessions/starting");
+    let session_key = session_target(&path);
+    let mut pending = HashMap::from([(
+        "submission".into(),
+        PendingSubmission {
+            id: "submission".into(),
+            submitted_at: std::time::Instant::now(),
+            submitted_target: target.clone(),
+            mode: PromptMode::Normal,
+            text: "hello".into(),
+            images: Vec::new(),
+            pastes: Vec::new(),
+            append_on_failure: false,
+            result: None,
+        },
+    )]);
+    let mut statuses = HashMap::from([(target.clone(), "Working".into())]);
+    let preserves = |target: &str, status: &str, pending: &_, statuses: &_| {
+        preserve_submission_working_status(target, Some(&path), status, pending, statuses)
+    };
+    assert!(preserves(&target, "Done", &pending, &statuses));
+    assert!(!preserves("draft:other", "Done", &pending, &statuses));
+    assert!(!preserves(&session_key, "Done", &pending, &statuses));
+    for status in ["Failed", "Stopped", "Delivery unknown"] {
+        assert!(!preserves(&target, status, &pending, &statuses));
+    }
+
+    // Identity arrives during startup; the next idle update still addresses
+    // the draft actor, but its badge and pending submission may be promoted.
+    transfer_draft_status(&mut statuses, &mut HashMap::new(), "starting", &path);
+    pending.get_mut("submission").unwrap().submitted_target = session_key.clone();
+    assert!(preserves(&target, "Done", &pending, &statuses));
+    for terminal in ["Done", "Failed", "Stopped", "Delivery unknown"] {
+        statuses.insert(session_key.clone(), terminal.into());
+        assert!(!preserves(&target, "Done", &pending, &statuses));
+    }
+    statuses.insert(session_key, "Working".into());
+    for outcome in [
+        PromptOutcome::Accepted,
+        PromptOutcome::RejectedBeforeAcceptance,
+        PromptOutcome::DeliveryUnknown,
+    ] {
+        pending.get_mut("submission").unwrap().result = Some((outcome, Some(path.clone())));
+        assert!(!preserves(&target, "Done", &pending, &statuses));
+    }
+    pending.clear();
+    assert!(!preserves(&target, "Done", &pending, &statuses));
+}
+
+#[test]
 fn empty_startup_draft_stays_deleted_after_late_composer_save()
 -> Result<(), Box<dyn std::error::Error>> {
     use crate::app::infrastructure::persistence::{ComposerRecord, StateStore};
