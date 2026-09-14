@@ -3,7 +3,7 @@ use crate::conversation::{ConversationState, ToolReview};
 use serde_json::json;
 
 #[test]
-fn live_activity_updates_its_header_without_replacing_the_row() {
+fn live_activity_keeps_its_row_except_when_a_single_item_becomes_a_group() {
     use super::super::{project_rows, update_rows_from};
 
     let mut state = ConversationState::default();
@@ -11,7 +11,6 @@ fn live_activity_updates_its_header_without_replacing_the_row() {
     state.reduce(&json!({"type":"message_update", "assistantMessageEvent":{"type":"thinking_start", "contentIndex":0}}));
     let mut rows = project_rows(&state.items);
     assert_eq!(rows.len(), 1);
-    let initial = rows[0];
     assert_eq!(
         activity_header(state.items.iter().map(AsRef::as_ref)),
         "Thinking…"
@@ -48,12 +47,19 @@ fn live_activity_updates_its_header_without_replacing_the_row() {
         ),
     ] {
         let before = state.items.clone();
+        let previous_row = rows[0];
         state.reduce(&event);
         rows = update_rows_from(&rows, &before, &state.items, None);
         assert_eq!(rows, project_rows(&state.items), "{event}");
         assert_eq!(rows.len(), 1, "{event}");
-        assert!(rows[0].same_position(&initial), "{event}");
-        assert_eq!(rows[0].disclosure_key(), initial.disclosure_key());
+        if before.len() == 1 && state.items.len() > 1 {
+            assert!(!rows[0].same_position(&previous_row), "{event}");
+            let states = std::collections::HashMap::from([(previous_row.disclosure_key(), true)]);
+            assert!(super::super::resolved_expanded(rows[0], &state.items, &states));
+        } else {
+            assert!(rows[0].same_position(&previous_row), "{event}");
+            assert_eq!(rows[0].disclosure_key(), previous_row.disclosure_key());
+        }
         assert_eq!(rows[0].item_end(), state.items.len());
         assert_eq!(
             activity_header(state.items.iter().map(AsRef::as_ref)),

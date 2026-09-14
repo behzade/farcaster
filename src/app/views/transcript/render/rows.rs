@@ -514,11 +514,7 @@ fn project_rows_from(
             {
                 end += 1;
             }
-            let single_command = end == start + 1
-                && item.tool_details.as_ref().is_some_and(|details| {
-                    details.metadata.category == Some(crate::agents::ToolCategory::Execute)
-                });
-            if !single_command {
+            if end - start > 1 {
                 rows.push(TranscriptRow::ActivityGroup {
                     start,
                     len: end - start,

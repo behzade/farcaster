@@ -47,7 +47,7 @@ fn scratch_uses_visible_activity_summaries_instead_of_raw_tool_payloads() {
     let text = transcript_scratch_text(&state.items);
     assert_eq!(
         text,
-        "## You\n\nRead the file\n\n## Activity\n\n1 read\n\n## Assistant\n\nFirst line\nFinal line"
+        "## You\n\nRead the file\n\n## Tool\n\nRead src/main.rs\n\n## Assistant\n\nFirst line\nFinal line"
     );
     // Raw export remains an explicit, separate operation.
     assert!(copy_transcript_items(&state.items, 0..=2).contains("hidden output"));
@@ -593,14 +593,7 @@ fn failed_native_reads_remain_visible_with_details() {
     }
     let rows = project_rows(&state.items);
     assert_eq!(rows.len(), 2);
-    assert!(matches!(
-        rows[0],
-        TranscriptRow::ActivityGroup {
-            start: 0,
-            len: 1,
-            ..
-        }
-    ));
+    assert!(matches!(rows[0], TranscriptRow::Item { index: 0, .. }));
     assert!(matches!(rows[1], TranscriptRow::Item { index: 1, .. }));
 }
 
@@ -837,14 +830,7 @@ fn activity_groups_keep_thinking_inside_and_attention_outside() {
     for (row, index) in rows.iter().skip(1).take(3).zip(4..7) {
         assert!(matches!(row, TranscriptRow::Item { index: actual, .. } if *actual == index));
     }
-    assert!(matches!(
-        rows[4],
-        TranscriptRow::ActivityGroup {
-            start: 7,
-            len: 1,
-            ..
-        }
-    ));
+    assert!(matches!(rows[4], TranscriptRow::Item { index: 7, .. }));
 }
 
 #[test]
@@ -860,7 +846,7 @@ fn file_activity_never_crosses_a_message_or_session_notice() {
     assert_eq!(rows.len(), 5);
     for index in [0, 2, 4] {
         assert!(
-            matches!(rows[index], TranscriptRow::ActivityGroup { start, len: 1, .. } if start == index)
+            matches!(rows[index], TranscriptRow::Item { index: actual, .. } if actual == index)
         );
     }
 }
