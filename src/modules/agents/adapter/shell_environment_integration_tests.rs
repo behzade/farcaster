@@ -1,4 +1,6 @@
 //! Real-process contracts for shell capture. No user shell configuration is sourced.
+// Report timings for the opt-in shell integration checks.
+#![allow(clippy::print_stderr)]
 use super::*;
 use std::time::{Duration, Instant};
 
@@ -179,7 +181,7 @@ fn check_environment(environment: Environment, project: &Path, bin: &Path) -> Te
         .args(["-c", "exec farcaster-capture-probe"])
         .env_clear()
         .envs(environment)
-        .current_dir(&project)
+        .current_dir(project)
         .output()?;
     assert!(child.status.success(), "probe failed: {:?}", child.stderr);
     let records: Vec<_> = child.stdout.split(|byte| *byte == 0).collect();

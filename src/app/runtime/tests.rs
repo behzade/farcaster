@@ -907,7 +907,7 @@ fn selecting_a_resident_document_does_not_reload_or_message_its_actor() {
     let path = PathBuf::from("/sessions/one.jsonl");
     let select = |harness: Backend| RuntimeCommand::SelectSession {
         path: path.clone(),
-        harness: harness.into(),
+        harness,
         session_id: "one".into(),
         project: PathBuf::from("/project"),
     };
@@ -1440,12 +1440,12 @@ fn child_session_changes_publish_metadata_without_refreshing_the_catalog() {
     assert!(published.iter().any(|event| matches!(event,
         RuntimeEvent::SessionMetadata(child)
             if child.id == "child" && child.is_running
-                && child.path == PathBuf::from("/sessions/child")
+                && child.path == std::path::Path::new("/sessions/child")
     )));
     assert!(published.iter().any(|event| matches!(event,
         RuntimeEvent::AgentActivityUpdated(child)
             if child.session_id == "child"
-                && child.session_path == PathBuf::from("/sessions/child")
+                && child.session_path == std::path::Path::new("/sessions/child")
                 && child.lifecycle == crate::agent_activity::AgentLifecycle::Working
     )));
     assert!(owner.snapshot.conversation.running);

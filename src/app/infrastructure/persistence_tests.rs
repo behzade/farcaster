@@ -72,7 +72,7 @@ fn preferred_harness_survives_reopen_and_overrides_session_history()
         StateStore::open_at(&database)?.save_preferred_harness(harness)?;
         assert_eq!(
             StateStore::open_at(&database)?.load_preferred_harness(temp.path())?,
-            Some(harness.into())
+            Some(harness)
         );
     }
     Ok(())
@@ -2066,7 +2066,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         false,
         String::new(),
     );
-    session.harness = link.child_backend.clone();
+    session.harness = link.child_backend;
     store.replace_sessions(&[session])?;
     drop(store);
     let store = StateStore::open_at(&database)?;
@@ -2152,7 +2152,7 @@ fn typed_backend_persistence_preserves_unselected_drafts_and_rejects_unknown_nam
             .drafts
             .iter()
             .find(|d| d.id == "unselected")
-            .unwrap()
+            .expect("unselected draft")
             .harness,
         None
     );
@@ -2162,7 +2162,7 @@ fn typed_backend_persistence_preserves_unselected_drafts_and_rejects_unknown_nam
                 .drafts
                 .iter()
                 .find(|d| d.id == backend.as_str())
-                .unwrap()
+                .expect("backend draft")
                 .harness,
             Some(backend)
         );

@@ -440,7 +440,7 @@ fn worker_resume_reopens_its_saved_session_without_forking()
             .any(|pair| pair == ["--session", saved_locator.as_str()]),
         "{arguments:?}"
     );
-    assert!(!arguments.iter().any(|argument| *argument == "--fork"));
+    assert!(!arguments.contains(&"--fork"));
     assert_eq!(
         std::fs::read_to_string(temp.path().join("worker-resume-history"))?,
         history

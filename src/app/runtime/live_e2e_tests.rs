@@ -20,6 +20,8 @@
 //! malformed request. Production controls cannot make either race both safe
 //! and repeatable across installed harnesses. Adapter process tests own those
 //! receipt states; these tests prove the real accepted/restart/navigation path.
+// Live-test progress is consumed by the E2E runner.
+#![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 
 use std::{
@@ -295,7 +297,7 @@ fn live_e2e_runtime_accepted_prompt_survives_restart_without_duplicate_or_replay
                 after_restart.phase("restart persisted native session")?;
                 resumed.send(RuntimeCommand::RestartSession {
                     path: first.path.clone(),
-                    harness: first.harness.clone(),
+                    harness: first.harness,
                     session_id: first.id.clone(),
                     project: project.clone(),
                 })?;
@@ -491,7 +493,7 @@ fn live_e2e_runtime_navigation_keeps_pending_receipts_in_their_origin_session() 
             trace.phase("select first session to observe queued follow-up delivery")?;
             runtime.send(RuntimeCommand::SelectSession {
                 path: first.path.clone(),
-                harness: first.harness.clone(),
+                harness: first.harness,
                 session_id: first.id.clone(),
                 project: project.clone(),
             })?;

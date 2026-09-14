@@ -48,7 +48,7 @@ fn cached_catalog_replaces_a_resident_loading_or_stale_snapshot() {
     };
     let loaded = model("loaded", false, None);
     store.set_catalog(
-        snapshot.harness.unwrap(),
+        snapshot.harness.expect("snapshot backend"),
         snapshot.project.clone(),
         crate::agents::ConfigurationCatalog {
             models: vec![loaded.clone()],
@@ -139,7 +139,7 @@ fn session_default_is_not_replaced_by_stale_draft_effort() {
                 "isStreaming": false, "isCompacting": false, "sessionId": "ses_default",
                 "autoCompactionEnabled": false, "messageCount": 0, "pendingMessageCount": 0
             }))
-            .unwrap(),
+            .expect("decode fixture model"),
         ),
         ..Default::default()
     };
@@ -164,7 +164,10 @@ fn cleared_default_stays_unset_after_configuration_restore() {
     };
     restored.reconcile_snapshot(&mut draft, true);
     assert_eq!(draft.session_identity().effort, None);
-    assert_eq!(draft.session_identity().model.unwrap().id, "astra");
+    assert_eq!(
+        draft.session_identity().model.expect("draft model").id,
+        "astra"
+    );
 }
 
 #[test]

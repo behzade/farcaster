@@ -42,19 +42,25 @@ fn session_folders_ignore_invalid_ids() {
 
 #[test]
 fn session_folders_survive_database_reopen() {
-    let directory = tempfile::tempdir().unwrap();
+    let directory = tempfile::tempdir().expect("temporary directory");
     let path = directory.path().join("state.sqlite");
     let mut folders = folders();
     folders.assign(42, Some(2));
     {
-        let store = StateStore::open_at(&path).unwrap();
-        assert!(store.load_session_folders().unwrap().folders.is_empty());
-        store.save_session_folders(&folders).unwrap();
+        let store = StateStore::open_at(&path).expect("open store");
+        assert!(
+            store
+                .load_session_folders()
+                .expect("load folders")
+                .folders
+                .is_empty()
+        );
+        store.save_session_folders(&folders).expect("save folders");
     }
     let restored = StateStore::open_at(&path)
-        .unwrap()
+        .expect("reopen store")
         .load_session_folders()
-        .unwrap();
+        .expect("restore folders");
     assert_eq!(restored.folders[1].name, "Personal");
     assert_eq!(restored.folder_for(42), Some(2));
 }
@@ -65,7 +71,7 @@ fn creating_folder_from_drop_moves_only_the_dragged_session() {
     folders.assign(10, Some(1));
     folders.assign(11, Some(1));
     folders.create("New folder".into(), Some(10));
-    let created = folders.folders.last().unwrap();
+    let created = folders.folders.last().expect("created folder");
     assert_eq!(created.name, "New folder");
     assert_eq!(folders.folder_for(10), Some(created.id));
     assert_eq!(folders.folder_for(11), Some(1));

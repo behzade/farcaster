@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 pub(crate) fn project_trust_description(
     backend: impl Into<Option<Backend>>,
 ) -> Option<&'static str> {
-    let Some(backend) = backend.into() else {
-        return None;
-    };
+    let backend = backend.into()?;
     (backend == Backend::Pi).then_some("Trusting allows Pi to load project settings and resources, install missing project packages, and execute project extensions.")
 }
 

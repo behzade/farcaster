@@ -43,7 +43,14 @@ fn unavailable_location_keeps_its_details_inspectable() {
         })
     ));
     assert_eq!(review.inspecting, Some(0));
-    assert_eq!(review.navigation.as_ref().unwrap().selected, None);
+    assert_eq!(
+        review
+            .navigation
+            .as_ref()
+            .expect("review navigation")
+            .selected,
+        None
+    );
     review.pending = Some(8);
     assert!(review.complete(8, Err("List was removed".into())));
     assert_eq!(review.inspecting, Some(0));
@@ -64,11 +71,25 @@ fn late_navigation_cannot_overwrite_a_newer_request() {
         }],
     };
     assert!(review.complete(7, Ok(navigation)));
-    assert_eq!(review.navigation.as_ref().unwrap().selected, Some(0));
+    assert_eq!(
+        review
+            .navigation
+            .as_ref()
+            .expect("review navigation")
+            .selected,
+        Some(0)
+    );
     review.pending = Some(8);
     assert!(!review.complete(7, Err("late failure".into())));
     assert!(review.complete(8, Err("List was removed; reopen the review".into())));
     assert!(review.pending.is_none());
     assert!(review.error.is_some());
-    assert_eq!(review.navigation.as_ref().unwrap().list_id, 42);
+    assert_eq!(
+        review
+            .navigation
+            .as_ref()
+            .expect("review navigation")
+            .list_id,
+        42
+    );
 }

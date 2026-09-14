@@ -206,7 +206,7 @@ fn resume_rejects_an_acknowledgement_for_a_different_thread() {
     assert!(
         connection
             .resume_thread("expected", HarnessAccessMode::Sandboxed)
-            .unwrap_err()
+            .expect_err("mismatched thread must fail")
             .contains("different thread")
     );
 }

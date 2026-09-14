@@ -154,7 +154,7 @@ fn saved_presentations_restore_compact_history_in_order() {
 #[test]
 fn pasted_files_and_images_survive_finalization_and_history() {
     let prompt = "check this\n\nPasted text files:\n- [pasted.txt](</tmp/pasted.txt>)\n\n--- BEGIN PASTED FILE pasted.txt ---\nsecret\n--- END PASTED FILE pasted.txt ---";
-    let image = Arc::new(EncodedImage::new(vec![1, 2, 3], "image/png").unwrap());
+    let image = Arc::new(EncodedImage::new(vec![1, 2, 3], "image/png").expect("fixture image"));
     let message = json!({"role":"user", "content":[
         {"type":"text", "text":prompt},
         {"type":"image", "data":"AQID", "mimeType":"image/png"}

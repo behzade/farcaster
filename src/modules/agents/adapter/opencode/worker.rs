@@ -1414,9 +1414,8 @@ impl WorkerSession for OpenCodeWorkerSession {
         let native_ids = self
             .pending_deliveries
             .iter()
-            .filter_map(|(id, delivery)| {
-                (delivery.mode == WorkerSendMode::Queue).then(|| id.clone())
-            })
+            .filter(|(_, delivery)| delivery.mode == WorkerSendMode::Queue)
+            .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         let (interrupted, errors) = promote_followups_and_interrupt(
             &mut client,

@@ -134,7 +134,7 @@ fn worker_task_edits_validate_before_mutating() {
 fn worker_catalogs_preserve_effort_order_and_project_scope() {
     let entry = |harness: Backend, project: &str, efforts: &[&str]| {
         crate::app::persistence::CachedConfigurationCatalog {
-            harness: harness.into(),
+            harness,
             project: project.into(),
             catalog: ConfigurationCatalog {
                 models: vec![],

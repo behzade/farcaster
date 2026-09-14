@@ -88,7 +88,9 @@ fn catalog_launch_resolves_only_to_supported_safe_modes() {
     assert_eq!(configuration_access_mode(Backend::Codex, Auto), Ok(Auto));
     assert_eq!(configuration_access_mode(Backend::Claude, Auto), Ok(Auto));
     assert_eq!(configuration_access_mode(Backend::Pi, Auto), Ok(Auto));
-    assert!(configuration_access_mode(Backend::OpenCode, Auto).unwrap() != Full);
+    assert!(
+        configuration_access_mode(Backend::OpenCode, Auto).expect("OpenCode auto mode") != Full
+    );
 }
 
 #[test]

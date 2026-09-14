@@ -45,8 +45,9 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
     drop(store);
     let mut store = StateStore::open_at(&database)?;
     let assert_parent = |store: &StateStore| {
-        let cached = store.cached_sessions("").unwrap();
-        let root = crate::sessions::root_session_for_path(&cached, Some(&child.path)).unwrap();
+        let cached = store.cached_sessions("").expect("load cached sessions");
+        let root = crate::sessions::root_session_for_path(&cached, Some(&child.path))
+            .expect("child family root");
         assert_eq!(root.path, parent.path);
         assert!(root.archived);
     };
@@ -75,12 +76,14 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
             .iter()
             .any(|s| s.path == child.path)
     );
-    let family = crate::sessions::session_family_for_path(&cached, &parent.path).unwrap();
+    let family =
+        crate::sessions::session_family_for_path(&cached, &parent.path).expect("parent family");
     assert_eq!(
         family.iter().map(|s| &s.path).collect::<Vec<_>>(),
         [&parent.path, &child.path]
     );
-    let other_family = crate::sessions::session_family_for_path(&cached, &homonym.path).unwrap();
+    let other_family =
+        crate::sessions::session_family_for_path(&cached, &homonym.path).expect("homonym family");
     assert_eq!(other_family.len(), 1);
     let filtered = store.cached_sessions("child")?;
     assert_eq!(filtered.len(), 2);
@@ -92,7 +95,7 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
         .collect::<Vec<_>>();
     assert_eq!(
         crate::sessions::root_session_for_path(&without_parent, Some(&child.path))
-            .unwrap()
+            .expect("orphan child root")
             .path,
         child.path,
         "a missing resolved parent must not bind to a native-ID homonym"

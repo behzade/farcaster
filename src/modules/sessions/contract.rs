@@ -85,7 +85,7 @@ impl SessionSummary {
                 .duration_since(value.modified)
                 .unwrap_or_default()
                 <= RUNNING_ACTIVITY_TIMEOUT;
-        let parent_harness = value.parent_session.as_ref().map(|_| value.harness.clone());
+        let parent_harness = value.parent_session.as_ref().map(|_| value.harness);
         Self {
             id: value.id,
             app_session_id: 0,
@@ -183,7 +183,7 @@ impl SessionSummary {
                 .duration_since(modified)
                 .unwrap_or_default()
                 <= RUNNING_ACTIVITY_TIMEOUT;
-        let parent_harness = parent_session.as_ref().map(|_| harness.clone());
+        let parent_harness = parent_session.as_ref().map(|_| harness);
         Self {
             id,
             app_session_id: 0,

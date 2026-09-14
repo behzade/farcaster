@@ -218,6 +218,8 @@ impl CallerRegistry {
         )
     }
 
+    // Keep the explicit identity and access fields together at caller registration.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn issue_as_with_access(
         &self,
         project: &Path,

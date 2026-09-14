@@ -366,7 +366,7 @@ fn discover_in(
         let parent = DiscoveredSession {
             path: external_session_path(locator_root, BACKEND, &id),
             id,
-            harness: BACKEND.into(),
+            harness: BACKEND,
             project,
             title,
             first_user_message: first,

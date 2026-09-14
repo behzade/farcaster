@@ -348,7 +348,7 @@ pub(crate) fn spawn_session(
                 .session_locator_root
                 .as_deref()
                 .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
-            return main_session::WorkerSessionTransport::new(
+            main_session::WorkerSessionTransport::new(
                 locator_root,
                 Backend::Codex,
                 locator,
@@ -356,7 +356,7 @@ pub(crate) fn spawn_session(
                 metadata,
                 history,
             )
-            .map(|transport| Box::new(transport) as _);
+            .map(|transport| Box::new(transport) as _)
         }
         Backend::Cursor | Backend::Antigravity => {
             if matches!(&launch.start, crate::agents::SessionStart::Fork(_)) {
@@ -376,7 +376,7 @@ pub(crate) fn spawn_session(
                 .session_locator_root
                 .as_deref()
                 .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
-            return main_session::WorkerSessionTransport::new(
+            main_session::WorkerSessionTransport::new(
                 locator_root,
                 launch.harness,
                 locator,
@@ -384,7 +384,7 @@ pub(crate) fn spawn_session(
                 metadata,
                 history,
             )
-            .map(|transport| Box::new(transport) as _);
+            .map(|transport| Box::new(transport) as _)
         }
         Backend::OpenCode | Backend::Claude => {
             let history = launch_history(
@@ -405,7 +405,7 @@ pub(crate) fn spawn_session(
                 .session_locator_root
                 .as_deref()
                 .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
-            return main_session::WorkerSessionTransport::new(
+            main_session::WorkerSessionTransport::new(
                 locator_root,
                 launch.harness,
                 locator,
@@ -413,7 +413,7 @@ pub(crate) fn spawn_session(
                 metadata,
                 history,
             )
-            .map(|transport| Box::new(transport) as _);
+            .map(|transport| Box::new(transport) as _)
         }
         Backend::Pi => {
             let process = match &launch.start {
@@ -454,7 +454,7 @@ pub(crate) fn rename_session(
     name: &str,
 ) -> Result<(), String> {
     session_storage::validate_session_target(&crate::sessions::SessionTarget {
-        harness: harness.into(),
+        harness,
         id: session_id.into(),
         path: session.into(),
     })?;

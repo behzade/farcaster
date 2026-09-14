@@ -1,5 +1,7 @@
 //! Opt-in, billable child-worker checks. These tests deliberately use the real
 //! backend executable and model selected by `FARCASTER_E2E_HARNESS`.
+// Live-test progress is consumed by the E2E runner.
+#![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 
 use std::{
@@ -91,7 +93,7 @@ fn live_e2e_child_needs_input_projects_to_catalog_rows() -> Result<(), String> {
     let questions = crate::agents::live_e2e_support::native_questions_available(harness)?;
     let approvals = crate::agents::live_e2e_support::native_approvals_available(harness)?;
     let fixture = LiveChildFixture::new(harness)?;
-    let mut approval_probe = None;
+    let mut approval_probe;
     let initial_prompt = if questions {
         native_question_prompt()
     } else {
@@ -508,7 +510,7 @@ impl LiveChildFixture {
                 name: "live".into(),
                 description: "Live child-worker E2E profile.".into(),
                 models: vec![WorkerExecution {
-                    harness: harness.into(),
+                    harness,
                     provider: model.provider,
                     model: model.model,
                     effort: None,
@@ -945,7 +947,7 @@ fn new_parent(
     let identity = CallerRegistry::shared().issue_with_access(
         project,
         CallerProfile {
-            backend: harness.into(),
+            backend: harness,
             provider: None,
             model: None,
             effort: None,

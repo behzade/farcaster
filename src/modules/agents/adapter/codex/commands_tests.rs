@@ -4,8 +4,8 @@ use std::io::BufRead;
 
 fn read(sent: &mut BufReader<std::process::ChildStdout>) -> Value {
     let mut line = String::new();
-    sent.read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
+    sent.read_line(&mut line).expect("read fixture request");
+    serde_json::from_str(&line).expect("decode fixture request")
 }
 
 fn submit(session: &mut CodexWorkerSession, id: &str, command: &str) -> Result<bool, String> {
@@ -19,7 +19,7 @@ fn submit(session: &mut CodexWorkerSession, id: &str, command: &str) -> Result<b
 
 fn reply(session: &mut CodexWorkerSession, request: &Value, result: Value) -> Vec<WorkerEvent> {
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
-        id: serde_json::from_value(request["id"].clone()).unwrap(),
+        id: serde_json::from_value(request["id"].clone()).expect("request ID"),
         result,
     }));
     std::iter::from_fn(|| session.poll()).collect()
@@ -46,7 +46,7 @@ fn review_and_compact_use_native_requests_and_reject_invalid_arguments() {
         ),
     ] {
         let (mut session, mut sent) = writable_test_session();
-        assert!(!submit(&mut session, "submission", command).unwrap());
+        assert!(!submit(&mut session, "submission", command).expect("submit command"));
         let request = read(&mut sent);
         assert_eq!(request["method"], method);
         assert_eq!(request["params"]["target"], target);
@@ -81,7 +81,7 @@ fn review_and_compact_use_native_requests_and_reject_invalid_arguments() {
 #[test]
 fn model_selection_waits_for_update_and_applies_to_subsequent_turns() {
     let (mut session, mut sent) = writable_test_session();
-    submit(&mut session, "choose", "/model chosen high").unwrap();
+    submit(&mut session, "choose", "/model chosen high").expect("select model");
     let list = read(&mut sent);
     assert_eq!(list["method"], "model/list");
     reply(
@@ -109,7 +109,7 @@ fn model_selection_waits_for_update_and_applies_to_subsequent_turns() {
     assert_eq!(session.poll_prompt_ack(), Some(("choose".into(), Ok(()))));
     session
         .send("hello".into(), WorkerSendMode::Prompt)
-        .unwrap();
+        .expect("send prompt");
     let turn = read(&mut sent);
     assert_eq!(turn["method"], "turn/start");
     assert_eq!(turn["params"]["model"], "chosen");
@@ -120,7 +120,7 @@ fn model_selection_waits_for_update_and_applies_to_subsequent_turns() {
 fn permission_selection_respects_allowed_profiles_and_server_rejections() {
     for allowed in [true, false] {
         let (mut session, mut sent) = writable_test_session();
-        submit(&mut session, "choose", "/permissions restricted").unwrap();
+        submit(&mut session, "choose", "/permissions restricted").expect("select permissions");
         let list = read(&mut sent);
         assert_eq!(list["method"], "permissionProfile/list");
         assert_eq!(list["params"]["cwd"], "/project");
@@ -137,7 +137,7 @@ fn permission_selection_respects_allowed_profiles_and_server_rejections() {
             );
             assert!(session.poll_prompt_ack().is_none());
             session.queued_inbound.push_back(Ok(CodexInbound::Error {
-                id: serde_json::from_value(update["id"].clone()).unwrap(),
+                id: serde_json::from_value(update["id"].clone()).expect("update ID"),
                 error: super::super::super::contract::CodexRpcError {
                     code: -1,
                     message: "denied".into(),
@@ -163,7 +163,7 @@ fn status_reports_usage_and_review_completion_retains_native_output() {
         context_window: 1000,
         ..Default::default()
     });
-    submit(&mut session, "status", "/status").unwrap();
+    submit(&mut session, "status", "/status").expect("request status");
     let request = read(&mut sent);
     assert_eq!(request["method"], "account/rateLimits/read");
     let events = reply(

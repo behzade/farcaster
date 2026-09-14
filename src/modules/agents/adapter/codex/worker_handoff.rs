@@ -325,10 +325,10 @@ impl CodexWorkerSession {
         let discarded = self
             .native_inputs
             .iter()
-            .filter_map(|(client_id, input)| {
-                (input.handoff && matches!(input.kind, NativeInputKind::Steer { .. }))
-                    .then(|| client_id.clone())
+            .filter(|(_, input)| {
+                input.handoff && matches!(input.kind, NativeInputKind::Steer { .. })
             })
+            .map(|(client_id, _)| client_id.clone())
             .collect::<Vec<_>>();
         for client_id in discarded {
             self.native_inputs.remove(&client_id);

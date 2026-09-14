@@ -49,7 +49,7 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
             .issue_as_with_access(
                 &launch.project,
                 CallerProfile {
-                    backend: BACKEND.into(),
+                    backend: BACKEND,
                     provider: launch.provider.clone(),
                     model: launch.model.clone(),
                     effort: launch.effort.clone(),
@@ -122,7 +122,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let caller = CallerRegistry::shared().issue_with_access(
         &launch.project,
         CallerProfile {
-            backend: BACKEND.into(),
+            backend: BACKEND,
             provider: None,
             model: None,
             effort: None,

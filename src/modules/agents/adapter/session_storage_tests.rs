@@ -6,7 +6,7 @@ const PI_HEADER: &str = "{\"type\":\"session\",\"id\":\"root\",\"cwd\":\"/projec
 fn summary(harness: Backend, path: PathBuf, id: &str) -> SessionSummary {
     SessionSummary::from_cached_for_harness(
         id.into(),
-        harness.into(),
+        harness,
         path,
         PathBuf::from("/project"),
         String::new(),

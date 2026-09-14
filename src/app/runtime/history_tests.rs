@@ -19,7 +19,7 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
         None,
         crate::protocol::PromptMode::Normal,
         "",
-        &[image.clone()],
+        std::slice::from_ref(&image),
     )?;
     store.complete_prompt(id, "draft:image", Some(&session))?;
     store.complete_prompt(id, "draft:image", Some(&session))?;
@@ -207,7 +207,9 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
     for receipt in &history[1..] {
         assert_eq!(receipt["content"][1]["data"], ONE_PIXEL_PNG);
         conversation.record_prompt_delivery(
-            receipt["submissionId"].as_str().unwrap(),
+            receipt["submissionId"]
+                .as_str()
+                .expect("receipt submission ID"),
             receipt,
             "delivered",
         );
@@ -244,7 +246,7 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
             None,
             mode,
             "same text",
-            &[image.clone()],
+            std::slice::from_ref(&image),
         )?;
         store.complete_prompt_with_receipt(row, "draft:queue", Some(&session), id, true)?;
     }
@@ -267,7 +269,9 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
         "reopen cannot turn receipt into delivery"
     );
     for receipt in &receipts {
-        let id = receipt["submissionId"].as_str().unwrap();
+        let id = receipt["submissionId"]
+            .as_str()
+            .expect("receipt submission ID");
         state.record_prompt_delivery(id, receipt, "delivered");
         state.record_prompt_delivery(id, receipt, "delivered");
     }

@@ -48,18 +48,15 @@ impl crate::agents::SessionTransport for HeldAcks {
     }
 }
 
+type HeldAcksRuntime = (
+    RuntimeOwner,
+    mpsc::Receiver<RuntimeEvent>,
+    Rc<RefCell<Vec<SessionCommand>>>,
+);
+
 /// Running Claude session with a held-ack transport and a durable state store.
 /// The first dispatched input receives the `held-1` request id.
-fn held_acks_runtime(
-    temp: &std::path::Path,
-) -> Result<
-    (
-        RuntimeOwner,
-        mpsc::Receiver<RuntimeEvent>,
-        Rc<RefCell<Vec<SessionCommand>>>,
-    ),
-    String,
-> {
+fn held_acks_runtime(temp: &std::path::Path) -> Result<HeldAcksRuntime, String> {
     let (mut owner, events) = owner_without_process(temp.to_path_buf());
     let transport = HeldAcks::new();
     let commands = transport.commands.clone();

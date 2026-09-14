@@ -12,17 +12,19 @@ fn draft(id: i64) -> ActiveSessionItem {
 
 #[test]
 fn folder_headers_follow_unfiled_sessions_and_keep_empty_folders() {
-    let mut folders = SessionFolders::default();
-    folders.folders = vec![
-        SessionFolder {
-            id: 1,
-            name: "Work".into(),
-        },
-        SessionFolder {
-            id: 2,
-            name: "Empty".into(),
-        },
-    ];
+    let mut folders = SessionFolders {
+        folders: vec![
+            SessionFolder {
+                id: 1,
+                name: "Work".into(),
+            },
+            SessionFolder {
+                id: 2,
+                name: "Empty".into(),
+            },
+        ],
+        ..Default::default()
+    };
     folders.assign(3, Some(1));
     let rows = folder_rows(vec![draft(3), draft(2), draft(1)], &folders);
     assert!(matches!(&rows[0], FolderRow::Session(item) if item.app_session_id() == 2));

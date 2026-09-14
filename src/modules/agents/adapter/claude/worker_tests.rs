@@ -159,7 +159,7 @@ fn session(command: &AgentLaunchConfig, project: &Path) -> ClaudeSession {
     let caller = CallerRegistry::shared().issue(
         project,
         CallerProfile {
-            backend: BACKEND.into(),
+            backend: BACKEND,
             provider: None,
             model: None,
             effort: None,
@@ -438,7 +438,7 @@ fn catalog_probe_and_main_resume_launch_without_sending_a_prompt() {
     assert!(!args.lines().any(|arg| arg == "--mcp-config"));
     let id = "00000000-0000-4000-8000-000000000001";
     let launch = SessionLaunch {
-        harness: BACKEND.into(),
+        harness: BACKEND,
         session_id: None,
         project: directory.path().into(),
         start: SessionStart::Resume(main_session::external_session_path(
@@ -568,8 +568,8 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
             WorkerSendMode::Prompt,
             Vec::new(),
         )
-        .unwrap();
-    let first = session.active_uuid.clone().unwrap();
+        .expect("submit first prompt");
+    let first = session.active_uuid.clone().expect("active prompt UUID");
     session
         .submit_prompt(
             "queued".into(),
@@ -577,16 +577,20 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
             WorkerSendMode::Queue,
             Vec::new(),
         )
-        .unwrap();
+        .expect("submit queued prompt");
     session.events.pending.clear();
     assert!(session.poll_prompt_ack().is_none());
     let mut echo = fixture("SDKUserMessageReplay");
     echo["session_id"] = json!(session.id);
     echo["uuid"] = json!("unrelated");
-    session.receive(decode(echo.clone()).unwrap()).unwrap();
+    session
+        .receive(decode(echo.clone()).expect("decode echo"))
+        .expect("receive echo");
     assert!(session.poll_prompt_ack().is_none());
     echo["uuid"] = json!(first);
-    session.receive(decode(echo).unwrap()).unwrap();
+    session
+        .receive(decode(echo).expect("decode echo"))
+        .expect("receive echo");
     assert_eq!(session.poll_prompt_ack(), Some(("first".into(), Ok(()))));
     assert!(matches!(
         session.events.pending.pop_front(),
@@ -595,7 +599,7 @@ fn claude_ack_uses_the_echoed_uuid_and_survives_queued_delivery() {
         )) if submission_id == "first"
     ));
     assert!(session.poll_prompt_ack().is_none());
-    session.abort().unwrap();
+    session.abort().expect("abort session");
     assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "queued"));
 }
 
@@ -642,7 +646,7 @@ fn queued_batch_round_trip(interrupt: bool) {
         let events = until(&mut session, |event| {
             matches!(event, WorkerEvent::NeedsInput(_))
         });
-        let WorkerEvent::NeedsInput(input) = events.last().unwrap() else {
+        let WorkerEvent::NeedsInput(input) = events.last().expect("input event") else {
             unreachable!()
         };
         session
@@ -651,7 +655,7 @@ fn queued_batch_round_trip(interrupt: bool) {
                 value: Some("Allow".into()),
                 cancel: false,
             })
-            .unwrap();
+            .expect("respond to input");
     }
     until(&mut session, |event| {
         matches!(event, WorkerEvent::Settled { .. })

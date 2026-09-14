@@ -464,7 +464,7 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
                         let pending = &app.composer.pending_submissions[submission_id];
                         assert_eq!(pending.result, None);
                         assert_eq!(pending.text, "exact unresolved text");
-                        assert_eq!(pending.images, [image.clone()]);
+                        assert_eq!(pending.images, std::slice::from_ref(&image));
                     });
                 });
             }
@@ -496,7 +496,7 @@ fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
                         state.composer.sessions.snapshot_for(&target).text,
                         "exact unresolved text"
                     );
-                    assert_eq!(state.composer.images[&target], [image.clone()]);
+                    assert_eq!(state.composer.images[&target], std::slice::from_ref(&image));
                 }
                 window.draw(cx).clear(cx);
                 let state = app.read(cx);

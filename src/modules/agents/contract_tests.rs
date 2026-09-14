@@ -21,9 +21,13 @@ fn backend_round_trips_preserve_storage_and_wire_names() {
     for (backend, name) in Backend::ALL.into_iter().zip(expected) {
         assert_eq!(backend.as_str(), name);
         assert_eq!(name.parse::<Backend>(), Ok(backend));
-        assert_eq!(serde_json::to_value(backend).unwrap(), name);
         assert_eq!(
-            serde_json::from_value::<Backend>(serde_json::json!(name)).unwrap(),
+            serde_json::to_value(backend).expect("serialize backend"),
+            name
+        );
+        assert_eq!(
+            serde_json::from_value::<Backend>(serde_json::json!(name))
+                .expect("deserialize backend"),
             backend
         );
     }
@@ -31,7 +35,10 @@ fn backend_round_trips_preserve_storage_and_wire_names() {
         assert!(name.parse::<Backend>().is_err());
         assert!(serde_json::from_value::<Backend>(serde_json::json!(name)).is_err());
     }
-    let legacy: Backend = serde_json::from_str(r#""opencode2""#).unwrap();
+    let legacy: Backend = serde_json::from_str(r#""opencode2""#).expect("legacy backend alias");
     assert_eq!(legacy, Backend::OpenCode);
-    assert_eq!(serde_json::to_string(&legacy).unwrap(), r#""opencode""#);
+    assert_eq!(
+        serde_json::to_string(&legacy).expect("serialize backend"),
+        r#""opencode""#
+    );
 }

@@ -5,6 +5,8 @@
 //! `spawn_session`, the installed binary, its real model account, normalized
 //! activities, transcript projection, and native history together.
 
+// Live-test diagnostics are consumed by the E2E runner.
+#![allow(clippy::print_stderr)]
 use std::{
     process::{Child, Command, ExitStatus, Stdio},
     thread,

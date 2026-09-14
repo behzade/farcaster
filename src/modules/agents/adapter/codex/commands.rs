@@ -269,10 +269,10 @@ impl CodexWorkerSession {
                                 .cloned()
                         })
                         .or_else(|| model["defaultEffort"].as_str().map(str::to_owned));
-                    if let Some(effort) = &effort {
-                        if !supports_effort(effort) {
-                            return Err(format!("Model {id} does not support effort {effort}"));
-                        }
+                    if let Some(effort) = &effort
+                        && !supports_effort(effort)
+                    {
+                        return Err(format!("Model {id} does not support effort {effort}"));
                     }
                     let mut params = json!({"threadId":self.thread_id, "model":id});
                     if let Some(effort) = &effort {

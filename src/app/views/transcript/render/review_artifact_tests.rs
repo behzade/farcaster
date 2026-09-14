@@ -16,7 +16,7 @@ fn accepts_structured_and_text_mcp_results_not_arguments() {
         json!({"content": [{"type": "text", "text": result().to_string()}]}),
         Value::String(result().to_string()),
     ] {
-        let value = find(&wrapped, 0, &mut 1000).unwrap();
+        let value = find(&wrapped, 0, &mut 1000).expect("review artifact");
         assert_eq!(value.review.items[0].end_line, Some(5));
     }
     assert!(find(&json!({"arguments": result()}), 0, &mut 1000).is_none());
@@ -32,7 +32,10 @@ fn live_tool_result_becomes_review_only_after_success() {
     assert!(from_item(&conversation.items[0]).is_none());
     conversation.reduce(&json!({"type":"tool_execution_end", "toolCallId":"review", "result":{"content":[{"type":"text", "text":result().to_string()}]}, "isError":false}));
     assert_eq!(
-        from_item(&conversation.items[0]).unwrap().review.title,
+        from_item(&conversation.items[0])
+            .expect("review item")
+            .review
+            .title,
         "Review failure handling"
     );
     conversation.reduce(&json!({"type":"tool_execution_start", "toolCallId":"failed", "toolName":"submit_review", "args":{}}));

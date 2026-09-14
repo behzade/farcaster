@@ -901,7 +901,7 @@ fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), Strin
                 .iter()
                 .filter(|item| item.kind == TranscriptKind::User)
                 .last()
-                .unwrap()
+                .expect("last queued prompt")
                 .images[0]
                 .clone();
             for _ in 0..2 {

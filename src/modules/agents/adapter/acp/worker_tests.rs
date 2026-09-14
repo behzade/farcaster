@@ -1342,13 +1342,13 @@ fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
     use std::os::unix::net::UnixStream;
 
     let mut session = inert_session();
-    let (client, _peer) = UnixStream::pair().unwrap();
+    let (client, _peer) = UnixStream::pair().expect("fixture socket pair");
     session.connection = AcpConnection::new(
-        blocking::Unblock::new(client.try_clone().unwrap()),
+        blocking::Unblock::new(client.try_clone().expect("clone fixture socket")),
         blocking::Unblock::new(client),
         None,
     )
-    .unwrap();
+    .expect("create fixture connection");
     session
         .submit_prompt(
             "steer".into(),
@@ -1356,7 +1356,7 @@ fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
             WorkerSendMode::Steer,
             Vec::new(),
         )
-        .unwrap();
+        .expect("submit fixture prompt");
     session
         .submit_prompt(
             "follow-up".into(),
@@ -1367,9 +1367,9 @@ fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
                 "image/png".into(),
             )],
         )
-        .unwrap();
+        .expect("submit fixture prompt");
 
-    session.apply_steering().unwrap();
+    session.apply_steering().expect("apply steering");
     assert!(session.queued_prompts.is_empty());
     let handoff = session.handoff.as_ref().expect("claimed handoff");
     assert_eq!(handoff.inputs.len(), 2);
@@ -1381,7 +1381,7 @@ fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
     assert_eq!(handoff.inputs[1].images.len(), 1);
     assert!(session.poll_prompt_ack().is_none());
 
-    session.abort().unwrap();
+    session.abort().expect("abort session");
     assert!(session.handoff.is_none());
     assert_eq!(
         session.poll_prompt_ack(),
@@ -1411,14 +1411,14 @@ fn acp_in_memory_queue_is_not_an_acknowledgement() {
                 WorkerSendMode::Queue,
                 Vec::new()
             )
-            .unwrap()
+            .expect("submit fixture prompt")
     );
     assert!(session.poll_prompt_ack().is_none());
     assert_eq!(
         session
             .queued_prompts
             .back()
-            .unwrap()
+            .expect("queued prompt")
             .submission_id
             .as_deref(),
         Some("queued")
@@ -2030,13 +2030,13 @@ fn acp_metadata_does_not_acknowledge_prompt_execution() {
 fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
     use std::os::unix::net::UnixStream;
     let mut session = inert_session();
-    let (client, _peer) = UnixStream::pair().unwrap();
+    let (client, _peer) = UnixStream::pair().expect("fixture socket pair");
     session.connection = AcpConnection::new(
-        blocking::Unblock::new(client.try_clone().unwrap()),
+        blocking::Unblock::new(client.try_clone().expect("clone fixture socket")),
         blocking::Unblock::new(client),
         None,
     )
-    .unwrap();
+    .expect("create fixture connection");
     let image = crate::protocol::PromptImage::new("YWJj".into(), "image/png".into());
     for (id, mode) in [
         ("steer-1", WorkerSendMode::Steer),
@@ -2045,7 +2045,7 @@ fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
     ] {
         session
             .submit_prompt(id.into(), "same".into(), mode, vec![image.clone()])
-            .unwrap();
+            .expect("submit fixture prompt");
     }
     session
         .connection

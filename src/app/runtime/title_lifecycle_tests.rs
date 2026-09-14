@@ -46,13 +46,13 @@ struct ProtocolPeer {
 
 impl ProtocolPeer {
     fn start() -> Self {
-        let project = std::env::current_dir().unwrap();
+        let project = std::env::current_dir().expect("fixture directory");
         let socket = project.join("control.sock");
         if socket.exists() {
-            fs::remove_file(&socket).unwrap();
+            fs::remove_file(&socket).expect("remove old socket");
         }
-        let listener = UnixListener::bind(socket).unwrap();
-        listener.set_nonblocking(true).unwrap();
+        let listener = UnixListener::bind(socket).expect("bind fixture socket");
+        listener.set_nonblocking(true).expect("configure listener");
         let state = Arc::new(Mutex::new(BackendState::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let shared = state.clone();
@@ -74,7 +74,7 @@ impl ProtocolPeer {
                 }
             }
             for peer in peers {
-                peer.join().unwrap();
+                peer.join().expect("fixture peer should finish");
             }
         });
         Self {
@@ -87,7 +87,7 @@ impl ProtocolPeer {
     fn rename_requests(&self) -> Vec<String> {
         self.state
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .requests
             .iter()
             .filter_map(|request| {
@@ -105,9 +105,9 @@ impl ProtocolPeer {
 impl Drop for ProtocolPeer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        let result = self.server.take().unwrap().join();
+        let result = self.server.take().expect("fixture server").join();
         if !thread::panicking() {
-            result.unwrap();
+            result.expect("fixture server should finish");
         }
     }
 }
@@ -126,9 +126,12 @@ fn write(peer: &mut UnixStream, value: Value) {
 }
 
 fn title_output(state: &Mutex<BackendState>, stop: &AtomicBool) -> Option<String> {
-    state.lock().unwrap().title_requests += 1;
+    state
+        .lock()
+        .expect("test lock should not be poisoned")
+        .title_requests += 1;
     while !stop.load(Ordering::Relaxed) {
-        let state = state.lock().unwrap();
+        let state = state.lock().expect("test lock should not be poisoned");
         if state.release_title {
             return Some(if state.empty_title { "" } else { GENERATED }.into());
         }
@@ -154,7 +157,7 @@ fn read_request(peer: &mut Peer, stop: &AtomicBool) -> Option<Value> {
             }
             Err(error) => panic!("read fixture: {error}"),
         }
-        return Some(serde_json::from_str(&line).unwrap());
+        return Some(serde_json::from_str(&line).expect("decode fixture request"));
     }
     None
 }
@@ -167,7 +170,7 @@ fn serve(
 ) {
     let mut peer = Peer::new(stream);
     let mut mode = String::new();
-    peer.reader.read_line(&mut mode).unwrap();
+    peer.reader.read_line(&mut mode).expect("read fixture mode");
     if peer.backend == Backend::OpenCode {
         title_native_tests::serve_opencode(peer, state, stop, project);
         return;
@@ -178,21 +181,25 @@ fn serve(
     }
     if mode.trim() == "print" {
         if let Some(title) = title_output(&state, &stop) {
-            writeln!(peer.reader.get_mut(), "{title}").unwrap();
+            writeln!(peer.reader.get_mut(), "{title}").expect("write title");
         }
         return;
     }
     peer.reader
         .get_mut()
         .set_read_timeout(Some(Duration::from_millis(50)))
-        .unwrap();
+        .expect("configure peer timeout");
     let mut ephemeral = false;
     while let Some(request) = read_request(&mut peer, &stop) {
         let method = request["method"]
             .as_str()
             .or(request["type"].as_str())
-            .unwrap();
-        state.lock().unwrap().requests.push(request.clone());
+            .expect("request method");
+        state
+            .lock()
+            .expect("test lock should not be poisoned")
+            .requests
+            .push(request.clone());
         if method == "initialized" {
             continue;
         }
@@ -205,9 +212,14 @@ fn serve(
             "collaborationMode/list" | "skills/list" | "thread/list" => json!({"data":[]}),
             "thread/read" | "thread/resume" | "thread/fork" | "thread/start" => {
                 ephemeral = request["params"]["ephemeral"].as_bool().unwrap_or(false);
-                let mut state = state.lock().unwrap();
+                let mut state = state.lock().expect("test lock should not be poisoned");
                 if method != "thread/read" && !ephemeral {
-                    state.main = Some(peer.reader.get_ref().try_clone().unwrap());
+                    state.main = Some(
+                        peer.reader
+                            .get_ref()
+                            .try_clone()
+                            .expect("clone peer socket"),
+                    );
                 }
                 json!({"thread":{"id":if ephemeral {"title-thread"} else {"main-thread"}, "cwd":project, "name":state.name, "turns":[]}})
             }
@@ -218,7 +230,7 @@ fn serve(
                 "input":request["params"]["input"]
             }}),
             "thread/name/set" | "set_session_name" => {
-                let mut state = state.lock().unwrap();
+                let mut state = state.lock().expect("test lock should not be poisoned");
                 failure = state.reject_rename;
                 if !failure {
                     state.name = request["params"]["name"]
@@ -229,7 +241,7 @@ fn serve(
                 json!({})
             }
             "get_state" => {
-                let state = state.lock().unwrap();
+                let state = state.lock().expect("test lock should not be poisoned");
                 json!({"sessionId":"main-thread", "sessionFile":project.join("main.jsonl"),
                     "sessionName":state.name, "isStreaming":false, "isCompacting":false,
                     "autoCompactionEnabled":true, "messageCount":state.messages, "pendingMessageCount":0})
@@ -305,7 +317,10 @@ fn serve(
                 );
             }
         } else if method == "prompt" {
-            state.lock().unwrap().messages += 2;
+            state
+                .lock()
+                .expect("test lock should not be poisoned")
+                .messages += 2;
             write(peer.reader.get_mut(), json!({"type":"agent_start"}));
             write(
                 peer.reader.get_mut(),
@@ -326,12 +341,16 @@ struct Scenario {
 impl Scenario {
     fn new(harness: Backend, name: Option<&str>, resume: bool) -> Self {
         let backend = ProtocolPeer::start();
-        backend.state.lock().unwrap().name = name.map(str::to_owned);
-        let project = std::env::current_dir().unwrap();
-        fs::write(project.join("main.jsonl"), "").unwrap();
+        backend
+            .state
+            .lock()
+            .expect("test lock should not be poisoned")
+            .name = name.map(str::to_owned);
+        let project = std::env::current_dir().expect("fixture directory");
+        fs::write(project.join("main.jsonl"), "").expect("write fixture session");
         let (mut owner, incoming_events) = owner_without_process(project.clone());
         owner.harness = harness.into();
-        owner.state = Some(StateStore::open().unwrap());
+        owner.state = Some(StateStore::open().expect("open fixture store"));
         owner.process_command = AgentLaunchConfig {
             program: project.join("pi"),
             session_locator_root: Some(project.join("locators")),
@@ -392,7 +411,11 @@ impl Scenario {
         self.owner.send_prompt(
             format!(
                 "session:{}",
-                self.owner.active_session.as_ref().unwrap().display()
+                self.owner
+                    .active_session
+                    .as_ref()
+                    .expect("active session")
+                    .display()
             ),
             PromptMode::Normal,
             "Inspect this archive".into(),
@@ -421,11 +444,22 @@ impl Scenario {
 
     fn generate(&mut self) {
         self.prompt();
-        self.until(|s| s.backend.state.lock().unwrap().title_requests == 1);
+        self.until(|s| {
+            s.backend
+                .state
+                .lock()
+                .expect("test lock should not be poisoned")
+                .title_requests
+                == 1
+        });
     }
 
     fn title_result(&mut self) -> SessionTitleResult {
-        self.backend.state.lock().unwrap().release_title = true;
+        self.backend
+            .state
+            .lock()
+            .expect("test lock should not be poisoned")
+            .release_title = true;
         self.owner
             .title_generation
             .receiver
@@ -452,9 +486,9 @@ impl Scenario {
                     self.owner
                         .state
                         .as_mut()
-                        .unwrap()
+                        .expect("state store")
                         .update_session_metadata(&metadata)
-                        .unwrap()
+                        .expect("save session metadata")
                         .title,
                 ),
                 _ => None,
@@ -487,7 +521,13 @@ fn fresh_sessions_generate_and_persist_one_title() {
             s.generate();
             s.finish_title();
             s.until(|s| {
-                s.backend.state.lock().unwrap().name.as_deref() == Some(GENERATED)
+                s.backend
+                    .state
+                    .lock()
+                    .expect("test lock should not be poisoned")
+                    .name
+                    .as_deref()
+                    == Some(GENERATED)
                     && s.name() == Some(GENERATED)
             });
             assert_eq!(s.name(), Some(GENERATED), "{harness}");
@@ -497,7 +537,14 @@ fn fresh_sessions_generate_and_persist_one_title() {
                 Some(GENERATED)
             );
             s.prompt();
-            assert_eq!(s.backend.state.lock().unwrap().title_requests, 1);
+            assert_eq!(
+                s.backend
+                    .state
+                    .lock()
+                    .expect("test lock should not be poisoned")
+                    .title_requests,
+                1
+            );
             assert!(!s.owner.title_generation.in_flight);
         }
     });
@@ -514,7 +561,14 @@ fn waking_existing_sessions_does_not_generate_titles() {
                     !s.owner.title_generation.in_flight,
                     "{harness} resumed session started generation"
                 );
-                assert_eq!(s.backend.state.lock().unwrap().title_requests, 0);
+                assert_eq!(
+                    s.backend
+                        .state
+                        .lock()
+                        .expect("test lock should not be poisoned")
+                        .title_requests,
+                    0
+                );
                 assert!(s.backend.rename_requests().is_empty());
             }
         }
@@ -539,14 +593,18 @@ fn codex_native_title_wins_over_pending_generation() {
         let mut s = Scenario::new(Backend::Codex, None, false);
         s.generate();
         {
-            let mut backend = s.backend.state.lock().unwrap();
+            let mut backend = s
+                .backend
+                .state
+                .lock()
+                .expect("test lock should not be poisoned");
             backend.name = Some("Native title".into());
             write(
-                backend.main.as_mut().unwrap(),
+                backend.main.as_mut().expect("main peer"),
                 json!({"method":"thread/name/updated", "params":{"threadId":"main-thread","threadName":"Native title"}}),
             );
             write(
-                backend.main.as_mut().unwrap(),
+                backend.main.as_mut().expect("main peer"),
                 json!({"method":"turn/started", "params":{"threadId":"main-thread","turn":{"id":"native-turn","status":"inProgress"}}}),
             );
         }
@@ -565,7 +623,11 @@ fn codex_native_title_wins_over_pending_generation() {
 fn rejected_rename(harness: Backend) {
     let mut s = Scenario::new(harness, None, false);
     s.generate();
-    s.backend.state.lock().unwrap().reject_rename = true;
+    s.backend
+        .state
+        .lock()
+        .expect("test lock should not be poisoned")
+        .reject_rename = true;
     s.finish_title();
     s.until(|s| {
         s.owner
@@ -576,7 +638,14 @@ fn rejected_rename(harness: Backend) {
             .any(|item| item.text.contains("rename denied"))
     });
     assert_eq!(s.backend.rename_requests(), [GENERATED]);
-    assert_eq!(s.backend.state.lock().unwrap().name, None);
+    assert_eq!(
+        s.backend
+            .state
+            .lock()
+            .expect("test lock should not be poisoned")
+            .name,
+        None
+    );
     let cached_titles = s.cached_titles();
     assert!(
         !cached_titles.iter().any(|title| title == GENERATED),
@@ -608,7 +677,15 @@ fn manual_rename_wins_over_pending_generation() {
             s.generate();
             s.owner
                 .apply_command(RuntimeCommand::SetSessionName("My title".into()));
-            s.until(|s| s.backend.state.lock().unwrap().name.as_deref() == Some("My title"));
+            s.until(|s| {
+                s.backend
+                    .state
+                    .lock()
+                    .expect("test lock should not be poisoned")
+                    .name
+                    .as_deref()
+                    == Some("My title")
+            });
             s.finish_title();
             assert_eq!(s.backend.rename_requests(), ["My title"], "{harness}");
         }
@@ -633,7 +710,11 @@ fn empty_generator_output_does_not_rename_session() {
     isolated_title("empty_generator_output_does_not_rename_session", || {
         for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, false);
-            s.backend.state.lock().unwrap().empty_title = true;
+            s.backend
+                .state
+                .lock()
+                .expect("test lock should not be poisoned")
+                .empty_title = true;
             s.generate();
             let result = s.title_result();
             assert!(result.result.is_err(), "empty title should fail validation");
@@ -665,7 +746,11 @@ fn pi_backend_title_wins_over_pending_generation() {
     isolated_title("pi_backend_title_wins_over_pending_generation", || {
         let mut s = Scenario::new(Backend::Pi, None, false);
         s.generate();
-        s.backend.state.lock().unwrap().name = Some("Backend title".into());
+        s.backend
+            .state
+            .lock()
+            .expect("test lock should not be poisoned")
+            .name = Some("Backend title".into());
         s.owner.send(SessionCommand::LoadState);
         s.until(|s| s.name() == Some("Backend title"));
         s.finish_title();
@@ -679,7 +764,7 @@ fn forks_do_not_generate_replacement_titles() {
     isolated_title("forks_do_not_generate_replacement_titles", || {
         for harness in [Backend::Pi, Backend::Codex] {
             let mut s = Scenario::new(harness, None, true);
-            let source = s.owner.active_session.clone().unwrap();
+            let source = s.owner.active_session.clone().expect("active session");
             s.owner.start_process_from(None, Some(source), false);
             s.until(|s| s.owner.startup_state_loaded && s.owner.startup_history_loaded);
             s.prompt();
@@ -687,7 +772,14 @@ fn forks_do_not_generate_replacement_titles() {
                 !s.owner.title_generation.in_flight,
                 "{harness} fork started title inference"
             );
-            assert_eq!(s.backend.state.lock().unwrap().title_requests, 0);
+            assert_eq!(
+                s.backend
+                    .state
+                    .lock()
+                    .expect("test lock should not be poisoned")
+                    .title_requests,
+                0
+            );
             assert!(s.backend.rename_requests().is_empty());
         }
     });

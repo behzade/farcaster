@@ -228,7 +228,7 @@ impl RuntimeOwner {
                 project,
                 harness,
             } => {
-                if !harness.is_none() {
+                if harness.is_some() {
                     self.harness = harness;
                 }
                 self.bind_external_session_identity(&path);

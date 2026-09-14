@@ -1,3 +1,5 @@
+// Live-test diagnostics are consumed by the E2E runner.
+#![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 use std::io::Write as _;
@@ -214,10 +216,11 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
     // A temporary live project intentionally blocks catalog discovery and
     // therefore move coverage.  Do not let that expected limitation skip the
     // independent resume, history, persistence, and cleanup checks below.
-    let move_outcome = coverage
-        .move_project
-        .then(|| exercise_live_move(harness, &config, &project, &path, &marker, coverage))
-        .unwrap_or(Ok(()));
+    let move_outcome = if coverage.move_project {
+        exercise_live_move(harness, &config, &project, &path, &marker, coverage)
+    } else {
+        Ok(())
+    };
     let persistence_outcome =
         verify_persistence_and_cleanup(harness, &config, &launch, &path, &marker, coverage);
     match (move_outcome, persistence_outcome) {
@@ -305,7 +308,7 @@ fn exercise_live_move(
             let mut resumed = spawn_session(
                 config,
                 SessionLaunch {
-                    harness: harness.into(),
+                    harness,
                     session_id: Some(original.id.clone()),
                     project: project.into(),
                     start: SessionStart::Resume(current.path.clone()),
@@ -1396,7 +1399,7 @@ pub(crate) mod support {
         harness: Backend,
         capabilities: AgentCapabilities,
         project_guard: tempfile::TempDir,
-        locator_guard: tempfile::TempDir,
+        _locator_guard: tempfile::TempDir,
         config: AgentLaunchConfig,
         transport: Box<dyn SessionTransport>,
         path: PathBuf,
@@ -1443,7 +1446,7 @@ pub(crate) mod support {
             let transport = spawn_session(
                 &config,
                 SessionLaunch {
-                    harness: harness.into(),
+                    harness,
                     session_id: None,
                     project,
                     start: SessionStart::New,
@@ -1451,10 +1454,10 @@ pub(crate) mod support {
                 },
             )?;
             let mut live = Self {
-                harness: harness.into(),
+                harness,
                 capabilities: descriptor.capabilities,
                 project_guard,
-                locator_guard,
+                _locator_guard: locator_guard,
                 config,
                 transport,
                 path: PathBuf::new(),
@@ -1503,10 +1506,6 @@ pub(crate) mod support {
             self.project_guard.path()
         }
 
-        pub(crate) fn launch_config(&self) -> AgentLaunchConfig {
-            self.config.clone()
-        }
-
         pub(crate) fn session_path(&mut self) -> Result<PathBuf, String> {
             let Payload::LoadState(state) = self.request(SessionCommand::LoadState)? else {
                 return Err("expected state response".into());
@@ -1517,28 +1516,12 @@ pub(crate) mod support {
                 .ok_or_else(|| "live session state omitted its locator path".to_owned())
         }
 
-        pub(crate) fn path(&self) -> &Path {
-            &self.path
-        }
-
-        pub(crate) fn program_version(&self) -> &str {
-            &self.program_version
-        }
-
-        pub(crate) fn model_identity(&self) -> Option<&str> {
-            self.model_identity.as_deref()
-        }
-
         pub(crate) fn conversation(&self) -> &ConversationState {
             &self.conversation
         }
 
         pub(crate) fn activities(&self) -> &[TraceEvent] {
             &self.activities
-        }
-
-        pub(crate) fn stderr(&self) -> &[String] {
-            &self.stderr
         }
 
         pub(crate) fn require_available(
@@ -1666,10 +1649,6 @@ pub(crate) mod support {
             self.wait_for_gate_started(&gate, TURN_TIMEOUT)?;
             gate.assert_process_alive()?;
             Ok(gate)
-        }
-
-        pub(crate) fn hold_turn(&mut self, label: &str) -> Result<TurnGate, String> {
-            self.start_gated_turn(label)
         }
 
         pub(crate) fn release_gate(&mut self, gate: &TurnGate) -> Result<(), String> {
@@ -1920,18 +1899,6 @@ pub(crate) mod support {
             ))
         }
 
-        pub(crate) fn wait_for_delivery(
-            &mut self,
-            submission_id: &str,
-            timeout: Duration,
-        ) -> Result<Value, String> {
-            self.wait_for_activity(timeout, |event| {
-                event.get("type").and_then(Value::as_str) == Some("prompt_delivery")
-                    && event.get("submissionId").and_then(Value::as_str) == Some(submission_id)
-                    && event.get("status").and_then(Value::as_str) == Some("delivered")
-            })
-        }
-
         pub(crate) fn wait_for_delivery_after(
             &mut self,
             cursor: usize,
@@ -1964,13 +1931,6 @@ pub(crate) mod support {
             }
         }
 
-        pub(crate) fn wait_for_settled(&mut self, timeout: Duration) -> Result<(), String> {
-            self.wait_for_activity(timeout, |event| {
-                event.get("type").and_then(Value::as_str) == Some("agent_settled")
-            })?;
-            Ok(())
-        }
-
         pub(crate) fn wait_for_native_idle(&mut self, timeout: Duration) -> Result<(), String> {
             let deadline = Instant::now() + timeout;
             while Instant::now() < deadline {
@@ -1996,16 +1956,6 @@ pub(crate) mod support {
                 event.get("type").and_then(Value::as_str) == Some("agent_settled")
             })?;
             Ok(())
-        }
-
-        pub(crate) fn wait_for_replacement_start_after(
-            &mut self,
-            cursor: usize,
-            timeout: Duration,
-        ) -> Result<Value, String> {
-            self.wait_for_activity_after(cursor, timeout, |event| {
-                event.get("type").and_then(Value::as_str) == Some("agent_start")
-            })
         }
 
         pub(crate) fn wait_for_assistant_text(
@@ -2057,29 +2007,6 @@ pub(crate) mod support {
                 ))
             } else {
                 Ok(())
-            }
-        }
-
-        pub(crate) fn assert_functional_marker_absent(
-            &mut self,
-            submission: &Submission,
-            marker: &str,
-        ) -> Result<(), String> {
-            match self.require_functional_prompt_observation(submission.mode)? {
-                PromptObservation::CorrelatedDelivery => self.assert_no_delivery(&submission.id),
-                PromptObservation::NativeHistoryOnly => {
-                    if self
-                        .history()?
-                        .iter()
-                        .any(|message| history_user_contains(message, marker))
-                    {
-                        Err(format!(
-                            "untracked input marker {marker:?} appeared in native history before its intended boundary"
-                        ))
-                    } else {
-                        Ok(())
-                    }
-                }
             }
         }
 
@@ -2673,12 +2600,6 @@ pub(crate) mod support {
         Ok(())
     }
 
-    pub(crate) fn run_selected_live_case(
-        exercise: impl FnMut(&mut LiveSession) -> Result<(), String>,
-    ) -> Result<(), String> {
-        for_each_selected(exercise)
-    }
-
     pub(crate) fn marker(label: &str) -> String {
         format!(
             "FARCASTER_E2E_{}_{}",
@@ -2698,8 +2619,6 @@ pub(crate) mod support {
             "image/gif",
         )
     }
-
-    pub(crate) type LiveGate = TurnGate;
 
     pub(crate) fn new_turn_gate(project: &Path, label: &str) -> Result<TurnGate, String> {
         TurnGate::new(project, label)

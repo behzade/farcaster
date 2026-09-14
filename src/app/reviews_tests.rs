@@ -41,31 +41,32 @@ fn validates_review_boundaries() {
 
 #[test]
 fn resolves_missing_files_but_rejects_escaping_symlinks() {
-    let project = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("file.rs"), "code").unwrap();
-    let existing = resolve_path(project.path(), "file.rs").unwrap();
+    let project = tempfile::tempdir().expect("temporary project");
+    let outside = tempfile::tempdir().expect("outside directory");
+    std::fs::write(project.path().join("file.rs"), "code").expect("write fixture");
+    let existing = resolve_path(project.path(), "file.rs").expect("resolve fixture");
     assert!(existing.is_file());
     assert_eq!(
         existing.as_os_str(),
         project
             .path()
             .canonicalize()
-            .unwrap()
+            .expect("canonical project")
             .join("file.rs")
             .as_os_str()
     );
     assert_eq!(
-        resolve_path(project.path(), "missing/file.rs").unwrap(),
+        resolve_path(project.path(), "missing/file.rs").expect("resolve missing file"),
         project
             .path()
             .canonicalize()
-            .unwrap()
+            .expect("canonical project")
             .join("missing/file.rs")
     );
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(outside.path(), project.path().join("escape")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.path().join("escape"))
+            .expect("create escaping symlink");
         assert!(resolve_path(project.path(), "escape/missing.rs").is_err());
     }
 }

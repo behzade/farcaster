@@ -182,7 +182,7 @@ impl FarcasterApp {
                 .then(|| "Choose a backend to import sessions.".into());
             dialog.candidates.clear();
             dialog.selected.clear();
-            (dialog.harness.clone(), dialog.preview_generation)
+            (dialog.harness, dialog.preview_generation)
         }) else {
             return;
         };

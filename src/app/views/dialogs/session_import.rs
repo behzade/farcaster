@@ -19,7 +19,7 @@ pub(in crate::app::views) fn render(
 ) -> AnyElement {
     let dialog = app.sessions.import.as_ref().expect("visible import");
     let dismiss = entity.clone();
-    let harness = dialog.harness.clone();
+    let harness = dialog.harness;
     let harness_name = agents::backend_display_name(harness);
     let loading = dialog.loading;
     let error = dialog.error.clone();
@@ -132,7 +132,6 @@ fn harness_picker(
                 },
                 true,
                 move |_, cx| {
-                    let harness = harness.clone();
                     let _ = entity.update(cx, |this, cx| {
                         this.select_session_import_harness(harness, cx);
                     });

@@ -130,14 +130,16 @@ fn skill_refresh_updates_commands_and_attaches_paths_to_prompts() {
     let mut requests = Vec::new();
     for _ in 0..2 {
         let mut line = String::new();
-        sent.read_line(&mut line).unwrap();
-        let request: Value = serde_json::from_str(&line).unwrap();
+        sent.read_line(&mut line).expect("read fixture request");
+        let request: Value = serde_json::from_str(&line).expect("decode fixture request");
         assert_eq!(request["method"], "skills/list");
         assert_eq!(
             request["params"],
             json!({"cwds":["/project"], "forceReload":true})
         );
-        requests.push(serde_json::from_value::<CodexRequestId>(request["id"].clone()).unwrap());
+        requests.push(
+            serde_json::from_value::<CodexRequestId>(request["id"].clone()).expect("request ID"),
+        );
     }
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
         id: requests[1].clone(),
@@ -161,10 +163,10 @@ fn skill_refresh_updates_commands_and_attaches_paths_to_prompts() {
             WorkerSendMode::Prompt,
             Vec::new(),
         )
-        .unwrap();
+        .expect("submit fixture prompt");
     let mut line = String::new();
-    sent.read_line(&mut line).unwrap();
-    let request: Value = serde_json::from_str(&line).unwrap();
+    sent.read_line(&mut line).expect("read fixture request");
+    let request: Value = serde_json::from_str(&line).expect("decode fixture request");
     assert_eq!(request["method"], "turn/start");
     assert_eq!(
         request["params"]["input"],
@@ -1066,7 +1068,7 @@ fn prompt_ack_requires_the_matching_rpc_reply_for_every_delivery_mode() {
         assert!(
             !session
                 .submit_prompt("submission".into(), "work".into(), mode, Vec::new())
-                .unwrap()
+                .expect("submit fixture prompt")
         );
         assert!(session.poll_prompt_ack().is_none());
         let id = CodexRequestId::Number(session.next_id);
@@ -1113,7 +1115,7 @@ fn rejected_and_malformed_codex_replies_have_distinct_receipt_outcomes() {
                 WorkerSendMode::Prompt,
                 Vec::new(),
             )
-            .unwrap();
+            .expect("receive fixture reply");
         let rejected = reply.get("error").is_some();
         let mut reply = reply;
         reply["id"] = json!(session.next_id);
@@ -1493,7 +1495,7 @@ fn malformed_native_reply_stays_correlatable_but_never_joins_next_handoff() {
     let batch: Value = serde_json::from_str(&line).expect("decode new batch");
     let text = batch["params"]["input"]
         .as_array()
-        .unwrap()
+        .expect("fixture array")
         .iter()
         .filter_map(|part| part["text"].as_str())
         .collect::<String>();
@@ -1996,10 +1998,10 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
         [
             first_delete["params"]["queuedSubmissionId"]
                 .as_str()
-                .unwrap(),
+                .expect("first queued submission ID"),
             second_delete["params"]["queuedSubmissionId"]
                 .as_str()
-                .unwrap(),
+                .expect("second queued submission ID"),
         ],
         ["queued-1", "queued-2"]
     );
@@ -2019,7 +2021,7 @@ fn apply_steering_claims_all_queued_inputs_and_fans_out_batch_delivery() {
         .to_owned();
     let batch_text = batch["params"]["input"]
         .as_array()
-        .unwrap()
+        .expect("fixture array")
         .iter()
         .filter_map(|part| part["text"].as_str())
         .collect::<Vec<_>>()
@@ -2168,7 +2170,7 @@ fn failed_queue_claim_waits_for_auto_started_turn_and_steers_only_safe_remainder
     line.clear();
     sent.read_line(&mut line).expect("queue claim");
     assert_eq!(
-        serde_json::from_str::<Value>(&line).unwrap()["method"],
+        serde_json::from_str::<Value>(&line).expect("decode fixture request")["method"],
         "thread/queue/delete"
     );
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
@@ -2195,7 +2197,7 @@ fn failed_queue_claim_waits_for_auto_started_turn_and_steers_only_safe_remainder
     assert_eq!(steer["params"]["expectedTurnId"], "auto-turn");
     let text = steer["params"]["input"]
         .as_array()
-        .unwrap()
+        .expect("fixture array")
         .iter()
         .filter_map(|part| part["text"].as_str())
         .collect::<String>();

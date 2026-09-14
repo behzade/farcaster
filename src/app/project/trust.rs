@@ -74,7 +74,7 @@ impl FarcasterApp {
             .trust_project
             .clone()
             .unwrap_or_else(|| self.project.path.clone());
-        let backend = self.project.trust_backend.clone();
+        let backend = self.project.trust_backend;
         let applied = match backend {
             Some(backend) => crate::agents::apply_project_trust(backend, &project, choice),
             None => apply(&project, choice),

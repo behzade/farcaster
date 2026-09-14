@@ -45,26 +45,40 @@ impl WorkerSession for ControlledPromptWorker {
     ) -> Result<bool, String> {
         self.0
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .requests
             .push((id, mode, text, images));
         Ok(false)
     }
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
-        self.0.lock().unwrap().acks.pop_front()
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .acks
+            .pop_front()
     }
     fn poll(&mut self) -> Option<WorkerEvent> {
-        self.0.lock().unwrap().events.pop_front()
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .events
+            .pop_front()
     }
     fn abort(&mut self) -> Result<(), String> {
-        self.0.lock().unwrap().aborts += 1;
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .aborts += 1;
         Ok(())
     }
     fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
         Ok(())
     }
     fn close(&mut self) -> Result<(), String> {
-        self.0.lock().unwrap().closes += 1;
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .closes += 1;
         Ok(())
     }
 }
@@ -160,7 +174,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             })
             .expect("old prompt submission");
         {
-            let state = backend.lock().unwrap();
+            let state = backend.lock().expect("test lock should not be poisoned");
             assert_eq!(
                 state.requests[0],
                 (
@@ -175,7 +189,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
         for _ in 0..2 {
             backend
                 .lock()
-                .unwrap()
+                .expect("test lock should not be poisoned")
                 .events
                 .push_back(WorkerEvent::PromptDeliveryUnknown {
                     submission_id: old_id.clone(),
@@ -213,7 +227,13 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
                 "queued Unknown is not delivered"
             );
         }
-        assert_eq!(backend.lock().unwrap().closes, 0);
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .closes,
+            0
+        );
 
         let new_id = transport
             .send(SessionCommand::Prompt {
@@ -224,7 +244,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
             .expect("new prompt submission");
         assert_ne!(old_id, new_id);
         {
-            let state = backend.lock().unwrap();
+            let state = backend.lock().expect("test lock should not be poisoned");
             assert_eq!(
                 state.requests[1],
                 (
@@ -238,7 +258,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
         backend
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .acks
             .push_back((old_id.clone(), Ok(())));
         let old_acceptance = project_transport_without_failures(&mut transport, &mut conversation);
@@ -258,7 +278,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
         backend
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .events
             .push_back(WorkerEvent::Activity(
                 WorkerActivity::SubmittedInputDeliveredWithImages {
@@ -284,7 +304,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
         backend
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .events
             .push_back(WorkerEvent::PromptDeliveryUnknown {
                 submission_id: old_id,
@@ -298,7 +318,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
         backend
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .acks
             .push_back((new_id.clone(), Ok(())));
         let new_acceptance = project_transport_without_failures(&mut transport, &mut conversation);
@@ -336,7 +356,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
         backend
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .events
             .push_back(WorkerEvent::PromptDeliveryUnknown {
                 submission_id: new_id.clone(),
@@ -350,7 +370,7 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
 
         backend
             .lock()
-            .unwrap()
+            .expect("test lock should not be poisoned")
             .events
             .push_back(WorkerEvent::Activity(
                 WorkerActivity::SubmittedInputDeliveredWithImages {
@@ -386,7 +406,13 @@ fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
                 .sum::<usize>(),
             2
         );
-        assert_eq!(backend.lock().unwrap().closes, 0);
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .closes,
+            0
+        );
     }
 }
 
@@ -403,7 +429,7 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
             MainSessionMetadata::default(),
             None,
         )
-        .unwrap();
+        .expect("create fixture transport");
         let mut conversation = ConversationState::default();
         let id = transport
             .send(SessionCommand::Prompt {
@@ -411,11 +437,26 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
                 message: "duplicate text".into(),
                 images: Vec::new(),
             })
-            .unwrap();
-        transport.send(SessionCommand::Abort).unwrap();
+            .expect("submit fixture prompt");
+        transport
+            .send(SessionCommand::Abort)
+            .expect("abort transport");
         let mut responses = project_transport(&mut transport, &mut conversation);
-        assert_eq!(backend.lock().unwrap().aborts, 1);
-        assert_eq!(backend.lock().unwrap().requests.len(), 1);
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .aborts,
+            1
+        );
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .requests
+                .len(),
+            1
+        );
         assert!(
             conversation.items.is_empty(),
             "Abort cannot prove queued input was delivered"
@@ -432,13 +473,29 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
             message: "duplicate text".into(),
         });
         if delivery_first {
-            backend.lock().unwrap().events.push_back(delivered);
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .events
+                .push_back(delivered);
             responses.extend(project_transport(&mut transport, &mut conversation));
-            backend.lock().unwrap().acks.push_back((id.clone(), Ok(())));
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .acks
+                .push_back((id.clone(), Ok(())));
         } else {
-            backend.lock().unwrap().acks.push_back((id.clone(), Ok(())));
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .acks
+                .push_back((id.clone(), Ok(())));
             responses.extend(project_transport(&mut transport, &mut conversation));
-            backend.lock().unwrap().events.push_back(delivered);
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .events
+                .push_back(delivered);
         }
         responses.extend(project_transport(&mut transport, &mut conversation));
         let prompt_responses = responses
@@ -461,7 +518,11 @@ fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
             "late acknowledgement cannot revive an aborted queue"
         );
         assert_eq!(
-            backend.lock().unwrap().requests.len(),
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .requests
+                .len(),
             1,
             "uncertain receipt never causes replay"
         );
@@ -481,7 +542,7 @@ fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
             MainSessionMetadata::default(),
             None,
         )
-        .unwrap();
+        .expect("create fixture transport");
         let mut conversation = ConversationState::default();
         let id = transport
             .send(SessionCommand::Prompt {
@@ -489,19 +550,21 @@ fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
                 message: "preserve me".into(),
                 images: Vec::new(),
             })
-            .unwrap();
-        transport.send(SessionCommand::Abort).unwrap();
+            .expect("submit fixture prompt");
+        transport
+            .send(SessionCommand::Abort)
+            .expect("abort transport");
         project_transport(&mut transport, &mut conversation);
         if rejected {
             backend
                 .lock()
-                .unwrap()
+                .expect("test lock should not be poisoned")
                 .acks
                 .push_back((id.clone(), Err("invalid input".into())));
         } else {
             backend
                 .lock()
-                .unwrap()
+                .expect("test lock should not be poisoned")
                 .events
                 .push_back(WorkerEvent::Failed("connection lost".into()));
         }
@@ -510,7 +573,7 @@ fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
             .iter()
             .find(|r| r.id.as_deref() == Some(&id))
             .expect("prompt outcome");
-        let error = response.result.as_ref().unwrap_err();
+        let error = response.result.as_ref().expect_err("prompt must fail");
         assert_eq!(
             error.kind,
             if rejected {
@@ -547,7 +610,7 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
         MainSessionMetadata::default(),
         None,
     )
-    .unwrap();
+    .expect("create fixture transport");
     let mut conversation = ConversationState::default();
     let first = transport
         .send(SessionCommand::Prompt {
@@ -558,25 +621,27 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
                 "image/png".into(),
             )],
         })
-        .unwrap();
+        .expect("submit first prompt");
     let second = transport
         .send(SessionCommand::Prompt {
             mode: PromptMode::Steer,
             message: "same text".into(),
             images: vec![],
         })
-        .unwrap();
+        .expect("submit second prompt");
     backend
         .lock()
-        .unwrap()
+        .expect("test lock should not be poisoned")
         .acks
         .push_back((second.clone(), Ok(())));
     project_transport(&mut transport, &mut conversation);
-    transport.send(SessionCommand::Abort).unwrap();
+    transport
+        .send(SessionCommand::Abort)
+        .expect("abort transport");
     project_transport(&mut transport, &mut conversation);
     backend
         .lock()
-        .unwrap()
+        .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(
             WorkerActivity::SubmittedInputDelivered {
@@ -586,10 +651,14 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
             },
         ));
     project_transport(&mut transport, &mut conversation);
-    backend.lock().unwrap().acks.push_back((first, Ok(())));
     backend
         .lock()
-        .unwrap()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((first, Ok(())));
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(
             WorkerActivity::SubmittedInputDelivered {
@@ -612,7 +681,14 @@ fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort(
             .all(|item| item.text == "same text" && item.label.is_empty())
     );
     assert!(conversation.queue.steering.is_empty());
-    assert_eq!(backend.lock().unwrap().requests.len(), 2);
+    assert_eq!(
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .requests
+            .len(),
+        2
+    );
 }
 
 #[test]
@@ -626,14 +702,14 @@ fn replacement_transports_do_not_reuse_persisted_submission_ids() {
             MainSessionMetadata::default(),
             None,
         )
-        .unwrap();
+        .expect("create fixture transport");
         transport
             .send(SessionCommand::Prompt {
                 mode: PromptMode::Steer,
                 message: "next".into(),
                 images: vec![],
             })
-            .unwrap()
+            .expect("submit fixture prompt")
     };
     assert_ne!(submit(), submit());
 }
@@ -650,7 +726,7 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
         MainSessionMetadata::default(),
         None,
     )
-    .unwrap();
+    .expect("create fixture transport");
     let mut conversation = ConversationState::default();
     let item = conversation.push_local_user_with_prompt_images("normal text".into(), &[], false);
     let id = transport
@@ -659,14 +735,18 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
             message: "normal text".into(),
             images: vec![],
         })
-        .unwrap();
+        .expect("submit fixture prompt");
     conversation.bind_submitted_prompt(&id, &item);
-    backend.lock().unwrap().acks.push_back((id.clone(), Ok(())));
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
     project_transport(&mut transport, &mut conversation);
     assert_eq!(conversation.items.len(), 1);
     backend
         .lock()
-        .unwrap()
+        .expect("test lock should not be poisoned")
         .events
         .push_back(WorkerEvent::Activity(
             WorkerActivity::SubmittedInputDelivered {
@@ -680,7 +760,12 @@ fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
         if let SessionEvent::Activity(event) = event {
             let event = event.value();
             if event["type"] == "prompt_delivery" && event["status"] == "delivered" {
-                delivered_ids.push(event["submissionId"].as_str().unwrap().to_owned());
+                delivered_ids.push(
+                    event["submissionId"]
+                        .as_str()
+                        .expect("delivered submission ID")
+                        .to_owned(),
+                );
             }
             conversation.reduce(event);
         }
@@ -720,7 +805,11 @@ fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
             images: vec![input.clone()],
         })
         .expect("submit");
-    backend.lock().unwrap().acks.push_back((id.clone(), Ok(())));
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
     project_transport(&mut transport, &mut conversation);
     transport.send(SessionCommand::Abort).expect("abort");
     while let Some(event) = transport.poll() {
@@ -876,7 +965,7 @@ fn prompt_response_does_not_precede_worker_rejection() {
 
     backend
         .lock()
-        .unwrap()
+        .expect("test lock should not be poisoned")
         .acks
         .push_back((id.clone(), Err("native backend rejected the prompt".into())));
     let rejection = transport.poll().expect("rejection activity");

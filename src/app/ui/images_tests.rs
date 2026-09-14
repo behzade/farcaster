@@ -8,14 +8,14 @@ use crate::conversation::EncodedImage;
 #[test]
 fn preview_and_history_images_preserve_format_bytes_and_cache_identity() {
     let preview = Arc::new(Image::from_bytes(ImageFormat::Gif, vec![4, 5, 6]));
-    let encoded = from_preview(preview.clone()).unwrap();
+    let encoded = from_preview(preview.clone()).expect("encoded preview");
     assert_eq!(encoded.mime_type(), "image/gif");
     assert_eq!(encoded.bytes(), preview.bytes());
     assert!(Arc::ptr_eq(&image(&encoded), &preview));
 
     // History arrives without a cached composer preview. Check the actual
     // conversion on this path, using expectations independent of the cache.
-    let history = Arc::new(EncodedImage::new(vec![7, 8, 9], "image/jpg").unwrap());
+    let history = Arc::new(EncodedImage::new(vec![7, 8, 9], "image/jpg").expect("history image"));
     let restored = image(&history);
     assert_eq!(restored.format(), ImageFormat::Jpeg);
     assert_eq!(restored.bytes(), [7, 8, 9]);
@@ -27,7 +27,10 @@ fn cache_keeps_recent_images_and_releases_evicted_or_unowned_images() {
     let mut cache = ImageCache::default();
     let encoded = (0..=MAX_CACHED_IMAGES)
         .map(|index| {
-            Arc::new(EncodedImage::new(index.to_le_bytes().to_vec(), "image/png").unwrap())
+            Arc::new(
+                EncodedImage::new(index.to_le_bytes().to_vec(), "image/png")
+                    .expect("fixture image"),
+            )
         })
         .collect::<Vec<_>>();
     let create = || Arc::new(Image::from_bytes(ImageFormat::Png, vec![1]));
@@ -44,7 +47,7 @@ fn cache_keeps_recent_images_and_releases_evicted_or_unowned_images() {
     assert!(second.upgrade().is_none());
     assert_eq!(cache.entries.len(), MAX_CACHED_IMAGES);
 
-    let last = encoded.last().unwrap().clone();
+    let last = encoded.last().expect("last image").clone();
     let released = Arc::downgrade(&first);
     drop(first);
     drop(encoded);

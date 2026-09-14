@@ -933,47 +933,40 @@ impl WorkerSession for CodexWorkerSession {
                 .pop_front()
                 .or_else(|| self.incoming.try_recv().ok())?;
             // Correlate the actual RPC reply, never a write or turn notification.
-            match &inbound {
-                Ok(CodexInbound::Response { id, result }) => {
-                    if let Some(prompt) = self.prompt_requests.get(id).cloned() {
-                        let accepted = match self.pending.get(id) {
-                            Some(PendingRequest::StartTurn) => {
-                                serde_json::from_value::<TurnResponse>(result.clone())
-                                    .map(|_| ())
-                                    .map_err(|error| {
-                                        format!("decode Codex turn acknowledgement: {error}")
-                                    })
-                            }
-                            Some(PendingRequest::Control {
-                                operation: "queue", ..
-                            }) => queue_submission_id(result).map(|_| ()),
-                            Some(PendingRequest::Control {
-                                operation: "steer", ..
-                            }) => result
-                                .get("turnId")
-                                .and_then(Value::as_str)
-                                .map(|_| ())
-                                .ok_or_else(|| {
-                                    "decode Codex steer acknowledgement: missing turnId".into()
-                                }),
-                            _ => Ok(()),
-                        };
-                        if accepted.is_ok() {
-                            self.prompt_requests.remove(id);
-                            if let Some(PendingRequest::Control {
-                                client_id: Some(client_id),
-                                ..
-                            }) = self.pending.get(id)
-                                && let Some(input) = self.native_inputs.get_mut(client_id)
-                                && let NativeInputKind::Steer { receipt } = &mut input.kind
-                            {
-                                *receipt = SteerReceipt::Accepted;
-                            }
-                            self.record_prompt_ack(prompt, Ok(()));
-                        }
+            if let Ok(CodexInbound::Response { id, result }) = &inbound
+                && let Some(prompt) = self.prompt_requests.get(id).cloned()
+            {
+                let accepted = match self.pending.get(id) {
+                    Some(PendingRequest::StartTurn) => {
+                        serde_json::from_value::<TurnResponse>(result.clone())
+                            .map(|_| ())
+                            .map_err(|error| format!("decode Codex turn acknowledgement: {error}"))
                     }
+                    Some(PendingRequest::Control {
+                        operation: "queue", ..
+                    }) => queue_submission_id(result).map(|_| ()),
+                    Some(PendingRequest::Control {
+                        operation: "steer", ..
+                    }) => result
+                        .get("turnId")
+                        .and_then(Value::as_str)
+                        .map(|_| ())
+                        .ok_or_else(|| "decode Codex steer acknowledgement: missing turnId".into()),
+                    _ => Ok(()),
+                };
+                if accepted.is_ok() {
+                    self.prompt_requests.remove(id);
+                    if let Some(PendingRequest::Control {
+                        client_id: Some(client_id),
+                        ..
+                    }) = self.pending.get(id)
+                        && let Some(input) = self.native_inputs.get_mut(client_id)
+                        && let NativeInputKind::Steer { receipt } = &mut input.kind
+                    {
+                        *receipt = SteerReceipt::Accepted;
+                    }
+                    self.record_prompt_ack(prompt, Ok(()));
                 }
-                _ => {}
             }
             match inbound {
                 Ok(CodexInbound::Response { id, result }) => match self.pending.remove(&id) {
@@ -1157,10 +1150,10 @@ impl WorkerSession for CodexWorkerSession {
                         _ => false,
                     };
                     let rejected_prompt = self.prompt_requests.remove(&id);
-                    if let Some(prompt) = rejected_prompt.as_ref() {
-                        if !retry_handoff_steer {
-                            self.record_prompt_ack(prompt.clone(), Err(error.message.clone()));
-                        }
+                    if let Some(prompt) = rejected_prompt.as_ref()
+                        && !retry_handoff_steer
+                    {
+                        self.record_prompt_ack(prompt.clone(), Err(error.message.clone()));
                     }
                     match self.pending.remove(&id) {
                         Some(PendingRequest::Command(request)) => {
@@ -1435,10 +1428,10 @@ impl WorkerSession for CodexWorkerSession {
                         }
                         "item/completed" => {
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
-                            if item_type == Some("exitedReviewMode") {
-                                if let Some(review) = params["item"]["review"].as_str() {
-                                    self.output = review.to_owned();
-                                }
+                            if item_type == Some("exitedReviewMode")
+                                && let Some(review) = params["item"]["review"].as_str()
+                            {
+                                self.output = review.to_owned();
                             }
                             if let Some(output) = codex_agent_message_text(&params["item"]) {
                                 self.output = output;
@@ -1772,14 +1765,13 @@ impl CodexWorkerSession {
     }
 
     fn begin_abort_cleanup(&mut self, turn_id: &str, interrupt: bool) -> Result<(), String> {
-        if self.abort_cleanup.is_some() {
-            if self
+        if self.abort_cleanup.is_some()
+            && self
                 .abort_cleanup
                 .as_ref()
                 .is_some_and(|cleanup| cleanup.target_turn == turn_id)
-            {
-                return Ok(());
-            }
+        {
+            return Ok(());
         }
         let watch_late_handoff = self
             .abort_cleanup

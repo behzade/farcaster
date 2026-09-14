@@ -698,7 +698,7 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, Option<B
             project,
             harness,
             ..
-        } => Some((format!("draft:{id}"), project.clone(), harness.clone())),
+        } => Some((format!("draft:{id}"), project.clone(), *harness)),
         RuntimeCommand::ForkSession {
             path,
             project,
@@ -707,7 +707,7 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, Option<B
         } => Some((
             format!("fork:{}", path.display()),
             project.clone(),
-            Some(harness.clone()),
+            Some(*harness),
         )),
         RuntimeCommand::SelectSession {
             path,
@@ -723,7 +723,7 @@ fn command_target(command: &RuntimeCommand) -> Option<(String, PathBuf, Option<B
         } => Some((
             format!("session:{}", path.display()),
             project.clone(),
-            Some(harness.clone()),
+            Some(*harness),
         )),
         _ => None,
     }

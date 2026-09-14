@@ -139,7 +139,7 @@ async fn workgraph_rejects_missing_authenticated_caller() {
                 serde_json::from_value(serde_json::json!({
                     "title": "Review", "items": [{"path": "file.rs", "note": "Inspect"}]
                 }))
-                .unwrap(),
+                .expect("decode test parameters"),
             ),
             Extension(parts),
         )

@@ -20,7 +20,7 @@ fn catalog_excludes_disabled_foreign_and_ambiguous_skills() {
         ]}),
         Path::new("/project"),
     )
-    .unwrap();
+    .expect("decode skill fixture");
     assert_eq!(
         skills.commands(),
         [json!({"name":"skill:review", "description":"Review code", "source":"skill"})]
@@ -36,10 +36,10 @@ fn invocations_attach_exact_paths_and_preserve_other_text() {
         ]}]}),
         Path::new("/project"),
     )
-    .unwrap();
+    .expect("decode skill fixture");
     let message = "/skill:review Fix this\n$skill:check, $review! $unknown \\$review word$review $review.md  ";
     assert_eq!(
-        serde_json::to_value(skills.input(message.into())).unwrap(),
+        serde_json::to_value(skills.input(message.into())).expect("encode skill input"),
         json!([
             {"type":"text", "text":"$review Fix this\n$check, $review! $unknown \\$review word$review $review.md  ", "text_elements":[]},
             {"type":"skill", "name":"review", "path":"/skills/review/SKILL.md"},

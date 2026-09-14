@@ -172,7 +172,7 @@ impl FarcasterApp {
                     target: target.clone(),
                     session: this.snapshot.session_target(),
                     label: "Current chat".into(),
-                    harness: settings.harness.clone(),
+                    harness: settings.harness,
                 };
                 let destinations =
                     destinations::choices(&settings.project, current, &this.sessions.all);

@@ -122,7 +122,7 @@ impl FarcasterApp {
             .find(|draft| draft.id == id)
             .expect("selected draft was materialized");
         self.sessions.preferred_harness = Some(harness);
-        if !draft.change_harness(Some(harness.clone())) {
+        if !draft.change_harness(Some(harness)) {
             return;
         }
         let project = draft.project.clone();

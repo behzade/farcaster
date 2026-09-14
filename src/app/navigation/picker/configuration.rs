@@ -38,7 +38,7 @@ impl FarcasterApp {
                     picker_row(
                         commands,
                         &format!("harness:{}", backend.id),
-                        PickerCommand::SetHarness(backend.id.clone()),
+                        PickerCommand::SetHarness(backend.id),
                         AppIcon::for_harness(backend.id),
                         &backend.name,
                         detail,

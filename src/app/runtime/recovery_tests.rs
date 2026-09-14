@@ -46,7 +46,7 @@ fn mark_delivered_from_ui_clears_the_blocker_without_touching_the_draft() -> Res
         .into_iter()
         .next()
         .ok_or_else(|| "missing recovery request".to_owned())?;
-    let id = request.dialog_id().unwrap().to_owned();
+    let id = request.dialog_id().expect("recovery dialog ID").to_owned();
     let mut ui = ExtensionUiState::default();
     assert_eq!(
         ui.apply(request),

@@ -76,7 +76,9 @@ fn metadata_readback_failure_rolls_back_the_update() -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     update.title = Some("Must not commit".into());
-    let error = store.update_session_metadata(&update).unwrap_err();
+    let error = store
+        .update_session_metadata(&update)
+        .expect_err("invalid metadata must not commit");
     assert!(error.contains("decode cached session"), "{error}");
     let restored = store.cached_sessions("")?;
     assert_eq!(restored.len(), 1);

@@ -426,7 +426,7 @@ fn startup_does_not_launch_unselected_catalogs() {
         &["claude", "antigravity-acp"],
         || {
             let harness = Harness::start();
-            let launched = harness.accept(WAIT).map(|peer| peer.backend.clone());
+            let launched = harness.accept(WAIT).map(|peer| peer.backend);
             assert!(
                 launched.is_none(),
                 "startup launched {launched:?} without user selection"

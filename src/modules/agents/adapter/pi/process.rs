@@ -85,7 +85,7 @@ impl ReaderSender {
 }
 
 enum ReaderItem {
-    Wire(Result<PiWireMessage, String>),
+    Wire(Box<Result<PiWireMessage, String>>),
     Stderr(String),
     StderrEof,
     Eof,
@@ -968,141 +968,150 @@ impl PiRpcProcess {
     fn route(&mut self, item: ReaderItem) -> SessionEvent {
         self.retry_parent_stamp();
         match item {
-            ReaderItem::Wire(Ok(PiWireMessage::Response {
-                mut response,
-                command,
-                commands,
-            })) => {
-                let Some(id) = response.id.clone() else {
-                    return SessionEvent::Failure(format!("uncorrelated response for {command}"));
-                };
-                let Some(expected_command) = self.pending.remove(&id) else {
-                    return SessionEvent::Failure(format!("response used unknown request id {id}"));
-                };
-                if command != expected_command {
-                    return SessionEvent::Failure(format!(
-                        "response {id} was for {command}, expected {expected_command}"
-                    ));
-                }
-                if let Some(configuration) = self.pending_queue_configurations.remove(&id) {
-                    return self.route_queue_configuration(response, configuration);
-                }
-                if self.apply_steering_requests.remove(&id) {
-                    if self.apply_steering_requests.is_empty() && self.apply_steering_settled {
-                        self.apply_steering_settled = false;
-                        self.set_activity(WorkerActivityState::Idle);
-                        self.queued.push_back(SessionEvent::Activity(
-                            serde_json::json!({"type":"agent_settled"}).into(),
+            ReaderItem::Wire(wire) => match *wire {
+                Ok(PiWireMessage::Response {
+                    mut response,
+                    command,
+                    commands,
+                }) => {
+                    let Some(id) = response.id.clone() else {
+                        return SessionEvent::Failure(format!(
+                            "uncorrelated response for {command}"
+                        ));
+                    };
+                    let Some(expected_command) = self.pending.remove(&id) else {
+                        return SessionEvent::Failure(format!(
+                            "response used unknown request id {id}"
+                        ));
+                    };
+                    if command != expected_command {
+                        return SessionEvent::Failure(format!(
+                            "response {id} was for {command}, expected {expected_command}"
                         ));
                     }
-                    response = remap_response(
-                        response,
-                        crate::agents::SessionOperation::ApplySteering,
-                        crate::agents::SessionResponsePayload::ApplySteering,
-                    );
-                }
-                if let Some(configuration) = self.pending_configurations.remove(&id)
-                    && response.result.is_ok()
-                {
-                    match configuration {
-                        PendingConfiguration::Model { provider, model_id } => {
-                            self.caller_identity.select_model(&provider, &model_id);
-                            self.selected_model = Some((provider, model_id));
-                        }
-                        PendingConfiguration::Reasoning(level) => {
-                            self.caller_identity.select_effort(&level);
-                            self.selected_reasoning = Some(level);
-                        }
+                    if let Some(configuration) = self.pending_queue_configurations.remove(&id) {
+                        return self.route_queue_configuration(response, configuration);
                     }
-                }
-                if matches!(
-                    &response.result,
-                    Ok(crate::agents::SessionResponsePayload::ListCommands(_))
-                ) {
-                    self.commands = commands;
-                }
-                let prompt_operation = response.operation();
-                if matches!(prompt_operation, crate::agents::SessionOperation::Prompt(_)) {
-                    self.pending_prompt_modes.remove(&id);
-                }
-                if response.result.is_err() {
-                    if prompt_operation
-                        == crate::agents::SessionOperation::Prompt(
-                            crate::protocol::PromptMode::Normal,
-                        )
-                    {
-                        self.set_activity(WorkerActivityState::Idle);
-                    }
-                }
-                if let Ok(crate::agents::SessionResponsePayload::LoadState(state)) =
-                    &response.result
-                {
-                    self.selected_model = state.model.as_ref().map(|model| {
-                        self.caller_identity
-                            .select_model(&model.provider, &model.id);
-                        (model.provider.clone(), model.id.clone())
-                    });
-                    self.selected_reasoning = state.thinking_level.clone();
-                    if let Some(level) = &self.selected_reasoning {
-                        self.caller_identity.select_effort(level);
-                    }
-                    let session = state.session_file.as_deref();
-                    self.session_locator = session.map(PathBuf::from);
-                    if let Some(expected) = self.expected_resume.take() {
-                        let actual = session
-                            .map(|path| crate::sessions::normalize_session_path(Path::new(path)));
-                        if actual.as_ref() != Some(&expected) {
-                            return SessionEvent::Failure(format!(
-                                "Pi did not resume the requested session: {}",
-                                expected.display()
+                    if self.apply_steering_requests.remove(&id) {
+                        if self.apply_steering_requests.is_empty() && self.apply_steering_settled {
+                            self.apply_steering_settled = false;
+                            self.set_activity(WorkerActivityState::Idle);
+                            self.queued.push_back(SessionEvent::Activity(
+                                serde_json::json!({"type":"agent_settled"}).into(),
                             ));
                         }
+                        response = remap_response(
+                            response,
+                            crate::agents::SessionOperation::ApplySteering,
+                            crate::agents::SessionResponsePayload::ApplySteering,
+                        );
                     }
-                    if let Some(session) = session
-                        // An inherited worker resumes the parent before forking it.
-                        && self.parent_session.as_deref() != Some(session)
+                    if let Some(configuration) = self.pending_configurations.remove(&id)
+                        && response.result.is_ok()
                     {
-                        self.caller_identity.bind(session);
-                        if self.parent_session.is_some() {
-                            self.pending_parent_stamp = Some(PathBuf::from(session));
-                            self.retry_parent_stamp();
+                        match configuration {
+                            PendingConfiguration::Model { provider, model_id } => {
+                                self.caller_identity.select_model(&provider, &model_id);
+                                self.selected_model = Some((provider, model_id));
+                            }
+                            PendingConfiguration::Reasoning(level) => {
+                                self.caller_identity.select_effort(&level);
+                                self.selected_reasoning = Some(level);
+                            }
                         }
                     }
-                }
-                SessionEvent::Response(response)
-            }
-            ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(request))) => {
-                if let (Some(adapter), Some(expected)) = (self.sandbox_adapter, self.sandbox_mode)
-                    && let Some(report) = adapter.mode_report(&request)
-                {
-                    match report {
-                        Ok(mode) if mode == expected => return SessionEvent::Stderr(String::new()),
-                        report => {
-                            self.sandbox_mode = None;
-                            return SessionEvent::Failure(report.err().unwrap_or_else(|| "Sandbox mode changed outside Farcaster. Restart the session to confirm its mode.".into()));
-                        }
+                    if matches!(
+                        &response.result,
+                        Ok(crate::agents::SessionResponsePayload::ListCommands(_))
+                    ) {
+                        self.commands = commands;
                     }
-                }
-                SessionEvent::Interaction(request)
-            }
-            ReaderItem::Wire(Ok(PiWireMessage::Event(event))) => {
-                match event.get("type").and_then(Value::as_str) {
-                    Some("agent_start") => {
-                        self.apply_steering_settled = false;
-                        self.set_activity(WorkerActivityState::Working);
+                    let prompt_operation = response.operation();
+                    if matches!(prompt_operation, crate::agents::SessionOperation::Prompt(_)) {
+                        self.pending_prompt_modes.remove(&id);
                     }
-                    Some("agent_settled") => {
-                        if !self.apply_steering_requests.is_empty() {
-                            self.apply_steering_settled = true;
-                            return SessionEvent::Stderr(String::new());
-                        }
+                    if response.result.is_err()
+                        && prompt_operation
+                            == crate::agents::SessionOperation::Prompt(
+                                crate::protocol::PromptMode::Normal,
+                            )
+                    {
                         self.set_activity(WorkerActivityState::Idle);
                     }
-                    _ => {}
+                    if let Ok(crate::agents::SessionResponsePayload::LoadState(state)) =
+                        &response.result
+                    {
+                        self.selected_model = state.model.as_ref().map(|model| {
+                            self.caller_identity
+                                .select_model(&model.provider, &model.id);
+                            (model.provider.clone(), model.id.clone())
+                        });
+                        self.selected_reasoning = state.thinking_level.clone();
+                        if let Some(level) = &self.selected_reasoning {
+                            self.caller_identity.select_effort(level);
+                        }
+                        let session = state.session_file.as_deref();
+                        self.session_locator = session.map(PathBuf::from);
+                        if let Some(expected) = self.expected_resume.take() {
+                            let actual = session.map(|path| {
+                                crate::sessions::normalize_session_path(Path::new(path))
+                            });
+                            if actual.as_ref() != Some(&expected) {
+                                return SessionEvent::Failure(format!(
+                                    "Pi did not resume the requested session: {}",
+                                    expected.display()
+                                ));
+                            }
+                        }
+                        if let Some(session) = session
+                        // An inherited worker resumes the parent before forking it.
+                        && self.parent_session.as_deref() != Some(session)
+                        {
+                            self.caller_identity.bind(session);
+                            if self.parent_session.is_some() {
+                                self.pending_parent_stamp = Some(PathBuf::from(session));
+                                self.retry_parent_stamp();
+                            }
+                        }
+                    }
+                    SessionEvent::Response(response)
                 }
-                SessionEvent::Activity(event.into())
-            }
-            ReaderItem::Wire(Err(error)) => SessionEvent::Failure(error),
+                Ok(PiWireMessage::ExtensionUi(request)) => {
+                    if let (Some(adapter), Some(expected)) =
+                        (self.sandbox_adapter, self.sandbox_mode)
+                        && let Some(report) = adapter.mode_report(&request)
+                    {
+                        match report {
+                            Ok(mode) if mode == expected => {
+                                return SessionEvent::Stderr(String::new());
+                            }
+                            report => {
+                                self.sandbox_mode = None;
+                                return SessionEvent::Failure(report.err().unwrap_or_else(|| "Sandbox mode changed outside Farcaster. Restart the session to confirm its mode.".into()));
+                            }
+                        }
+                    }
+                    SessionEvent::Interaction(request)
+                }
+                Ok(PiWireMessage::Event(event)) => {
+                    match event.get("type").and_then(Value::as_str) {
+                        Some("agent_start") => {
+                            self.apply_steering_settled = false;
+                            self.set_activity(WorkerActivityState::Working);
+                        }
+                        Some("agent_settled") => {
+                            if !self.apply_steering_requests.is_empty() {
+                                self.apply_steering_settled = true;
+                                return SessionEvent::Stderr(String::new());
+                            }
+                            self.set_activity(WorkerActivityState::Idle);
+                        }
+                        _ => {}
+                    }
+                    SessionEvent::Activity(event.into())
+                }
+                Err(error) => SessionEvent::Failure(error),
+            },
             ReaderItem::Stderr(chunk) => {
                 self.stderr.push_str(&chunk);
                 SessionEvent::Stderr(chunk)
@@ -1260,20 +1269,24 @@ fn spawn_stdout_reader(mut stdout: impl std::io::Read + Send + 'static, sender: 
                     Ok(0) => break,
                     Ok(count) => {
                         for frame in framer.push(&buffer[..count]) {
-                            if sender.send(ReaderItem::Wire(parse_frame(&frame))).is_err() {
+                            if sender
+                                .send(ReaderItem::Wire(Box::new(parse_frame(&frame))))
+                                .is_err()
+                            {
                                 return;
                             }
                         }
                     }
                     Err(error) => {
-                        let _ =
-                            sender.send(ReaderItem::Wire(Err(format!("read Pi stdout: {error}"))));
+                        let _ = sender.send(ReaderItem::Wire(Box::new(Err(format!(
+                            "read Pi stdout: {error}"
+                        )))));
                         return;
                     }
                 }
             }
             if let Some(frame) = framer.finish() {
-                let _ = sender.send(ReaderItem::Wire(parse_frame(&frame)));
+                let _ = sender.send(ReaderItem::Wire(Box::new(parse_frame(&frame))));
             }
             let _ = sender.send(ReaderItem::Eof);
         })

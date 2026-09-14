@@ -4,7 +4,7 @@ use serde_json::json;
 
 #[test]
 fn submission_uses_caller_project_and_returns_validated_artifact() {
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("temporary project");
     let caller = crate::agents::CallerContext {
         worker_id: "worker".into(),
         worker_name: "Worker".into(),
@@ -18,10 +18,14 @@ fn submission_uses_caller_project_and_returns_validated_artifact() {
         parent_worker_id: None,
     };
     let params = || json!({"title":"Review this", "items":[{"path":"missing.rs", "note":"Inspect deletion", "start_line":1,"end_line":3}]});
-    let result = submit(&caller, serde_json::from_value(params()).unwrap()).unwrap();
+    let result = submit(
+        &caller,
+        serde_json::from_value(params()).expect("review parameters"),
+    )
+    .expect("submit review");
     assert_eq!(
         result["farcaster_review"]["project"],
-        json!(project.path().canonicalize().unwrap())
+        json!(project.path().canonicalize().expect("canonical project"))
     );
     assert_eq!(result["farcaster_review"]["review"], params());
     assert!(!project.path().join("missing.rs").exists());
@@ -32,5 +36,11 @@ fn submission_uses_caller_project_and_returns_validated_artifact() {
     }
     let mut value = params();
     value["items"][0]["path"] = json!("../escape");
-    assert!(submit(&caller, serde_json::from_value(value).unwrap()).is_err());
+    assert!(
+        submit(
+            &caller,
+            serde_json::from_value(value).expect("review parameters")
+        )
+        .is_err()
+    );
 }

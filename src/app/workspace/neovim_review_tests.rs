@@ -4,12 +4,12 @@ use crate::app::reviews::{Review, ReviewLocation};
 #[test]
 #[ignore = "requires a Neovim executable; exercises real quickfix windows"]
 fn review_quickfix_preserves_history_buffers_and_advisory_ranges() {
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("temporary project");
     std::fs::write(
         project.path().join("it's code.rs"),
         "first\nsecond\nthird\n",
     )
-    .unwrap();
+    .expect("write fixture file");
     let review = Review {
         title: "Check `code` | سلام".into(),
         items: vec![
@@ -35,9 +35,9 @@ fn review_quickfix_preserves_history_buffers_and_advisory_ranges() {
     };
     std::fs::write(
         project.path().join("review.json"),
-        serde_json::to_vec(&review).unwrap(),
+        serde_json::to_vec(&review).expect("encode review"),
     )
-    .unwrap();
+    .expect("write review fixture");
     let script = r#"
 vim.cmd('edit ' .. vim.fn.fnameescape("it's code.rs"))
 local work = vim.api.nvim_get_current_buf()
@@ -72,20 +72,20 @@ vim.cmd('qa!')
 #[test]
 #[ignore = "requires a Neovim executable; exercises real quickfix and editor windows"]
 fn opening_targets_from_review_keeps_quickfix_out_of_the_editing_window() {
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("temporary project");
     for (name, contents) in [
         ("first.rs", "first\n"),
         ("second.rs", "second\nline two\n"),
         ("scratch.md", "# Transcript\n"),
         ("base", "base\n"),
     ] {
-        std::fs::write(project.path().join(name), contents).unwrap();
+        std::fs::write(project.path().join(name), contents).expect("write fixture file");
     }
     std::fs::write(
         project.path().join("session.lua"),
         format!("return {}", include_str!("neovim_session.lua")),
     )
-    .unwrap();
+    .expect("write review fixture");
     let script = r#"
 local function activate(path, scratch, base)
   _A = {1, path or vim.NIL, 2, scratch or vim.NIL, base or vim.NIL}
@@ -142,9 +142,9 @@ vim.cmd('qa!')
 #[test]
 #[ignore = "requires a Neovim executable; exercises hidden quickfix navigation"]
 fn hidden_review_navigation_preserves_list_identity_and_revalidates_locations() {
-    let project = tempfile::tempdir().unwrap();
-    std::fs::write(project.path().join("first.rs"), "one\ntwo\n").unwrap();
-    std::fs::write(project.path().join("second.rs"), "other\n").unwrap();
+    let project = tempfile::tempdir().expect("temporary project");
+    std::fs::write(project.path().join("first.rs"), "one\ntwo\n").expect("write first fixture");
+    std::fs::write(project.path().join("second.rs"), "other\n").expect("write second fixture");
     let script = r#"
 local function request(args)
   _A = args
@@ -199,15 +199,15 @@ vim.cmd('qa!')
 #[test]
 #[ignore = "requires a Neovim executable; exercises repurposed splits and review routing"]
 fn review_targets_main_pane_even_when_file_is_already_in_small_split() {
-    let project = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().expect("temporary project");
     for name in ["original.rs", "first.rs", "second.rs", "base"] {
-        std::fs::write(project.path().join(name), "one\ntwo\n").unwrap();
+        std::fs::write(project.path().join(name), "one\ntwo\n").expect("write fixture file");
     }
     std::fs::write(
         project.path().join("session.lua"),
         format!("return {}", include_str!("neovim_session.lua")),
     )
-    .unwrap();
+    .expect("write review fixture");
     run_review_script(
         project.path(),
         r#"
@@ -266,13 +266,13 @@ fn run_review_script(project: &Path, script: &str) {
         project.join("review.lua"),
         format!("return {}", include_str!("neovim_review.lua")),
     )
-    .unwrap();
-    std::fs::write(project.join("test.lua"), script).unwrap();
+    .expect("write editor fixture");
+    std::fs::write(project.join("test.lua"), script).expect("write test script");
     let output = Command::new(nvim_executable())
         .current_dir(project)
         .args(["--clean", "--headless", "-i", "NONE", "-l", "test.lua"])
         .output()
-        .unwrap();
+        .expect("run Neovim fixture");
     assert!(
         output.status.success(),
         "{}",

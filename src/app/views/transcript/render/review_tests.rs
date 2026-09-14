@@ -50,7 +50,9 @@ fn header_opens_by_default_and_alt_click_only_toggles_locations(cx: &mut gpui::T
         }
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let header = cx.debug_bounds("review-header-7").unwrap();
+    let header = cx
+        .debug_bounds("review-header-7")
+        .expect("review header bounds");
     // Blank row space has the same primary action as the title.
     let target = point(header.right() - px(5.0), header.center().y);
     cx.simulate_click(target, Default::default());

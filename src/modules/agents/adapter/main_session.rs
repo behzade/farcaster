@@ -139,7 +139,7 @@ impl WorkerSessionTransport {
             .and_then(Value::as_u64)
             .unwrap_or(0);
         Ok(Self {
-            harness: harness.into(),
+            harness,
             locator,
             path,
             worker,

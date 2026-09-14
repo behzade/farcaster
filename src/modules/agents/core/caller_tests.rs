@@ -5,7 +5,7 @@ fn identity(registry: &CallerRegistry, project: &Path, backend: Backend) -> Call
     registry.issue(
         project,
         CallerProfile {
-            backend: backend.into(),
+            backend,
             provider: None,
             model: None,
             effort: None,

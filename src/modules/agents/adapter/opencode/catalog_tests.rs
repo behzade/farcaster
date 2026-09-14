@@ -33,16 +33,17 @@ fn default_variant_is_unset_without_resurrecting_an_older_effort() {
         json!({"id": "astra", "providerID": "openai"}),
         json!({"id": "astra", "providerID": "openai", "variant": "default"}),
     ] {
-        let saved: OpenCodeModelSelection = serde_json::from_value(selection.clone()).unwrap();
+        let saved: OpenCodeModelSelection =
+            serde_json::from_value(selection.clone()).expect("decode saved selection");
         assert_eq!(
-            latest_identity(&[old.clone()], Some(&saved))
-                .unwrap()
+            latest_identity(std::slice::from_ref(&old), Some(&saved))
+                .expect("saved identity")
                 .variant,
             None
         );
         assert_eq!(
             latest_identity(&[old.clone(), json!({"model": selection})], None)
-                .unwrap()
+                .expect("latest identity")
                 .variant,
             None
         );
@@ -50,7 +51,7 @@ fn default_variant_is_unset_without_resurrecting_an_older_effort() {
     let none: OpenCodeModelSelection = serde_json::from_value(json!({
         "id": "glm", "providerID": "provider", "variant": "none"
     }))
-    .unwrap();
+    .expect("decode model selection");
     assert_eq!(none.variant.as_deref(), Some("none"));
 }
 
@@ -224,7 +225,11 @@ fn restored_patch_has_a_file_edit_presentation() {
     assert_eq!(presentation.path(), "src/main.rs");
     assert_eq!(presentation.counts(), (2, 1));
     assert_eq!(
-        item.tool_details.as_ref().unwrap().metadata.targets,
+        item.tool_details
+            .as_ref()
+            .expect("tool details")
+            .metadata
+            .targets,
         ["src/main.rs"]
     );
     assert!(!item.is_error);

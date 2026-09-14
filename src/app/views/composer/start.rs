@@ -40,7 +40,7 @@ pub(super) fn harness_selector(
         .text_color(THEME.colors.text)
         .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
             for backend in &backends {
-                let target = backend.id.clone();
+                let target = backend.id;
                 let entity = entity.clone();
                 let label = if backend.available {
                     backend.name.clone()
@@ -57,7 +57,7 @@ pub(super) fn harness_selector(
                         .disabled(!backend.available)
                         .on_click(move |_, window, cx| {
                             let _ = entity.update(cx, |this, cx| {
-                                this.change_draft_harness(target.clone(), window, cx);
+                                this.change_draft_harness(target, window, cx);
                             });
                         }),
                 );

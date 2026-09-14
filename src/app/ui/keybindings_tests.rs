@@ -249,9 +249,12 @@ fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
         crate::app::OVERLAY_KEY_CONTEXT,
         "Input",
     ]
-    .map(|context| gpui::KeyContext::parse(context).unwrap());
+    .map(|context| gpui::KeyContext::parse(context).expect("key context"));
     let mut inside = outside.to_vec();
-    inside.insert(1, gpui::KeyContext::parse("FarcasterSendToChat").unwrap());
+    inside.insert(
+        1,
+        gpui::KeyContext::parse("FarcasterSendToChat").expect("send-to-chat context"),
+    );
     for platform in ["ctrl", "cmd"] {
         let keymap = gpui::Keymap::new(
             super::registry_for_platform(platform)
@@ -265,7 +268,7 @@ fn send_to_chat_keys_are_control_only_and_dialog_scoped() {
             ("cmd-n", super::NextCodeDestination.name()),
             ("cmd-p", super::PreviousCodeDestination.name()),
         ] {
-            let strokes = [gpui::Keystroke::parse(key).unwrap()];
+            let strokes = [gpui::Keystroke::parse(key).expect("fixture keystroke")];
             let (baseline, _) = keymap.bindings_for_input(&strokes, &outside);
             let baseline = baseline.first().map(|binding| binding.action().name());
             assert_ne!(baseline, Some(action));
@@ -383,7 +386,7 @@ fn modified_jk_navigates_chat_sessions_with_composer_focus() {
     let contexts = |names: &[&str]| {
         names
             .iter()
-            .map(|name| gpui::KeyContext::parse(name).unwrap())
+            .map(|name| gpui::KeyContext::parse(name).expect("key context"))
             .collect::<Vec<_>>()
     };
     for modifier in ["ctrl", "cmd", "super"] {
@@ -397,7 +400,8 @@ fn modified_jk_navigates_chat_sessions_with_composer_focus() {
                 Box::new(crate::app::PreviousTranscriptSession) as Box<dyn gpui::Action>,
             ),
         ] {
-            let stroke = gpui::Keystroke::parse(&format!("{modifier}-{key}")).unwrap();
+            let stroke =
+                gpui::Keystroke::parse(&format!("{modifier}-{key}")).expect("fixture keystroke");
             for names in [
                 vec![CHAT_INPUT_CONTEXT],
                 vec![CHAT_INPUT_CONTEXT, "FarcasterComposer", "Input"],

@@ -73,7 +73,7 @@ impl WorkerSessionFactory for AcpWorkerFactory {
             .issue_as_with_access(
                 &launch.project,
                 crate::modules::agents::core::CallerProfile {
-                    backend: self.profile.backend.into(),
+                    backend: self.profile.backend,
                     provider: launch.provider.clone(),
                     model: launch.model.clone(),
                     effort: launch.effort.clone(),
@@ -129,7 +129,7 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     let caller_identity = crate::modules::agents::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::modules::agents::core::CallerProfile {
-            backend: profile.backend.into(),
+            backend: profile.backend,
             provider: None,
             model: None,
             effort: None,
@@ -1482,26 +1482,23 @@ impl WorkerSession for AcpWorkerSession {
                 .try_wait()
                 .map_err(|error| format!("check {} ACP agent: {error}", self.profile.name))?
                 .is_none()
-        {
-            if let Err(error) = self
+            && let Err(error) = self
                 .connection
                 .request_blocking("session/close", json!({"sessionId": self.session_id}))
-            {
-                errors.push(format!("close {} session: {error}", self.profile.name));
-            }
+        {
+            errors.push(format!("close {} session: {error}", self.profile.name));
         }
         if self
             .child
             .try_wait()
             .map_err(|error| format!("check {} ACP agent: {error}", self.profile.name))?
             .is_none()
+            && let Err(error) = self.child.kill()
         {
-            if let Err(error) = self.child.kill() {
-                errors.push(format!(
-                    "terminate {} ACP agent: {error}",
-                    self.profile.name
-                ));
-            }
+            errors.push(format!(
+                "terminate {} ACP agent: {error}",
+                self.profile.name
+            ));
         }
         if let Err(error) = self.child.wait() {
             errors.push(format!("reap {} ACP agent: {error}", self.profile.name));

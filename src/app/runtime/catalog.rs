@@ -146,7 +146,7 @@ impl RuntimeOwner {
         .collect::<HashSet<_>>();
         let locator_root = self.process_command.session_locator_root.clone();
         let sender = self.event_tx.clone();
-        let failed_harness = harness.clone();
+        let failed_harness = harness;
         if let Err(error) = thread::Builder::new()
             .name("farcaster-import".into())
             .spawn(move || {

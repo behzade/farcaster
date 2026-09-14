@@ -23,7 +23,10 @@ fn abort_classifies_abandoned_refreshes_as_cancelled() -> TestResult {
             .iter()
             .find(|response| response.id.as_ref() == Some(&id))
             .ok_or("missing cancellation response")?;
-        let error = response.result.as_ref().unwrap_err();
+        let error = response
+            .result
+            .as_ref()
+            .expect_err("cancelled request must fail");
         assert_eq!(error.operation, operation);
         assert_eq!(
             error.kind,

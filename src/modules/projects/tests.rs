@@ -201,10 +201,10 @@ fn draft_backend_serialization_preserves_empty_and_legacy_names() {
         let draft: DraftSession = serde_json::from_value(serde_json::json!({
             "id": "draft", "harness": name, "project": "/project", "created_ms": 1
         }))
-        .unwrap();
+        .expect("decode fixture draft");
         assert_eq!(draft.harness, expected);
         assert_eq!(
-            serde_json::to_value(draft).unwrap()["harness"],
+            serde_json::to_value(draft).expect("encode draft")["harness"],
             expected.map(Backend::as_str).unwrap_or("")
         );
     }

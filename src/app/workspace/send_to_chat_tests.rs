@@ -59,7 +59,7 @@ fn destinations_keep_current_then_recent_chats_in_this_project() {
         target: "draft:current".into(),
         session: Some(current.target()),
         label: "Current chat".into(),
-        harness: Some(current.harness.clone()),
+        harness: Some(current.harness),
     };
     let recent = session("recent", project, false, 5);
     let sessions = vec![

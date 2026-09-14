@@ -14,7 +14,11 @@ struct InputWorkerFactory(Mutex<Option<mpsc::Receiver<WorkerEvent>>>);
 impl WorkerSessionFactory for InputWorkerFactory {
     fn create(&self, _: WorkerLaunch) -> Result<Box<dyn WorkerSession>, String> {
         Ok(Box::new(InputWorker(
-            self.0.lock().unwrap().take().unwrap(),
+            self.0
+                .lock()
+                .expect("test lock should not be poisoned")
+                .take()
+                .expect("worker input"),
         )))
     }
 }
@@ -171,7 +175,7 @@ fn expired_child_lease_dismisses_the_dialog_and_late_answers_keep_parent_alive()
             owner
                 .process
                 .as_mut()
-                .unwrap()
+                .expect("active process")
                 .send(agents::SessionCommand::Abort)?,
             "still-alive"
         );

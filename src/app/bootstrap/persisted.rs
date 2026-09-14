@@ -67,7 +67,7 @@ pub(super) fn load(project: &Path) -> PersistedState {
         Err(load_error) => {
             error.get_or_insert(load_error);
             projects::DraftSession::with_id(
-                preferred_harness.clone(),
+                preferred_harness,
                 format!("untracked-draft-{}", std::process::id()),
                 project.to_path_buf(),
             )

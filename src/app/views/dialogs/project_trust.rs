@@ -126,7 +126,7 @@ pub(in crate::app::views) fn render(
                         let project = project.to_path_buf();
                         let entity = entity.clone();
                         content.child(button("backend-project-trust", label, ButtonTone::Quiet, true, move |window, cx| {
-                            let _ = entity.update(cx, |this, cx| this.open_backend_project_trust(backend.clone(), project.clone(), window, cx));
+                            let _ = entity.update(cx, |this, cx| this.open_backend_project_trust(backend, project.clone(), window, cx));
                         }))
                     })
                     .child(

@@ -460,7 +460,7 @@ fn normalize_configuration_catalogs(
     let mut normalized = Vec::with_capacity(catalogs.len());
     for mut catalog in catalogs {
         catalog.project = crate::sessions::normalize_session_path(&catalog.project);
-        let key = (catalog.harness.clone(), catalog.project.clone());
+        let key = (catalog.harness, catalog.project.clone());
         if let Some(index) = indexes.get(&key) {
             normalized[*index] = catalog;
         } else {

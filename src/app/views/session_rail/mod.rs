@@ -59,12 +59,10 @@ enum VisibleSessionTarget {
 impl VisibleSessionTarget {
     fn from_row(row: folders::FolderRow) -> Option<Self> {
         match row {
-            folders::FolderRow::Session(ActiveSessionItem::Draft(draft)) => {
-                Some(Self::Draft(draft))
-            }
-            folders::FolderRow::Session(ActiveSessionItem::Session(item)) => {
-                Some(Self::Persisted(item.session))
-            }
+            folders::FolderRow::Session(item) => match *item {
+                ActiveSessionItem::Draft(draft) => Some(Self::Draft(draft)),
+                ActiveSessionItem::Session(item) => Some(Self::Persisted(item.session)),
+            },
             folders::FolderRow::Header(..) | folders::FolderRow::New => None,
         }
     }

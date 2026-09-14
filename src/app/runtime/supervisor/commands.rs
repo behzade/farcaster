@@ -123,13 +123,13 @@ impl Supervisor {
         };
         if !self
             .configuration_requests
-            .insert((harness.clone(), project.clone()))
+            .insert((harness, project.clone()))
         {
             return;
         }
         self.configurations
-            .set_catalog_loading(harness.clone(), project.clone());
-        let request_harness = harness.clone();
+            .set_catalog_loading(harness, project.clone());
+        let request_harness = harness;
         let request_project = project.clone();
         let process_command = self.configuration_process_command(harness, &project, target);
         let supervisor = self.supervisor_thread.clone();
@@ -147,7 +147,7 @@ impl Supervisor {
             })
         {
             let _ = sender.send((
-                harness.clone(),
+                harness,
                 project.clone(),
                 Err(format!("start catalog request: {error}")),
             ));
@@ -198,7 +198,7 @@ impl Supervisor {
                 }
                 if let RuntimeCommand::LoadConfiguration { harness, project } = &command {
                     let selected = self.selected.clone();
-                    self.request_configuration(harness.clone(), project.clone(), &selected);
+                    self.request_configuration(*harness, project.clone(), &selected);
                     return true;
                 }
                 if self.handle_session_family_command(&command) {

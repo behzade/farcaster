@@ -22,7 +22,7 @@ fn setup(project: &Path, access_mode: HarnessAccessMode) -> (AgentLaunchConfig, 
             session_locator_root: Some(project.join("locators")),
         },
         SessionLaunch {
-            harness: super::BACKEND.into(),
+            harness: super::BACKEND,
             session_id: None,
             project: project.into(),
             start: SessionStart::New,

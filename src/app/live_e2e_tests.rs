@@ -3,6 +3,8 @@
 //! `scripts/e2e.sh` creates `FARCASTER_DATA_DIR`; this file refuses to use a
 //! normal user state directory. It sends real model requests and is ignored by
 //! ordinary test runs.
+// Live-test progress is consumed by the E2E runner.
+#![allow(clippy::print_stderr)]
 use crate::agents::Backend;
 
 use std::{
@@ -281,9 +283,11 @@ fn wait_for_exact_queue(
         }
         thread::sleep(UI_POLL);
     }
-    let slot = need_next_submit_slot
-        .then_some(" and release the composer for the next real Tab submission")
-        .unwrap_or_default();
+    let slot = if need_next_submit_slot {
+        " and release the composer for the next real Tab submission"
+    } else {
+        ""
+    };
     Err(format!(
         "timed out after {} seconds waiting for {description} to render exact queued inputs{slot}; last state: {last}",
         QUEUE_VISIBILITY_TIMEOUT.as_secs()

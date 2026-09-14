@@ -133,7 +133,7 @@ fn rejection_before_active_mixed_content_keeps_projection_offsets_valid() {
             .items
             .iter()
             .find(|item| item.kind == TranscriptKind::Thinking)
-            .unwrap()
+            .expect("thinking item")
             .complete_text(),
         "think done"
     );
@@ -142,7 +142,7 @@ fn rejection_before_active_mixed_content_keeps_projection_offsets_valid() {
             .items
             .iter()
             .find(|item| item.kind == TranscriptKind::Assistant)
-            .unwrap()
+            .expect("assistant item")
             .complete_text(),
         "hello world"
     );
@@ -159,7 +159,7 @@ fn rejection_before_active_mixed_content_keeps_projection_offsets_valid() {
             .items
             .iter()
             .find(|item| item.kind == TranscriptKind::Tool)
-            .unwrap()
+            .expect("tool item")
             .tool_output
             .contains("file bytes")
     );

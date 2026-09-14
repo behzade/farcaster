@@ -204,7 +204,7 @@ fn listed_session(
         parent_session: crate::modules::agents::core::CallerRegistry::shared()
             .session_parent(PROFILE.backend, &id),
         id,
-        harness: PROFILE.backend.into(),
+        harness: PROFILE.backend,
         project,
         title,
         first_user_message: String::new(),

@@ -103,62 +103,67 @@ impl FarcasterApp {
         let active_drop_target = self.sessions.drop_target;
         let active_list = list(session_list, move |index, _, _| {
             match active_rows.get(index) {
-                Some(FolderRow::Session(ActiveSessionItem::Draft(draft))) => {
-                    let selected = selected_draft.as_deref() == Some(draft.id.as_str());
-                    let status = crate::app::session::drafts::resolved_draft_status(
-                        &draft.id,
-                        &submitted_drafts,
-                        &active_run_statuses,
-                    );
-                    let shortcut = session_shortcuts.get(&draft.app_session_id).copied();
-                    let drop_position = active_drop_target
-                        .filter(|(target, _)| *target == draft.app_session_id)
-                        .map(|(_, position)| position);
-                    DraftRow::new(
-                        draft,
-                        DraftRowInput {
-                            selected,
-                            status,
-                            shortcut,
-                            drop_position,
-                        },
-                        active_row_entity.clone(),
-                    )
-                    .into_any_element()
-                }
-                Some(FolderRow::Session(ActiveSessionItem::Session(item))) => {
-                    let selected =
-                        active_selected_root.as_deref() == Some(item.session.id.as_str());
-                    let target = format!("session:{}", item.session.path.display());
-                    let badge = session_badge(
-                        item,
-                        active_run_statuses.get(&target).map(String::as_str),
-                        active_live_root.as_deref(),
-                        &active_live_status,
-                        active_waiting_roots.contains(&item.session.id),
-                    );
-                    let shortcut = session_shortcuts.get(&item.session.app_session_id).copied();
-                    let editing =
-                        active_editing_path.as_deref() == Some(item.session.path.as_path());
-                    let drop_position = active_drop_target
-                        .filter(|(target, _)| *target == item.session.app_session_id)
-                        .map(|(_, position)| position);
-                    SessionRow::new(
-                        item,
-                        SessionRowInput {
-                            selected,
-                            status: badge,
-                            shortcut,
-                            drop_position,
-                            draggable: true,
-                            title_editor: editing.then(|| active_title_input.clone()),
-                            subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
-                            row_height: THEME.layout.session_row_height,
-                        },
-                        active_row_entity.clone(),
-                    )
-                    .into_any_element()
-                }
+                Some(FolderRow::Session(item)) => match item.as_ref() {
+                    ActiveSessionItem::Draft(draft) => {
+                        let selected = selected_draft.as_deref() == Some(draft.id.as_str());
+                        let status = crate::app::session::drafts::resolved_draft_status(
+                            &draft.id,
+                            &submitted_drafts,
+                            &active_run_statuses,
+                        );
+                        let shortcut = session_shortcuts.get(&draft.app_session_id).copied();
+                        let drop_position = active_drop_target
+                            .filter(|(target, _)| *target == draft.app_session_id)
+                            .map(|(_, position)| position);
+                        DraftRow::new(
+                            draft,
+                            DraftRowInput {
+                                selected,
+                                status,
+                                shortcut,
+                                drop_position,
+                            },
+                            active_row_entity.clone(),
+                        )
+                        .into_any_element()
+                    }
+                    ActiveSessionItem::Session(item) => {
+                        let selected =
+                            active_selected_root.as_deref() == Some(item.session.id.as_str());
+                        let target = format!("session:{}", item.session.path.display());
+                        let badge = session_badge(
+                            item,
+                            active_run_statuses.get(&target).map(String::as_str),
+                            active_live_root.as_deref(),
+                            &active_live_status,
+                            active_waiting_roots.contains(&item.session.id),
+                        );
+                        let shortcut = session_shortcuts.get(&item.session.app_session_id).copied();
+                        let editing =
+                            active_editing_path.as_deref() == Some(item.session.path.as_path());
+                        let drop_position = active_drop_target
+                            .filter(|(target, _)| *target == item.session.app_session_id)
+                            .map(|(_, position)| position);
+                        SessionRow::new(
+                            item,
+                            SessionRowInput {
+                                selected,
+                                status: badge,
+                                shortcut,
+                                drop_position,
+                                draggable: true,
+                                title_editor: editing.then(|| active_title_input.clone()),
+                                subagents: counts
+                                    .get(item.session.id.as_str())
+                                    .copied()
+                                    .unwrap_or(0),
+                                row_height: THEME.layout.session_row_height,
+                            },
+                            active_row_entity.clone(),
+                        )
+                        .into_any_element()
+                    }
+                },
                 Some(FolderRow::Header(id, name)) => folder_header(
                     Some(*id),
                     name.clone(),

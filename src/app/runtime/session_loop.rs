@@ -16,7 +16,7 @@ pub(super) fn run(
     };
     let mut owner = RuntimeOwner {
         project: project.clone(),
-        harness: harness.clone(),
+        harness,
         session_id: None,
         process_command,
         process: None,

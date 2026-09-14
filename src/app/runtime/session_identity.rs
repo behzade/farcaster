@@ -181,29 +181,25 @@ impl HarnessConfigurationStore {
             .filter(|(_, identity)| identity.model.is_some() || identity.effort.is_some())
             .map(|(harness, identity)| {
                 crate::app::infrastructure::persistence::CachedSessionControlDefaults {
-                    harness: harness.clone(),
+                    harness: *harness,
                     model: identity.model.clone(),
                     effort: identity.effort.clone(),
                 }
             })
             .collect::<Vec<_>>();
-        entries.sort_by(|left, right| left.harness.cmp(&right.harness));
+        entries.sort_by_key(|entry| entry.harness);
         entries
     }
 
     pub fn model(&self, harness: impl Into<Option<Backend>>) -> Option<&Model> {
-        let Some(harness) = harness.into() else {
-            return None;
-        };
+        let harness = harness.into()?;
         self.identities
             .get(&harness)
             .and_then(|identity| identity.model.as_ref())
     }
 
     pub fn effort(&self, harness: impl Into<Option<Backend>>) -> Option<&str> {
-        let Some(harness) = harness.into() else {
-            return None;
-        };
+        let harness = harness.into()?;
         self.identities
             .get(&harness)
             .and_then(|identity| identity.effort.as_deref())
@@ -280,9 +276,7 @@ impl HarnessConfigurationStore {
         harness: impl Into<Option<Backend>>,
         project: &std::path::Path,
     ) -> Option<super::RuntimeCommand> {
-        let Some(harness) = harness.into() else {
-            return None;
-        };
+        let harness = harness.into()?;
         let catalog = self
             .catalogs
             .get(&(harness.to_owned(), project.to_owned()))?;

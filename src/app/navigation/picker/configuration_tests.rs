@@ -66,7 +66,7 @@ fn opencode_default_row_is_first_and_matches_only_the_unset_variant() {
         "id": "test", "name": "Test", "provider": "provider", "reasoning": true,
         "efforts": ["thinking", "high", "none", "low"]
     }))
-    .unwrap();
+    .expect("decode fixture model");
     let mut snapshot = crate::runtime::RuntimeSnapshot {
         harness: Some(Backend::OpenCode),
         prefill_model: Some(model.clone()),
@@ -88,8 +88,20 @@ fn opencode_default_row_is_first_and_matches_only_the_unset_variant() {
     snapshot.prefill_thinking_level = Some("high".into());
     assert_eq!(selected_row(&rows, &commands, &snapshot, None), Some(3));
     let rows = effort_picker_rows(&snapshot, &model, &mut commands);
-    assert!(!rows[0].detail.as_deref().unwrap().contains("Current"));
-    assert!(rows[3].detail.as_deref().unwrap().contains("Current"));
+    assert!(
+        !rows[0]
+            .detail
+            .as_deref()
+            .expect("row detail")
+            .contains("Current")
+    );
+    assert!(
+        rows[3]
+            .detail
+            .as_deref()
+            .expect("row detail")
+            .contains("Current")
+    );
     snapshot.harness = Some(Backend::Pi);
     assert_eq!(
         effort_picker_rows(&snapshot, &model, &mut commands).len(),
@@ -102,7 +114,7 @@ fn direct_model_rows_still_select_a_non_reasoning_model_with_a_reported_level() 
     let model: Model = serde_json::from_value(serde_json::json!({
         "id": "plain", "name": "Plain", "provider": "provider", "reasoning": false
     }))
-    .unwrap();
+    .expect("decode fixture model");
     let snapshot = crate::runtime::RuntimeSnapshot {
         prefill_model: Some(model.clone()),
         prefill_thinking_level: Some("off".into()),

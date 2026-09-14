@@ -54,7 +54,7 @@ fn live_review_stays_inline_then_moves_after_final_response_on_state_only_settle
     state.reduce(&json!({"type":"agent_settled"}));
     assert_eq!(before.items, state.items);
     let update = update_conversation_rows(&live, &before, &state, None);
-    let settled = update.rows.unwrap();
+    let settled = update.rows.expect("updated rows");
     assert_eq!(settled, project_conversation_rows(&state));
     assert_eq!(order(&settled), vec![0, 2, 3, 4, 1]);
     assert!(matches!(
@@ -146,7 +146,7 @@ fn restored_history_places_reviews_after_chunked_final_responses_without_duplica
     let rows = project_conversation_rows(&state);
     let review_index = rows
         .position(|row| matches!(row, TranscriptRow::Review { .. }))
-        .unwrap();
+        .expect("review row position");
     assert!(matches!(
         rows[review_index - 1],
         TranscriptRow::MessageChunk {

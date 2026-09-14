@@ -2,13 +2,13 @@ use super::*;
 
 fn request(reader: &mut impl std::io::BufRead) -> Value {
     let mut line = String::new();
-    reader.read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
+    reader.read_line(&mut line).expect("read fixture request");
+    serde_json::from_str(&line).expect("decode fixture request")
 }
 
 fn reply(session: &mut CodexWorkerSession, request: &Value, result: Value) {
     session.queued_inbound.push_back(Ok(CodexInbound::Response {
-        id: serde_json::from_value(request["id"].clone()).unwrap(),
+        id: serde_json::from_value(request["id"].clone()).expect("request ID"),
         result,
     }));
     while session.poll().is_some() {}
@@ -36,7 +36,7 @@ fn claimed_batch(
                     "image/png".into(),
                 )],
             )
-            .unwrap();
+            .expect("submit queued prompt");
         let queued = request(&mut sent);
         reply(
             &mut session,
@@ -48,7 +48,7 @@ fn claimed_batch(
         );
         assert_eq!(session.poll_prompt_ack(), Some((submission_id, Ok(()))));
     }
-    session.apply_steering().unwrap();
+    session.apply_steering().expect("apply steering");
     let interrupt = request(&mut sent);
     reply(&mut session, &interrupt, json!({}));
     session
@@ -72,7 +72,7 @@ fn claimed_batch(
 
 fn reject(session: &mut CodexWorkerSession, batch: &Value) {
     session.queued_inbound.push_back(Ok(CodexInbound::Error {
-        id: serde_json::from_value(batch["id"].clone()).unwrap(),
+        id: serde_json::from_value(batch["id"].clone()).expect("batch ID"),
         error: super::super::super::contract::CodexRpcError {
             code: -32000,
             message: "handoff rejected".into(),
@@ -108,7 +108,7 @@ fn rejected_claimed_handoff_retries_exact_input_only_on_explicit_apply() {
         );
         // A now-idle turn lets the explicit retry start immediately.
         session.current_turn = None;
-        session.apply_steering().unwrap();
+        session.apply_steering().expect("apply steering");
         assert!(
             session.next_id > before,
             "accepted input was dropped instead of retained"
@@ -160,17 +160,17 @@ fn abort_discards_rejected_handoff_instead_of_retrying_it() {
     for abort_before_rejection in [false, true] {
         let (mut session, mut sent, batch) = claimed_batch(false);
         if abort_before_rejection {
-            session.abort().unwrap();
+            session.abort().expect("abort session");
         }
         reject(&mut session, &batch);
         if !abort_before_rejection {
-            session.abort().unwrap();
+            session.abort().expect("abort session");
             let cleanup = request(&mut sent);
             assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
             reply(&mut session, &cleanup, json!({}));
         }
         let before = session.next_id;
-        session.apply_steering().unwrap();
+        session.apply_steering().expect("apply steering");
         assert_eq!(session.next_id, before);
     }
 }
@@ -186,13 +186,13 @@ fn rejected_unacknowledged_handoff_returns_input_to_caller_without_local_retry()
             WorkerSendMode::Steer,
             Vec::new(),
         )
-        .unwrap();
+        .expect("submit steering prompt");
     let steer = request(&mut sent);
-    session.apply_steering().unwrap();
+    session.apply_steering().expect("apply steering");
     let interrupt = request(&mut sent);
     reply(&mut session, &interrupt, json!({}));
     session.queued_inbound.push_back(Ok(CodexInbound::Error {
-        id: serde_json::from_value(steer["id"].clone()).unwrap(),
+        id: serde_json::from_value(steer["id"].clone()).expect("steering request ID"),
         error: super::super::super::contract::CodexRpcError {
             code: -32000,
             message: "no active turn to steer".into(),
@@ -212,7 +212,7 @@ fn rejected_unacknowledged_handoff_returns_input_to_caller_without_local_retry()
     reject(&mut session, &batch);
     assert!(matches!(session.poll_prompt_ack(), Some((id, Err(_))) if id == "pending-steer"));
     let before = session.next_id;
-    session.apply_steering().unwrap();
+    session.apply_steering().expect("apply steering");
     assert_eq!(
         session.next_id, before,
         "caller already received the rejected input"

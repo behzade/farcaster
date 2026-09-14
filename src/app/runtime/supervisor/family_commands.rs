@@ -26,7 +26,7 @@ impl Supervisor {
                 let project = family[0].project.clone();
                 let worker_paths = family
                     .iter()
-                    .map(|session| (session.harness.clone(), session.path.clone()))
+                    .map(|session| (session.harness, session.path.clone()))
                     .collect::<Vec<_>>();
                 if let Err(message) =
                     crate::app::mcp_server::stop_session_family_workers(&project, &worker_paths)

@@ -7,14 +7,11 @@ impl Supervisor {
         while let Ok((harness, project, result)) = self.configuration_rx.try_recv() {
             match result {
                 Ok(catalog) => {
-                    self.configurations.set_catalog(
-                        harness.clone(),
-                        project.clone(),
-                        catalog.clone(),
-                    );
+                    self.configurations
+                        .set_catalog(harness, project.clone(), catalog.clone());
                     if cache_configuration_catalog(
                         &mut self.configuration_catalogs,
-                        harness.clone(),
+                        harness,
                         project.clone(),
                         catalog,
                     ) && let Some(state) = self.catalog_state.as_ref()
@@ -24,10 +21,10 @@ impl Supervisor {
                 }
                 Err(error) => {
                     self.configuration_requests
-                        .remove(&(harness.clone(), project.clone()));
+                        .remove(&(harness, project.clone()));
                     zlog::warn!("Failed to refresh {harness} catalog: {error}");
                     self.configurations
-                        .set_catalog_error(harness.clone(), project.clone(), error);
+                        .set_catalog_error(harness, project.clone(), error);
                 }
             }
             self.publish_configuration_snapshots(harness, &project);

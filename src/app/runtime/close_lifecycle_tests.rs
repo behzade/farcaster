@@ -26,7 +26,11 @@ fn pending(id: &str, target: &str) -> PendingSubmission {
 }
 
 fn assert_close_is_idle(scenario: &mut Scenario, mut pending: HashMap<String, PendingSubmission>) {
-    let path = scenario.owner.active_session.clone().unwrap();
+    let path = scenario
+        .owner
+        .active_session
+        .clone()
+        .expect("active session");
     let target = session_target(&path);
     let mut sessions = Vec::new();
     let mut replies = Vec::new();
@@ -37,9 +41,9 @@ fn assert_close_is_idle(scenario: &mut Scenario, mut pending: HashMap<String, Pe
                     .owner
                     .state
                     .as_mut()
-                    .unwrap()
+                    .expect("state store")
                     .update_session_metadata(&metadata)
-                    .unwrap();
+                    .expect("save session metadata");
                 sessions.retain(|session: &SessionSummary| session.path != row.path);
                 sessions.push(row);
             }
@@ -100,7 +104,11 @@ fn completed_send_to_chat_releases_close_guard() {
         "close_lifecycle_tests::completed_send_to_chat_releases_close_guard",
         || {
             let mut scenario = Scenario::new(Backend::Cursor, Some("Existing chat"), false);
-            let path = scenario.owner.active_session.clone().unwrap();
+            let path = scenario
+                .owner
+                .active_session
+                .clone()
+                .expect("active session");
             let target = session_target(&path);
             let pending =
                 HashMap::from([("ui-submission".into(), pending("ui-submission", &target))]);
@@ -130,8 +138,20 @@ fn completed_cold_prompt_and_follow_up_release_close_guard() {
         "close_lifecycle_tests::completed_cold_prompt_and_follow_up_release_close_guard",
         || {
             let mut scenario = Scenario::new(Backend::Codex, Some("Existing chat"), true);
-            scenario.owner.process.take().unwrap().close().unwrap();
-            let target = session_target(scenario.owner.active_session.as_ref().unwrap());
+            scenario
+                .owner
+                .process
+                .take()
+                .expect("active process")
+                .close()
+                .expect("close process");
+            let target = session_target(
+                scenario
+                    .owner
+                    .active_session
+                    .as_ref()
+                    .expect("active session"),
+            );
             let pending = HashMap::from([
                 ("first".into(), pending("first", &target)),
                 ("second".into(), pending("second", &target)),

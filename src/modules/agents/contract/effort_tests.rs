@@ -6,7 +6,7 @@ fn model_choices_are_sorted_without_mutating_or_leaking_catalog_variants() {
         "provider": "openai", "id": "astra", "name": "Astra", "reasoning": true,
         "efforts": ["thinking", "low", "high", "max", "medium", "xhigh", "minimal", "none", "custom"]
     }))
-    .unwrap();
+    .expect("decode fixture model");
     let fallback = ["unrelated".into(), "max".into()];
     assert_eq!(
         model_efforts(&model, &fallback),
@@ -14,7 +14,10 @@ fn model_choices_are_sorted_without_mutating_or_leaking_catalog_variants() {
             "none", "minimal", "low", "medium", "high", "xhigh", "max", "custom", "thinking"
         ]
     );
-    assert_eq!(model.efforts.as_ref().unwrap()[0], "thinking");
+    assert_eq!(
+        model.efforts.as_ref().expect("model efforts")[0],
+        "thinking"
+    );
     model.efforts = Some(vec![]);
     assert!(model_efforts(&model, &fallback).is_empty());
     model.efforts = None;

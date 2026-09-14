@@ -178,7 +178,7 @@ impl WorkerPool {
         if parent_backend.as_ref().is_some_and(|backend| {
             state.stopping_families.contains(&(
                 project.clone(),
-                backend.clone(),
+                *backend,
                 request.parent_session.clone(),
             ))
         }) {
@@ -318,7 +318,7 @@ impl WorkerPool {
         let project = canonical_directory(project)?;
         let mut sessions = sessions
             .iter()
-            .map(|(backend, path)| (backend.clone(), path.to_string_lossy().into_owned()))
+            .map(|(backend, path)| (*backend, path.to_string_lossy().into_owned()))
             .collect::<BTreeSet<_>>();
         let mut state = self
             .inner
@@ -328,7 +328,7 @@ impl WorkerPool {
         expand_family_sessions(&state, &project, &mut sessions);
         let family_keys = sessions
             .iter()
-            .map(|(backend, locator)| (project.clone(), backend.clone(), locator.clone()))
+            .map(|(backend, locator)| (project.clone(), *backend, locator.clone()))
             .collect::<BTreeSet<_>>();
         state.stopping_families.extend(family_keys.iter().cloned());
         let ids = state
@@ -344,11 +344,10 @@ impl WorkerPool {
                                 .any(|(_, locator)| locator == &record.launch.parent_session)
                         },
                         |backend| {
-                            sessions
-                                .contains(&(backend.clone(), record.launch.parent_session.clone()))
+                            sessions.contains(&(*backend, record.launch.parent_session.clone()))
                         },
                     ) || current.session_locator.as_ref().is_some_and(|locator| {
-                        sessions.contains(&(current.backend.clone(), locator.clone()))
+                        sessions.contains(&(current.backend, locator.clone()))
                     })))
                 .then(|| id.clone())
             })
@@ -361,11 +360,11 @@ impl WorkerPool {
                     failures.push(format!("{}: {error}", record.launch.worker_name));
                     continue;
                 }
-            } else if record.cleanup_confirmed.load(Ordering::SeqCst) {
-                if let Ok(mut current) = record.snapshot.lock() {
-                    current.status = WorkerStatus::Stopped;
-                    current.pending_input = None;
-                }
+            } else if record.cleanup_confirmed.load(Ordering::SeqCst)
+                && let Ok(mut current) = record.snapshot.lock()
+            {
+                current.status = WorkerStatus::Stopped;
+                current.pending_input = None;
             }
             let current = snapshot(record)?;
             if current.status != WorkerStatus::Stopped {
@@ -402,7 +401,7 @@ impl WorkerPool {
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
         let mut sessions = sessions
             .iter()
-            .map(|(backend, locator)| (backend.clone(), locator.to_string_lossy().into_owned()))
+            .map(|(backend, locator)| (*backend, locator.to_string_lossy().into_owned()))
             .collect::<BTreeSet<_>>();
         expand_family_sessions(&state, &project, &mut sessions);
         for (backend, locator) in sessions {
@@ -568,7 +567,7 @@ fn expand_family_sessions(
                 let current = snapshot(record).ok()?;
                 (current.project == project
                     && record.parent_backend.as_ref().is_some_and(|backend| {
-                        sessions.contains(&(backend.clone(), record.launch.parent_session.clone()))
+                        sessions.contains(&(*backend, record.launch.parent_session.clone()))
                     }))
                 .then(|| {
                     current

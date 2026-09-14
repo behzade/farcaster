@@ -16,11 +16,11 @@ fn request(
     transport: &mut main_session::WorkerSessionTransport,
     command: SessionCommand,
 ) -> Payload {
-    transport.send(command).unwrap();
+    transport.send(command).expect("send fixture command");
     let Some(SessionEvent::Response(response)) = transport.poll() else {
         panic!("expected response")
     };
-    response.result.unwrap()
+    response.result.expect("fixture command should succeed")
 }
 
 fn state(transport: &mut main_session::WorkerSessionTransport) -> crate::protocol::SessionState {
@@ -103,7 +103,10 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
                 stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").map_err(|error| error.to_string())?;
                 continue;
             } else if path == "/api/session/ses_resume/model" {
-                recorded.lock().unwrap().push(body.clone());
+                recorded
+                    .lock()
+                    .expect("test lock should not be poisoned")
+                    .push(body.clone());
                 if body["model"]["variant"] == "high" {
                     (400, json!({"message": "selection rejected"}))
                 } else {
@@ -157,11 +160,11 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
         let mut transport = open()?;
         let initial = state(&mut transport);
         assert_eq!(initial.thinking_level.as_deref(), Some("high"));
-        let model = initial.model.unwrap();
+        let model = initial.model.expect("initial model");
         assert_eq!(model.id, "astra");
         assert_eq!(model.name, "Astra");
         assert_eq!(model.context_window, 400000);
-        assert_eq!(model.efforts.unwrap(), ["high", "low"]);
+        assert_eq!(model.efforts.expect("model variants"), ["high", "low"]);
         assert_eq!(
             request(&mut transport, SessionCommand::ListReasoningLevels),
             Payload::ListReasoningLevels(vec!["low".into(), "high".into()])
@@ -218,7 +221,7 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
     stop.store(true, Ordering::Relaxed);
     server.join().map_err(|_| "mock server panicked")??;
     result?;
-    let requests = requests.lock().unwrap();
+    let requests = requests.lock().expect("test lock should not be poisoned");
     assert_eq!(requests.len(), 5);
     assert_eq!(
         requests[0]["model"],

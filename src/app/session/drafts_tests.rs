@@ -36,7 +36,10 @@ fn startup_idle_preserves_only_the_unresolved_draft_submission() {
     // Identity arrives during startup; the next idle update still addresses
     // the draft actor, but its badge and pending submission may be promoted.
     transfer_draft_status(&mut statuses, &mut HashMap::new(), "starting", &path);
-    pending.get_mut("submission").unwrap().submitted_target = session_key.clone();
+    pending
+        .get_mut("submission")
+        .expect("pending submission")
+        .submitted_target = session_key.clone();
     assert!(preserves(&target, "Done", &pending, &statuses));
     for terminal in ["Done", "Failed", "Stopped", "Delivery unknown"] {
         statuses.insert(session_key.clone(), terminal.into());
@@ -48,7 +51,10 @@ fn startup_idle_preserves_only_the_unresolved_draft_submission() {
         PromptOutcome::RejectedBeforeAcceptance,
         PromptOutcome::DeliveryUnknown,
     ] {
-        pending.get_mut("submission").unwrap().result = Some((outcome, Some(path.clone())));
+        pending
+            .get_mut("submission")
+            .expect("pending submission")
+            .result = Some((outcome, Some(path.clone())));
         assert!(!preserves(&target, "Done", &pending, &statuses));
     }
     pending.clear();

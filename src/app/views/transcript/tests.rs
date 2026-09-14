@@ -58,7 +58,7 @@ fn scratch_uses_visible_activity_summaries_instead_of_raw_tool_payloads() {
 fn transcript_copy_keeps_image_attachment_markers() {
     let mut attached = item(TranscriptKind::User, "", "look here");
     Arc::make_mut(&mut attached).images = Arc::new(vec![Arc::new(
-        crate::conversation::EncodedImage::new(vec![1, 2, 3], "image/png").unwrap(),
+        crate::conversation::EncodedImage::new(vec![1, 2, 3], "image/png").expect("fixture image"),
     )]);
     let mut items = PersistentVec::default();
     items.push(attached);

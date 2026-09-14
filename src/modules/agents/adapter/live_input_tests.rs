@@ -6,6 +6,8 @@
 //! `FARCASTER_E2E_HARNESS` to one harness when running them so every feature
 //! reports its harness-specific result.
 
+// Live-test diagnostics are consumed by the E2E runner.
+#![allow(clippy::print_stderr)]
 use std::time::Duration;
 
 use crate::agents::{
@@ -896,12 +898,12 @@ fn require_late_old_delivery(
             response.operation()
         ));
     }
-    if let Err(error) = response.result {
-        if error.kind != SessionResponseErrorKind::DeliveryUnknown {
-            return Err(format!(
-                "E2E_BLOCKED: old receipt became an unrelated terminal error: {error}"
-            ));
-        }
+    if let Err(error) = response.result
+        && error.kind != SessionResponseErrorKind::DeliveryUnknown
+    {
+        return Err(format!(
+            "E2E_BLOCKED: old receipt became an unrelated terminal error: {error}"
+        ));
     }
     live.wait_for_delivery_after(newer.submitted_at, &old.submission.id, TURN_TIMEOUT)
         .map_err(|error| {

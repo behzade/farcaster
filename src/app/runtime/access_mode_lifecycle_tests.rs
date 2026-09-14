@@ -12,11 +12,11 @@ fn saved_model_refresh_and_launch_use_auto() {
             let saved: Model = serde_json::from_value(json!({
                 "id":"gpt-5.6-sol", "name":"gpt-5.6-sol", "provider":"claude"
             }))
-            .unwrap();
+            .expect("decode saved model");
             harness
                 .runtime
                 .send(RuntimeCommand::SetModel(saved))
-                .unwrap();
+                .expect("select saved model");
             let mut catalog = harness.accept(WAIT).expect("catalog starts");
             let init = catalog.request("initialize");
             let metadata = json!({
@@ -34,14 +34,14 @@ fn saved_model_refresh_and_launch_use_auto() {
             harness
                 .runtime
                 .send(RuntimeCommand::SetAccessMode(HarnessAccessMode::Sandboxed))
-                .unwrap();
+                .expect("select sandbox mode");
             harness.snapshot(Backend::Claude, |s| {
                 s.access_mode == HarnessAccessMode::Sandboxed
             });
             harness
                 .runtime
                 .send(RuntimeCommand::SetAccessMode(HarnessAccessMode::Auto))
-                .unwrap();
+                .expect("select auto mode");
             harness.snapshot(Backend::Claude, |s| {
                 s.access_mode == HarnessAccessMode::Auto
             });
@@ -57,12 +57,12 @@ fn saved_model_refresh_and_launch_use_auto() {
                     images: vec![],
                     allow_while_running: false,
                 })
-                .unwrap();
+                .expect("send runtime command");
             let mut session = harness.accept(WAIT).expect("session starts");
             let init = session.request("initialize");
             assert!(
                 fs::read_to_string(harness.project.join("claude.args"))
-                    .unwrap()
+                    .expect("read recorded arguments")
                     .lines()
                     .any(|arg| arg == "--permission-mode=auto")
             );
@@ -70,8 +70,8 @@ fn saved_model_refresh_and_launch_use_auto() {
             let selection = session.request("set_model");
             session.reply(&selection, json!({}));
             let mut line = String::new();
-            session.reader.read_line(&mut line).unwrap();
-            let prompt: Value = serde_json::from_str(&line).unwrap();
+            session.reader.read_line(&mut line).expect("read prompt");
+            let prompt: Value = serde_json::from_str(&line).expect("decode prompt");
             assert_eq!(prompt["type"], "user");
             session.write(prompt);
             harness.snapshot(Backend::Claude, |s| {

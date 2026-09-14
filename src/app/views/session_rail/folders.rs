@@ -25,7 +25,7 @@ use gpui_component::{
 
 #[derive(Clone)]
 pub(super) enum FolderRow {
-    Session(ActiveSessionItem),
+    Session(Box<ActiveSessionItem>),
     Header(u64, String),
     New,
 }
@@ -54,7 +54,7 @@ pub(super) fn folder_rows(
         .remove(&None)
         .unwrap_or_default()
         .into_iter()
-        .map(FolderRow::Session)
+        .map(|item| FolderRow::Session(Box::new(item)))
         .collect::<Vec<_>>();
     for folder in &folders.folders {
         rows.push(FolderRow::Header(folder.id, folder.name.clone()));
@@ -63,7 +63,7 @@ pub(super) fn folder_rows(
                 .remove(&Some(folder.id))
                 .unwrap_or_default()
                 .into_iter()
-                .map(FolderRow::Session),
+                .map(|item| FolderRow::Session(Box::new(item))),
         );
     }
     rows.push(FolderRow::New);

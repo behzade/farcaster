@@ -138,7 +138,7 @@ impl WorkerProfileEditor {
     ) -> Result<(), String> {
         let route = self.route_mut(target).ok_or("Profile no longer exists")?;
         let next = WorkerExecution {
-            harness: route.harness.clone(),
+            harness: route.harness,
             provider,
             model,
             effort: (!effort.is_empty()).then_some(effort),

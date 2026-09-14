@@ -563,7 +563,7 @@ fn abort_marks_only_unacknowledged_dispatched_prompt_unknown() -> TestResult {
     let error = response
         .ok_or("missing delivery-unknown response")?
         .result
-        .unwrap_err();
+        .expect_err("delivery must be unknown");
     assert_eq!(
         error.kind,
         crate::agents::SessionResponseErrorKind::DeliveryUnknown
@@ -758,7 +758,9 @@ fn abort_reports_resume_readiness_failure_after_cleaning_up_both_processes() -> 
     let project = tempdir()?;
     let command = queue_rpc_fixture_case(project.path(), "second-readiness-fails")?;
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
-    let error = rpc.send_request(SessionCommand::Abort).unwrap_err();
+    let error = rpc
+        .send_request(SessionCommand::Abort)
+        .expect_err("resume must fail");
     assert!(error.contains("Pi stopped; could not resume"), "{error}");
     assert!(error.contains("second readiness failed"), "{error}");
     assert!(
@@ -795,7 +797,9 @@ fn abort_reports_second_launch_failure_after_confirming_the_old_exit() -> TestRe
     };
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
     fs::remove_file(&script)?;
-    let error = rpc.send_request(SessionCommand::Abort).unwrap_err();
+    let error = rpc
+        .send_request(SessionCommand::Abort)
+        .expect_err("resume must fail");
     assert!(error.contains("Pi stopped; could not resume"), "{error}");
     assert!(
         rpc.child
@@ -1295,7 +1299,11 @@ fn sandbox_control_needs_more_than_a_successful_rpc_response() -> TestResult {
         Duration::from_millis(50),
         |_| None,
     );
-    assert!(result.unwrap_err().contains("did not confirm"));
+    assert!(
+        result
+            .expect_err("sandbox confirmation must fail")
+            .contains("did not confirm")
+    );
     Ok(())
 }
 
@@ -1305,13 +1313,13 @@ fn sandbox_mode_drift_revokes_confirmation_and_blocks_further_prompts() -> TestR
     command.access_mode = HarnessAccessMode::Sandboxed;
     let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
     let report = serde_json::json!({"version":1,"requestId":"external","files":"full","network":"full","success":true});
-    let event = process.route(ReaderItem::Wire(Ok(PiWireMessage::ExtensionUi(
+    let event = process.route(ReaderItem::Wire(Box::new(Ok(PiWireMessage::ExtensionUi(
         crate::agents::extensions::ExtensionUiRequest::SetStatus {
             id: "mode-change".into(),
             key: "\u{1f}pi-gpui-sandbox-mode\u{1f}".into(),
             text: Some(report.to_string()),
         },
-    ))));
+    )))));
     assert!(matches!(event, SessionEvent::Failure(_)));
     assert_eq!(process.confirmed_sandbox_mode(), None);
     assert!(
