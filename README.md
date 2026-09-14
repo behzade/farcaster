@@ -51,7 +51,7 @@ I have been using Farcaster daily for a while. It's still early, and bugs/missin
 
 - [Codex](https://github.com/openai/codex) (through codex-cli app server)
 - [Pi](https://github.com/badlogic/pi-mono) (through Pi RPC)
-- [OpenCode](https://opencode.ai/) (through the `opencode2` server executable)
+- [OpenCode](https://opencode.ai/) (version 2+, through the `opencode` server executable)
 - [Cursor](https://cursor.com/cli) (through Cursor CLI ACP adapter)
 - [Claude Code](https://github.com/anthropics/claude-code) (through `claude -p`)
 - Antigravity (through its ACP server)
