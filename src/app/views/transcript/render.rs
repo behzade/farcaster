@@ -157,12 +157,17 @@ pub(in crate::app) fn transcript_scratch_text(
             continue;
         }
         if let TranscriptRow::ActivityGroup { start, len, .. } = *row {
-            sections.push(format!(
-                "## Activity\n\n{}",
-                tool_rows::activity_summary(
-                    items.iter_range(start..start + len).map(AsRef::as_ref)
-                ),
-            ));
+            let summary = tool_rows::activity_summary(
+                items.iter_range(start..start + len).map(AsRef::as_ref),
+            );
+            if summary.is_empty() {
+                sections.push(format!(
+                    "## Thinking\n\n{}",
+                    copy_transcript_items(items, start..=start + len - 1),
+                ));
+            } else {
+                sections.push(format!("## Activity\n\n{summary}"));
+            }
             continue;
         }
         let index = row.item_start();

@@ -2,6 +2,67 @@ use super::*;
 use crate::conversation::{ConversationState, ToolReview};
 use serde_json::json;
 
+#[test]
+fn live_activity_updates_its_header_without_replacing_the_row() {
+    use super::super::{project_rows, update_rows_from};
+
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"message_start","message":{"role":"assistant","content":[]}}));
+    state.reduce(&json!({"type":"message_update", "assistantMessageEvent":{"type":"thinking_start", "contentIndex":0}}));
+    let mut rows = project_rows(&state.items);
+    assert_eq!(rows.len(), 1);
+    let initial = rows[0];
+    assert_eq!(
+        activity_header(state.items.iter().map(AsRef::as_ref)),
+        "Thinking…"
+    );
+
+    for (event, header) in [
+        (
+            json!({"type":"message_update", "assistantMessageEvent":{"type":"thinking_delta", "contentIndex":0, "delta":"Inspect"}}),
+            "Thinking…",
+        ),
+        (
+            json!({"type":"message_end", "message":{"role":"assistant", "content":[{"type":"thinking", "thinking":"Inspect"}]}}),
+            "Thinking",
+        ),
+        (
+            json!({"type":"tool_execution_start", "toolCallId":"read-1", "toolName":"read", "args":{"path":"src/main.rs"}}),
+            "1 read · Reading…",
+        ),
+        (
+            json!({"type":"tool_execution_end", "toolCallId":"read-1", "isError":false, "result":{"content":[]}}),
+            "1 read",
+        ),
+        (
+            json!({"type":"message_start","message":{"role":"assistant","content":[]}}),
+            "1 read",
+        ),
+        (
+            json!({"type":"message_update", "assistantMessageEvent":{"type":"thinking_start", "contentIndex":0}}),
+            "1 read · Thinking…",
+        ),
+        (
+            json!({"type":"message_end", "message":{"role":"assistant", "content":[{"type":"thinking", "thinking":"Reviewed"}]}}),
+            "1 read",
+        ),
+    ] {
+        let before = state.items.clone();
+        state.reduce(&event);
+        rows = update_rows_from(&rows, &before, &state.items, None);
+        assert_eq!(rows, project_rows(&state.items), "{event}");
+        assert_eq!(rows.len(), 1, "{event}");
+        assert!(rows[0].same_position(&initial), "{event}");
+        assert_eq!(rows[0].disclosure_key(), initial.disclosure_key());
+        assert_eq!(rows[0].item_end(), state.items.len());
+        assert_eq!(
+            activity_header(state.items.iter().map(AsRef::as_ref)),
+            header,
+            "{event}"
+        );
+    }
+}
+
 pub(super) fn write_item() -> TranscriptItem {
     let mut state = ConversationState::default();
     state.reduce(&json!({

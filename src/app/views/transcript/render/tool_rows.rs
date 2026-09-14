@@ -45,7 +45,7 @@ pub(super) fn render_activity_group(
     cx: &gpui::App,
 ) -> AnyElement {
     let group_items = || items.iter_range(start..start + len);
-    let summary = activity_summary(group_items().map(AsRef::as_ref));
+    let summary = activity_header(group_items().map(AsRef::as_ref));
     let disclosure_label = format!(
         "{} activity details for {summary}",
         if expanded { "Collapse" } else { "Expand" },
@@ -69,7 +69,7 @@ pub(super) fn render_activity_group(
             .text_size(THEME.type_scale.body_small * font_scale)
             .line_height(THEME.type_scale.line_body * font_scale)
             .text_color(THEME.colors.muted)
-            .child(summary),
+            .child(div().min_w_0().flex_1().truncate().child(summary)),
         )
         .when(expanded, |group| {
             group.child(
@@ -216,6 +216,43 @@ pub(super) fn tool_summary(item: &TranscriptItem) -> String {
         },
         |details| details.summary(),
     )
+}
+
+fn activity_header<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {
+    use crate::agents::ToolCategory;
+    let mut live = None;
+    let summary = activity_summary(items.inspect(|item| {
+        if matches!(
+            item.tool_execution_state(),
+            Some(ToolExecutionState::Pending | ToolExecutionState::Running)
+        ) {
+            live = Some(*item);
+        }
+    }));
+    let status = live.map(|item| {
+        if item.kind == TranscriptKind::Thinking {
+            return "Thinking…";
+        }
+        match item
+            .tool_details
+            .as_ref()
+            .and_then(|details| details.metadata.category)
+        {
+            Some(ToolCategory::Read) => "Reading…",
+            Some(ToolCategory::Search) => "Searching…",
+            Some(ToolCategory::List) => "Listing…",
+            Some(ToolCategory::Change) => "Editing…",
+            Some(ToolCategory::Execute) => "Running…",
+            Some(ToolCategory::Fetch) => "Fetching…",
+            _ => "Working…",
+        }
+    });
+    match (summary.is_empty(), status) {
+        (true, Some(status)) => status.to_owned(),
+        (true, None) => "Thinking".to_owned(),
+        (false, Some(status)) => format!("{summary} · {status}"),
+        (false, None) => summary,
+    }
 }
 
 pub(super) fn activity_summary<'a>(items: impl Iterator<Item = &'a TranscriptItem>) -> String {

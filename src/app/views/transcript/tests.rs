@@ -691,9 +691,10 @@ fn tool_rows_are_collapsed_by_default_even_while_running_or_failed() {
     let items = vec![successful_mutation, running, failed];
     let rows = project_rows(&items);
 
-    assert!(!expanded_by_default(rows[0], &items));
-    assert!(!expanded_by_default(rows[1], &items));
-    assert!(!expanded_by_default(rows[2], &items));
+    assert_eq!(rows.len(), 2);
+    for row in rows.iter() {
+        assert!(!expanded_by_default(*row, &items));
+    }
 }
 
 #[test]
@@ -824,20 +825,20 @@ fn activity_groups_keep_thinking_inside_and_attention_outside() {
         item(TranscriptKind::Tool, "Read", "Path: two"),
     ];
     let rows = project_rows(&items);
-    assert_eq!(rows.len(), 6);
+    assert_eq!(rows.len(), 5);
     assert!(matches!(
         rows[0],
         TranscriptRow::ActivityGroup {
             start: 0,
-            len: 3,
+            len: 4,
             ..
         }
     ));
-    for (row, index) in rows.iter().skip(1).take(4).zip(3..7) {
+    for (row, index) in rows.iter().skip(1).take(3).zip(4..7) {
         assert!(matches!(row, TranscriptRow::Item { index: actual, .. } if *actual == index));
     }
     assert!(matches!(
-        rows[5],
+        rows[4],
         TranscriptRow::ActivityGroup {
             start: 7,
             len: 1,

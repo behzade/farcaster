@@ -148,16 +148,12 @@ impl TranscriptRow {
             }
             (
                 Self::ActivityGroup {
-                    start: left_start,
-                    len: left_len,
-                    ..
+                    start: left_start, ..
                 },
                 Self::ActivityGroup {
-                    start: right_start,
-                    len: right_len,
-                    ..
+                    start: right_start, ..
                 },
-            ) => left_start == right_start && left_len == right_len,
+            ) => left_start == right_start,
             _ => false,
         }
     }
@@ -512,24 +508,17 @@ fn project_rows_from(
         if is_groupable_activity(item) {
             let start = index;
             let mut end = start;
-            let mut has_tool = false;
-            while let Some(next) = items.get(end).filter(|next| is_groupable_activity(next)) {
-                has_tool |= next.kind == TranscriptKind::Tool;
+            while items
+                .get(end)
+                .is_some_and(|next| is_groupable_activity(next))
+            {
                 end += 1;
-            }
-            if !has_tool && end - start > 1 {
-                rows.extend((start..end).map(|index| TranscriptRow::Item {
-                    index,
-                    revision: item_revision(items, index..index + 1),
-                }));
-                index = end;
-                continue;
             }
             let single_command = end == start + 1
                 && item.tool_details.as_ref().is_some_and(|details| {
                     details.metadata.category == Some(crate::agents::ToolCategory::Execute)
                 });
-            if has_tool && !single_command {
+            if !single_command {
                 rows.push(TranscriptRow::ActivityGroup {
                     start,
                     len: end - start,
@@ -612,8 +601,8 @@ fn is_groupable_activity(item: &TranscriptItem) -> bool {
                 ToolReviewState::Reviewing | ToolReviewState::Blocked
             )
         })
-        && matches!(
+        && !matches!(
             item.tool_execution_state(),
-            None | Some(ToolExecutionState::Succeeded)
+            Some(ToolExecutionState::Failed)
         )
 }
