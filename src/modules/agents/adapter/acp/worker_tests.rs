@@ -21,7 +21,8 @@ while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
     *'"method":"authenticate"'*) result='{}' ;;
-    *'"method":"session/new"'*|*'"method":"session/resume"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]}]}' ;;
+    *'"method":"cursor/list_available_models"'*) result='{"models":[]}' ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*|*'"method":"session/load"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]}]}' ;;
     *'"method":"session/set_config_option"'*) result='{}' ;;
     *'"method":"session/close"'*) result='{}' ;;
     *) exit 2 ;;
@@ -53,8 +54,7 @@ done
         json!({"role":"user", "content":"Remember the previous work"}),
         json!({"role":"assistant", "content":[{"type":"text", "text":"I have the context"}]}),
     ]);
-    let previous_items = conversation.items.clone();
-    assert_eq!(previous_items.len(), 2);
+    assert_eq!(conversation.items.len(), 2);
     original.close()?;
 
     command.access_mode = HarnessAccessMode::Full;
@@ -99,8 +99,26 @@ done
     }
     assert_eq!(
         conversation.items.len(),
-        previous_items.len(),
+        2,
         "sandbox restart must retain the visible transcript when Antigravity resumes without replay; got {history:?}"
+    );
+
+    // An empty session/load replay is authoritative. Do not fix the regression
+    // by discarding all empty histories, which would leave stale rows visible.
+    let (mut loaded, _, history) = spawn_session(
+        &command,
+        &PROFILE,
+        project.path(),
+        Some("saved-session"),
+        None,
+        None,
+    )?;
+    loaded.close()?;
+    assert!(
+        history
+            .expect("session/load must return history")
+            .messages
+            .is_empty()
     );
     Ok(())
 }
@@ -1566,6 +1584,130 @@ fn acp_user_message_chunk_commits_delivery_before_a_cancel_or_error() {
             session.events.is_empty(),
             "delivery must not become unknown"
         );
+    }
+}
+
+#[test]
+fn acp_user_message_chunk_malformed_content_preserves_cancel_and_error_recovery() {
+    for content in [
+        None,
+        Some(Value::Null),
+        Some(json!("wo")),
+        Some(json!({"text":"wo"})),
+        Some(json!({"type":"unknown","text":"wo"})),
+        Some(json!({"type":"text"})),
+        Some(json!({"type":"text","text":7})),
+        Some(json!({"type":"image","mimeType":"image/png"})),
+        Some(json!({"type":"image","data":"YWJj","mimeType":null})),
+        Some(json!({"type":"audio","data":7,"mimeType":"audio/wav"})),
+        Some(json!({"type":"resource_link","uri":"file:///fixture.txt"})),
+        Some(json!({"type":"resource","resource":{"uri":"file:///fixture.txt"}})),
+    ] {
+        for rejected in [false, true] {
+            let mut session = inert_session();
+            track_inert_submission(&mut session, "prompt");
+            let mut update = json!({"sessionUpdate":"user_message_chunk"});
+            if let Some(content) = &content {
+                update["content"] = content.clone();
+            }
+            session.connection.restore_queued(VecDeque::from([
+                AcpInbound::Notification {
+                    method: "session/update".into(),
+                    params: json!({"sessionId":"one","update":update}),
+                },
+                AcpInbound::Notification {
+                    method: "session/update".into(),
+                    params: json!({"sessionId":"one","update":{
+                        "sessionUpdate":"session_info_update","title":"Waiting for delivery"
+                    }}),
+                },
+            ]));
+            assert!(
+                matches!(
+                    session.poll(),
+                    Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(_)))
+                ),
+                "malformed echo must not deliver: {content:?}"
+            );
+            assert!(!session.current_prompt_proven);
+            assert!(session.poll_prompt_ack().is_none());
+            assert!(session.events.is_empty());
+
+            let terminal = if rejected {
+                AcpInbound::Error {
+                    id: AcpRequestId::Number(1),
+                    message: "prompt rejected".into(),
+                }
+            } else {
+                AcpInbound::Response {
+                    id: AcpRequestId::Number(1),
+                    result: json!({"stopReason":"cancelled"}),
+                }
+            };
+            session
+                .connection
+                .restore_queued(VecDeque::from([terminal]));
+            assert_eq!(
+                session.poll(),
+                Some(WorkerEvent::Settled {
+                    output: String::new()
+                })
+            );
+            if rejected {
+                assert_eq!(
+                    session.poll_prompt_ack(),
+                    Some(("prompt".into(), Err("prompt rejected".into())))
+                );
+            } else {
+                assert!(session.poll_prompt_ack().is_none());
+                assert!(matches!(
+                    session.poll(),
+                    Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
+                        if submission_id == "prompt"
+                ));
+            }
+            assert!(session.current_prompt.is_none());
+            assert!(session.poll_prompt_ack().is_none());
+            assert!(session.events.is_empty());
+        }
+    }
+}
+
+#[test]
+fn acp_user_message_chunk_accepts_empty_text_and_non_text_content() {
+    for content in [
+        json!({"type":"text","text":""}),
+        json!({"type":"image","data":"YWJj","mimeType":"image/png"}),
+        json!({"type":"audio","data":"YWJj","mimeType":"audio/wav"}),
+        json!({"type":"resource_link","name":"fixture","uri":"file:///fixture.txt"}),
+        json!({"type":"resource","resource":{"uri":"file:///fixture.txt","text":"fixture"}}),
+        json!({"type":"resource","resource":{"uri":"file:///fixture.bin","blob":"YWJj"}}),
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "prompt");
+        session
+            .connection
+            .restore_queued(VecDeque::from([AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":"one","update":{
+                    "sessionUpdate":"user_message_chunk","content":content
+                }}),
+            }]));
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Activity(
+                WorkerActivity::SubmittedInputDelivered {
+                    submission_id: "prompt".into(),
+                    mode: WorkerSendMode::Prompt,
+                    message: "work".into(),
+                }
+            )),
+            "valid echo should deliver before model output: {content}"
+        );
+        assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(session.events.is_empty());
+        assert!(session.output.is_empty());
     }
 }
 

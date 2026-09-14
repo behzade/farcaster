@@ -5,6 +5,7 @@ use std::{
     thread,
 };
 
+use agent_client_protocol::schema::v1::ContentBlock;
 use serde_json::{Value, json};
 
 use super::{
@@ -324,7 +325,9 @@ fn setup_connection(
     {
         metadata.commands = commands;
     }
-    let history = resume.is_some().then(|| {
+    // ACP session/resume retains backend context without replaying the transcript.
+    // Only session/load supplies authoritative history, including an empty replay.
+    let history = (resume.is_some() && profile.resume_method == "session/load").then(|| {
         let mut history = super::catalog::discovered_history(
             profile,
             queued.iter().cloned(),
@@ -336,7 +339,7 @@ fn setup_connection(
         }
         history
     });
-    if resume.is_none() {
+    if history.is_none() {
         connection.restore_queued(queued);
     }
     Ok(AcpSetup {
@@ -643,7 +646,8 @@ impl AcpWorkerSession {
                 )
             }
             "user_message_chunk" => {
-                // The first live user echo proves admission before any model output.
+                // The first valid live user echo proves admission before any model output.
+                serde_json::from_value::<ContentBlock>(update.get("content")?.clone()).ok()?;
                 self.acknowledge_current_prompt_started();
                 self.events.pop_front()
             }
