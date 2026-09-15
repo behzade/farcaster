@@ -27,6 +27,31 @@ fn process_metadata_identity_is_available_before_session_binding() {
     assert_eq!((id, name), (context.worker_id, context.worker_name));
 }
 
+#[test]
+fn transient_identity_keeps_its_locator_without_persisting_a_session() {
+    let registry = CallerRegistry::default();
+    let registrations = Arc::new(Mutex::new(0));
+    let captured = registrations.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |_| {
+            *captured.lock().expect("registrations") += 1;
+            Ok(42)
+        })),
+        None,
+    );
+
+    let caller =
+        identity(&registry, Path::new("/project"), Backend::Codex).without_session_persistence();
+    caller.bind("ephemeral-title-thread");
+    caller.begin_execution(Some("title"));
+
+    assert_eq!(
+        context(&registry, &caller).session,
+        "ephemeral-title-thread"
+    );
+    assert_eq!(*registrations.lock().expect("registrations"), 0);
+}
+
 fn context(registry: &CallerRegistry, identity: &CallerIdentity) -> CallerContext {
     registry
         .resolve(identity.token())

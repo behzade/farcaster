@@ -67,8 +67,13 @@ impl WorkerSessionFactory for CodexWorkerFactory {
                 launch.worker_name.clone(),
                 launch.parent_worker_id.clone(),
                 launch.access_mode,
-            )?
-            .with_slot(launch.slot.clone());
+            )?;
+        let caller_identity = if launch.ephemeral {
+            caller_identity.without_session_persistence()
+        } else {
+            caller_identity
+        }
+        .with_slot(launch.slot.clone());
         configure_codex_app_server(&mut prepared, launch.access_mode);
         let mut child = prepared
             .stdin(Stdio::piped())

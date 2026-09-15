@@ -73,6 +73,7 @@ pub(crate) struct CallerContext {
 }
 
 struct RegisteredCaller {
+    persist_session: bool,
     session_record: Option<i64>,
     execution: Option<ExecutionBinding>,
     worker_id: String,
@@ -152,6 +153,15 @@ impl CallerRegistry {
     }
 
     fn bind_record(&self, token: &str) {
+        let persistent = self
+            .callers
+            .lock()
+            .ok()
+            .and_then(|callers| callers.get(token).map(|caller| caller.persist_session))
+            .unwrap_or(false);
+        if !persistent {
+            return;
+        }
         let sink = self.session_sink.lock().ok().and_then(|sink| sink.clone());
         let Some(sink) = sink else { return };
         let result = self.resolve(token).and_then(|context| sink(&context));
@@ -183,6 +193,9 @@ impl CallerRegistry {
         let link = (|| {
             let callers = self.callers.lock().ok()?;
             let child = callers.get(token)?;
+            if !child.persist_session {
+                return None;
+            }
             let parent = child.parent_session.as_ref()?;
             Some(WorkerFamilyLink {
                 project: child.project.clone(),
@@ -245,6 +258,7 @@ impl CallerRegistry {
             callers.insert(
                 token.clone(),
                 RegisteredCaller {
+                    persist_session: true,
                     session_record: None,
                     execution: None,
                     worker_id,
@@ -334,6 +348,7 @@ impl CallerRegistry {
         callers.insert(
             token.clone(),
             RegisteredCaller {
+                persist_session: true,
                 session_record: None,
                 execution: None,
                 worker_id,
@@ -564,6 +579,18 @@ impl RegisteredCaller {
 }
 
 impl CallerIdentity {
+    /// Keep a backend locator available for in-memory routing without recording it as a session.
+    pub(crate) fn without_session_persistence(self) -> Self {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.get_mut(&self.token)
+        {
+            caller.persist_session = false;
+            caller.session_record = None;
+            caller.execution = None;
+        }
+        self
+    }
+
     pub(crate) fn ensure_execution(&self) {
         let missing = self
             .registry
