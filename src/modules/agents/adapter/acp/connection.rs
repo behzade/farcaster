@@ -197,7 +197,7 @@ impl AcpConnection {
         result
     }
 
-    pub(super) fn model_catalog(&self, profile: &AcpProfile) -> Result<Vec<Value>, String> {
+    pub(super) fn request_model_catalog(&self, profile: &AcpProfile) -> Result<Vec<Value>, String> {
         if profile.backend != Backend::Cursor {
             return Ok(Vec::new());
         }

@@ -1043,6 +1043,58 @@ fn cursor_access_configures_sandbox_and_approvals() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn cursor_model_catalog_is_reused_across_processes_and_access_modes() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"authMethods":[{"id":"cursor_login"}]}' ;;
+    *'"method":"authenticate"'*) result='{}' ;;
+    *'"method":"session/new"'*) result='{"sessionId":"cached-model-session","configOptions":[{"id":"model","category":"model","currentValue":"base","options":[{"value":"base"}]}]}' ;;
+    *'"method":"cursor/list_available_models"'*) result='{"models":[{"value":"base","name":"Base"}]}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("agent");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
+        let command = AgentLaunchConfig {
+            program: executable.clone(),
+            access_mode,
+            ..AgentLaunchConfig::default()
+        };
+        let (mut session, metadata, _) = spawn_session(
+            &command,
+            &super::super::super::cursor::PROFILE,
+            project.path(),
+            None,
+            None,
+            None,
+        )?;
+        assert_eq!(metadata.models.len(), 1);
+        session.close()?;
+    }
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        requests
+            .matches("\"method\":\"cursor/list_available_models\"")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires signed-in Cursor and network; creates a scratch session"]
 fn live_cursor_configuration_and_listing() {

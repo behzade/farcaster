@@ -182,6 +182,7 @@ fn spawn_session(
 > {
     let mut prepared = command.command(project)?;
     configure_command(&mut prepared, profile, command.access_mode)?;
+    let runtime_key = super::configuration::AcpRuntimeKey::from_command(&prepared);
     let mut child = prepared
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -196,7 +197,15 @@ fn spawn_session(
         config_ids,
         features,
         history,
-    } = match setup_connection(&mut child, profile, project, resume, caller_token, wake) {
+    } = match setup_connection(
+        &mut child,
+        profile,
+        project,
+        resume,
+        caller_token,
+        wake,
+        &runtime_key,
+    ) {
         Ok(setup) => setup,
         Err(error) => {
             let _ = child.kill();
@@ -279,6 +288,7 @@ fn setup_connection(
     resume: Option<&str>,
     caller_token: Option<&str>,
     wake: Option<thread::Thread>,
+    runtime_key: &super::configuration::AcpRuntimeKey,
 ) -> Result<AcpSetup, String> {
     let stdin = child
         .stdin
@@ -316,8 +326,8 @@ fn setup_connection(
     if resume.is_some_and(|expected| expected != session_id) {
         return Err(format!("{} resumed a different session", profile.name));
     }
-    let (mut metadata, config_ids) =
-        super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
+    let catalog = super::configuration::model_catalog(&connection, profile, runtime_key)?;
+    let (mut metadata, config_ids) = super::configuration::metadata(profile, &response, catalog);
     let queued = connection.drain_queued()?;
     if let Some(commands) = queued
         .iter()
@@ -1032,9 +1042,8 @@ impl AcpWorkerSession {
     fn record_prompt_result(&mut self, id: AcpRequestId, result: Value) {
         let stop_reason = result.get("stopReason").and_then(Value::as_str);
         match stop_reason {
-            Some("cancelled") => self.mark_current_prompt_unknown(
-                "ACP prompt stopped before delivery acknowledgement",
-            ),
+            Some("cancelled") => self
+                .mark_current_prompt_unknown("ACP prompt stopped before delivery acknowledgement"),
             Some(stop_reason) if Self::prompt_stop_reason_is_receipt(stop_reason) => {
                 self.acknowledge_current_prompt_started()
             }

@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
-    process::{Child, Stdio},
+    ffi::OsString,
+    path::Path,
+    process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
     time::{Duration, Instant},
@@ -27,7 +28,7 @@ pub(in crate::modules::agents::adapter) fn list_sessions(
     profile: &AcpProfile,
 ) -> Result<Vec<Value>, String> {
     let project = std::env::current_dir().map_err(|error| error.to_string())?;
-    with_connection_kind(profile, &project, "listing", |connection, _, _| {
+    with_connection_kind(profile, &project, "listing", |connection, _, _, _| {
         let mut sessions = Vec::new();
         let mut cursor = None;
         let mut seen = std::collections::HashSet::new();
@@ -62,28 +63,32 @@ pub(in crate::modules::agents::adapter) fn load_configuration(
     profile: &AcpProfile,
     project: &Path,
 ) -> Result<(main_session::MainSessionMetadata, String), String> {
-    with_connection(profile, project, |connection, profile, project| {
-        let response = connection.request_blocking(
-            "session/new",
-            json!({"cwd": project.to_string_lossy(), "mcpServers": []}),
-        )?;
-        let session_id = response
-            .get("sessionId")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("{} did not provide an ACP session id", profile.name))?;
-        let (mut metadata, _) =
-            super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
-        if let Some(commands) = connection
-            .drain_queued()?
-            .iter()
-            .filter_map(|message| commands_from_update(message, session_id))
-            .next_back()
-        {
-            metadata.commands = commands;
-        }
-        close_session(connection, session_id);
-        Ok((metadata, session_id.to_owned()))
-    })
+    with_connection(
+        profile,
+        project,
+        |connection, profile, project, catalog_key| {
+            let response = connection.request_blocking(
+                "session/new",
+                json!({"cwd": project.to_string_lossy(), "mcpServers": []}),
+            )?;
+            let session_id = response
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{} did not provide an ACP session id", profile.name))?;
+            let catalog = super::configuration::model_catalog(connection, profile, catalog_key)?;
+            let (mut metadata, _) = super::configuration::metadata(profile, &response, catalog);
+            if let Some(commands) = connection
+                .drain_queued()?
+                .iter()
+                .filter_map(|message| commands_from_update(message, session_id))
+                .next_back()
+            {
+                metadata.commands = commands;
+            }
+            close_session(connection, session_id);
+            Ok((metadata, session_id.to_owned()))
+        },
+    )
 }
 
 pub(in crate::modules::agents::adapter) fn load_history(
@@ -99,7 +104,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
                 path.display()
             )
         })?;
-    with_connection(profile, project, move |connection, profile, project| {
+    with_connection(profile, project, move |connection, profile, project, _| {
         let started = Instant::now();
         let response = connection.request_blocking(
             "session/load",
@@ -130,7 +135,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
 struct CatalogProcess {
     child: Option<Child>,
     connection: Option<AcpConnection>,
-    project: PathBuf,
+    launch: CatalogLaunch,
 }
 
 impl CatalogProcess {
@@ -156,8 +161,23 @@ impl Drop for CatalogProcess {
     }
 }
 
-fn catalog_is_reusable(existing_project: &Path, project: &Path, running: bool) -> bool {
-    running && existing_project == project
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CatalogLaunch {
+    runtime: super::configuration::AcpRuntimeKey,
+    arguments: Vec<OsString>,
+}
+
+impl CatalogLaunch {
+    fn from_command(command: &Command) -> Self {
+        Self {
+            runtime: super::configuration::AcpRuntimeKey::from_command(command),
+            arguments: command.get_args().map(OsString::from).collect(),
+        }
+    }
+}
+
+fn catalog_is_reusable(existing: &CatalogLaunch, requested: &CatalogLaunch, running: bool) -> bool {
+    running && existing == requested
 }
 
 type CatalogKey = (crate::agents::Backend, &'static str);
@@ -171,7 +191,14 @@ fn catalog_processes() -> &'static Mutex<HashMap<CatalogKey, CatalogSlot>> {
 fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
     project: &Path,
-    operation: impl FnOnce(&mut AcpConnection, &AcpProfile, &Path) -> Result<T, String> + Send + 'static,
+    operation: impl FnOnce(
+        &mut AcpConnection,
+        &AcpProfile,
+        &Path,
+        &super::configuration::AcpRuntimeKey,
+    ) -> Result<T, String>
+    + Send
+    + 'static,
 ) -> Result<T, String> {
     with_connection_kind(profile, project, "session", operation)
 }
@@ -182,9 +209,21 @@ fn with_connection_kind<T: Send + 'static>(
     profile: &AcpProfile,
     project: &Path,
     kind: &'static str,
-    operation: impl FnOnce(&mut AcpConnection, &AcpProfile, &Path) -> Result<T, String> + Send + 'static,
+    operation: impl FnOnce(
+        &mut AcpConnection,
+        &AcpProfile,
+        &Path,
+        &super::configuration::AcpRuntimeKey,
+    ) -> Result<T, String>
+    + Send
+    + 'static,
 ) -> Result<T, String> {
     let key = (profile.backend, kind);
+    // The ACP request carries its own cwd, so the child process is reusable
+    // across projects when both projects resolve to the same launch context.
+    // Comparing the captured environment keeps project-specific PATH, account,
+    // and proxy configuration behind the backend process boundary.
+    let (command, launch) = catalog_command(profile, project)?;
     // Only map access holds the global lock. Each backend/connection kind owns
     // its exchange lock, so a stalled agent cannot block another backend.
     let slot = {
@@ -198,7 +237,7 @@ fn with_connection_kind<T: Send + 'static>(
         .map_err(|error| format!("{} ACP catalog lock: {error}", profile.name))?;
     let reused = cached.take().and_then(|mut process| {
         let running = matches!(process.child.as_mut().map(Child::try_wait), Some(Ok(None)));
-        if catalog_is_reusable(&process.project, project, running) {
+        if catalog_is_reusable(&process.launch, &launch, running) {
             process.take_parts()
         } else {
             None
@@ -208,7 +247,7 @@ fn with_connection_kind<T: Send + 'static>(
     let spawn_started = Instant::now();
     let (mut child, connection) = match reused {
         Some(parts) => parts,
-        None => spawn_catalog_child(profile, project)?,
+        None => spawn_catalog_child(profile, command)?,
     };
     zlog::info!(
         "PERF operation=acp.catalog agent={} mode={} elapsed_ms={:.2}",
@@ -218,6 +257,7 @@ fn with_connection_kind<T: Send + 'static>(
     );
     let profile_owned = profile.clone();
     let project_owned = project.to_owned();
+    let runtime_key = launch.runtime.clone();
     let result = run_catalog_operation(Duration::from_secs(30), move || {
         let mut connection = connection;
         let result = (|| {
@@ -226,7 +266,12 @@ fn with_connection_kind<T: Send + 'static>(
             } else {
                 connection.drain_queued()?;
             }
-            operation(&mut connection, &profile_owned, &project_owned)
+            operation(
+                &mut connection,
+                &profile_owned,
+                &project_owned,
+                &runtime_key,
+            )
         })();
         (result, connection)
     });
@@ -235,7 +280,7 @@ fn with_connection_kind<T: Send + 'static>(
             *cached = Some(CatalogProcess {
                 child: Some(child),
                 connection: Some(connection),
-                project: project.to_owned(),
+                launch,
             });
             Ok(value)
         }
@@ -252,10 +297,10 @@ fn with_connection_kind<T: Send + 'static>(
     }
 }
 
-fn spawn_catalog_child(
+fn catalog_command(
     profile: &AcpProfile,
     project: &Path,
-) -> Result<(Child, AcpConnection), String> {
+) -> Result<(Command, CatalogLaunch), String> {
     let config = AgentLaunchConfig {
         program: profile.program(),
         access_mode: HarnessAccessMode::Sandboxed,
@@ -263,6 +308,14 @@ fn spawn_catalog_child(
     };
     let mut command = config.command(project)?;
     configure_command(&mut command, profile, config.access_mode)?;
+    let launch = CatalogLaunch::from_command(&command);
+    Ok((command, launch))
+}
+
+fn spawn_catalog_child(
+    profile: &AcpProfile,
+    mut command: Command,
+) -> Result<(Child, AcpConnection), String> {
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

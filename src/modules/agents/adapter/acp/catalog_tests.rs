@@ -1,5 +1,5 @@
 use crate::agents::Backend;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::*;
 use crate::modules::agents::adapter::acp::events::AcpInbound;
@@ -173,12 +173,27 @@ fn replay_handles_completed_tool_as_its_first_update() {
     assert_eq!(history[1]["role"], "toolResult");
 }
 
+fn catalog_launch(project: &Path, account: &str) -> CatalogLaunch {
+    let mut command = Command::new("/agent");
+    command
+        .arg("acp")
+        .env("AGENT_ACCOUNT", account)
+        .env("PWD", project)
+        .current_dir(project);
+    CatalogLaunch::from_command(&command)
+}
+
 #[test]
-fn catalog_reuse_requires_the_same_live_project() {
-    let project = PathBuf::from("/project");
-    assert!(catalog_is_reusable(&project, &project, true));
-    assert!(!catalog_is_reusable(&project, Path::new("/other"), true));
-    assert!(!catalog_is_reusable(&project, &project, false));
+fn catalog_reuse_follows_launch_context_not_request_cwd() {
+    let existing = catalog_launch(Path::new("/project"), "personal");
+    let requested = catalog_launch(Path::new("/other"), "personal");
+    assert!(catalog_is_reusable(&existing, &requested, true));
+    assert!(!catalog_is_reusable(&existing, &requested, false));
+    assert!(!catalog_is_reusable(
+        &existing,
+        &catalog_launch(Path::new("/other"), "work"),
+        true
+    ));
 }
 
 #[test]

@@ -1,13 +1,81 @@
 use crate::agents::Backend;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    ffi::OsString,
+    process::Command,
+    sync::{Mutex, OnceLock},
+};
 
 use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
 
 use super::super::main_session::MainSessionMetadata;
 use super::{
     AcpProfile,
+    connection::AcpConnection,
     translate::{ConfigIds, metadata_from_session},
 };
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct AcpRuntimeKey {
+    program: OsString,
+    environment_digest: [u8; 32],
+}
+
+impl AcpRuntimeKey {
+    pub(super) fn from_command(command: &Command) -> Self {
+        let mut environment = command
+            .get_envs()
+            .filter(|(name, _)| *name != "PWD" && *name != "OLDPWD")
+            .map(|(name, value)| (name.to_owned(), value.map(OsString::from)))
+            .collect::<Vec<_>>();
+        environment.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        let mut digest = Sha256::new();
+        for (name, value) in environment {
+            let name = name.as_encoded_bytes();
+            digest.update(name.len().to_le_bytes());
+            digest.update(name);
+            if let Some(value) = value {
+                let value = value.as_encoded_bytes();
+                digest.update([1]);
+                digest.update(value.len().to_le_bytes());
+                digest.update(value);
+            } else {
+                digest.update([0]);
+            }
+        }
+        Self {
+            program: command.get_program().to_owned(),
+            environment_digest: digest.finalize().into(),
+        }
+    }
+}
+
+pub(super) fn model_catalog(
+    connection: &AcpConnection,
+    profile: &AcpProfile,
+    key: &AcpRuntimeKey,
+) -> Result<Vec<Value>, String> {
+    if profile.backend != Backend::Cursor {
+        return Ok(Vec::new());
+    }
+    static CATALOGS: OnceLock<Mutex<HashMap<AcpRuntimeKey, Vec<Value>>>> = OnceLock::new();
+    let catalogs = CATALOGS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(catalog) = catalogs
+        .lock()
+        .map_err(|error| format!("Cursor model catalog cache: {error}"))?
+        .get(key)
+        .cloned()
+    {
+        return Ok(catalog);
+    }
+    let catalog = connection.request_model_catalog(profile)?;
+    catalogs
+        .lock()
+        .map_err(|error| format!("Cursor model catalog cache: {error}"))?
+        .insert(key.clone(), catalog.clone());
+    Ok(catalog)
+}
 
 pub(super) const CURSOR_SERVICE_TIERS: [(&str, &str); 2] =
     [("standard", "false"), ("priority", "true")];
