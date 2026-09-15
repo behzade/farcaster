@@ -42,3 +42,30 @@ fn live_tool_result_becomes_review_only_after_success() {
     conversation.reduce(&json!({"type":"tool_execution_end", "toolCallId":"failed", "result":result(), "isError":true}));
     assert!(from_item(&conversation.items[1]).is_none());
 }
+
+#[test]
+fn pi_native_tool_result_becomes_review() {
+    let mut conversation = ConversationState::default();
+    conversation.reduce(&json!({
+        "type":"tool_execution_start",
+        "toolCallId":"review",
+        "toolName":"submit_review",
+        "args":{}
+    }));
+    conversation.reduce(&json!({
+        "type":"tool_execution_end",
+        "toolCallId":"review",
+        "result":{
+            "content":[{"type":"text", "text": result().to_string()}],
+            "details": result()
+        },
+        "isError":false
+    }));
+    assert_eq!(
+        from_item(&conversation.items[0])
+            .expect("review item")
+            .review
+            .title,
+        "Review failure handling"
+    );
+}

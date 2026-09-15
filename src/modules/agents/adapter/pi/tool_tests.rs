@@ -64,6 +64,41 @@ fn builtin_metadata_matches_across_live_history_and_stream_events() {
 }
 
 #[test]
+fn farcaster_tools_keep_app_titles() {
+    let mut message = json!({
+        "role": "assistant",
+        "content": [{
+            "type": "toolCall",
+            "id": "review-1",
+            "name": "submit_review",
+            "arguments": {"title": "Review"}
+        }]
+    });
+    annotate_pi_message(&mut message);
+    assert_eq!(
+        message["content"][0]["toolMetadata"]["title"],
+        "Submit review"
+    );
+    assert_eq!(message["content"][0]["toolMetadata"]["category"], "other");
+
+    let mut prefixed = json!({
+        "role": "assistant",
+        "content": [{
+            "type": "toolCall",
+            "id": "search-1",
+            "name": "farcaster_workgraph_search",
+            "arguments": {"query": "tasks"}
+        }]
+    });
+    annotate_pi_message(&mut prefixed);
+    assert_eq!(
+        prefixed["content"][0]["toolMetadata"]["title"],
+        "Search workgraph"
+    );
+    assert_eq!(prefixed["content"][0]["toolMetadata"]["category"], "other");
+}
+
+#[test]
 fn leaves_custom_tool_intent_unknown_and_keeps_native_metadata() {
     let mut message = json!({
         "role": "assistant",

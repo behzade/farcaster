@@ -1,6 +1,5 @@
 pub(super) mod deletion;
 mod framing;
-mod mcp_config;
 mod process;
 mod protocol;
 mod response;

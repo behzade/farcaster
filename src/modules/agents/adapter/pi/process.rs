@@ -17,7 +17,6 @@ use serde_json::Value;
 
 use super::{
     framing::{JsonlFramer, encode_json_line},
-    mcp_config::TransientMcpConfig,
     wire::{PiWireMessage, parse_frame},
 };
 #[cfg(test)]
@@ -103,13 +102,9 @@ fn rpc_command(
     command: &AgentLaunchConfig,
     project: &Path,
     launch: SessionLaunch<'_>,
-    mcp_config: Option<&Path>,
 ) -> Result<std::process::Command, String> {
     let mut prepared = launch_configuration(command).command(project)?;
     prepared.args(["--mode", "rpc"]);
-    if let Some(mcp_config) = mcp_config {
-        prepared.arg("--mcp-config").arg(mcp_config);
-    }
     prepared
         .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
         .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
@@ -128,12 +123,64 @@ fn rpc_command(
     Ok(prepared)
 }
 
+fn apply_farcaster_tools(command: &mut std::process::Command, caller_token: Option<&str>) {
+    match caller_token {
+        Some(token) => {
+            command
+                .env(
+                    "FARCASTER_MCP_URL",
+                    crate::modules::agents::adapter::farcaster_mcp::URL,
+                )
+                .env(
+                    "FARCASTER_MCP_HEADER",
+                    crate::modules::agents::adapter::farcaster_mcp::CALLER_HEADER,
+                )
+                .env("FARCASTER_MCP_CALLER", token);
+        }
+        None => {
+            command
+                .env_remove("FARCASTER_MCP_URL")
+                .env_remove("FARCASTER_MCP_HEADER")
+                .env_remove("FARCASTER_MCP_CALLER");
+        }
+    }
+}
+
+fn prepare_rpc(
+    command: &AgentLaunchConfig,
+    project: &Path,
+    launch: SessionLaunch<'_>,
+    extension: &Path,
+    is_worker: bool,
+    identity: Option<&(String, String)>,
+    parent_worker: Option<&str>,
+    parent_session: Option<&str>,
+    caller_token: &str,
+) -> Result<std::process::Command, String> {
+    let mut prepared = rpc_command(command, project, launch)?;
+    prepared.arg("--extension").arg(extension);
+    metadata::apply(
+        &mut prepared,
+        project,
+        &launch,
+        is_worker,
+        identity,
+        parent_worker,
+        parent_session,
+    );
+    apply_farcaster_tools(
+        &mut prepared,
+        (!is_worker && crate::modules::agents::adapter::farcaster_mcp::enabled())
+            .then_some(caller_token),
+    );
+    Ok(prepared)
+}
+
 pub(crate) struct PiRpcProcess {
     commands: Vec<super::wire::PiCommand>,
     sandbox_adapter: Option<&'static dyn super::sandbox::PiSandboxAdapter>,
     sandbox_mode: Option<HarnessAccessMode>,
     caller_identity: crate::modules::agents::core::CallerIdentity,
-    _mcp_config: Option<TransientMcpConfig>,
     steering_extension: tempfile::NamedTempFile,
     launch_command: AgentLaunchConfig,
     project: PathBuf,
@@ -279,33 +326,25 @@ impl PiRpcProcess {
         } else {
             registry.issue_with_access(project, profile, wake.clone(), command.access_mode)
         };
-        let mcp_config = (!is_worker && crate::modules::agents::adapter::farcaster_mcp::enabled())
-            .then(|| TransientMcpConfig::create(caller_identity.token()))
-            .transpose()?;
         let mut steering_extension = tempfile::Builder::new()
-            .prefix("farcaster-steering-")
+            .prefix("farcaster-extension-")
             .suffix(".mjs")
             .tempfile()
-            .map_err(|error| format!("create Pi steering extension: {error}"))?;
+            .map_err(|error| format!("create Pi extension: {error}"))?;
         steering_extension
-            .write_all(include_bytes!("steering.js"))
-            .map_err(|error| format!("write Pi steering extension: {error}"))?;
-        let mut prepared = rpc_command(
+            .write_all(include_bytes!("farcaster.js"))
+            .map_err(|error| format!("write Pi extension: {error}"))?;
+        let mut prepared = prepare_rpc(
             command,
             project,
             launch,
-            mcp_config.as_ref().map(TransientMcpConfig::path),
-        )?;
-        prepared.arg("--extension").arg(steering_extension.path());
-        metadata::apply(
-            &mut prepared,
-            project,
-            &launch,
+            steering_extension.path(),
             is_worker,
             caller_identity.worker_identity().as_ref(),
             parent.as_ref().map(|(id, _)| id.as_str()),
             parent_session.as_deref(),
-        );
+            caller_identity.token(),
+        )?;
         let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -343,7 +382,6 @@ impl PiRpcProcess {
             sandbox_adapter: None,
             sandbox_mode: None,
             caller_identity,
-            _mcp_config: mcp_config,
             steering_extension,
             launch_command: command.clone(),
             project: project.to_path_buf(),
@@ -543,25 +581,18 @@ impl PiRpcProcess {
                 .map(|(provider, model)| (provider.as_str(), model.as_str())),
             restore_reasoning.as_deref(),
         );
-        let mut prepared = rpc_command(
+        let mut prepared = prepare_rpc(
             &command,
             &self.project,
             launch,
-            self._mcp_config.as_ref().map(TransientMcpConfig::path),
-        )
-        .map_err(|error| restart_error(session.as_deref(), error))?;
-        prepared
-            .arg("--extension")
-            .arg(self.steering_extension.path());
-        metadata::apply(
-            &mut prepared,
-            &self.project,
-            &launch,
+            self.steering_extension.path(),
             self.is_worker,
             self.caller_identity.worker_identity().as_ref(),
             self.parent_worker_id.as_deref(),
             self.native_parent_session.as_deref(),
-        );
+            self.caller_identity.token(),
+        )
+        .map_err(|error| restart_error(session.as_deref(), error))?;
         let mut child = prepared
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

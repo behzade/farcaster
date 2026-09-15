@@ -1115,13 +1115,15 @@ fn process_starts_directly_in_the_project_directory() -> TestResult {
         fs::canonicalize(process_project)?,
         fs::canonicalize(temp.path())?,
     );
-    let mcp_config = serde_json::from_slice::<serde_json::Value>(&fs::read(
-        temp.path().join("process-mcp-config"),
-    )?)?;
     assert_eq!(
-        mcp_config["mcpServers"]["farcaster"]["url"],
+        fs::read_to_string(temp.path().join("process-mcp-url"))?,
         "http://127.0.0.1:8765/mcp"
     );
+    assert_eq!(
+        fs::read_to_string(temp.path().join("process-mcp-header"))?,
+        "farcaster-caller"
+    );
+    assert!(!fs::read_to_string(temp.path().join("process-mcp-caller"))?.is_empty());
     assert!(!temp.path().join(".mcp.json").exists());
     rpc.terminate()?;
     Ok(())
@@ -1148,7 +1150,8 @@ fn child_process_omits_farcaster_mcp() -> TestResult {
             "child".into(),
             None,
         )?;
-        assert!(!temp.path().join("process-mcp-config").exists());
+        assert!(fs::read_to_string(temp.path().join("process-mcp-url"))?.is_empty());
+        assert!(fs::read_to_string(temp.path().join("process-mcp-caller"))?.is_empty());
         rpc.terminate()?;
     }
     Ok(())
@@ -1163,7 +1166,6 @@ fn catalog_process_disables_session_persistence() -> TestResult {
         },
         project.path(),
         SessionLaunch::Catalog,
-        Some(Path::new("/dev/fd/9")),
     )?;
     assert!(
         process
@@ -1183,15 +1185,9 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
         },
         project.path(),
         SessionLaunch::Fork(source),
-        Some(Path::new("/dev/fd/9")),
     )?;
     let arguments = process.get_args().collect::<Vec<_>>();
     assert!(arguments.windows(2).any(|pair| pair == ["--mode", "rpc"]));
-    assert!(
-        arguments
-            .windows(2)
-            .any(|pair| pair == ["--mcp-config", "/dev/fd/9"])
-    );
     assert!(
         !arguments
             .iter()
@@ -1206,19 +1202,29 @@ fn fork_process_passes_the_source_session_to_pi() -> TestResult {
 
 #[test]
 fn process_omits_builtin_mcp_when_disabled() -> TestResult {
+    let _mcp = DisabledMcp::new();
     let project = tempdir()?;
-    let process = rpc_command(
+    let extension = project.path().join("extension.mjs");
+    let process = prepare_rpc(
         &AgentLaunchConfig::default(),
         project.path(),
         SessionLaunch::New,
+        &extension,
+        false,
         None,
+        None,
+        None,
+        "caller-1",
     )?;
-    let arguments = process.get_args().collect::<Vec<_>>();
-    assert!(!arguments.iter().any(|argument| *argument == "--mcp-config"));
     assert!(
-        !arguments
-            .iter()
-            .any(|argument| *argument == "--append-system-prompt")
+        !process
+            .get_envs()
+            .any(|(name, value)| name == "FARCASTER_MCP_URL" && value.is_some())
+    );
+    assert!(
+        !process
+            .get_envs()
+            .any(|(name, value)| name == "FARCASTER_MCP_CALLER" && value.is_some())
     );
     Ok(())
 }
@@ -1270,7 +1276,6 @@ fn pi_without_a_sandbox_adapter_leaves_extension_settings_alone() -> TestResult 
             },
             project.path(),
             SessionLaunch::New,
-            Some(Path::new("/dev/fd/9")),
         )
     };
 

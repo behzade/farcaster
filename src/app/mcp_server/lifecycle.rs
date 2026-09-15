@@ -281,3 +281,7 @@ async fn serve(
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pi_handshake_tests.rs"]
+mod pi_handshake_tests;
