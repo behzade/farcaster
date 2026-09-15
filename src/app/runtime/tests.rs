@@ -2531,7 +2531,66 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
             .iter()
             .any(|item| item.text == "active output")
     );
+    let published = event_rx
+        .try_iter()
+        .filter_map(|event| match event {
+            RuntimeEvent::Snapshot { snapshot, .. } => Some(snapshot),
+            _ => None,
+        })
+        .last()
+        .expect("restored live session");
+    assert_eq!(published.transcript_changed_from, Some(0));
     Ok(())
+}
+
+#[test]
+fn live_session_history_load_does_not_replace_the_parked_transcript() {
+    let path = PathBuf::from("/sessions/live.jsonl");
+    let project = PathBuf::from("/project");
+    let (mut owner, events) = owner_without_process(project.clone());
+    owner.active_session = Some(path.clone());
+    owner.snapshot.selected_session = Some(path.clone());
+    conversation_mut(&mut owner.snapshot).replace_history(&[json!({
+        "role": "user",
+        "content": "live prompt"
+    })]);
+    owner.parked_snapshot = Some(owner.snapshot.clone());
+    owner.snapshot.history_preview = true;
+    conversation_mut(&mut owner.snapshot).replace_history(&[json!({
+        "role": "user",
+        "content": "stale history"
+    })]);
+    owner.history_generation = 1;
+
+    owner.apply_history(HistoryResult {
+        generation: 1,
+        path: path.clone(),
+        project: project.clone(),
+        kind: HistoryLoadKind::Selection,
+        result: Ok(LoadedHistory {
+            messages: vec![json!({"role":"user","content":"session/load lag"})],
+            model: None,
+            thinking_level: None,
+            pending_question: None,
+        }),
+    });
+    assert_eq!(owner.snapshot.conversation.items[0].text, "stale history");
+    assert!(events.try_iter().all(|event| !matches!(
+        event,
+        RuntimeEvent::Snapshot { snapshot, .. }
+            if snapshot.conversation.items.iter().any(|item| item.text == "session/load lag")
+    )));
+
+    owner.select_history(path, project);
+    assert!(!owner.snapshot.history_preview);
+    assert!(
+        owner
+            .snapshot
+            .conversation
+            .items
+            .iter()
+            .any(|item| item.text == "live prompt")
+    );
 }
 
 #[test]

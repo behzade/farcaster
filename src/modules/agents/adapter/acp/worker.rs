@@ -256,6 +256,7 @@ fn spawn_session(
             config_ids,
             features,
             caller_identity: None,
+            pending_prompt_result: None,
         },
         metadata,
         history,
@@ -491,6 +492,7 @@ struct AcpWorkerSession {
     config_ids: ConfigIds,
     features: AcpFeatures,
     caller_identity: Option<crate::modules::agents::core::CallerIdentity>,
+    pending_prompt_result: Option<AcpRequestId>,
 }
 
 impl AcpWorkerSession {
@@ -508,6 +510,7 @@ impl AcpWorkerSession {
         self.output.clear();
         self.thought_started = false;
         self.tool_states.clear();
+        self.pending_prompt_result = None;
         if let Some(identity) = &self.caller_identity {
             identity.begin_execution(
                 inputs
@@ -1025,6 +1028,50 @@ impl AcpWorkerSession {
             },
         }
     }
+
+    fn record_prompt_result(&mut self, id: AcpRequestId, result: Value) {
+        let stop_reason = result.get("stopReason").and_then(Value::as_str);
+        match stop_reason {
+            Some("cancelled") => self.mark_current_prompt_unknown(
+                "ACP prompt stopped before delivery acknowledgement",
+            ),
+            Some(stop_reason) if Self::prompt_stop_reason_is_receipt(stop_reason) => {
+                self.acknowledge_current_prompt_started()
+            }
+            invalid => {
+                let detail = invalid.map_or_else(
+                    || "response has no stop reason".to_owned(),
+                    |reason| format!("response has invalid stop reason: {reason}"),
+                );
+                self.mark_current_prompt_unknown("ACP prompt response has no delivery receipt");
+                self.events.push_back(WorkerEvent::RequestFailed {
+                    operation: "ACP prompt".into(),
+                    error: detail,
+                });
+            }
+        }
+        self.pending_prompt_result = Some(id);
+    }
+
+    fn finish_current_prompt(&mut self, id: &AcpRequestId) {
+        self.current_prompt = None;
+        self.current_inputs.clear();
+        self.current_prompt_proven = false;
+        self.pending_prompt_result = None;
+        if self.handoff.is_some() {
+            self.start_waiting_handoff(id);
+        } else {
+            self.start_next_queued_prompt();
+        }
+    }
+
+    fn settle_prompt_if_idle(&mut self) -> Option<WorkerEvent> {
+        let id = self.pending_prompt_result.take()?;
+        self.finish_current_prompt(&id);
+        Some(WorkerEvent::Settled {
+            output: self.output.clone(),
+        })
+    }
 }
 
 impl WorkerSession for AcpWorkerSession {
@@ -1383,43 +1430,18 @@ impl WorkerSession for AcpWorkerSession {
             });
         }
         loop {
-            let incoming = self.connection.poll()?;
+            let Some(incoming) = self.connection.poll() else {
+                if let Some(event) = self.events.pop_front() {
+                    return Some(event);
+                }
+                return self.settle_prompt_if_idle();
+            };
             match incoming {
                 Ok(AcpInbound::Response { id, result })
                     if self.current_prompt.as_ref() == Some(&id) =>
                 {
-                    let stop_reason = result.get("stopReason").and_then(Value::as_str);
-                    match stop_reason {
-                        Some("cancelled") => self.mark_current_prompt_unknown(
-                            "ACP prompt stopped before delivery acknowledgement",
-                        ),
-                        Some(stop_reason) if Self::prompt_stop_reason_is_receipt(stop_reason) => {
-                            self.acknowledge_current_prompt_started()
-                        }
-                        invalid => {
-                            let detail = invalid.map_or_else(
-                                || "response has no stop reason".to_owned(),
-                                |reason| format!("response has invalid stop reason: {reason}"),
-                            );
-                            self.mark_current_prompt_unknown(
-                                "ACP prompt response has no delivery receipt",
-                            );
-                            self.events.push_back(WorkerEvent::RequestFailed {
-                                operation: "ACP prompt".into(),
-                                error: detail,
-                            });
-                        }
-                    }
-                    let output = self.output.clone();
-                    self.current_prompt = None;
-                    self.current_inputs.clear();
-                    self.current_prompt_proven = false;
-                    if self.handoff.is_some() {
-                        self.start_waiting_handoff(&id);
-                    } else {
-                        self.start_next_queued_prompt();
-                    }
-                    return Some(WorkerEvent::Settled { output });
+                    self.record_prompt_result(id, result);
+                    continue;
                 }
                 Ok(AcpInbound::Response { .. }) => {}
                 Ok(AcpInbound::Error { id, message }) => {
@@ -1429,13 +1451,7 @@ impl WorkerSession for AcpWorkerSession {
                         if !self.current_prompt_proven {
                             self.reject_inputs(inputs, &message);
                         }
-                        self.current_prompt = None;
-                        self.current_prompt_proven = false;
-                        if self.handoff.is_some() {
-                            self.start_waiting_handoff(&id);
-                        } else {
-                            self.start_next_queued_prompt();
-                        }
+                        self.finish_current_prompt(&id);
                         return Some(WorkerEvent::Settled {
                             output: self.output.clone(),
                         });

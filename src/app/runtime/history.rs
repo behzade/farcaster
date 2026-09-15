@@ -25,26 +25,43 @@ impl RuntimeOwner {
             crate::app::infrastructure::performance::Timing::new("switch.select_document");
         self.history_generation = self.history_generation.saturating_add(1);
         self.pending_document_refresh = None;
+        if self.covers_live_session(&path) {
+            if !self.showing_live_session(&path) {
+                self.restore_live_session(project);
+            }
+            return;
+        }
         if self.snapshot.selected_session.as_deref() == Some(path.as_path())
             && (self.snapshot.history_preview || self.process.is_some())
         {
             return;
         }
-        if self.active_session.as_deref() == Some(path.as_path())
-            && (self.process.is_some() || self.parked_snapshot.is_some())
-        {
-            if let Some(snapshot) = self.parked_snapshot.take() {
-                self.snapshot = snapshot;
-                self.project = project;
-                let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
-                    generation: self.process_generation,
-                });
-                self.publish();
-            }
-            return;
-        }
         self.bind_history_selection(path.clone(), project.clone());
         self.refresh_history(path, project, HistoryLoadKind::Selection);
+    }
+
+    fn covers_live_session(&self, path: &std::path::Path) -> bool {
+        self.active_session.as_deref() == Some(path)
+            && (self.process.is_some() || self.parked_snapshot.is_some())
+    }
+
+    fn showing_live_session(&self, path: &std::path::Path) -> bool {
+        self.parked_snapshot.is_none()
+            && !self.snapshot.history_preview
+            && self.snapshot.selected_session.as_deref() == Some(path)
+    }
+
+    fn restore_live_session(&mut self, project: PathBuf) {
+        if let Some(snapshot) = self.parked_snapshot.take() {
+            self.snapshot = snapshot;
+        }
+        self.project = project.clone();
+        self.snapshot.project = project;
+        self.transcript_changed_from = Some(0);
+        let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
+            generation: self.process_generation,
+        });
+        self.publish();
     }
 
     pub(super) fn bind_external_session_identity(&mut self, path: &std::path::Path) {
@@ -185,6 +202,10 @@ impl RuntimeOwner {
             *active_generation = None;
         }
         if result.generation != self.history_generation {
+            self.start_pending_document_refresh();
+            return;
+        }
+        if self.covers_live_session(&result.path) {
             self.start_pending_document_refresh();
             return;
         }

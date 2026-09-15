@@ -374,11 +374,11 @@ impl WorkerSessionTransport {
             WorkerEvent::Settled { output } => {
                 self.running = false;
                 self.reconcile_completed_output(&output);
-                self.start_assistant_message();
-                self.finish_assistant_message(Some(self.usage.turn));
+                if self.assistant_message.started {
+                    self.finish_assistant_message(Some(self.usage.turn));
+                }
                 self.pending
                     .push_back(activity(json!({"type": "agent_settled"})));
-                self.assistant_message.clear();
                 self.observed_text.clear();
             }
             WorkerEvent::SessionChanged { locator } => {

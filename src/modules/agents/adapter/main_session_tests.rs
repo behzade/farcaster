@@ -1540,6 +1540,62 @@ fn started_after_settlement_begins_a_real_new_assistant_turn() {
     );
 }
 
+#[test]
+fn late_text_after_settlement_still_lands_in_the_transcript() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Cursor,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: String::new(),
+    });
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "late answer".into(),
+    }));
+
+    let types = transport
+        .pending
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::Activity(event) => event.value().get("type")?.as_str().map(str::to_owned),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        types,
+        [
+            "agent_start",
+            "agent_settled",
+            "message_start",
+            "message_update"
+        ]
+    );
+
+    let mut conversation = ConversationState::default();
+    for event in &transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce_deferred(event.value());
+        }
+    }
+    conversation.flush_live_projection();
+    let assistant = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::Assistant)
+        .map(|item| item.complete_text())
+        .collect::<Vec<_>>();
+    assert_eq!(assistant, ["late answer"]);
+}
+
 impl WorkerSession for IdleWorker {
     fn send_with_images(
         &mut self,

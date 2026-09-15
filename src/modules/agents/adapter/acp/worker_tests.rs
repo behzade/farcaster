@@ -855,6 +855,7 @@ fn inert_session() -> AcpWorkerSession {
         config_ids: ConfigIds::default(),
         features: AcpFeatures { close: false },
         caller_identity: None,
+        pending_prompt_result: None,
     }
 }
 
@@ -1508,6 +1509,55 @@ fn acp_prompt_delivery_precedes_the_first_execution_chunk() {
         }]));
     assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert!(session.poll_prompt_ack().is_none());
+}
+
+#[cfg(unix)]
+fn agent_message_chunk(text: &str) -> AcpInbound {
+    AcpInbound::Notification {
+        method: "session/update".into(),
+        params: json!({
+            "sessionId": "one",
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": text}
+            }
+        }),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_prompt_result_settles_after_queued_chunks_and_still_applies_late_text() {
+    let mut session = inert_session();
+    let current = session.current_prompt.clone().expect("active prompt");
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Response {
+            id: current,
+            result: json!({"stopReason": "end_turn"}),
+        },
+        agent_message_chunk("the answer"),
+    ]));
+
+    assert!(
+        matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+                if delta == "the answer"
+        ),
+        "queued agent_message_chunk must be applied before session/prompt settlement"
+    );
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Settled { output }) if output == "the answer"
+    ));
+
+    session
+        .connection
+        .restore_queued(VecDeque::from([agent_message_chunk("late")]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. })) if delta == "late"
+    ));
 }
 
 #[test]
