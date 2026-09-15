@@ -185,15 +185,22 @@ pub(crate) fn project_rows(
     review_layout::arrange(project_rows_from(items, 0), items, None, &[])
 }
 
+pub(crate) fn project_presentation_rows(
+    presentation: &crate::app::reviews::presentation::TranscriptPresentation,
+) -> PersistentVec<TranscriptRow> {
+    review_layout::arrange(
+        project_rows_from(&presentation.items, 0),
+        &presentation.items,
+        presentation.active_start,
+        &presentation.completed_runs,
+    )
+}
+
+#[cfg(test)]
 pub(crate) fn project_conversation_rows(
     conversation: &conversation::ConversationState,
 ) -> PersistentVec<TranscriptRow> {
-    review_layout::arrange(
-        project_rows_from(&conversation.items, 0),
-        &conversation.items,
-        conversation.active_run_start(),
-        &conversation.completed_runs,
-    )
+    project_presentation_rows(&conversation.into())
 }
 
 #[cfg(test)]

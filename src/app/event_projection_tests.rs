@@ -1,5 +1,104 @@
 use super::*;
 
+#[gpui::test]
+fn review_button_survives_switching_back_to_a_resident_history_snapshot(
+    cx: &mut gpui::TestAppContext,
+) {
+    use crate::app::reviews::{artifact, presentation::TranscriptPresentation};
+    use crate::conversation::ConversationState;
+    use serde_json::json;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::review_button_survives_switching_back_to_a_resident_history_snapshot"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            for (case, harness) in [Backend::Cursor, Backend::Antigravity]
+                .into_iter()
+                .enumerate()
+            {
+                let session = project.join(format!("review-{case}"));
+                let generation = case as u64 * 3 + 1;
+                let loading = RuntimeSnapshot {
+                    harness: Some(harness),
+                    project: project.into(),
+                    selected_session: Some(session),
+                    history_preview: true,
+                    ..Default::default()
+                };
+                runtime.send_event(RuntimeEvent::Snapshot {
+                    generation,
+                    snapshot: Arc::new(loading.clone()),
+                });
+                cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+
+                let spec = json!({"title":"Review source", "items":[
+                    {"path":"src/main.rs", "note":"Inspect entry point"}
+                ]});
+                let arguments = match harness {
+                    Backend::Cursor => json!({"providerIdentifier":"farcaster",
+                        "toolName":"submit_review", "args":spec}),
+                    _ => json!({"prompt":"Submitting review", "arguments":spec}),
+                };
+                let mut conversation = ConversationState::default();
+                conversation.replace_history(&[
+                    json!({"role":"assistant", "content":[{"type":"toolCall",
+                        "id":"review", "name":"farcaster: submit_review", "arguments":arguments}]}),
+                    json!({"role":"toolResult", "toolCallId":"review", "isError":false,
+                        "content":[{"type":"text", "text":"{\"success\":true}"}]}),
+                ]);
+                // Runtime snapshots carry hydrated presentation rows while the
+                // backend conversation retains the original lossy tool result.
+                assert!(artifact::from_item(&conversation.items[0]).is_none());
+                let mut presentation = TranscriptPresentation::from(&conversation);
+                let mut row = conversation.items[0].as_ref().clone();
+                let result = artifact::hydration_result(&row, project).expect("review hydration");
+                Arc::make_mut(row.tool_details.as_mut().expect("tool details")).result =
+                    Some(result);
+                presentation.items.set(0, Arc::new(row));
+                let loaded = Arc::new(RuntimeSnapshot {
+                    conversation: Arc::new(conversation),
+                    transcript: Some(Arc::new(presentation)),
+                    ..loading
+                });
+
+                for (generation, snapshot, review_visible) in [
+                    (generation, loaded.clone(), true),
+                    (
+                        generation + 1,
+                        Arc::new(RuntimeSnapshot {
+                            project: project.into(),
+                            selected_session: Some(project.join("other")),
+                            ..Default::default()
+                        }),
+                        false,
+                    ),
+                    // The supervisor returns its cached snapshot with no dirty
+                    // suffix and a new selection generation.
+                    (generation + 2, loaded.clone(), true),
+                    (generation + 2, loaded, true),
+                ] {
+                    runtime.send_event(RuntimeEvent::Snapshot {
+                        generation,
+                        snapshot,
+                    });
+                    cx.update(|window, cx| {
+                        app.update(cx, |app, cx| app.drain_runtime(cx));
+                        window.draw(cx).clear(cx);
+                    });
+                    assert_eq!(
+                        cx.debug_bounds("review-header-0").is_some(),
+                        review_visible,
+                        "review button visibility for {harness:?}, generation {generation}"
+                    );
+                }
+            }
+        },
+    );
+}
+
 #[test]
 fn metadata_refresh_does_not_erase_an_explicit_native_outcome() {
     let child = |running: bool, outcome: Option<&str>| {

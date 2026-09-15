@@ -223,15 +223,15 @@ impl FarcasterApp {
             self.reset_session_ui(generation, transcript_preselected, cx);
             dirty.root = true;
         }
-        let row_update = if transcript_preselected {
-            self.project_transcript_rows(&snapshot, cx)
-        } else if session_changed {
+        let row_update = if session_changed && !transcript_preselected {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
                 crate::app::infrastructure::performance::OperationKind::FullProjection,
                 snapshot.conversation.items.len(),
             );
             crate::app::views::transcript::TranscriptRowUpdate::replace(
-                crate::app::views::transcript::project_conversation_rows(&snapshot.conversation),
+                crate::app::views::transcript::project_presentation_rows(
+                    &snapshot.transcript_presentation(),
+                ),
             )
         } else {
             self.project_transcript_rows(&snapshot, cx)
