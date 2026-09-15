@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use super::{
     client::OpenCodeClient,
@@ -324,4 +324,80 @@ fn api_errors_preserve_status_tag_and_message() {
         error,
         "OpenCode API error 409 (SessionBusy): already running"
     );
+}
+
+#[test]
+fn session_messages_follow_cursor_next_without_repeating_order() -> Result<(), String> {
+    let mut client = OpenCodeClient::new(FakeTransport::with_responses([
+        response(
+            200,
+            json!({
+                "data": [{"id": "msg_a", "role": "user"}, {"id": "msg_b", "role": "assistant"}],
+                "cursor": {"next": "page-2"}
+            }),
+        ),
+        response(
+            200,
+            json!({
+                "data": [{"id": "msg_b", "role": "assistant"}, {"id": "msg_c", "role": "user"}],
+                "cursor": {}
+            }),
+        ),
+    ]));
+
+    let messages = client.session_messages("session/1")?;
+    assert_eq!(
+        messages,
+        json!([
+            {"id": "msg_a", "role": "user"},
+            {"id": "msg_b", "role": "assistant"},
+            {"id": "msg_c", "role": "user"}
+        ])
+    );
+
+    let requests = client.into_transport().requests;
+    assert_eq!(
+        requests[0].path,
+        "/api/session/session%2F1/message?limit=200&order=asc"
+    );
+    assert_eq!(
+        requests[1].path,
+        "/api/session/session%2F1/message?limit=200&cursor=page-2"
+    );
+    assert!(!requests[1].path.contains("order="));
+    Ok(())
+}
+
+#[test]
+fn session_messages_stop_on_a_single_page_without_cursor() -> Result<(), String> {
+    let mut client = OpenCodeClient::new(FakeTransport::with_responses([response(
+        200,
+        json!({"data": [{"id": "msg_a"}]}),
+    )]));
+
+    assert_eq!(
+        client.session_messages("session-1")?,
+        json!([{"id": "msg_a"}])
+    );
+    assert_eq!(client.into_transport().requests.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn session_messages_reject_a_repeated_cursor() {
+    let mut client = OpenCodeClient::new(FakeTransport::with_responses([
+        response(
+            200,
+            json!({"data": [{"id": "msg_a"}], "cursor": {"next": "loop"}}),
+        ),
+        response(
+            200,
+            json!({"data": [{"id": "msg_b"}], "cursor": {"next": "loop"}}),
+        ),
+    ]));
+
+    let error = client
+        .session_messages("session-1")
+        .expect_err("repeated cursor");
+    assert_eq!(error, "OpenCode session history cursor repeated");
 }

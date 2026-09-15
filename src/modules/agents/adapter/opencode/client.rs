@@ -1,5 +1,6 @@
-use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde::{de::DeserializeOwned, Deserialize};
+use serde_json::{json, Value};
+use std::collections::HashSet;
 
 use super::contract::{
     DataEnvelope, ErrorEnvelope, OpenCodeDelivery, OpenCodeFileInput, OpenCodeHttpMethod,
@@ -209,14 +210,47 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
     }
 
     pub(crate) fn session_messages(&mut self, session_id: &str) -> Result<Value, String> {
-        self.json(
-            OpenCodeHttpMethod::Get,
-            format!(
-                "/api/session/{}/message?limit=200&order=asc",
-                path_segment(session_id)
-            ),
-            None,
-        )
+        const PAGE_LIMIT: u32 = 200;
+        let session_id = path_segment(session_id);
+        let mut messages = Vec::new();
+        let mut seen_ids = HashSet::new();
+        let mut cursor: Option<String> = None;
+        let mut seen_cursors = HashSet::new();
+        loop {
+            let path = match &cursor {
+                None => format!("/api/session/{session_id}/message?limit={PAGE_LIMIT}&order=asc"),
+                Some(cursor) => {
+                    let encoded: String =
+                        url::form_urlencoded::byte_serialize(cursor.as_bytes()).collect();
+                    format!("/api/session/{session_id}/message?limit={PAGE_LIMIT}&cursor={encoded}")
+                }
+            };
+            let operation = format!("{:?} {path}", OpenCodeHttpMethod::Get);
+            let response = self.execute(OpenCodeHttpMethod::Get, path, None)?;
+            ensure_success(&response)?;
+            let page: OpenCodeMessagePage = serde_json::from_slice(&response.body)
+                .map_err(|error| format!("{operation}: decode OpenCode response: {error}"))?;
+            for message in page.data {
+                if let Some(id) = message.get("id").and_then(Value::as_str) {
+                    if !seen_ids.insert(id.to_owned()) {
+                        continue;
+                    }
+                }
+                messages.push(message);
+            }
+            let next = page.cursor.next.filter(|cursor| !cursor.is_empty());
+            match next {
+                Some(next) if !seen_cursors.insert(next.clone()) => {
+                    return Err("OpenCode session history cursor repeated".into());
+                }
+                Some(_) if seen_cursors.len() > 256 => {
+                    return Err("OpenCode session history exceeded 256 pages".into());
+                }
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
+        }
+        Ok(Value::Array(messages))
     }
 
     pub(crate) fn reply_permission(
@@ -408,6 +442,19 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         self.transport
             .execute(OpenCodeHttpRequest { method, path, body })
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenCodeMessagePage {
+    data: Vec<Value>,
+    #[serde(default)]
+    cursor: OpenCodePageCursor,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct OpenCodePageCursor {
+    #[serde(default)]
+    next: Option<String>,
 }
 
 fn model_selection(provider: &str, id_key: &str, model: &str, variant: Option<&str>) -> Value {
