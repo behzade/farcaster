@@ -524,14 +524,13 @@ pub(crate) fn annotate_history_message(harness: Backend, message: &mut serde_jso
 #[cfg(test)]
 pub(crate) fn load_external_history(
     path: &std::path::Path,
+    project: &std::path::Path,
 ) -> Option<Result<crate::agents::DiscoveredHistory, String>> {
     external_session_identity(path).map(|(harness, _)| match harness {
         Backend::Codex => codex::load_history(path),
         Backend::Cursor => cursor::load_history(path),
         Backend::OpenCode => opencode::load_history(path),
-        Backend::Antigravity => {
-            Err("Antigravity ACP does not expose history replay through this adapter".into())
-        }
+        Backend::Antigravity => antigravity::load_history(path, project),
         Backend::Claude => claude::load_history(path),
         Backend::Pi => unreachable!("Pi does not have an external session locator"),
     })

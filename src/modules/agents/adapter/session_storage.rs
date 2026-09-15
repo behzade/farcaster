@@ -124,18 +124,18 @@ pub(crate) fn delete_session_family(
     }
 }
 
-pub(crate) fn load_session_history(harness: Backend, path: &Path) -> Result<LoadedHistory, String> {
+pub(crate) fn load_session_history(
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+) -> Result<LoadedHistory, String> {
     validate_session_locator(harness, path)?;
     let history = match harness {
         Backend::Pi => return pi::session_files::load_history(path),
         Backend::Codex => codex::load_history(path)?,
         Backend::Cursor => cursor::load_history(path)?,
         Backend::OpenCode => opencode::load_history(path)?,
-        Backend::Antigravity => {
-            return Err(
-                "Antigravity ACP does not expose history replay through this adapter".into(),
-            );
-        }
+        Backend::Antigravity => super::antigravity::load_history(path, project)?,
         Backend::Claude => super::claude::load_history(path)?,
     };
     Ok(LoadedHistory {

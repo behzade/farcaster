@@ -86,7 +86,7 @@ fn pi_identity_does_not_depend_on_its_parent_directory_name() {
     std::fs::create_dir(&directory).expect("session directory");
     let path = directory.join("root.jsonl");
     std::fs::write(&path, "{\"type\":\"session\",\"id\":\"root\"}\n").expect("Pi header");
-    assert!(load_session_history(Backend::Pi, &path).is_ok());
+    assert!(load_session_history(Backend::Pi, &path, temp.path()).is_ok());
     assert!(delete_session_family(&[summary(Backend::Pi, path.clone(), "root").target()]).is_ok());
     assert!(!path.exists());
 }
@@ -100,9 +100,12 @@ fn history_requires_explicit_matching_harness_without_pi_fallback() {
         "{\"type\":\"session\",\"id\":\"root\",\"cwd\":\"/project\"}\n",
     )
     .expect("test fixture");
-    assert!(load_session_history(Backend::Pi, &path).is_ok());
+    assert!(load_session_history(Backend::Pi, &path, temp.path()).is_ok());
     for harness in [Backend::Codex, Backend::Cursor, Backend::OpenCode] {
-        assert!(load_session_history(harness, &path).is_err(), "{harness}");
+        assert!(
+            load_session_history(harness, &path, temp.path()).is_err(),
+            "{harness}"
+        );
     }
 }
 

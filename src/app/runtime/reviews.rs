@@ -194,6 +194,16 @@ impl ReviewProjection {
                     insertions.push((position.min(source.items.len()), card.item.clone()));
                 }
             }
+            if !self.cards.is_empty() {
+                zlog::info!(
+                    "Review projection: cards={} users={} native={} insertions={} unresolved={}",
+                    self.cards.len(),
+                    users.len(),
+                    self.native.len(),
+                    insertions.len(),
+                    self.unresolved
+                );
+            }
             insertions.sort_by_key(|(position, _)| *position);
             let common = self
                 .document

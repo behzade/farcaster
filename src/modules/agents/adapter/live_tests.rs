@@ -221,8 +221,9 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
     } else {
         Ok(())
     };
-    let persistence_outcome =
-        verify_persistence_and_cleanup(harness, &config, &launch, &path, &marker, coverage);
+    let persistence_outcome = verify_persistence_and_cleanup(
+        harness, &config, &launch, &path, &marker, coverage, &project,
+    );
     match (move_outcome, persistence_outcome) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(move_error), Ok(())) => Err(move_error),
@@ -297,7 +298,7 @@ fn exercise_live_move(
                 return Err("move returned an invalid locator mapping".into());
             }
             current = rediscover(project, &moved.root)?;
-            let history = super::load_session_history(harness, &current.path)?;
+            let history = super::load_session_history(harness, &current.path, project)?;
             if !history
                 .messages
                 .iter()
@@ -793,6 +794,7 @@ fn verify_persistence_and_cleanup(
     path: &Path,
     marker: &str,
     coverage: Coverage,
+    project: &Path,
 ) -> Result<(), String> {
     if harness == Backend::Pi {
         if coverage.history {
@@ -819,7 +821,7 @@ fn verify_persistence_and_cleanup(
     }
 
     if coverage.history {
-        let history = load_external_history(path)
+        let history = load_external_history(path, project)
             .ok_or_else(|| "live session did not use an external backend locator".to_owned())?
             .map_err(|error| format!("history load failed: {error}"))?;
         if !history
@@ -2204,7 +2206,7 @@ pub(crate) mod support {
         pub(crate) fn history(&mut self) -> Result<Vec<Value>, String> {
             self.require_available("native history", &self.capabilities.sessions.history)?;
             if self.harness != Backend::Pi {
-                return load_external_history(&self.path)
+                return load_external_history(&self.path, self.project())
                     .ok_or_else(|| {
                         format!(
                             "E2E_BLOCKED: {} does not expose a native external history loader",

@@ -54,6 +54,66 @@ fn tool(state: &mut ConversationState, id: &str, output: Value) {
         &json!({"type":"tool_execution_end","toolCallId":id,"result":output,"isError":false}),
     );
 }
+
+#[test]
+fn history_load_rebinds_saved_review_cards_onto_the_reloaded_transcript() -> Result<(), String> {
+    let temp = tempfile::tempdir().expect("project");
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    save(&store, temp.path(), "turn", None);
+    let mut snapshot = snapshot(temp.path(), ConversationState::default());
+    let mut projection = ReviewProjection::default();
+    projection.apply(Some(&store), &mut snapshot);
+    assert_eq!(cards(&snapshot), 1, "empty preview shows the saved card");
+    let mut loaded = ConversationState::default();
+    loaded.replace_history(&[
+        json!({"role":"user","content":[{"type":"text","text":"use submit review on readme"}]}),
+        json!({"role":"assistant","content":[{"type":"text","text":"Submitted review"}]}),
+    ]);
+    snapshot.conversation = Arc::new(loaded);
+    snapshot.transcript_changed_from = Some(0);
+    projection.apply(Some(&store), &mut snapshot);
+    assert_eq!(
+        cards(&snapshot),
+        1,
+        "loaded history keeps the review button row"
+    );
+    Ok(())
+}
+
+#[test]
+fn history_load_keeps_the_review_row_when_the_native_submit_row_replays() -> Result<(), String> {
+    let temp = tempfile::tempdir().expect("project");
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let artifact = save(&store, temp.path(), "turn", Some(0));
+    let mut snapshot = snapshot(temp.path(), ConversationState::default());
+    let mut projection = ReviewProjection::default();
+    projection.apply(Some(&store), &mut snapshot);
+    assert_eq!(cards(&snapshot), 1, "empty preview shows the saved card");
+    // The Antigravity replay can include the executed submit_review tool call
+    // with its farcaster_review result; the native row then represents the card
+    // itself and must render the review row instead of a bare tool row.
+    let mut loaded = ConversationState::default();
+    loaded.replace_history(&[
+        json!({"role":"user","content":[{"type":"text","text":"use submit review on readme"}]}),
+        json!({
+            "role":"assistant",
+            "content":[{"type":"toolCall","id":"native-review","name":"submit_review","arguments":{}}]
+        }),
+        json!({"role":"toolResult","toolCallId":"native-review","isError":false,
+            "content":[{"type":"text","text":artifact.to_string()}]}),
+        json!({"role":"assistant","content":[{"type":"text","text":"Submitted review"}]}),
+    ]);
+    snapshot.conversation = Arc::new(loaded);
+    snapshot.transcript_changed_from = Some(0);
+    projection.apply(Some(&store), &mut snapshot);
+    assert_eq!(
+        cards(&snapshot),
+        1,
+        "the replayed native submit row keeps representing the review"
+    );
+    Ok(())
+}
+
 fn message(state: &mut ConversationState, text: &str) {
     let message = json!({"role":"assistant","content":[{"type":"text","text":text}]});
     state.reduce(&json!({"type":"message_start","message":message}));
