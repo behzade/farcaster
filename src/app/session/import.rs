@@ -143,10 +143,7 @@ impl FarcasterApp {
         }
         dialog.loading = false;
         dialog.error = None;
-        dialog.selected = sessions
-            .iter()
-            .map(|session| session.path.clone())
-            .collect();
+        dialog.selected.clear();
         dialog.candidates = sessions;
         cx.notify();
     }

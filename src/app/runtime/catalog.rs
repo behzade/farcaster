@@ -289,7 +289,8 @@ fn unknown_import_candidates(
     discovered
         .into_iter()
         .filter(|session| {
-            !known_paths.contains(&crate::sessions::normalize_session_path(&session.path))
+            session.parent_session.is_none()
+                && !known_paths.contains(&crate::sessions::normalize_session_path(&session.path))
         })
         .collect()
 }

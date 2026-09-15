@@ -2,7 +2,7 @@ use crate::agents::Backend;
 use std::path::Path;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex, mpsc},
+    sync::{mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -36,6 +36,18 @@ fn import_preview_skips_sessions_already_in_the_catalog() {
     let candidates = unknown_import_candidates(vec![known_session, unknown.clone()], &known);
 
     assert_eq!(candidates, vec![unknown]);
+}
+
+#[test]
+fn import_preview_skips_nested_child_workers() {
+    let parent = summary(Path::new("/sessions/parent.jsonl"));
+    let mut child = summary(Path::new("/sessions/child.jsonl"));
+    child.id = "child".into();
+    child.parent_session = Some("parent".into());
+
+    let candidates = unknown_import_candidates(vec![parent.clone(), child], &HashSet::new());
+
+    assert_eq!(candidates, vec![parent]);
 }
 
 #[test]

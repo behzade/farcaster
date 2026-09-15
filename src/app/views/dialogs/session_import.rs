@@ -1,15 +1,25 @@
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    div, prelude::FluentBuilder as _, px, AnyElement, App, CursorStyle, ElementId, FontWeight,
+    InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _, Role, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
 };
+use gpui_component::tooltip::Tooltip;
 
 use crate::app::FarcasterApp;
 use crate::{
     agents,
-    app::OVERLAY_KEY_CONTEXT,
     app::session::import::import_harnesses,
-    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
-    app::ui::theme::THEME,
+    app::ui::{
+        assets::AppIcon,
+        primitives::{
+            activates_button, app_icon, button, feedback, icon_control, modal, AppIconSize,
+            ButtonTone, FeedbackTone,
+        },
+        theme::THEME,
+    },
+    app::OVERLAY_KEY_CONTEXT,
     sessions::SessionSummary,
 };
 
@@ -147,6 +157,7 @@ fn candidate_list(
 ) -> gpui::Div {
     let all = entity.clone();
     let none = entity.clone();
+    let selected_count = selected.len();
     div()
         .flex()
         .flex_col()
@@ -154,6 +165,7 @@ fn candidate_list(
         .child(
             div()
                 .flex()
+                .items_center()
                 .gap(THEME.space.sm)
                 .child(button(
                     "import-select-all",
@@ -176,47 +188,244 @@ fn candidate_list(
                             this.set_session_import_selection(false, cx);
                         });
                     },
-                )),
+                ))
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(format!(
+                            "{selected_count} selected · {} on disk",
+                            candidates.len()
+                        )),
+                ),
         )
         .child(
             div()
                 .id("import-session-list")
-                .max_h(px(320.0))
+                .max_h(THEME.layout.session_row_height * 7)
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
-                .gap(THEME.space.xs)
                 .children(candidates.iter().map(|session| {
-                    let path = session.path.clone();
-                    let checked = selected.contains(&path);
-                    let entity = entity.clone();
-                    let title = if session.parent_session.is_some() {
-                        format!("↳ {}", session.title)
-                    } else {
-                        session.title.clone()
-                    };
-                    let project = session
-                        .project
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .filter(|name| !name.is_empty())
-                        .map_or_else(|| session.project.display().to_string(), str::to_owned);
-                    button(
-                        format!("import-session-{}", session.path.display()),
-                        format!("{title}  ·  {project}"),
-                        if checked {
-                            ButtonTone::Accent
-                        } else {
-                            ButtonTone::Neutral
-                        },
-                        true,
-                        move |_, cx| {
-                            let path = path.clone();
-                            let _ = entity.update(cx, |this, cx| {
-                                this.toggle_session_import_candidate(path, cx);
-                            });
-                        },
-                    )
+                    candidate_row(entity.clone(), session, selected.contains(&session.path))
                 })),
         )
 }
+
+fn candidate_row(
+    entity: WeakEntity<FarcasterApp>,
+    session: &SessionSummary,
+    checked: bool,
+) -> Stateful<gpui::Div> {
+    let path = session.path.clone();
+    let title = collapsed_import_title(&session.title, session.parent_session.is_some());
+    let project = project_name(&session.project);
+    let age = relative_age(session.modified);
+    let accessible = format!(
+        "{} {} · {project}. Updated {age}",
+        if checked { "Deselect" } else { "Select" },
+        title
+    );
+    let tooltip = format!("{title} · {project}");
+    let checkbox_id = format!("import-select-{}", session.path.display());
+    let row_id = format!("import-session-{}", session.path.display());
+    let toggle = path.clone();
+    let row_entity = entity.clone();
+    div()
+        .id(row_id)
+        .role(Role::Button)
+        .aria_label(accessible)
+        .aria_selected(checked)
+        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .tab_index(0)
+        .on_mouse_down(
+            MouseButton::Left,
+            crate::app::ui::primitives::preserve_pointer_focus,
+        )
+        .w_full()
+        .h(THEME.layout.session_row_height)
+        .relative()
+        .px(THEME.space.sm)
+        .py(THEME.space.xs)
+        .rounded(px(2.0))
+        .flex()
+        .items_center()
+        .gap(THEME.space.sm)
+        .bg(if checked {
+            THEME.colors.session_selection
+        } else {
+            THEME.colors.panel
+        })
+        .hover(move |row| {
+            row.bg(if checked {
+                THEME.colors.session_selection
+            } else {
+                THEME.colors.surface
+            })
+        })
+        .when(checked, |row| {
+            row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(THEME.space.xs)
+                    .bottom(THEME.space.xs)
+                    .w(px(2.0))
+                    .bg(THEME.colors.accent),
+            )
+        })
+        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .cursor(CursorStyle::PointingHand)
+        .on_click(move |_, _, cx| {
+            let path = toggle.clone();
+            let _ = row_entity.update(cx, |this, cx| {
+                this.toggle_session_import_candidate(path, cx);
+            });
+        })
+        .child(selection_checkbox(
+            checkbox_id,
+            checked,
+            format!("{} {title}", if checked { "Deselect" } else { "Select" }),
+            move |_, cx| {
+                let path = path.clone();
+                let _ = entity.update(cx, |this, cx| {
+                    this.toggle_session_import_candidate(path, cx);
+                });
+            },
+        ))
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(THEME.type_scale.body_small)
+                        .font_weight(if checked {
+                            FontWeight::SEMIBOLD
+                        } else {
+                            FontWeight::NORMAL
+                        })
+                        .text_color(THEME.colors.text)
+                        .child(title.clone()),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(project),
+                ),
+        )
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
+                .child(app_icon(
+                    AppIcon::for_harness(session.harness),
+                    AppIconSize::Inline,
+                ))
+                .child(
+                    div()
+                        .w(px(30.0))
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_align(gpui::TextAlign::Right)
+                        .text_size(THEME.type_scale.caption)
+                        .text_color(THEME.colors.subtle)
+                        .child(age),
+                ),
+        )
+}
+
+fn selection_checkbox(
+    id: impl Into<ElementId>,
+    selected: bool,
+    label: impl Into<SharedString>,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> Stateful<gpui::Div> {
+    let press = Rc::new(on_press);
+    let click = Rc::clone(&press);
+    icon_control(id, label)
+        .size(px(20.0))
+        .role(Role::CheckBox)
+        .aria_toggled(if selected {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            click(window, cx);
+        })
+        .on_key_down(move |event, window, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                press(window, cx);
+            }
+        })
+        .child(
+            div()
+                .size(px(14.0))
+                .border(THEME.border)
+                .border_color(THEME.colors.muted)
+                .rounded(px(2.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(selected, |checkbox| {
+                    checkbox.bg(THEME.colors.accent).child(
+                        app_icon(AppIcon::Check, AppIconSize::Inline)
+                            .text_color(THEME.colors.surface),
+                    )
+                }),
+        )
+}
+
+fn collapsed_import_title(title: &str, nested: bool) -> String {
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    if nested {
+        format!("↳ {title}")
+    } else {
+        title
+    }
+}
+
+fn project_name(project: &std::path::Path) -> String {
+    project
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| project.display().to_string(), str::to_owned)
+}
+
+fn relative_age(modified: std::time::SystemTime) -> String {
+    let age = std::time::SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or(std::time::Duration::ZERO);
+    if age < std::time::Duration::from_secs(60) {
+        "now".into()
+    } else if age < std::time::Duration::from_secs(60 * 60) {
+        format!("{}m", age.as_secs() / 60)
+    } else if age < std::time::Duration::from_secs(24 * 60 * 60) {
+        format!("{}h", age.as_secs() / (60 * 60))
+    } else {
+        format!("{}d", age.as_secs() / (24 * 60 * 60))
+    }
+}
+
+#[cfg(test)]
+#[path = "session_import_tests.rs"]
+mod tests;
