@@ -2,7 +2,7 @@ use crate::agents::Backend;
 use std::path::Path;
 use std::{
     collections::BTreeMap,
-    sync::{mpsc, Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
 };
 

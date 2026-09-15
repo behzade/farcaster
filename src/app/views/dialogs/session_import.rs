@@ -1,25 +1,25 @@
 use std::rc::Rc;
 
 use gpui::{
-    div, prelude::FluentBuilder as _, px, AnyElement, App, CursorStyle, ElementId, FontWeight,
-    InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _, Role, SharedString,
-    Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
+    AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
+    MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::tooltip::Tooltip;
 
 use crate::app::FarcasterApp;
 use crate::{
     agents,
+    app::OVERLAY_KEY_CONTEXT,
     app::session::import::import_harnesses,
     app::ui::{
         assets::AppIcon,
         primitives::{
-            activates_button, app_icon, button, feedback, icon_control, modal, AppIconSize,
-            ButtonTone, FeedbackTone,
+            AppIconSize, ButtonTone, FeedbackTone, activates_button, app_icon, button, feedback,
+            icon_control, modal,
         },
         theme::THEME,
     },
-    app::OVERLAY_KEY_CONTEXT,
     sessions::SessionSummary,
 };
 

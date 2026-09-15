@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::{
     client::OpenCodeClient,

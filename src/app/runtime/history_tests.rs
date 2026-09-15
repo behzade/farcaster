@@ -5,8 +5,8 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
-fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");
     let session = temp.path().join("session");
@@ -49,15 +49,17 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen(
     })];
     annotate_history_presentations(Some(&store), &session, &mut backend);
     assert_eq!(backend.len(), 1);
-    assert!(store
-        .accepted_prompt_history(&temp.path().join("other"))?
-        .is_empty());
+    assert!(
+        store
+            .accepted_prompt_history(&temp.path().join("other"))?
+            .is_empty()
+    );
     Ok(())
 }
 
 #[test]
-fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_history(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_history()
+-> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");
     let session = temp.path().join("session");
@@ -144,8 +146,8 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
 }
 
 #[test]
-fn cold_history_restores_queued_receipt_identity_without_claiming_delivery(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
     use crate::protocol::{PromptImage, PromptMode};
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");
@@ -216,8 +218,8 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery(
 }
 
 #[test]
-fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing()
+-> Result<(), Box<dyn std::error::Error>> {
     use crate::protocol::PromptMode;
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");
@@ -258,9 +260,11 @@ fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing(
     ];
     annotate_history_presentations(Some(&store), &session, &mut history);
     assert_eq!(history.len(), 2);
-    assert!(history
-        .iter()
-        .all(|message| message.get("submissionId").is_none()));
+    assert!(
+        history
+            .iter()
+            .all(|message| message.get("submissionId").is_none())
+    );
     let mut conversation = ConversationState::default();
     conversation.replace_history(&history);
     assert!(conversation.pending_receipts().is_empty());
@@ -270,8 +274,8 @@ fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing(
 }
 
 #[test]
-fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
     use crate::protocol::{PromptImage, PromptMode};
     let temp = tempfile::tempdir()?;
     let database = temp.path().join("state.sqlite3");
@@ -319,9 +323,11 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery(
         state.record_prompt_delivery(id, receipt, "delivered");
     }
     assert_eq!(state.items.len(), 2);
-    assert!(state
-        .items
-        .iter()
-        .all(|item| item.text == "same text" && item.images.len() == 1));
+    assert!(
+        state
+            .items
+            .iter()
+            .all(|item| item.text == "same text" && item.images.len() == 1)
+    );
     Ok(())
 }
