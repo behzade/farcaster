@@ -322,6 +322,12 @@ impl RenderOnce for Popover {
                 this.on_mouse_down_out({
                     let state = state.clone();
                     move |_, window, cx| {
+                        // A press claimed by another occluding surface — most
+                        // importantly a nested popup overhanging this one —
+                        // is not a press outside this popover.
+                        if window.mouse_press_claimed_by_occluding_surface() {
+                            return;
+                        }
                         state.update(cx, |state, cx| state.dismiss(window, cx));
                         cx.notify(parent_view_id);
                     }

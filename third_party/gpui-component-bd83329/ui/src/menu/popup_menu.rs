@@ -1366,6 +1366,7 @@ impl Render for PopupMenu {
 
         v_flex()
             .id("popup-menu")
+            .debug_selector(|| "popup-menu".into())
             .role(Role::Menu)
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle)

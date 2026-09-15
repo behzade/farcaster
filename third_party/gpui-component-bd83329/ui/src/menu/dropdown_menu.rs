@@ -171,3 +171,98 @@ where
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use gpui::{
+        AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _, Window,
+        div, point, px,
+    };
+
+    use super::*;
+    use crate::{button::Button, menu::PopupMenuItem, popover::Popover};
+
+    struct HostHarness {
+        selected: Rc<RefCell<bool>>,
+    }
+
+    impl Render for HostHarness {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let selected = self.selected.clone();
+            div().size_full().child(
+                Popover::new("host-popover")
+                    .trigger(
+                        Button::new("host-trigger")
+                            .label("Host")
+                            .debug_selector(|| "host-trigger".into()),
+                    )
+                    .content(move |_, _, _| {
+                        let selected = selected.clone();
+                        div()
+                            .debug_selector(|| "host-content".into())
+                            .w(px(60.))
+                            .h(px(40.))
+                            .child(
+                                Button::new("nested-trigger")
+                                    .label("Nested")
+                                    .debug_selector(|| "nested-trigger".into())
+                                    .dropdown_menu(move |menu, _, _| {
+                                        menu.item(PopupMenuItem::new("Item").on_click({
+                                            let selected = selected.clone();
+                                            move |_, _, _| *selected.borrow_mut() = true
+                                        }))
+                                    }),
+                            )
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn overhanging_nested_dropdown_press_keeps_the_host_popover_open(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let selected = Rc::new(RefCell::new(false));
+        let (_, mut cx) = cx.add_window_view({
+            let selected = selected.clone();
+            move |_, _| HostHarness { selected }
+        });
+
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let host_trigger = cx
+            .debug_bounds("host-trigger")
+            .expect("host trigger rendered");
+        cx.simulate_click(host_trigger.center(), Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let host_content = cx
+            .debug_bounds("host-content")
+            .expect("host popover content rendered");
+
+        let nested_trigger = cx
+            .debug_bounds("nested-trigger")
+            .expect("nested trigger rendered");
+        cx.simulate_click(nested_trigger.center(), Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let menu = cx.debug_bounds("popup-menu").expect("nested menu rendered");
+
+        // Press the part of the menu item that overhangs the host popover's
+        // right edge. The press is inside the nested menu, so the host must
+        // not treat it as an outside click and dismiss itself.
+        let press = point(menu.right() - px(10.), menu.top() + px(17.));
+        assert!(press.x > host_content.right());
+        cx.simulate_click(press, Default::default());
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+
+        assert!(
+            *selected.borrow(),
+            "the nested menu item click must be handled"
+        );
+        assert!(
+            cx.debug_bounds("host-content").is_some(),
+            "the host popover must stay open when a press lands in an overhanging nested menu"
+        );
+    }
+}

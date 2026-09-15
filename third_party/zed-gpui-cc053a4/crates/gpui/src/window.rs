@@ -5154,6 +5154,21 @@ impl Window {
         }
     }
 
+    /// Returns whether the current mouse press is claimed by an occluding
+    /// (`HitboxBehavior::BlockMouse`) hitbox, i.e. by a floating surface such
+    /// as a popup or menu sitting in front of the background at the press
+    /// position. Outside-click dismissal handlers use this to keep their own
+    /// surface open when the press actually belongs to such a surface.
+    pub fn mouse_press_claimed_by_occluding_surface(&self) -> bool {
+        self.mouse_hit_test.ids.iter().any(|id| {
+            self.rendered_frame
+                .hitboxes
+                .iter()
+                .find(|hitbox| hitbox.id == *id)
+                .is_some_and(|hitbox| hitbox.behavior == HitboxBehavior::BlockMouse)
+        })
+    }
+
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
             self.draw(cx).clear(cx);
