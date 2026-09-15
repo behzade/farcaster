@@ -485,6 +485,7 @@ impl RuntimeOwner {
                 }
                 self.send(SessionCommand::ListReasoningLevels);
                 self.send(SessionCommand::LoadState);
+                self.send(SessionCommand::LoadUsage);
             }
             Payload::SelectReasoning | Payload::SelectServiceTier => {
                 self.send(SessionCommand::LoadState);

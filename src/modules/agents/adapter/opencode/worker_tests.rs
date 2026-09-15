@@ -707,6 +707,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
         usage: OpenCodeUsageTracker::default(),
         context_window: 0,
         pending_inputs: HashMap::new(),
+        context_windows: HashMap::new(),
         pending_deliveries: HashMap::from([
             (
                 "steer-1".into(),
@@ -889,6 +890,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         usage: OpenCodeUsageTracker::default(),
         context_window: 0,
         pending_inputs: HashMap::new(),
+        context_windows: HashMap::new(),
         pending_deliveries: HashMap::from([(
             "msg_delivered".into(),
             PendingOpenCodeDelivery {
@@ -993,6 +995,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         usage: OpenCodeUsageTracker::default(),
         context_window: 0,
         pending_inputs: HashMap::new(),
+        context_windows: HashMap::new(),
         pending_deliveries: HashMap::new(),
         delivered_awaiting_execution: HashSet::new(),
         active_tools: HashMap::new(),
@@ -1292,6 +1295,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
         usage: OpenCodeUsageTracker::default(),
         context_window: 0,
         pending_inputs: HashMap::new(),
+        context_windows: HashMap::new(),
         pending_deliveries: HashMap::new(),
         delivered_awaiting_execution: HashSet::new(),
         active_tools: HashMap::new(),

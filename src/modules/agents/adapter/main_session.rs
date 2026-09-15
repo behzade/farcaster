@@ -132,9 +132,15 @@ impl WorkerSessionTransport {
             .and_then(|mode| mode.get("id"))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let context_window = metadata
-            .models
-            .first()
+        let context_window = selection
+            .model
+            .as_ref()
+            .and_then(|(provider, id)| {
+                metadata
+                    .models
+                    .iter()
+                    .find(|model| model["provider"] == *provider && model["id"] == *id)
+            })
             .and_then(|model| model.get("contextWindow"))
             .and_then(Value::as_u64)
             .unwrap_or(0);
@@ -856,6 +862,18 @@ impl SessionTransport for WorkerSessionTransport {
                 self.worker.select_model(&provider, &model_id)?;
                 self.model = Some((provider.clone(), model_id.clone()));
                 self.sync_model_selection();
+                self.usage.context_window = self
+                    .model
+                    .as_ref()
+                    .and_then(|(provider, id)| {
+                        self.metadata
+                            .models
+                            .iter()
+                            .find(|model| model["provider"] == *provider && model["id"] == *id)
+                    })
+                    .and_then(|model| model.get("contextWindow"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 self.response(
                     Some(id.clone()),
                     Payload::SelectModel(self.catalog_model(&provider, &model_id)),

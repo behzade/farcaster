@@ -29,8 +29,16 @@ fn state(transport: &mut main_session::WorkerSessionTransport) -> crate::protoco
     };
     *state
 }
+
+fn context_limit(transport: &mut main_session::WorkerSessionTransport) -> u64 {
+    let Payload::LoadUsage(usage) = request(transport, SessionCommand::LoadUsage) else {
+        panic!("expected usage")
+    };
+    usage.context_usage.expect("context usage").context_window
+}
+
 #[test]
-fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Result<(), String> {
+fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
     listener
         .set_nonblocking(true)
@@ -40,8 +48,10 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
     let recorded = requests.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
+    let (event_ready, event_connected) = mpsc::channel();
     let server = thread::spawn(move || -> Result<(), String> {
         let mut selection = json!({"id": "astra", "providerID": "openai", "variant": "high"});
+        let mut event_stream = None;
         while !stopped.load(Ordering::Relaxed) {
             let mut stream = match listener.accept() {
                 Ok((stream, _)) => stream,
@@ -86,9 +96,9 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
                 (
                     200,
                     json!({"data": [
-                        {"id": "other", "name": "Other", "providerID": "provider", "variants": ["thinking"]},
-                        {"id": "astra", "name": "Astra", "providerID": "openai", "variants": ["high", "low"], "limit": {"context": 400000}},
-                        {"id": "fixed", "name": "Fixed", "providerID": "openai", "variants": []}
+                        {"id": "astra", "name": "Astra", "providerID": "provider", "variants": ["thinking"], "limit": {"context": 1050000}},
+                        {"id": "astra", "name": "Astra", "providerID": "openai", "variants": ["high", "low"], "limit": {"context": 400000, "input": 272000}},
+                        {"id": "fixed", "name": "Fixed", "providerID": "openai", "variants": [], "limit": {"context": 64000, "input": 0}}
                     ]}),
                 )
             } else if path.starts_with("/api/agent?") || path.starts_with("/api/command?") {
@@ -101,6 +111,8 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
                 )
             } else if path == "/api/event" {
                 stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n").map_err(|error| error.to_string())?;
+                event_stream = Some(stream);
+                event_ready.send(()).map_err(|error| error.to_string())?;
                 continue;
             } else if path == "/api/session/ses_resume/model" {
                 recorded
@@ -113,6 +125,16 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
                     selection = body["model"].clone();
                     if selection.get("variant").is_none() {
                         selection["variant"] = json!("default");
+                    }
+                    if selection["id"] == "fixed" {
+                        let event = json!({"type": "session.step.ended", "data": {
+                            "sessionID": "ses_resume", "tokens": {"input": 12000, "output": 100}
+                        }});
+                        writeln!(
+                            event_stream.as_mut().expect("event stream"),
+                            "data: {event}\n"
+                        )
+                        .map_err(|error| error.to_string())?;
                     }
                     (204, Value::Null)
                 }
@@ -143,7 +165,11 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
         };
         let open = || {
             let (worker, locator, metadata) = spawn_main(&command, &launch)?;
+            event_connected
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| error.to_string())?;
             assert!(metadata.efforts.is_empty());
+            assert_eq!(metadata.models[0]["contextWindow"], 1050000);
             main_session::WorkerSessionTransport::new(
                 project.path(),
                 Backend::OpenCode,
@@ -163,7 +189,8 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
         let model = initial.model.expect("initial model");
         assert_eq!(model.id, "astra");
         assert_eq!(model.name, "Astra");
-        assert_eq!(model.context_window, 400000);
+        assert_eq!(model.context_window, 272000);
+        assert_eq!(context_limit(&mut transport), 272000);
         assert_eq!(model.efforts.expect("model variants"), ["high", "low"]);
         assert_eq!(
             request(&mut transport, SessionCommand::ListReasoningLevels),
@@ -184,6 +211,7 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
                 .is_err()
         );
         assert_eq!(state(&mut transport).thinking_level.as_deref(), Some("low"));
+        assert_eq!(context_limit(&mut transport), 272000);
         // A preset advertised only by another model must not be sent.
         assert!(
             transport
@@ -215,6 +243,22 @@ fn resumed_worker_changes_and_resets_effort_without_a_model_selection() -> Resul
             request(&mut transport, SessionCommand::ListReasoningLevels),
             Payload::ListReasoningLevels(vec![])
         );
+        assert_eq!(context_limit(&mut transport), 64000);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(SessionEvent::Activity(activity)) = transport.poll()
+                && activity.value()["type"] == "turn_end"
+            {
+                assert_eq!(activity.value()["contextWindow"], 64000);
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "missing usage event after model switch"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(context_limit(&mut transport), 64000);
         transport.close()?;
         Ok::<_, String>(())
     })();

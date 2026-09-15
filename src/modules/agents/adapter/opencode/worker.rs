@@ -122,6 +122,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             model: launch.model,
             effort: launch.effort,
             effort_catalog: HashMap::new(),
+            context_windows: HashMap::new(),
             access_mode: launch.access_mode,
             incoming,
             reasoning_started: false,
@@ -267,6 +268,19 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             model: selection.as_ref().map(|selected| selected.id.clone()),
             effort: selection.and_then(|selected| selected.variant),
             effort_catalog: effort_catalog(&metadata),
+            context_windows: metadata
+                .models
+                .iter()
+                .filter_map(|model| {
+                    Some((
+                        (
+                            model.get("provider")?.as_str()?.to_owned(),
+                            model.get("id")?.as_str()?.to_owned(),
+                        ),
+                        model.get("contextWindow")?.as_u64()?,
+                    ))
+                })
+                .collect(),
             access_mode: command.access_mode,
             incoming,
             reasoning_started: false,
@@ -366,11 +380,16 @@ fn load_main_metadata(
                 .and_then(Value::as_str)
                 .unwrap_or("opencode");
             let model_efforts = model_variant_efforts(model);
+            // The meter tracks the input budget rather than combined input/output capacity.
             Some(json!({
                 "id": id,
                 "name": model.get("name").and_then(Value::as_str).unwrap_or(id),
                 "provider": provider,
-                "contextWindow": model.pointer("/limit/context").and_then(Value::as_u64).unwrap_or(0),
+                "contextWindow": model.pointer("/limit/input")
+                    .and_then(Value::as_u64)
+                    .filter(|limit| *limit > 0)
+                    .or_else(|| model.pointer("/limit/context").and_then(Value::as_u64))
+                    .unwrap_or(0),
                 "reasoning": true,
                 "efforts": model_efforts,
             }))
@@ -525,6 +544,7 @@ struct OpenCodeWorkerSession {
     model: Option<String>,
     effort: Option<String>,
     effort_catalog: HashMap<(String, String), Vec<String>>,
+    context_windows: HashMap<(String, String), u64>,
     access_mode: crate::agents::HarnessAccessMode,
     incoming: mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>,
     reasoning_started: bool,
@@ -1454,6 +1474,11 @@ impl WorkerSession for OpenCodeWorkerSession {
             .select_model(&self.session_id, provider, model, variant.as_deref())?;
         self.provider = Some(provider.to_owned());
         self.model = Some(model.to_owned());
+        self.context_window = self
+            .context_windows
+            .get(&(provider.to_owned(), model.to_owned()))
+            .copied()
+            .unwrap_or(0);
         self.effort = variant;
         self.caller_identity.select_model(provider, model);
         self.caller_identity.set_effort(self.effort.as_deref());
