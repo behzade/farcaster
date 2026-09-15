@@ -260,7 +260,7 @@ impl FarcasterApp {
                 }
             };
         let draft_key = draft_target(&draft.id);
-        self.switch_composer_target(draft_key, window, cx);
+        self.switch_composer_target(draft_key.clone(), window, cx);
         self.sessions.selected_draft = Some(draft.id.clone());
         self.sessions
             .draft_session_ids
@@ -288,6 +288,7 @@ impl FarcasterApp {
         self.close_sessions_sheet_after_selection(window, cx);
         self.show_chat_surface(window, cx);
         self.composer.focus.focus(window, cx);
+        self.reveal_active_session_row(draft_key, cx);
         self.notify_session_rail(cx);
         self.notify_transcript(cx);
         self.notify_composer(cx);

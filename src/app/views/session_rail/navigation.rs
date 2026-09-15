@@ -127,11 +127,7 @@ impl FarcasterApp {
             });
         } else {
             // The expanded archive occupies the active list's space.
-            self.sessions.archived_expanded = false;
-            self.views.session_rail.update(cx, |view, cx| {
-                view.reveal = Some(key);
-                cx.notify();
-            });
+            self.reveal_active_session_row(key, cx);
         }
         self.recover_keyboard_focus(window, cx);
         self.notify_session_rail(cx);

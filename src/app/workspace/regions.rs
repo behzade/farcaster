@@ -18,6 +18,18 @@ impl FarcasterApp {
         self.notify_archived_session_rail(cx);
     }
 
+    pub(in crate::app) fn reveal_active_session_row(
+        &mut self,
+        key: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.sessions.archived_expanded = false;
+        self.views.session_rail.update(cx, |view, cx| {
+            view.reveal = Some(key);
+            cx.notify();
+        });
+    }
+
     pub(in crate::app) fn notify_session_rail_shell(&self, cx: &mut Context<Self>) {
         Self::notify_region(&self.views.session_rail, cx);
     }
