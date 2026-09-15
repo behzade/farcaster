@@ -192,6 +192,63 @@ fn a_replay_that_later_regains_its_result_rehydrates_away() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn the_real_cursor_replay_payload_renders_the_review() -> Result<(), String> {
+    // Captured from agent acp session/load of the failing session: the
+    // submit_review row completes with rawOutput {"success":true} and no
+    // echoing artifact.
+    let temp = tempfile::tempdir().expect("project");
+    let spec = json!({
+        "title": "README review debug",
+        "items": [
+            {"path": "README.md", "start_line": 1, "end_line": 8, "note": "Title, icon, and hero screenshot."},
+            {"path": "README.md", "start_line": 35, "end_line": 46, "note": "submit_review docs."}
+        ]
+    });
+    let mut call = json!({
+        "type": "toolCall",
+        "id": "replay-0-5",
+        "name": "farcaster: submit_review",
+        "arguments": {
+            "providerIdentifier": "farcaster",
+            "toolName": "submit_review",
+            "args": spec
+        }
+    });
+    call["toolMetadata"] = json!({
+        "category": "other",
+        "native": {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "replay-0-5",
+            "title": "farcaster: submit_review",
+            "kind": "other",
+            "status": "pending",
+            "rawInput": {
+                "providerIdentifier": "farcaster",
+                "toolName": "submit_review",
+                "args": spec
+            }
+        }
+    });
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({"role":"user","content":[{"type":"text","text":"use submit review on readme, I wanna debug sth"}]}),
+        json!({"role":"assistant","content":[call]}),
+        json!({"role":"toolResult","toolCallId":"replay-0-5","isError":false,
+            "content":[{"type":"text","text":"{\"success\":true}"}]}),
+        json!({"role":"assistant","content":[{"type":"text","text":"Submitted a review."}]}),
+    ]);
+    let mut snapshot = snapshot(temp.path(), state);
+    snapshot.transcript_changed_from = Some(0);
+    ReviewProjection::default().apply(&mut snapshot);
+    assert_eq!(
+        cards(&snapshot),
+        1,
+        "the real replayed payload renders the review"
+    );
+    Ok(())
+}
+
 fn message(state: &mut ConversationState, text: &str) {
     let message = json!({"role":"assistant","content":[{"type":"text","text":text}]});
     state.reduce(&json!({"type":"message_start","message":message}));
