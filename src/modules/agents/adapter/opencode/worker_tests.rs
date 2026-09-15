@@ -482,19 +482,35 @@ fn session_usage_totals_are_adopted_without_inflating_the_context_metric() {
         cache_write: 0,
     };
 
-    let (turn, session) = tracker.step_ended(tokens(3837, 3, 0));
-    assert_eq!((turn.total(), session.total()), (3840, 3840));
-    let (turn, session) = tracker.session_total(tokens(4356, 14, 0));
-    assert_eq!((turn.total(), session.total()), (3840, 4370));
+    let turn = tracker.step_ended(tokens(3837, 3, 0), Some(0.10));
+    assert_eq!(turn.total(), 3840);
+    assert_eq!(tracker.session.total(), 3840);
+    let turn = tracker.session_total(tokens(4356, 14, 0), Some(0.25));
+    assert_eq!(turn.total(), 3840);
+    assert_eq!(tracker.session.total(), 4370);
 
-    let (turn, session) = tracker.step_ended(tokens(72, 4, 3776));
-    assert_eq!((turn.total(), session.total()), (3852, 8222));
-    let (turn, session) = tracker.session_total(tokens(4428, 18, 3776));
+    let turn = tracker.step_ended(tokens(72, 4, 3776), Some(0.05));
+    assert_eq!(turn.total(), 3852);
+    let turn = tracker.session_total(tokens(4428, 18, 3776), None);
     assert_eq!((turn.input, turn.cache_read, turn.output), (72, 3776, 4));
     assert_eq!(
-        (session.input, session.cache_read, session.output),
+        (
+            tracker.session.input,
+            tracker.session.cache_read,
+            tracker.session.output
+        ),
         (4428, 3776, 18)
     );
+    assert_eq!(tracker.cost, Some(0.30));
+}
+
+#[test]
+fn live_usage_events_carry_session_cost() {
+    assert_eq!(
+        opencode_event_cost(&json!({"tokens": {"input": 1}, "cost": 0.18})),
+        Some(0.18)
+    );
+    assert_eq!(opencode_event_cost(&json!({"tokens": {"input": 1}})), None);
 }
 
 #[test]

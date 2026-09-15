@@ -600,6 +600,7 @@ pub(super) fn usage_update(update: &Value) -> Option<WorkerUsage> {
             cache_write,
         },
         context_window,
+        cost: None,
     })
 }
 

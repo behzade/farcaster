@@ -484,18 +484,34 @@ fn variant_for_model(effort: Option<&str>, known: Option<&Vec<String>>) -> Optio
 struct OpenCodeUsageTracker {
     session: TokenUsage,
     context: TokenUsage,
+    cost: Option<f64>,
 }
 
 impl OpenCodeUsageTracker {
-    fn step_ended(&mut self, turn: TokenUsage) -> (TokenUsage, TokenUsage) {
+    fn step_ended(&mut self, turn: TokenUsage, cost: Option<f64>) -> TokenUsage {
         self.context = turn;
         self.session = self.session.saturating_add(turn);
-        (turn, self.session)
+        if let Some(cost) = cost {
+            self.cost = Some(self.cost.unwrap_or(0.0) + cost);
+        }
+        turn
     }
 
-    fn session_total(&mut self, total: TokenUsage) -> (TokenUsage, TokenUsage) {
+    fn session_total(&mut self, total: TokenUsage, cost: Option<f64>) -> TokenUsage {
         self.session = total;
-        (self.context, self.session)
+        if let Some(cost) = cost {
+            self.cost = Some(cost);
+        }
+        self.context
+    }
+
+    fn worker_usage(&self, turn: TokenUsage, context_window: u64) -> WorkerUsage {
+        WorkerUsage {
+            turn,
+            session: self.session,
+            context_window,
+            cost: self.cost,
+        }
     }
 }
 
@@ -1147,24 +1163,22 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "step end is missing token usage");
                         continue;
                     };
-                    let (turn, session) = self.usage.step_ended(turn);
-                    return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
-                        turn,
-                        session,
-                        context_window: self.context_window,
-                    })));
+                    let turn = self.usage.step_ended(turn, opencode_event_cost(&event.data));
+                    return Some(WorkerEvent::Activity(WorkerActivity::Usage(
+                        self.usage.worker_usage(turn, self.context_window),
+                    )));
                 }
                 "session.usage.updated" | "session.usage.recorded" => {
                     let Some(total) = opencode_event_usage(&event.data) else {
                         log_bad_opencode_event(&event, "usage event is missing token usage");
                         continue;
                     };
-                    let (turn, session) = self.usage.session_total(total);
-                    return Some(WorkerEvent::Activity(WorkerActivity::Usage(WorkerUsage {
-                        turn,
-                        session,
-                        context_window: self.context_window,
-                    })));
+                    let turn = self
+                        .usage
+                        .session_total(total, opencode_event_cost(&event.data));
+                    return Some(WorkerEvent::Activity(WorkerActivity::Usage(
+                        self.usage.worker_usage(turn, self.context_window),
+                    )));
                 }
                 "session.tool.success"
                 | "session.tool.failed"
@@ -1718,6 +1732,12 @@ fn opencode_event_usage(data: &Value) -> Option<TokenUsage> {
         cache_read: opencode_token(usage.pointer("/cache/read")),
         cache_write: opencode_token(usage.pointer("/cache/write")),
     })
+}
+
+fn opencode_event_cost(data: &Value) -> Option<f64> {
+    data.get("cost")
+        .and_then(Value::as_f64)
+        .filter(|cost| cost.is_finite() && *cost >= 0.0)
 }
 
 fn opencode_token(value: Option<&Value>) -> u64 {

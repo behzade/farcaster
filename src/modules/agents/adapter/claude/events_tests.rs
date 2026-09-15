@@ -43,6 +43,7 @@ fn final_stream_usage_updates_context_without_clearing_omitted_counts() {
         .expect("test operation should succeed");
     assert_eq!(usage.turn.input, 22635);
     assert_eq!(usage.turn.output, 6);
+    assert_eq!(usage.cost, Some(0.11971));
     events.pending.clear();
     events.message(&json!({"type":"stream_event","event":{"type":"message_delta","usage":{"output_tokens":7}}}));
     events.message(&json!({"type":"result","usage":{}}));
@@ -54,12 +55,14 @@ fn final_stream_usage_updates_context_without_clearing_omitted_counts() {
 fn session_usage_reads_cumulative_model_totals_without_double_counting() {
     let mut events = Events::default();
     let frame = json!({"type":"result","usage":{"input_tokens":2,"output_tokens":1},
+        "total_cost_usd":0.42,
         "modelUsage":{"main":{"inputTokens":20,"outputTokens":10},"child":{"inputTokens":5,"outputTokens":3}}});
     for _ in 0..2 {
         events.message(&frame);
     }
     assert!(events.pending.iter().all(|event| matches!(event,
-        WorkerEvent::Activity(WorkerActivity::Usage(usage)) if usage.session.input == 25 && usage.session.output == 13)));
+        WorkerEvent::Activity(WorkerActivity::Usage(usage))
+            if usage.session.input == 25 && usage.session.output == 13 && usage.cost == Some(0.42))));
 }
 
 #[test]

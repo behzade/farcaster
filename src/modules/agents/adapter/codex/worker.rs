@@ -1530,6 +1530,7 @@ impl WorkerSession for CodexWorkerSession {
                                     .get("modelContextWindow")
                                     .and_then(Value::as_u64)
                                     .unwrap_or(0),
+                                cost: None,
                             };
                             self.command_state.usage = Some(reported_usage);
                             return Some(WorkerEvent::Activity(WorkerActivity::Usage(

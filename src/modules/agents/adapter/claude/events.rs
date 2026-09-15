@@ -266,6 +266,7 @@ impl Events {
                     });
                     usage.context_window = usage.context_window.max(model["contextWindow"].as_u64().unwrap_or(0));
                 }
+                usage.cost = frame["total_cost_usd"].as_f64().filter(|cost| cost.is_finite() && *cost >= 0.0);
                 self.activity(WorkerActivity::Usage(usage));
             }
             "tool_progress" => self.activity(WorkerActivity::ToolUpdated {

@@ -147,7 +147,7 @@ impl WorkerSessionTransport {
                 cache_write: self.usage.session.cache_write,
                 total_tokens: self.usage.session.total(),
             },
-            total_cost: None,
+            total_cost: self.usage.cost,
         }
     }
 }

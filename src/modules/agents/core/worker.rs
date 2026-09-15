@@ -99,11 +99,12 @@ impl TokenUsage {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct WorkerUsage {
     pub(crate) turn: TokenUsage,
     pub(crate) session: TokenUsage,
     pub(crate) context_window: u64,
+    pub(crate) cost: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
