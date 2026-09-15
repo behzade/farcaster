@@ -29,6 +29,46 @@ jobs:
 
   diagnose:
     needs: stage
-    uses: ./.github/workflows/appimage-startup.yml
-    with:
-      artifact: release-linux-x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare AppImage
+        id: appimage
+        uses: ./.github/actions/appimage-input
+        with:
+          artifact: release-linux-x86_64
+
+      - name: Check out nixos-unstable
+        uses: actions/checkout@v4
+        with:
+          repository: NixOS/nixpkgs
+          ref: nixos-unstable
+          path: nixpkgs
+          persist-credentials: false
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          enable_kvm: true
+
+      - name: Build NixOS test VM
+        env:
+          APPIMAGE_PATH: ${{ steps.appimage.outputs.path }}
+        run: |
+          test -r /dev/kvm && test -w /dev/kvm
+          nix-build packaging/appimage-startup-test.nix -A driver \
+            --argstr nixpkgs "$PWD/nixpkgs" --argstr appimage "$APPIMAGE_PATH" \
+            --out-link test-driver
+
+      - name: Run startup in NixOS unstable
+        run: |
+          mkdir -p artifacts/nixos
+          test-driver/bin/nixos-test-driver -o "$PWD/artifacts/nixos"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nixos-unstable-sigill-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn

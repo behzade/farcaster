@@ -23,6 +23,7 @@ fi
 
 {
     uname -a
+    cat /proc/cpuinfo
     cat /etc/os-release
     weston --version
     file "$appimage"
