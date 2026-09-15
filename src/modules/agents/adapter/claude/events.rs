@@ -158,6 +158,7 @@ impl Events {
                 title: frame["description"].as_str().map(str::to_owned),
                 is_running: subtype != "task_notification",
                 outcome: None,
+                execution: None,
             });
         }
     }

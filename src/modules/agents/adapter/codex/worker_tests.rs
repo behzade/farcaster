@@ -220,6 +220,7 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
                         title: Some("/root/reviewer".into()),
                         is_running: running.expect("test operation should succeed"),
                         outcome,
+                        execution: Some(crate::agents::WorkerModelSelection::default()),
                     }
                 ))
             );
@@ -244,6 +245,42 @@ fn native_child_events_carry_metadata_and_emit_one_finished_activity() {
         super::super::subagents::is_running("native-event-child"),
         None
     );
+}
+
+#[test]
+fn native_child_events_use_the_childs_stored_model() {
+    let home = tempfile::tempdir().expect("temporary Codex home");
+    let database = rusqlite::Connection::open(home.path().join("state_5.sqlite"))
+        .expect("Codex state database");
+    database
+        .execute_batch(
+            "CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, model TEXT, reasoning_effort TEXT);
+             INSERT INTO threads VALUES ('native-child', 'openai', 'gpt-child', 'xhigh');",
+        )
+        .expect("Codex child identity");
+    drop(database);
+    let mut session = test_session();
+    session.thread_id = "native-parent".into();
+    session.codex_home = home.path().into();
+
+    let activity = session
+        .observe_child_activity(&json!({
+            "kind": "started",
+            "agentThreadId": "native-child",
+            "agentPath": "/root/reviewer",
+        }))
+        .expect("child activity");
+
+    assert!(matches!(
+        activity,
+        WorkerActivity::ChildSessionsChanged {
+            execution: Some(crate::agents::WorkerModelSelection {
+                model: Some((provider, model)),
+                effort: Some(effort),
+            }),
+            ..
+        } if provider == "openai" && model == "gpt-child" && effort == "xhigh"
+    ));
 }
 
 #[test]
@@ -282,6 +319,7 @@ fn interactions_read_child_turn_status_and_discard_superseded_reads() {
                         "failed" => Some(crate::agents::ChildSessionOutcome::Failed),
                         _ => None,
                     },
+                    execution: Some(crate::agents::WorkerModelSelection::default()),
                 }
             ))
         );
@@ -344,6 +382,8 @@ fn test_session() -> CodexWorkerSession {
         incoming,
         wake: None,
         thread_id: "thread-1".into(),
+        codex_home: std::path::PathBuf::new(),
+        child_executions: HashMap::new(),
         model: None,
         effort: None,
         collaboration_mode: None,

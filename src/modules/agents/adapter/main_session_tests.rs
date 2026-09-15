@@ -1123,7 +1123,7 @@ fn two_choice_questions_preserve_their_options() {
 }
 
 #[test]
-fn native_child_activity_carries_a_backend_locator_without_discovery() {
+fn native_child_activity_carries_metadata_without_discovery() {
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
         Backend::Codex,
@@ -1139,6 +1139,10 @@ fn native_child_activity_carries_a_backend_locator_without_discovery() {
             title: Some("Reviewer".into()),
             is_running: true,
             outcome: None,
+            execution: Some(crate::agents::WorkerModelSelection {
+                model: Some(("child-provider".into(), "child-model".into())),
+                effort: Some("xhigh".into()),
+            }),
         },
     ));
     let Some(SessionEvent::Activity(event)) = transport.poll() else {
@@ -1148,6 +1152,11 @@ fn native_child_activity_carries_a_backend_locator_without_discovery() {
     assert_eq!(event.value()["child"]["outcome"], Value::Null);
     assert_eq!(event.value()["child"]["parent_session"], "parent");
     assert_eq!(event.value()["child"]["is_running"], true);
+    assert_eq!(
+        event.value()["child"]["model"],
+        json!(["child-provider", "child-model"])
+    );
+    assert_eq!(event.value()["child"]["thinking_level"], "xhigh");
 
     transport.enqueue_worker_event(WorkerEvent::Activity(
         WorkerActivity::ChildSessionsChanged {
@@ -1155,6 +1164,7 @@ fn native_child_activity_carries_a_backend_locator_without_discovery() {
             title: Some("Reviewer".into()),
             is_running: false,
             outcome: Some(crate::agents::ChildSessionOutcome::Failed),
+            execution: None,
         },
     ));
     let Some(SessionEvent::Activity(event)) = transport.poll() else {

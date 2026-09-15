@@ -77,7 +77,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .spawn()
             .map_err(|error| format!("start Codex worker app-server: {error}"))?;
         child_stderr::capture(&mut child, "codex-worker")?;
-        let ((mut reader, writer, queued, next_id, thread), skills) =
+        let ((mut reader, writer, queued, next_id, thread, codex_home), skills) =
             match setup_connection(&mut child, &launch, launch.access_mode) {
                 Ok(setup) => setup,
                 Err(error) => {
@@ -119,6 +119,8 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             // session supplies a parked runtime thread that needs a wake.
             wake: None,
             thread_id: thread_id.clone(),
+            codex_home,
+            child_executions: HashMap::new(),
             model: launch.model,
             effort: launch.effort,
             collaboration_mode: None,
@@ -225,7 +227,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-main-session")?;
     let setup = setup_main_connection(&mut child, launch, command.access_mode);
-    let ((mut reader, writer, queued, next_id, thread), metadata, skills) = match setup {
+    let ((mut reader, writer, queued, next_id, thread, codex_home), metadata, skills) = match setup
+    {
         Ok(setup) => setup,
         Err(error) => {
             let _ = child.kill();
@@ -273,6 +276,8 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         incoming,
         wake: session_wake,
         thread_id: thread_id.clone(),
+        codex_home,
+        child_executions: HashMap::new(),
         model: None,
         effort: None,
         collaboration_mode: None,
@@ -332,6 +337,7 @@ type CodexSetup = (
     VecDeque<CodexInbound>,
     i64,
     super::contract::CodexThread,
+    std::path::PathBuf,
 );
 
 fn setup_connection(
@@ -348,11 +354,12 @@ fn setup_connection(
         .take()
         .ok_or_else(|| "Codex worker stdout must be piped".to_owned())?;
     let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
-    connection.initialize(CodexClientInfo {
+    let initialized = connection.initialize(CodexClientInfo {
         name: "farcaster".into(),
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
     })?;
+    let codex_home = std::path::PathBuf::from(initialized.codex_home);
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.context {
         WorkerContext::Fresh if launch.ephemeral => connection.start_ephemeral_thread(
@@ -394,7 +401,10 @@ fn setup_connection(
     };
     let skills = Skills::load(&mut connection, &launch.project);
     let (reader, writer, queued, next_id) = connection.into_parts();
-    Ok(((reader, writer, queued, next_id, thread), skills))
+    Ok((
+        (reader, writer, queued, next_id, thread, codex_home),
+        skills,
+    ))
 }
 
 fn setup_main_connection(
@@ -418,11 +428,12 @@ fn setup_main_connection(
         .take()
         .ok_or_else(|| "Codex main-session stdout must be piped".to_owned())?;
     let mut connection = CodexConnection::new(BufReader::new(stdout), stdin);
-    connection.initialize_experimental(CodexClientInfo {
+    let initialized = connection.initialize_experimental(CodexClientInfo {
         name: "farcaster".into(),
         title: Some("Farcaster".into()),
         version: env!("CARGO_PKG_VERSION").into(),
     })?;
+    let codex_home = std::path::PathBuf::from(initialized.codex_home);
     let (mut metadata, skills) = load_main_metadata(&mut connection, &launch.project)?;
     let cwd = launch.project.to_string_lossy();
     let thread = match &launch.start {
@@ -442,7 +453,11 @@ fn setup_main_connection(
     };
     metadata.session_name = thread.name.clone();
     let (reader, writer, queued, next_id) = connection.into_parts();
-    Ok(((reader, writer, queued, next_id, thread), metadata, skills))
+    Ok((
+        (reader, writer, queued, next_id, thread, codex_home),
+        metadata,
+        skills,
+    ))
 }
 
 fn load_main_metadata(
@@ -695,6 +710,8 @@ struct CodexWorkerSession {
     incoming: mpsc::Receiver<Result<CodexInbound, String>>,
     wake: Option<thread::Thread>,
     thread_id: String,
+    codex_home: std::path::PathBuf,
+    child_executions: HashMap<String, crate::agents::WorkerModelSelection>,
     model: Option<String>,
     effort: Option<String>,
     collaboration_mode: Option<Value>,
@@ -1037,12 +1054,14 @@ impl WorkerSession for CodexWorkerSession {
                             &id,
                             &result["thread"],
                         ) {
+                            let execution = Some(self.child_execution(&id));
                             return Some(WorkerEvent::Activity(
                                 WorkerActivity::ChildSessionsChanged {
                                     id,
                                     title,
                                     is_running,
                                     outcome: codex_child_thread_outcome(&result["thread"]),
+                                    execution,
                                 },
                             ));
                         }
@@ -2322,11 +2341,13 @@ impl CodexWorkerSession {
             }
         }
         if let Some(is_running) = super::subagents::observe(&self.thread_id, item) {
+            let execution = Some(self.child_execution(child));
             return Some(WorkerActivity::ChildSessionsChanged {
                 id: child.to_owned(),
                 title,
                 is_running,
                 outcome: codex_child_event_outcome(item),
+                execution,
             });
         }
         if item["kind"].as_str() != Some("interacted") {
@@ -2352,6 +2373,24 @@ impl CodexWorkerSession {
             }
         }
         None
+    }
+
+    fn child_execution(&mut self, child: &str) -> crate::agents::WorkerModelSelection {
+        if let Some(execution) = self.child_executions.get(child) {
+            return execution.clone();
+        }
+        match super::catalog::stored_identity(&self.codex_home, child) {
+            Ok(Some(execution)) => {
+                self.child_executions
+                    .insert(child.to_owned(), execution.clone());
+                execution
+            }
+            Ok(None) => crate::agents::WorkerModelSelection::default(),
+            Err(error) => {
+                zlog::warn!("Codex child identity unavailable for {child}: {error}");
+                crate::agents::WorkerModelSelection::default()
+            }
+        }
     }
 
     fn request(&mut self, method: &str, params: Value) -> Result<CodexRequestId, String> {

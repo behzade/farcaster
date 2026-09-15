@@ -201,6 +201,33 @@ fn translates_failed_tool_results() {
 }
 
 #[test]
+fn interrupted_subagent_history_does_not_keep_running_metadata() {
+    let messages = history_messages(&json!({
+        "type": "assistant",
+        "content": [{
+            "type": "tool",
+            "id": "subagent-1",
+            "name": "subagent",
+            "state": {
+                "status": "error",
+                "input": {"prompt": "Inspect the implementation"},
+                "metadata": {"status": "running", "sessionID": "child-1"},
+                "error": {
+                    "type": "aborted",
+                    "message": "Tool execution interrupted (sessionID: child-1)"
+                }
+            }
+        }]
+    }));
+
+    assert_eq!(
+        messages[0].pointer("/content/0/toolMetadata/native/state/metadata/status"),
+        Some(&json!("interrupted"))
+    );
+    assert_eq!(messages[1]["isError"], true);
+}
+
+#[test]
 fn restored_patch_has_a_file_edit_presentation() {
     let messages = history_messages(&json!({
         "type": "assistant",

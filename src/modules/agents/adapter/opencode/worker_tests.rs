@@ -262,12 +262,30 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
 
 #[test]
 fn child_execution_events_publish_sidebar_metadata() {
-    for (kind, parent, running) in [
-        ("session.execution.started", "parent-1", Some(true)),
-        ("session.execution.started.1", "parent-1", Some(true)),
-        ("session.execution.succeeded", "parent-1", Some(false)),
-        ("session.execution.failed", "parent-1", Some(false)),
-        ("session.execution.interrupted", "parent-1", Some(false)),
+    use crate::agents::ChildSessionOutcome::{Complete, Failed, Incomplete};
+
+    for (kind, parent, expected) in [
+        ("session.execution.started", "parent-1", Some((true, None))),
+        (
+            "session.execution.started.1",
+            "parent-1",
+            Some((true, None)),
+        ),
+        (
+            "session.execution.succeeded",
+            "parent-1",
+            Some((false, Some(Complete))),
+        ),
+        (
+            "session.execution.failed",
+            "parent-1",
+            Some((false, Some(Failed))),
+        ),
+        (
+            "session.execution.interrupted",
+            "parent-1",
+            Some((false, Some(Incomplete))),
+        ),
         ("session.execution.started", "unrelated", None),
     ] {
         let event = super::super::contract::OpenCodeEvent {
@@ -281,6 +299,7 @@ fn child_execution_events_publish_sidebar_metadata() {
                 "id": id, "parentID": parent,
                 "location": {"directory": "/project"},
                 "title": "Explore code",
+                "model": {"providerID": "provider", "id": "model", "variant": "high"},
             }))
             .map_err(|error| error.to_string())
         })
@@ -290,16 +309,24 @@ fn child_execution_events_publish_sidebar_metadata() {
                 id,
                 title,
                 is_running,
-                outcome: _,
+                outcome,
+                execution,
             } = activity
             else {
                 panic!("expected child metadata");
             };
             assert_eq!(id, "child-1");
             assert_eq!(title.as_deref(), Some("Explore code"));
-            is_running
+            assert_eq!(
+                execution,
+                Some(crate::agents::WorkerModelSelection {
+                    model: Some(("provider".into(), "model".into())),
+                    effort: Some("high".into()),
+                })
+            );
+            (is_running, outcome)
         });
-        assert_eq!(actual, running, "{kind} with parent {parent}");
+        assert_eq!(actual, expected, "{kind} with parent {parent}");
     }
 }
 

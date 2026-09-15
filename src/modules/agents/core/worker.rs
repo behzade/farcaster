@@ -225,6 +225,8 @@ pub(crate) enum WorkerActivity {
         title: Option<String>,
         is_running: bool,
         outcome: Option<ChildSessionOutcome>,
+        /// `None` inherits the owning session's selection; `Some` is authoritative.
+        execution: Option<WorkerModelSelection>,
     },
     CompactionStarted,
     CompactionFinished {
@@ -330,7 +332,7 @@ pub(crate) trait WorkerSession: Send {
 }
 
 /// An authoritative selection, including an explicitly unset effort.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WorkerModelSelection {
     pub model: Option<(String, String)>,
     pub effort: Option<String>,

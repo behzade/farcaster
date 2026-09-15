@@ -301,6 +301,18 @@ fn stored_identities(
         .map_err(|error| format!("read Codex session identities: {error}"))
 }
 
+pub(super) fn stored_identity(
+    codex_home: &Path,
+    thread_id: &str,
+) -> Result<Option<crate::agents::WorkerModelSelection>, String> {
+    Ok(stored_identities(codex_home, &[thread_id])?
+        .remove(thread_id)
+        .map(|identity| crate::agents::WorkerModelSelection {
+            model: Some((identity.provider, identity.model)),
+            effort: identity.effort,
+        }))
+}
+
 fn summary(
     locator_root: &Path,
     thread: &Value,

@@ -2,6 +2,33 @@ use serde_json::{Value, json};
 
 use crate::agents::{CommonTool, ToolCategory, ToolMetadata};
 
+fn reconcile_terminal_status(native: &mut Value) {
+    let state = native.get("state").unwrap_or(native);
+    let Some(status) = state.get("status").and_then(Value::as_str) else {
+        return;
+    };
+    let terminal_status = match status {
+        "completed" => "completed",
+        "error" | "failed" => {
+            let interrupted = state
+                .pointer("/error/type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("aborted"));
+            if interrupted { "interrupted" } else { "error" }
+        }
+        _ => return,
+    };
+    let metadata_status = if native.get("state").is_some() {
+        native.pointer_mut("/state/metadata/status")
+    } else {
+        native.pointer_mut("/metadata/status")
+    };
+    if let Some(metadata_status) = metadata_status.filter(|value| value.as_str() == Some("running"))
+    {
+        *metadata_status = Value::String(terminal_status.into());
+    }
+}
+
 pub(super) fn normalize_opencode_tool(
     name: &str,
     arguments: &Value,
@@ -75,7 +102,12 @@ fn strip_patch_preamble(diff: &str) -> &str {
     diff
 }
 
-pub(super) fn opencode_tool_metadata(name: &str, arguments: &Value, native: Value) -> ToolMetadata {
+pub(super) fn opencode_tool_metadata(
+    name: &str,
+    arguments: &Value,
+    mut native: Value,
+) -> ToolMetadata {
+    reconcile_terminal_status(&mut native);
     let normalized = name.trim().to_ascii_lowercase();
     let (category, verb, keys): (ToolCategory, Option<&str>, &[&str]) = match normalized.as_str() {
         "read" | "read_file" => (ToolCategory::Read, Some("Read"), &["path"]),

@@ -1163,7 +1163,9 @@ impl OpenCodeWorkerSession {
                         log_bad_opencode_event(&event, "step end is missing token usage");
                         continue;
                     };
-                    let turn = self.usage.step_ended(turn, opencode_event_cost(&event.data));
+                    let turn = self
+                        .usage
+                        .step_ended(turn, opencode_event_cost(&event.data));
                     return Some(WorkerEvent::Activity(WorkerActivity::Usage(
                         self.usage.worker_usage(turn, self.context_window),
                     )));
@@ -1592,11 +1594,15 @@ fn opencode_child_activity(
     let Some(event_type) = event.event.as_deref() else {
         return Ok(None);
     };
-    let is_running = match unversioned_opencode_event_type(event_type) {
-        "session.execution.started" => true,
-        "session.execution.succeeded"
-        | "session.execution.failed"
-        | "session.execution.interrupted" => false,
+    let (is_running, outcome) = match unversioned_opencode_event_type(event_type) {
+        "session.execution.started" => (true, None),
+        "session.execution.succeeded" => {
+            (false, Some(crate::agents::ChildSessionOutcome::Complete))
+        }
+        "session.execution.failed" => (false, Some(crate::agents::ChildSessionOutcome::Failed)),
+        "session.execution.interrupted" => {
+            (false, Some(crate::agents::ChildSessionOutcome::Incomplete))
+        }
         _ => return Ok(None),
     };
     let Some(id) = event.data.get("sessionID").and_then(Value::as_str) else {
@@ -1608,12 +1614,19 @@ fn opencode_child_activity(
     // The event stream includes other sessions. Resolve the native parent before
     // publishing a child, including when we attached after that child was created.
     let child = lookup_session(id)?;
+    let execution = child
+        .model
+        .map(|selection| crate::agents::WorkerModelSelection {
+            model: Some((selection.provider_id, selection.id)),
+            effort: selection.variant,
+        });
     Ok((child.parent_id.as_deref() == Some(parent_id)).then_some(
         WorkerActivity::ChildSessionsChanged {
             id: child.id,
             title: child.title,
             is_running,
-            outcome: None,
+            outcome,
+            execution,
         },
     ))
 }

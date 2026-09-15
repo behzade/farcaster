@@ -525,7 +525,12 @@ impl WorkerSessionTransport {
                 title,
                 is_running,
                 outcome,
+                execution,
             } => {
+                let execution = execution.unwrap_or_else(|| crate::agents::WorkerModelSelection {
+                    model: self.model.clone(),
+                    effort: self.effort.clone(),
+                });
                 let path = self
                     .path
                     .parent()
@@ -535,6 +540,8 @@ impl WorkerSessionTransport {
                     "id": id, "path": path, "title": title,
                     "parent_session": self.locator, "is_running": is_running,
                     "outcome": outcome.map(|outcome| outcome.as_str()),
+                    "model": execution.model,
+                    "thinking_level": execution.effort,
                 }})
             }
             WorkerActivity::ToolMetadataChanged { id, args, metadata } => {
