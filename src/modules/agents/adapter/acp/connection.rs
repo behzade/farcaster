@@ -4,7 +4,7 @@ use std::{
     io,
     sync::{Arc, Mutex, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use agent_client_protocol::{Agent, Client, ConnectionTo, Lines, Responder, UntypedMessage};
@@ -178,6 +178,7 @@ impl AcpConnection {
     pub(super) fn request_blocking(&self, method: &str, params: Value) -> Result<Value, String> {
         let request = UntypedMessage::new(method, params).map_err(|error| error.to_string())?;
         let (sender, receiver) = mpsc::sync_channel(1);
+        let started = Instant::now();
         self.connection
             .send_request(request)
             .on_receiving_result(move |result| async move {
@@ -185,10 +186,15 @@ impl AcpConnection {
                 Ok(())
             })
             .map_err(|error| error.to_string())?;
-        receiver
+        let result = receiver
             .recv_timeout(REQUEST_TIMEOUT)
             .map_err(|error| format!("wait for ACP {method}: {error}"))?
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string());
+        zlog::info!(
+            "PERF operation=acp.request method={method} elapsed_ms={:.2}",
+            started.elapsed().as_secs_f64() * 1_000.0
+        );
+        result
     }
 
     pub(super) fn model_catalog(&self, profile: &AcpProfile) -> Result<Vec<Value>, String> {

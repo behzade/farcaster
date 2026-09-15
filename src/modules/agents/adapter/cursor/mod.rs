@@ -1,6 +1,6 @@
 mod catalog;
 
-use std::path::Path;
+use std::{path::Path, time::Instant};
 
 use super::super::contract::{
     AgentBackendDescriptor, AgentCapabilities, Backend, CapabilitySupport,
@@ -121,6 +121,7 @@ pub(super) fn discover(
 }
 
 pub(super) fn load_history(path: &Path) -> Result<crate::agents::DiscoveredHistory, String> {
+    let started = Instant::now();
     let id = super::main_session::external_session_locator(PROFILE.backend, path)
         .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
     let (stored_project, unpersisted) = catalog::inspect(&id)?;
@@ -131,7 +132,12 @@ pub(super) fn load_history(path: &Path) -> Result<crate::agents::DiscoveredHisto
             thinking_level: None,
         });
     }
-    super::acp::load_history(&PROFILE, path, &stored_project)
+    let history = super::acp::load_history(&PROFILE, path, &stored_project);
+    zlog::info!(
+        "PERF operation=history.cursor.load elapsed_ms={:.2}",
+        started.elapsed().as_secs_f64() * 1_000.0
+    );
+    history
 }
 
 #[cfg(test)]

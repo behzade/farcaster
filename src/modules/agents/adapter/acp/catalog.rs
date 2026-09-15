@@ -4,7 +4,7 @@ use std::{
     process::{Child, Stdio},
     sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -100,6 +100,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
             )
         })?;
     with_connection(profile, project, move |connection, profile, project| {
+        let started = Instant::now();
         let response = connection.request_blocking(
             "session/load",
             json!({
@@ -109,13 +110,19 @@ pub(in crate::modules::agents::adapter) fn load_history(
             }),
         )?;
         let queued = connection.drain_queued()?;
-        let mut history = discovered_history(profile, queued, &response, &locator);
-        let (_, ids) =
-            super::configuration::metadata(profile, &response, connection.model_catalog(profile)?);
-        if let Some(model) = ids.selected_model {
-            history.model = Some((profile.backend.into(), model));
-        }
+        let queued_count = queued.len();
+        // cursor/list_available_models is a network round-trip that only
+        // refines the selected model id for the picker. The history preview
+        // uses the model session/load already reports, so skip it here.
+        let history = discovered_history(profile, queued, &response, &locator);
         close_session(connection, &locator);
+        zlog::info!(
+            "PERF operation=history.acp_load agent={} queued={} messages={} elapsed_ms={:.2}",
+            profile.name,
+            queued_count,
+            history.messages.len(),
+            started.elapsed().as_secs_f64() * 1_000.0
+        );
         Ok(history)
     })
 }
@@ -198,10 +205,17 @@ fn with_connection_kind<T: Send + 'static>(
         }
     });
     let initialized = reused.is_some();
+    let spawn_started = Instant::now();
     let (mut child, connection) = match reused {
         Some(parts) => parts,
         None => spawn_catalog_child(profile, project)?,
     };
+    zlog::info!(
+        "PERF operation=acp.catalog agent={} mode={} elapsed_ms={:.2}",
+        profile.name,
+        if initialized { "reused" } else { "spawned" },
+        spawn_started.elapsed().as_secs_f64() * 1_000.0
+    );
     let profile_owned = profile.clone();
     let project_owned = project.to_owned();
     let result = run_catalog_operation(Duration::from_secs(30), move || {
