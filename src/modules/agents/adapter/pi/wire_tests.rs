@@ -209,6 +209,27 @@ fn empty_catalogs_are_valid_and_backend_rejections_keep_the_error() {
 }
 
 #[test]
+fn compaction_is_listed_without_polluting_pi_extension_provenance() {
+    let PiWireMessage::Response {
+        response, commands, ..
+    } = parse_frame(
+        br#"{"type":"response","command":"get_commands","success":true,"data":{"commands":[]}}"#,
+    )
+    .expect("frame")
+    else {
+        panic!("response")
+    };
+    assert!(commands.is_empty());
+    let crate::agents::SessionResponsePayload::ListCommands(commands) =
+        response.result.expect("catalog")
+    else {
+        panic!("commands")
+    };
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "compact");
+}
+
+#[test]
 fn state_and_model_payloads_are_validated_before_leaving_pi() {
     for command in [
         "get_state",

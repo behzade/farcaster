@@ -36,3 +36,44 @@ fn encodes_pi_requests_only_at_the_adapter_boundary() {
         .is_err()
     );
 }
+
+#[test]
+fn compact_slash_invocations_become_rpc_controls() {
+    for (message, expected) in [
+        (" /compact ", json!({"type":"compact"})),
+        (
+            "/compact\nKeep the API decisions",
+            json!({"type":"compact", "customInstructions":"Keep the API decisions"}),
+        ),
+        (
+            "/compaction",
+            json!({"type":"prompt", "message":"/compaction"}),
+        ),
+    ] {
+        assert_eq!(
+            encode_request(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: message.into(),
+                images: vec![]
+            })
+            .expect("encoded"),
+            expected
+        );
+    }
+    assert!(
+        encode_request(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "/compact".into(),
+            images: vec![]
+        })
+        .is_err()
+    );
+    assert!(
+        encode_request(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "/compact".into(),
+            images: vec![PromptImage::new("AQID".into(), "image/png".into())]
+        })
+        .is_err()
+    );
+}

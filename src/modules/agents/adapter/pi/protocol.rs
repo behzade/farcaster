@@ -32,6 +32,18 @@ pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
             message,
             images,
         } => {
+            if let Some(instructions) = compact_invocation(&message) {
+                if mode != PromptMode::Normal || !images.is_empty() {
+                    return Err(
+                        "Run /compact without images when the current turn has finished".into(),
+                    );
+                }
+                return Ok(optional_string(
+                    "compact",
+                    "customInstructions",
+                    (!instructions.is_empty()).then(|| instructions.to_owned()),
+                ));
+            }
             let kind = match mode {
                 PromptMode::Normal => "prompt",
                 PromptMode::Steer => "steer",
@@ -71,6 +83,12 @@ pub(super) fn encode_request(request: SessionCommand) -> Result<Value, String> {
         }
         SessionCommand::SelectMode { mode } => json!({"type": "set_mode", "mode": mode}),
     })
+}
+
+pub(super) fn compact_invocation(message: &str) -> Option<&str> {
+    let input = message.trim();
+    let (name, arguments) = input.split_once(char::is_whitespace).unwrap_or((input, ""));
+    (name == "/compact").then_some(arguments.trim())
 }
 
 impl SessionTransport for PiRpcProcess {

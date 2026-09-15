@@ -55,7 +55,16 @@ pub(super) fn decode(
                 struct Commands {
                     commands: Vec<crate::agents::extensions::SlashCommand>,
                 }
-                Payload::ListCommands(serde_json::from_value::<Commands>(data)?.commands)
+                let mut commands = serde_json::from_value::<Commands>(data)?.commands;
+                commands.retain(|command| command.name != "compact");
+                commands.push(crate::agents::extensions::SlashCommand {
+                    name: "compact".into(),
+                    description: Some(
+                        "Compact this session's context: /compact [instructions]".into(),
+                    ),
+                    source: crate::agents::extensions::SlashCommandSource::Extension,
+                });
+                Payload::ListCommands(commands)
             }
             SessionOperation::SelectModel => Payload::SelectModel(serde_json::from_value(data)?),
             SessionOperation::ExportHtml => {

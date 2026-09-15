@@ -68,15 +68,49 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         delivery: OpenCodeDelivery,
     ) -> Result<OpenCodePromptAdmission, OpenCodePromptDispatchError> {
         let path = format!("/api/session/{}/prompt", path_segment(session_id));
-        let body = serde_json::to_vec(&json!({
-            "id": id,
-            "text": text,
-            "files": files,
-            "agents": [],
-            "delivery": delivery,
-            "resume": true,
-        }))
-        .map_err(|error| OpenCodePromptDispatchError::Unsent(error.to_string()))?;
+        let response = self.dispatch_input(
+            path,
+            json!({
+                "id": id,
+                "text": text,
+                "files": files,
+                "agents": [],
+                "delivery": delivery,
+                "resume": true,
+            }),
+        )?;
+        decode_data(response).map_err(OpenCodePromptDispatchError::Unknown)
+    }
+
+    pub(crate) fn run_command(
+        &mut self,
+        session_id: &str,
+        command: &str,
+        text: &str,
+        files: Vec<OpenCodeFileInput>,
+    ) -> Result<(), OpenCodePromptDispatchError> {
+        let (operation, body) = if command == "compact" {
+            ("compact", json!({}))
+        } else {
+            (
+                "command",
+                json!({"command": command, "text": text, "files": files, "agents": [], "delivery": "queue"}),
+            )
+        };
+        self.dispatch_input(
+            format!("/api/session/{}/{operation}", path_segment(session_id)),
+            body,
+        )?;
+        Ok(())
+    }
+
+    fn dispatch_input(
+        &mut self,
+        path: String,
+        body: Value,
+    ) -> Result<OpenCodeHttpResponse, OpenCodePromptDispatchError> {
+        let body = serde_json::to_vec(&body)
+            .map_err(|error| OpenCodePromptDispatchError::Unsent(error.to_string()))?;
         let response = self.transport.execute_prompt(OpenCodeHttpRequest {
             method: OpenCodeHttpMethod::Post,
             path,
@@ -90,7 +124,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
                 OpenCodePromptDispatchError::Unknown(error)
             });
         }
-        decode_data(response).map_err(OpenCodePromptDispatchError::Unknown)
+        Ok(response)
     }
 
     pub(crate) fn context(&mut self, session_id: &str) -> Result<Vec<Value>, String> {

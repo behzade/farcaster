@@ -38,7 +38,7 @@ read_id() {
 }
 
 read_type() {
-  for candidate in get_state get_commands prompt steer follow_up abort set_model set_thinking_level set_steering_mode set_follow_up_mode get_entries; do
+  for candidate in get_state get_commands compact prompt steer follow_up abort set_model set_thinking_level set_steering_mode set_follow_up_mode get_entries; do
     case "$1" in
       *\"type\":\"$candidate\"*) printf '%s' "$candidate"; return ;;
     esac
@@ -83,6 +83,13 @@ while IFS= read -r line; do
       ;;
     get_commands)
       printf '{"type":"response","id":"%s","command":"get_commands","success":true,"data":{"commands":[]}}\n' "$id"
+      ;;
+    compact)
+      if [ "$case_name" = 'compaction-fails' ]; then
+        printf '{"type":"response","id":"%s","command":"compact","success":false,"error":"compaction failed"}\n' "$id"
+      else
+        printf '{"type":"response","id":"%s","command":"compact","success":true,"data":{}}\n' "$id"
+      fi
       ;;
     prompt)
       message=$(printf '%s' "$line" | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')

@@ -24,7 +24,7 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
     }}))
     .map_err(|error| error.to_string())?;
     let server = thread::spawn(move || -> Result<(), String> {
-        for _ in 0..4 {
+        for _ in 0..5 {
             let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
             let recorded = Arc::clone(&recorded);
             let session_body = session_body.clone();
@@ -76,6 +76,14 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
                         write!(stream, "data: {event}\n\n").map_err(|error| error.to_string())?;
                         stream.flush().map_err(|error| error.to_string())?;
                     }
+                }
+                if request.starts_with("POST /api/session/saved-session/compact ") {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+                        )
+                        .map_err(|error| error.to_string())?;
+                    return Ok(());
                 }
                 if request.starts_with("POST /api/session/saved-session/prompt ") {
                     let body = request
@@ -158,6 +166,33 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
             locator: "saved-session".into(),
         })
     );
+    assert!(
+        worker
+            .send("/compact extra".into(), WorkerSendMode::Prompt)
+            .is_err()
+    );
+    assert!(
+        worker
+            .send_with_images(
+                "/compact".into(),
+                WorkerSendMode::Prompt,
+                vec![crate::protocol::PromptImage::new(
+                    "AQID".into(),
+                    "image/png".into()
+                )]
+            )
+            .is_err()
+    );
+    assert!(worker.submit_prompt(
+        "compact-submission".into(),
+        "/compact".into(),
+        WorkerSendMode::Prompt,
+        vec![]
+    )?);
+    assert!(
+        matches!(worker.poll(), Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages { submission_id, message, .. }))
+        if submission_id == "compact-submission" && message == "/compact")
+    );
     worker.send("after restart".into(), WorkerSendMode::Prompt)?;
     let unknown_id = match worker.poll() {
         Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. }) => submission_id,
@@ -200,6 +235,18 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
             .any(|request| request.starts_with("GET /api/session/saved-session "))
     );
     assert!(!requests.iter().any(|request| request.contains("/fork")));
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("POST /api/session/saved-session/compact "))
+            .count(),
+        1
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.contains("\"text\":\"/compact"))
+    );
     assert!(
         requests
             .iter()
@@ -699,6 +746,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
         model: None,
         effort: None,
         effort_catalog: HashMap::new(),
+        commands: HashSet::new(),
         access_mode: crate::agents::HarnessAccessMode::Sandboxed,
         incoming,
         reasoning_started: true,
@@ -882,6 +930,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         model: None,
         effort: None,
         effort_catalog: HashMap::new(),
+        commands: HashSet::new(),
         access_mode: crate::agents::HarnessAccessMode::Sandboxed,
         incoming,
         reasoning_started: false,
@@ -987,6 +1036,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         model: None,
         effort: None,
         effort_catalog: HashMap::new(),
+        commands: HashSet::new(),
         access_mode: crate::agents::HarnessAccessMode::Sandboxed,
         incoming,
         reasoning_started: false,
@@ -1287,6 +1337,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
         model: None,
         effort: None,
         effort_catalog: HashMap::new(),
+        commands: HashSet::new(),
         access_mode: crate::agents::HarnessAccessMode::Sandboxed,
         incoming,
         reasoning_started: false,

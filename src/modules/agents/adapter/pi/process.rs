@@ -403,6 +403,11 @@ impl PiRpcProcess {
     }
 
     pub(crate) fn send_request(&mut self, mut request: SessionCommand) -> Result<String, String> {
+        let compact_prompt = matches!(&request, SessionCommand::Prompt { message, .. }
+            if super::protocol::compact_invocation(message).is_some());
+        if compact_prompt && self.activity != WorkerActivityState::Idle {
+            return Err("Run /compact when the current turn has finished".into());
+        }
         if matches!(&request, SessionCommand::Prompt { .. })
             && self.sandbox_adapter.is_some()
             && self.sandbox_mode.is_none()
@@ -479,6 +484,11 @@ impl PiRpcProcess {
         }
         if starts_run {
             self.set_activity(WorkerActivityState::Starting);
+        }
+        if compact_prompt {
+            self.queued.push_back(SessionEvent::Activity(
+                serde_json::json!({"type":"compaction_start", "reason":"manual"}).into(),
+            ));
         }
         Ok(id)
     }
@@ -1027,6 +1037,22 @@ impl PiRpcProcess {
                         self.commands = commands;
                     }
                     let prompt_operation = response.operation();
+                    if command == "compact"
+                        && let Some(mode) = self.pending_prompt_modes.remove(&id)
+                    {
+                        self.set_activity(WorkerActivityState::Idle);
+                        self.queued.push_back(SessionEvent::Activity(
+                            serde_json::json!({"type":"compaction_end", "errorMessage": response.result.as_ref().err().map(|error| &error.message)}).into(),
+                        ));
+                        self.queued.push_back(SessionEvent::Activity(
+                            serde_json::json!({"type":"agent_settled"}).into(),
+                        ));
+                        response = remap_response(
+                            response,
+                            crate::agents::SessionOperation::Prompt(mode),
+                            crate::agents::SessionResponsePayload::Prompt(mode),
+                        );
+                    }
                     if matches!(prompt_operation, crate::agents::SessionOperation::Prompt(_)) {
                         self.pending_prompt_modes.remove(&id);
                     }

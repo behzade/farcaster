@@ -148,6 +148,61 @@ fn steer_is_encoded_independently_from_queue() -> Result<(), String> {
 }
 
 #[test]
+fn slash_commands_use_native_endpoints_and_preserve_attachments() -> Result<(), String> {
+    let mut client = OpenCodeClient::new(FakeTransport::with_responses([
+        response(200, json!({"data":{"id":"compact-1"}})),
+        response(204, Value::Null),
+    ]));
+    client
+        .run_command("session/1", "compact", "", vec![])
+        .map_err(prompt_error)?;
+    client
+        .run_command(
+            "session/1",
+            "review",
+            "src/lib.rs  tests",
+            vec![OpenCodeFileInput {
+                uri: "data:image/png;base64,AQID".into(),
+                name: Some("image-1".into()),
+                description: None,
+            }],
+        )
+        .map_err(prompt_error)?;
+    let requests = client.into_transport().requests;
+    assert_eq!(requests[0].path, "/api/session/session%2F1/compact");
+    assert_eq!(body(&requests[0]), json!({}));
+    assert_eq!(requests[1].path, "/api/session/session%2F1/command");
+    assert_eq!(
+        body(&requests[1]),
+        json!({
+            "command":"review", "text":"src/lib.rs  tests", "delivery":"queue", "agents":[],
+            "files":[{"uri":"data:image/png;base64,AQID", "name":"image-1"}]
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn command_failures_distinguish_rejection_from_uncertain_execution() {
+    for (status, unknown) in [(400, false), (404, false), (500, true)] {
+        let mut client = OpenCodeClient::new(FakeTransport::with_responses([response(
+            status,
+            json!({"_tag":"CommandExecutionError", "message":"failed"}),
+        )]));
+        let error = client
+            .run_command("session-1", "review", "", vec![])
+            .expect_err("failure");
+        assert_eq!(
+            matches!(
+                error,
+                super::contract::OpenCodePromptDispatchError::Unknown(_)
+            ),
+            unknown
+        );
+    }
+}
+
+#[test]
 fn prompt_only_rejects_receipts_that_prove_no_admission() {
     for (response, unknown) in [
         (

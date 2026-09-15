@@ -42,6 +42,57 @@ fn queue_rpc_fixture_case(project: &Path, case: &str) -> TestResult<AgentLaunchC
     Ok(AgentLaunchConfig::test_script(&script, vec![case.into()]))
 }
 
+#[test]
+fn compact_slash_command_preserves_prompt_correlation_and_settles() -> TestResult {
+    use crate::agents::SessionTransport;
+    for case in ["normal", "compaction-fails"] {
+        let project = tempdir()?;
+        let command = queue_rpc_fixture_case(project.path(), case)?;
+        let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+        let id = rpc.send_request(SessionCommand::Prompt {
+            mode: crate::protocol::PromptMode::Normal,
+            message: "/compact keep decisions".into(),
+            images: vec![],
+        })?;
+        let response = loop {
+            let item = rpc.incoming.recv_timeout(Duration::from_secs(5))?;
+            match rpc.route(item) {
+                SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                    break response;
+                }
+                other => rpc.queued.push_back(other),
+            }
+        };
+        assert_eq!(
+            response.operation(),
+            crate::agents::SessionOperation::Prompt(crate::protocol::PromptMode::Normal)
+        );
+        assert_eq!(response.result.is_ok(), case == "normal");
+        assert_eq!(rpc.activity, WorkerActivityState::Idle);
+        assert!(rpc.pending_prompt_modes.is_empty());
+        assert!(rpc.queued.iter().any(|event| matches!(event, SessionEvent::Activity(event) if event.value()["type"] == "agent_settled")));
+        let requests = fs::read_to_string(project.path().join("fixture-rpc-lines"))?;
+        let compact: Value = requests
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find(|row| row["type"] == "compact")
+            .ok_or("no compact RPC")?;
+        assert_eq!(compact["customInstructions"], "keep decisions");
+        assert!(!requests.contains("\"message\":\"/compact"));
+        rpc.set_activity(WorkerActivityState::Working);
+        assert!(
+            rpc.send_request(SessionCommand::Prompt {
+                mode: crate::protocol::PromptMode::Normal,
+                message: "/compact".into(),
+                images: vec![]
+            })
+            .is_err()
+        );
+        rpc.close()?;
+    }
+    Ok(())
+}
+
 fn installed_pi_fixture(project: &Path) -> TestResult<AgentLaunchConfig> {
     let pi = resolve_agent_program(
         Path::new("pi"),

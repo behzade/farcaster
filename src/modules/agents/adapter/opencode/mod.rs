@@ -2,6 +2,7 @@ mod catalog;
 mod client;
 #[cfg(test)]
 mod client_tests;
+mod commands;
 mod contract;
 mod event;
 mod server;

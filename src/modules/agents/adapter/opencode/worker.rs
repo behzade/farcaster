@@ -123,6 +123,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             effort: launch.effort,
             effort_catalog: HashMap::new(),
             context_windows: HashMap::new(),
+            commands: HashSet::new(),
             access_mode: launch.access_mode,
             incoming,
             reasoning_started: false,
@@ -281,6 +282,11 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
                     ))
                 })
                 .collect(),
+            commands: metadata
+                .commands
+                .iter()
+                .filter_map(|command| command["name"].as_str().map(str::to_owned))
+                .collect(),
             access_mode: command.access_mode,
             incoming,
             reasoning_started: false,
@@ -419,22 +425,7 @@ fn load_main_metadata(
             }))
         })
         .collect();
-    let command_response = client.commands(directory)?;
-    let command_rows = command_response
-        .as_array()
-        .or_else(|| command_response.get("data").and_then(Value::as_array))
-        .cloned()
-        .unwrap_or_default();
-    let commands = command_rows
-        .iter()
-        .filter_map(|command| {
-            Some(json!({
-                "name": command.get("name")?.as_str()?,
-                "description": command.get("description").and_then(Value::as_str),
-                "source": "prompt",
-            }))
-        })
-        .collect();
+    let commands = super::commands::catalog(client.commands(directory)?)?;
     Ok(
         crate::modules::agents::adapter::main_session::MainSessionMetadata {
             models,
@@ -545,6 +536,7 @@ struct OpenCodeWorkerSession {
     effort: Option<String>,
     effort_catalog: HashMap<(String, String), Vec<String>>,
     context_windows: HashMap<(String, String), u64>,
+    commands: HashSet<String>,
     access_mode: crate::agents::HarnessAccessMode,
     incoming: mpsc::Receiver<Result<super::contract::OpenCodeEvent, String>>,
     reasoning_started: bool,
@@ -597,6 +589,36 @@ impl OpenCodeWorkerSession {
         files: Vec<super::contract::OpenCodeFileInput>,
         images: Vec<crate::protocol::PromptImage>,
     ) -> Result<bool, super::contract::OpenCodePromptDispatchError> {
+        if let Some((name, text)) = super::commands::invocation(&message, &self.commands) {
+            use super::contract::OpenCodePromptDispatchError::Unsent;
+            if mode != WorkerSendMode::Prompt {
+                return Err(Unsent(format!(
+                    "Run /{name} as a command rather than a queued or steering message"
+                )));
+            }
+            if name == "compact" && (!text.trim().is_empty() || !files.is_empty()) {
+                return Err(Unsent("Usage: /compact (without attachments)".into()));
+            }
+            self.server
+                .client()
+                .run_command(&self.session_id, name, text, files)?;
+            self.ignore_execution_events = false;
+            let activity = match submission_id {
+                Some(submission_id) => WorkerActivity::SubmittedInputDeliveredWithImages {
+                    submission_id,
+                    mode,
+                    message,
+                    images,
+                },
+                None => WorkerActivity::InputDeliveredWithImages {
+                    mode,
+                    message,
+                    images,
+                },
+            };
+            self.pending.push_back(WorkerEvent::Activity(activity));
+            return Ok(true);
+        }
         let delivery = match mode {
             WorkerSendMode::Prompt | WorkerSendMode::Queue => {
                 super::contract::OpenCodeDelivery::Queue
