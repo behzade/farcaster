@@ -1,15 +1,4 @@
 use super::*;
-use crate::app::reviews::delivery::Submission;
-
-const SESSION_REVIEWS_SQL: &str = "SELECT r.id,r.artifact,r.turn_id,t.prompt_id,t.user_ordinal
-    FROM session_reviews r LEFT JOIN session_turns t ON t.id=r.turn_id
-    WHERE r.session_id IN (
-        SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id
-         WHERE s.harness=?1 AND p.path=?2 AND s.locator=?3
-        UNION
-        SELECT s.id FROM sessions s JOIN projects p ON p.id=s.project_id
-         WHERE s.harness=?1 AND p.path=?2 AND s.backend_id=?4
-    ) ORDER BY r.seq";
 
 impl StateStore {
     /// Session provisioning is a caller-binding lifecycle operation, not an
@@ -99,67 +88,6 @@ impl StateStore {
             return Err("review execution no longer belongs to the registered session".into());
         }
         Ok(())
-    }
-
-    pub(crate) fn record_review_position(
-        &self,
-        turn_id: &str,
-        ordinal: usize,
-    ) -> Result<(), String> {
-        self.connection
-            .execute(
-                "UPDATE session_turns SET user_ordinal=?2 WHERE id=?1 AND user_ordinal IS NULL",
-                params![turn_id, usize_to_i64(ordinal)],
-            )
-            .map(|_| ())
-            .map_err(|e| format!("save review turn position: {e}"))
-    }
-
-    pub(crate) fn session_reviews(
-        &self,
-        backend: Backend,
-        project: &Path,
-        session: &Path,
-    ) -> Result<Vec<Submission>, String> {
-        let native_id = crate::agents::external_session_identity(session)
-            .filter(|(harness, _)| *harness == backend)
-            .map(|(_, id)| id);
-        let mut statement = self
-            .connection
-            .prepare(SESSION_REVIEWS_SQL)
-            .map_err(|e| format!("prepare session reviews: {e}"))?;
-        let rows = statement
-            .query_map(
-                params![
-                    backend,
-                    crate::sessions::normalize_session_path(project).to_string_lossy(),
-                    crate::sessions::normalize_session_path(session).to_string_lossy(),
-                    native_id
-                ],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Option<String>>(2)?,
-                        r.get::<_, Option<String>>(3)?,
-                        r.get::<_, Option<usize>>(4)?,
-                    ))
-                },
-            )
-            .map_err(|e| format!("load session reviews: {e}"))?;
-        rows.map(|row| {
-            let (id, artifact, turn_id, prompt_id, user_ordinal) =
-                row.map_err(|e| e.to_string())?;
-            Ok(Submission {
-                id,
-                artifact: serde_json::from_str(&artifact)
-                    .map_err(|e| format!("decode stored review: {e}"))?,
-                turn_id,
-                prompt_id,
-                user_ordinal,
-            })
-        })
-        .collect()
     }
 }
 

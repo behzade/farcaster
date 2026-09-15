@@ -1,18 +1,19 @@
 //! Decode review artifacts from successful tool results, not model prose or arguments.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{
-    app::reviews::Review,
-    conversation::{ToolExecutionState, TranscriptItem},
+    app::reviews::{Review, ReviewLocation},
+    conversation::{ToolExecutionState, TranscriptItem, TranscriptKind},
 };
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct Artifact {
     version: u32,
     #[serde(default)]
+    #[allow(dead_code)] // the transcript card renders from the review itself
     pub(crate) id: Option<String>,
     pub(crate) project: PathBuf,
     pub(crate) review: Review,
@@ -57,6 +58,66 @@ fn find(value: &Value, depth: usize, budget: &mut usize) -> Option<Artifact> {
             .find_map(|value| find(value, depth + 1, budget)),
         _ => None,
     }
+}
+
+/// Rebuild a review artifact from a submit_review row's own arguments when
+/// history replay dropped the echoing result. The row itself is the durable
+/// carrier of the review; rendering never depends on a separately stored card.
+pub(crate) fn hydration_result(item: &TranscriptItem, project: &Path) -> Option<Value> {
+    if item.kind != TranscriptKind::Tool
+        || item.tool_execution_state() != Some(ToolExecutionState::Succeeded)
+        || from_item(item).is_some()
+    {
+        return None;
+    }
+    let details = item.tool_details.as_ref()?;
+    if !details.name.contains("submit_review") {
+        return None;
+    }
+    let review = review_from_arguments(&details.arguments)?;
+    Some(json!({
+        "farcaster_review": {"version": 1, "project": project, "review": review}
+    }))
+}
+
+fn review_from_arguments(arguments: &Value) -> Option<Review> {
+    // Farcaster MCP proxies may wrap the parameters one level deep.
+    [Some(arguments), arguments.get("args")]
+        .into_iter()
+        .flatten()
+        .find_map(|candidate| {
+            let title = candidate.get("title").and_then(Value::as_str)?;
+            let items = candidate
+                .get("items")?
+                .as_array()?
+                .iter()
+                .filter_map(|location| {
+                    let path = location.get("path")?.as_str()?.to_owned();
+                    let line = |key: &str| {
+                        location
+                            .get(key)
+                            .and_then(Value::as_u64)
+                            .and_then(|line| u32::try_from(line).ok())
+                    };
+                    Some(ReviewLocation {
+                        path,
+                        start_line: line("start_line"),
+                        end_line: line("end_line"),
+                        note: location
+                            .get("note")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let review = Review {
+                title: title.to_owned(),
+                items,
+            };
+            review.validate().ok()?;
+            Some(review)
+        })
 }
 
 #[cfg(test)]

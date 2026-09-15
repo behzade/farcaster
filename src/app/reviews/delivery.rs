@@ -4,18 +4,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct Submission {
-    pub(crate) id: String,
-    pub(crate) artifact: Value,
-    pub(crate) prompt_id: Option<String>,
-    pub(crate) turn_id: Option<String>,
-    pub(crate) user_ordinal: Option<usize>,
-}
-
 #[derive(Default)]
 struct Updates {
     revision: AtomicU64,

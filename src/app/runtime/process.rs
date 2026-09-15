@@ -499,10 +499,12 @@ impl RuntimeOwner {
                 }
                 if !should_publish {
                     SnapshotChange::None
-                } else if matches!(
-                    event.kind(),
-                    SessionActivityKind::MessageUpdated | SessionActivityKind::ToolUpdated
-                ) {
+                } else if self.active_snapshot().conversation.running
+                    && matches!(
+                        event.kind(),
+                        SessionActivityKind::MessageUpdated | SessionActivityKind::ToolUpdated
+                    )
+                {
                     SnapshotChange::Streaming
                 } else {
                     SnapshotChange::Immediate
@@ -747,8 +749,7 @@ impl RuntimeOwner {
             .or_else(|| active_snapshot.selected_session.clone());
         snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
         snapshot.transcript_changed_from = self.transcript_changed_from.take();
-        self.review_projection
-            .apply(self.state.as_ref(), &mut snapshot);
+        self.review_projection.apply(&mut snapshot);
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
             snapshot: Arc::new(snapshot),

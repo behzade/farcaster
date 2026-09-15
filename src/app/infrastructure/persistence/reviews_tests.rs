@@ -41,7 +41,6 @@ fn review_submission_is_read_only_for_session_identity_and_uses_captured_turn() 
     let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let caller = caller(temp.path(), "native");
     let first = execution(&store, &caller, "first");
-    let second = execution(&store, &caller, "second");
     let before: (i64, String) = store
         .connection
         .query_row("SELECT id,locator FROM sessions", [], |r| {
@@ -57,22 +56,22 @@ fn review_submission_is_read_only_for_session_identity_and_uses_captured_turn() 
         })
         .expect("session");
     assert_eq!(before, after);
-    let saved = store.session_reviews(
-        Backend::Cursor,
-        temp.path(),
-        &temp.path().join("session-locators/cursor-cli/native"),
-    )?;
-    assert_eq!(saved[0].turn_id.as_deref(), Some("first"));
-    assert_eq!(saved[0].prompt_id.as_deref(), Some("first"));
-    assert_ne!(saved[0].turn_id.as_deref(), Some(second.turn_id.as_str()));
+    let saved: String = store
+        .connection
+        .query_row(
+            "SELECT turn_id FROM session_reviews WHERE id='review'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("review row");
+    assert_eq!(saved, "first");
     Ok(())
 }
 
 #[test]
-fn bindings_and_reviews_survive_merges_reopen_and_delete() -> Result<(), String> {
+fn reviews_survive_identity_merges_and_refuse_stranger_callers() -> Result<(), String> {
     let temp = tempfile::tempdir().expect("project");
-    let database = temp.path().join("state.sqlite3");
-    let store = StateStore::open_at(&database)?;
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let caller = caller(temp.path(), "native");
     let execution = execution(&store, &caller, "turn");
     let other = self::caller(temp.path(), "other");
@@ -85,19 +84,12 @@ fn bindings_and_reviews_survive_merges_reopen_and_delete() -> Result<(), String>
     tx.commit().expect("merge");
     store.save_review(&caller, &execution, &artifact(temp.path(), "review"))?;
     drop(store);
-    let store = StateStore::open_at(&database)?;
-    let path = temp.path().join("session-locators/cursor-cli/native");
-    assert_eq!(
-        store
-            .session_reviews(Backend::Cursor, temp.path(), &path)?
-            .len(),
-        1
-    );
-    assert!(
-        store
-            .session_reviews(Backend::Antigravity, temp.path(), &path)?
-            .is_empty()
-    );
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let saved: i64 = store
+        .connection
+        .query_row("SELECT count(*) FROM session_reviews", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(saved, 1, "the merge kept the saved review");
     assert!(
         store
             .save_review(
@@ -106,15 +98,6 @@ fn bindings_and_reviews_survive_merges_reopen_and_delete() -> Result<(), String>
                 &artifact(temp.path(), "wrong")
             )
             .is_err()
-    );
-    store
-        .connection
-        .execute("DELETE FROM sessions", [])
-        .expect("delete");
-    assert!(
-        store
-            .session_reviews(Backend::Cursor, temp.path(), &path)?
-            .is_empty()
     );
     Ok(())
 }
@@ -157,59 +140,15 @@ fn migration_preserves_legacy_artifacts_without_guessing_a_turn() -> Result<(), 
     store.connection.execute_batch("DROP TABLE session_reviews; DROP TABLE session_turns; UPDATE meta SET value='16' WHERE key='schema_version';").expect("old schema");
     drop(store);
     let store = StateStore::open_at(&database)?;
-    let saved = store.session_reviews(
-        Backend::Cursor,
-        temp.path(),
-        &temp.path().join("session-locators/cursor-cli/native"),
-    )?;
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].id, "legacy");
-    assert!(saved[0].turn_id.is_none());
-    Ok(())
-}
-
-#[test]
-fn review_lookup_uses_session_indexes_without_reading_prompt_journals() -> Result<(), String> {
-    let temp = tempfile::tempdir().expect("project");
-    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
-    let caller = caller(temp.path(), "native");
-    let execution = execution(&store, &caller, "turn");
-    store.save_review(&caller, &execution, &artifact(temp.path(), "review"))?;
-    let mut statement = store
+    let saved: String = store
         .connection
-        .prepare(&format!("EXPLAIN QUERY PLAN {SESSION_REVIEWS_SQL}"))
-        .expect("query plan");
-    let plan = statement
-        .query_map(
-            params![
-                Backend::Cursor,
-                temp.path().to_string_lossy(),
-                "locator",
-                "native"
-            ],
-            |row| row.get::<_, String>(3),
+        .query_row(
+            "SELECT json_extract(artifact,'$.farcaster_review.id') FROM session_reviews",
+            [],
+            |r| r.get(0),
         )
-        .expect("plan rows")
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .expect("decode plan")
-        .join("\n");
-    assert!(plan.contains("session_reviews_session"), "{plan}");
-    assert!(plan.contains("sessions_native_identity"), "{plan}");
-    assert!(!plan.contains("session_events"), "{plan}");
-    store
-        .connection
-        .execute_batch("DROP TABLE session_events;")
-        .expect("drop test journal");
-    assert_eq!(
-        store
-            .session_reviews(
-                Backend::Cursor,
-                temp.path(),
-                &temp.path().join("session-locators/cursor-cli/native")
-            )?
-            .len(),
-        1
-    );
+        .expect("legacy review");
+    assert_eq!(saved, "legacy");
     Ok(())
 }
 
@@ -233,14 +172,5 @@ fn identical_backend_ids_in_different_projects_keep_distinct_review_owners() -> 
     );
     store.save_review(&a, &turn_a, &artifact(&first, "first-review"))?;
     store.save_review(&b, &turn_b, &artifact(&second, "second-review"))?;
-    let path = temp.path().join("session-locators/cursor-cli/native");
-    assert_eq!(
-        store.session_reviews(Backend::Cursor, &first, &path)?[0].id,
-        "first-review"
-    );
-    assert_eq!(
-        store.session_reviews(Backend::Cursor, &second, &path)?[0].id,
-        "second-review"
-    );
     Ok(())
 }

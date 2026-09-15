@@ -224,12 +224,15 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
         .expect("submit");
     assert!(crate::app::reviews::delivery::revision() > revision);
     let store = crate::app::persistence::StateStore::open_at(&database).unwrap();
-    let path = temp.path().join("session-locators/cursor-cli/review-test");
-    let saved = store
-        .session_reviews(crate::agents::Backend::Cursor, temp.path(), &path)
+    drop(store);
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    let saved: String = connection
+        .query_row("SELECT artifact FROM session_reviews", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].artifact, serde_json::Value::Object(result));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&saved).unwrap(),
+        serde_json::Value::Object(result)
+    );
     rusqlite::Connection::open(&database).unwrap().execute_batch(
         "CREATE TRIGGER reject_review BEFORE INSERT ON session_reviews BEGIN SELECT RAISE(FAIL,'disk failure'); END;"
     ).unwrap();
@@ -240,10 +243,11 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
         .expect("failed commit must fail MCP");
     assert!(error.contains("disk failure"));
     assert_eq!(
-        store
-            .session_reviews(crate::agents::Backend::Cursor, temp.path(), &path)
-            .unwrap()
-            .len(),
+        connection
+            .query_row("SELECT count(*) FROM session_reviews", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .unwrap(),
         1
     );
 }
