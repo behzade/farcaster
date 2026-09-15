@@ -15,7 +15,11 @@ mkdir -m 700 "$XDG_RUNTIME_DIR"
 export WAYLAND_DISPLAY=farcaster-probe
 export LIBGL_ALWAYS_SOFTWARE=1
 unset DISPLAY LD_PRELOAD LD_LIBRARY_PATH
-ulimit -c 0
+if [ "${FARCASTER_PROBE_ENABLE_CORES:-0}" = 1 ]; then
+    ulimit -c unlimited
+else
+    ulimit -c 0
+fi
 
 {
     uname -a

@@ -1,0 +1,34 @@
+name: AppImage SIGILL diagnostic
+
+on:
+  push:
+    branches:
+      - codex/nixos-sigill-diagnostic
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux-x86_64
+          path: candidate
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: "35013879961"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-x86_64
+          path: candidate/*
+          if-no-files-found: error
+
+  diagnose:
+    needs: stage
+    uses: ./.github/workflows/appimage-startup.yml
+    with:
+      artifact: release-linux-x86_64

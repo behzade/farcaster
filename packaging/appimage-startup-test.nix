@@ -9,6 +9,7 @@ let
   probe = pkgs.writeShellScriptBin "probe-farcaster-appimage" ''
     export FARCASTER_PROBE_APPIMAGE_RUNNER=${pkgs.appimage-run}/bin/appimage-run
     export FARCASTER_PROBE_HOST_WAYLAND=${pkgs.wayland}/lib/libwayland-client.so.0
+    export FARCASTER_PROBE_ENABLE_CORES=1
     exec ${pkgs.bash}/bin/bash ${../scripts/probe-appimage-startup.sh} \
       ${candidate} /tmp/probe-logs
   '';
@@ -44,6 +45,7 @@ pkgs.testers.runNixOSTest {
       wayland-utils
       xorg-server
       dbus
+      gdb
     ];
     system.stateVersion = "26.05";
   };
@@ -60,6 +62,18 @@ pkgs.testers.runNixOSTest {
     )
     machine.copy_from_machine("/tmp/probe-console.log")
     machine.copy_from_machine("/tmp/probe-logs")
+    if status != 0:
+        machine.succeed(
+            "binary=$(find /home/tester/.cache/appimage-run -path '*/usr/bin/farcaster' "
+            "-type f -print -quit); "
+            "coredumpctl dump farcaster --output=/tmp/farcaster.core; "
+            "gdb -q -batch -ex 'set pagination off' -ex 'info registers' "
+            "-ex 'x/24i $pc-48' -ex 'thread apply all bt' "
+            '"$binary" /tmp/farcaster.core '
+            "> /tmp/probe-logs/sigill-gdb.txt 2>&1",
+        )
+        machine.copy_from_machine("/tmp/probe-logs/sigill-gdb.txt")
+        print(machine.succeed("cat /tmp/probe-logs/sigill-gdb.txt"))
     assert status == 0, machine.succeed("cat /tmp/probe-console.log")
   '';
 }
