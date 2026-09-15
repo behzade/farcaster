@@ -626,6 +626,10 @@ impl OpenCodeWorkerSession {
             WorkerSendMode::Steer => super::contract::OpenCodeDelivery::Steer,
         };
         let clears_abort_barrier = self.ignore_execution_events;
+        if !self.turn_active {
+            self.caller_identity
+                .begin_execution(submission_id.as_deref());
+        }
         let pending = PendingOpenCodeDelivery {
             submission_id,
             mode,
@@ -719,6 +723,8 @@ impl OpenCodeWorkerSession {
 
     fn delivered_input(&mut self, native_id: &str) -> Option<WorkerEvent> {
         let delivery = self.pending_deliveries.remove(native_id)?;
+        self.caller_identity
+            .begin_execution(delivery.submission_id.as_deref());
         self.delivered_awaiting_execution
             .insert(native_id.to_owned());
         if delivery.clears_abort_barrier {

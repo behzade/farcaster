@@ -50,11 +50,12 @@ pub(super) fn submit(
     for item in &review.items {
         resolve_path(&caller.project, &item.path)?;
     }
-    // The normal tool-result transcript/history carries this artifact. No
-    // editor side effect, separate UI event, or second persistence path.
+    // Keep the same ID in the journal and MCP response so preserved backend
+    // results can be deduplicated without collapsing repeated submissions.
     Ok(serde_json::json!({
         "farcaster_review": {
             "version": 1,
+            "id": uuid::Uuid::new_v4().to_string(),
             "project": caller.project.canonicalize().map_err(|e| e.to_string())?,
             "review": review,
         }

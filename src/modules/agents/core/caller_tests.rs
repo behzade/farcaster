@@ -33,6 +33,53 @@ fn context(registry: &CallerRegistry, identity: &CallerIdentity) -> CallerContex
         .expect("registered caller")
 }
 
+#[test]
+fn execution_binding_is_captured_before_later_turns_and_cleared_on_rebind() {
+    let registry = CallerRegistry::default();
+    let turns = Arc::new(Mutex::new(Vec::new()));
+    let captured = turns.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(|_| Ok(42))),
+        Some(Arc::new(move |turn| {
+            captured.lock().expect("turns").push(turn.clone());
+            Ok(())
+        })),
+    );
+    let identity = identity(&registry, Path::new("/project"), Backend::Cursor);
+    identity.bind("native");
+    identity.begin_execution(Some("first"));
+    let (_, first) = registry
+        .resolve_execution(identity.token())
+        .expect("first execution");
+    identity.set_activity(WorkerActivityState::Working);
+    assert_eq!(
+        registry
+            .resolve_execution(identity.token())
+            .expect("unchanged")
+            .1,
+        first
+    );
+    identity.begin_execution(Some("first"));
+    assert_eq!(
+        turns.lock().expect("turns").len(),
+        1,
+        "receipt replay cannot create another turn"
+    );
+    identity.begin_execution(Some("second"));
+    assert_eq!(first.prompt_id.as_deref(), Some("first"));
+    assert_eq!(
+        registry
+            .resolve_execution(identity.token())
+            .expect("second")
+            .1
+            .prompt_id
+            .as_deref(),
+        Some("second")
+    );
+    identity.bind("another-session");
+    assert!(registry.resolve_execution(identity.token()).is_err());
+}
+
 fn child(
     registry: &CallerRegistry,
     parent: &CallerContext,

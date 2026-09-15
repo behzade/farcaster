@@ -55,6 +55,18 @@ pub(crate) fn start(
             crate::app::persistence::StateStore::open_at(&database)?.save_worker_family(link)
         },
     )));
+    let binding_database = server.service.database.clone();
+    let execution_database = binding_database.clone();
+    crate::agents::CallerRegistry::shared().set_execution_sinks(
+        Some(std::sync::Arc::new(move |caller| {
+            crate::app::persistence::StateStore::open_at(&binding_database)?
+                .register_caller_session(caller)
+        })),
+        Some(std::sync::Arc::new(move |execution| {
+            crate::app::persistence::StateStore::open_at(&execution_database)?
+                .register_execution(execution)
+        })),
+    );
     *current = Some(server);
     Ok(McpServer)
 }
@@ -183,6 +195,7 @@ impl Drop for McpServer {
         if let Ok(mut current) = SERVER.lock() {
             drop(current.take());
             crate::agents::CallerRegistry::shared().set_family_sink(None);
+            crate::agents::CallerRegistry::shared().set_execution_sinks(None, None);
         }
     }
 }

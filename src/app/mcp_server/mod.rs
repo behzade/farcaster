@@ -111,9 +111,15 @@ impl FarcasterMcp {
     ) -> Result<Json<JsonObject>, String> {
         let token = caller_token(&parts)
             .ok_or_else(|| "review requires a registered Farcaster caller".to_owned())?;
+        let database = self.database.clone();
+        let (caller, execution) =
+            crate::agents::CallerRegistry::shared().resolve_execution(&token)?;
         let result = tokio::task::spawn_blocking(move || {
-            let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
-            reviews::submit(&caller, params)
+            let artifact = reviews::submit(&caller, params)?;
+            crate::app::persistence::StateStore::open_at(&database)?
+                .save_review(&caller, &execution, &artifact)?;
+            crate::app::reviews::delivery::notify();
+            Ok::<_, String>(artifact)
         })
         .await
         .map_err(|error| format!("review task failed: {error}"))??;

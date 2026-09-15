@@ -120,6 +120,8 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
         "INSERT INTO worker_families SELECT ?1, execution_json FROM worker_families WHERE child_id=?2
          ON CONFLICT(child_id) DO NOTHING",
         "UPDATE session_ops SET session_id=?1 WHERE session_id=?2",
+        "UPDATE session_turns SET session_id=?1 WHERE session_id=?2",
+        "UPDATE session_reviews SET session_id=?1 WHERE session_id=?2",
         "UPDATE sessions SET parent_id=?1 WHERE parent_id=?2 AND id != ?1",
     ] {
         tx.execute(sql, params![keep, other]).map_err(|error| format!("merge session state: {error}"))?;
@@ -170,6 +172,7 @@ pub(super) fn ensure_locator_session(
         let encoded = url::form_urlencoded::byte_serialize(identity.as_bytes()).collect::<String>();
         locator_root.join(harness.as_str()).join(encoded)
     };
+    let locator = crate::sessions::normalize_session_path(&locator);
     let locator_text = locator.to_string_lossy();
     let mut statement = transaction
         .prepare(

@@ -504,6 +504,9 @@ impl PiRpcProcess {
             .to_owned();
         let id = self.next_request_id();
         object.insert("id".into(), Value::String(id.clone()));
+        if command_type == "prompt" {
+            self.caller_identity.begin_execution(Some(&id));
+        }
         let encoded = encode_json_line(&command)
             .map_err(|error| format!("encode {command_type}: {error}"))?;
         self.pending.insert(id.clone(), command_type);
@@ -1122,6 +1125,7 @@ impl PiRpcProcess {
                 Ok(PiWireMessage::Event(event)) => {
                     match event.get("type").and_then(Value::as_str) {
                         Some("agent_start") => {
+                            self.caller_identity.ensure_execution();
                             self.apply_steering_settled = false;
                             self.set_activity(WorkerActivityState::Working);
                         }

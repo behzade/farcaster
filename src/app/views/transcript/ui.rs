@@ -1,6 +1,6 @@
 use gpui::Context;
 
-use super::{TranscriptRowUpdate, update_conversation_rows};
+use super::{TranscriptRowUpdate, refresh_presentation_rows, update_presentation_rows};
 use crate::app::FarcasterApp;
 use crate::conversation::TranscriptKind;
 
@@ -91,10 +91,10 @@ impl FarcasterApp {
         let _timing =
             crate::app::infrastructure::performance::Timing::new("transcript.project_rows");
         let transcript = self.views.transcript.read(cx);
-        update_conversation_rows(
+        update_presentation_rows(
             &transcript.rows,
-            &self.snapshot.conversation,
-            &snapshot.conversation,
+            &self.snapshot.transcript_presentation(),
+            &snapshot.transcript_presentation(),
             snapshot.transcript_changed_from,
         )
     }
@@ -170,7 +170,7 @@ impl FarcasterApp {
         update: TranscriptRowUpdate,
         cx: &mut Context<Self>,
     ) -> bool {
-        let items = self.snapshot.conversation.items.clone();
+        let items = self.snapshot.transcript_presentation().items.clone();
         self.views
             .transcript
             .update(cx, |transcript, _| transcript.apply_rows(update, &items))
@@ -182,14 +182,15 @@ impl FarcasterApp {
         _was_empty: bool,
         cx: &mut Context<Self>,
     ) {
-        let conversation = self.snapshot.conversation.clone();
+        let snapshot = std::sync::Arc::make_mut(&mut self.snapshot);
+        let index = if let Some(presentation) = &mut snapshot.transcript {
+            std::sync::Arc::make_mut(presentation).update_source(&snapshot.conversation, index)
+        } else {
+            index
+        };
+        let conversation = self.snapshot.transcript_presentation();
         self.views.transcript.update(cx, |transcript, cx| {
-            let rows = update_conversation_rows(
-                &transcript.rows,
-                &conversation,
-                &conversation,
-                Some(index),
-            );
+            let rows = refresh_presentation_rows(&transcript.rows, &conversation, index);
             let _changed = transcript.apply_rows(rows, &conversation.items);
             cx.notify();
         });

@@ -71,6 +71,7 @@ const STREAM_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const MAX_FAILURE_DETAILS_CHARS: usize = 12_000;
 const MAX_FAILURE_SUMMARY_CHARS: usize = 240;
 
+mod reviews;
 mod supervisor;
 mod types;
 mod worker_inputs;
@@ -99,6 +100,7 @@ enum SnapshotChange {
 }
 
 struct RuntimeOwner {
+    review_projection: reviews::ReviewProjection,
     project: PathBuf,
     harness: Option<Backend>,
     session_id: Option<String>,

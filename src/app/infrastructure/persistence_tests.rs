@@ -367,7 +367,7 @@ fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 16);
+    assert_eq!(database_schema_version(&database)?, 17);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -1290,7 +1290,7 @@ fn schema_v1_migrates_to_current_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 16);
+    assert_eq!(database_schema_version(&database)?, 17);
     Ok(())
 }
 
@@ -1328,7 +1328,7 @@ fn schema_v2_migrates_to_current_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 16);
+    assert_eq!(database_schema_version(&database)?, 17);
     Ok(())
 }
 
@@ -1368,7 +1368,7 @@ fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity(
     drop(connection);
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 16);
+    assert_eq!(database_schema_version(&database)?, 17);
     let cached = store.cached_sessions("")?;
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].id, "v3-legacy");
@@ -1402,7 +1402,7 @@ fn schema_v4_migrates_with_a_writable_provisional_title_column()
     // The migration itself adds provisional_title; prove the new column is the
     // registry's title source by writing through it and reopening.
     let mut store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 16);
+    assert_eq!(database_schema_version(&database)?, 17);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     let mut registry = store.load_registry()?;
     registry.drafts[0].title = Some("Migrated column".into());
@@ -1454,7 +1454,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, Backend::Pi);
-    assert_eq!(database_schema_version(&database)?, 16);
+    assert_eq!(database_schema_version(&database)?, 17);
     Ok(())
 }
 

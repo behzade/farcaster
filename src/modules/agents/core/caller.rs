@@ -29,12 +29,25 @@ pub(crate) struct WorkerFamilyLink {
 pub(crate) type WorkerFamilySink =
     Arc<dyn Fn(&WorkerFamilyLink) -> Result<(), String> + Send + Sync>;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExecutionBinding {
+    pub(crate) session_record: i64,
+    pub(crate) turn_id: String,
+    pub(crate) prompt_id: Option<String>,
+}
+
+pub(crate) type SessionRecordSink =
+    Arc<dyn Fn(&CallerContext) -> Result<i64, String> + Send + Sync>;
+pub(crate) type ExecutionSink = Arc<dyn Fn(&ExecutionBinding) -> Result<(), String> + Send + Sync>;
+
 #[derive(Clone, Default)]
 pub(crate) struct CallerRegistry {
     callers: Arc<Mutex<HashMap<String, RegisteredCaller>>>,
     family_sink: Arc<Mutex<Option<WorkerFamilySink>>>,
     inputs: Arc<Mutex<Vec<inputs::PendingInput>>>,
     expired_inputs: Arc<Mutex<Vec<inputs::ExpiredInput>>>,
+    session_sink: Arc<Mutex<Option<SessionRecordSink>>>,
+    execution_sink: Arc<Mutex<Option<ExecutionSink>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +73,8 @@ pub(crate) struct CallerContext {
 }
 
 struct RegisteredCaller {
+    session_record: Option<i64>,
+    execution: Option<ExecutionBinding>,
     worker_id: String,
     worker_name: String,
     project: PathBuf,
@@ -93,6 +108,66 @@ pub(crate) struct CallerIdentity {
 }
 
 impl CallerRegistry {
+    pub(crate) fn set_execution_sinks(
+        &self,
+        session: Option<SessionRecordSink>,
+        execution: Option<ExecutionSink>,
+    ) {
+        *self.session_sink.lock().unwrap_or_else(|e| e.into_inner()) = session;
+        *self
+            .execution_sink
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = execution;
+    }
+
+    pub(crate) fn resolve_execution(
+        &self,
+        token: &str,
+    ) -> Result<(CallerContext, ExecutionBinding), String> {
+        let callers = self
+            .callers
+            .lock()
+            .map_err(|_| "caller registry unavailable")?;
+        let caller = callers.get(token).ok_or("unknown Farcaster caller")?;
+        let context = CallerContext {
+            worker_id: caller.worker_id.clone(),
+            worker_name: caller.worker_name.clone(),
+            project: caller.project.clone(),
+            session: caller
+                .session
+                .clone()
+                .ok_or("caller session is not bound")?,
+            backend: caller.backend,
+            provider: caller.provider.clone(),
+            model: caller.model.clone(),
+            effort: caller.effort.clone(),
+            access_mode: caller.access_mode,
+            parent_worker_id: caller.parent_worker_id.clone(),
+        };
+        let execution = caller
+            .execution
+            .clone()
+            .ok_or("review requires a registered executing turn")?;
+        Ok((context, execution))
+    }
+
+    fn bind_record(&self, token: &str) {
+        let sink = self.session_sink.lock().ok().and_then(|sink| sink.clone());
+        let Some(sink) = sink else { return };
+        let result = self.resolve(token).and_then(|context| sink(&context));
+        match result {
+            Ok(record) => {
+                if let Ok(mut callers) = self.callers.lock()
+                    && let Some(caller) = callers.get_mut(token)
+                {
+                    caller.session_record = Some(record);
+                }
+            }
+            Err(error) => {
+                zlog::error!("Register caller session: {error}");
+            }
+        }
+    }
     pub(crate) fn shared() -> &'static Self {
         static REGISTRY: OnceLock<CallerRegistry> = OnceLock::new();
         REGISTRY.get_or_init(Self::default)
@@ -170,6 +245,8 @@ impl CallerRegistry {
             callers.insert(
                 token.clone(),
                 RegisteredCaller {
+                    session_record: None,
+                    execution: None,
                     worker_id,
                     worker_name,
                     project,
@@ -257,6 +334,8 @@ impl CallerRegistry {
         callers.insert(
             token.clone(),
             RegisteredCaller {
+                session_record: None,
+                execution: None,
                 worker_id,
                 worker_name,
                 project,
@@ -485,6 +564,74 @@ impl RegisteredCaller {
 }
 
 impl CallerIdentity {
+    pub(crate) fn ensure_execution(&self) {
+        let missing = self
+            .registry
+            .callers
+            .lock()
+            .ok()
+            .and_then(|callers| {
+                callers
+                    .get(&self.token)
+                    .map(|caller| caller.execution.is_none())
+            })
+            .unwrap_or(false);
+        if missing {
+            self.begin_execution(None);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_execution_for_test(&self, execution: ExecutionBinding) {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.get_mut(&self.token)
+        {
+            caller.session_record = Some(execution.session_record);
+            caller.execution = Some(execution);
+        }
+    }
+
+    /// Called at execution dispatch, never when a queued prompt is admitted.
+    /// A missing sink is normal for standalone adapters and isolated tests.
+    pub(crate) fn begin_execution(&self, prompt_id: Option<&str>) {
+        self.registry.bind_record(&self.token);
+        let binding = (|| {
+            let mut callers = self.registry.callers.lock().ok()?;
+            let caller = callers.get_mut(&self.token)?;
+            if prompt_id.is_some()
+                && caller
+                    .execution
+                    .as_ref()
+                    .is_some_and(|execution| execution.prompt_id.as_deref() == prompt_id)
+            {
+                return None;
+            }
+            caller.execution = None;
+            Some(ExecutionBinding {
+                session_record: caller.session_record?,
+                turn_id: uuid::Uuid::new_v4().to_string(),
+                prompt_id: prompt_id.map(str::to_owned),
+            })
+        })();
+        let Some(binding) = binding else { return };
+        let sink = self
+            .registry
+            .execution_sink
+            .lock()
+            .ok()
+            .and_then(|sink| sink.clone());
+        if let Some(sink) = sink
+            && let Err(error) = sink(&binding)
+        {
+            zlog::error!("Register execution turn: {error}");
+            return;
+        }
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(caller) = callers.get_mut(&self.token)
+        {
+            caller.execution = Some(binding);
+        }
+    }
     pub(crate) fn with_slot(mut self, slot: Option<super::WorkerSlot>) -> Self {
         self.slot = slot;
         self
@@ -517,6 +664,10 @@ impl CallerIdentity {
         if let Ok(mut callers) = self.registry.callers.lock() {
             let session_key = if let Some(context) = callers.get_mut(&self.token) {
                 changed = context.session.as_deref() != Some(session_locator.as_str());
+                if changed {
+                    context.session_record = None;
+                    context.execution = None;
+                }
                 context.session = Some(session_locator);
                 context.activity = WorkerActivityState::Idle;
                 (context.parent_worker_id.is_none()).then(|| {
@@ -553,6 +704,7 @@ impl CallerIdentity {
         }
         if changed {
             self.registry.persist_family(&self.token);
+            self.registry.bind_record(&self.token);
         }
     }
 
@@ -561,6 +713,9 @@ impl CallerIdentity {
             && let Some(context) = callers.get_mut(&self.token)
         {
             context.activity = activity;
+            if activity == WorkerActivityState::Idle {
+                context.execution = None;
+            }
         }
     }
 

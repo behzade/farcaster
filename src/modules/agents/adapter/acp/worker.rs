@@ -508,6 +508,13 @@ impl AcpWorkerSession {
         self.output.clear();
         self.thought_started = false;
         self.tool_states.clear();
+        if let Some(identity) = &self.caller_identity {
+            identity.begin_execution(
+                inputs
+                    .first()
+                    .and_then(|input| input.submission_id.as_deref()),
+            );
+        }
         let id = self.request(
             "session/prompt",
             json!({"sessionId": self.session_id, "prompt": prompt}),

@@ -85,7 +85,7 @@ impl Render for TranscriptView {
                 tail_reserve: transcript::tail_reserve(viewport.height),
             },
             self.rows.clone(),
-            app.snapshot.conversation.clone(),
+            app.snapshot.transcript_presentation(),
             self.disclosure_states.clone(),
             self.file_trees.clone(),
             self.markdown_cache.clone(),

@@ -1997,6 +1997,11 @@ impl CodexWorkerSession {
             && let Some(client_id) = item.get("clientId").and_then(Value::as_str)
         {
             if let Some(deliveries) = self.batch_deliveries.remove(client_id) {
+                self.caller_identity.begin_execution(
+                    deliveries
+                        .first()
+                        .and_then(|entry| entry.delivery.submission_id.as_deref()),
+                );
                 let mut activities = deliveries
                     .into_iter()
                     .map(|entry| entry.delivery.activity());
@@ -2012,6 +2017,8 @@ impl CodexWorkerSession {
                 return first;
             }
             if let Some(input) = self.native_inputs.remove(client_id) {
+                self.caller_identity
+                    .begin_execution(input.delivery.submission_id.as_deref());
                 self.native_input_order.retain(|queued| queued != client_id);
                 self.client_submissions.remove(client_id);
                 if input.cancel_on_delivery
@@ -2275,6 +2282,7 @@ impl CodexWorkerSession {
             "{NORMAL_CLIENT_ID_PREFIX}{}",
             self.next_id.saturating_add(1)
         );
+        self.caller_identity.begin_execution(submission_id);
         let id = self.submission_request(
             "turn/start",
             json!({

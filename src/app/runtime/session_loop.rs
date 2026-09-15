@@ -15,6 +15,7 @@ pub(super) fn run(
         Err(error) => (None, Some(error)),
     };
     let mut owner = RuntimeOwner {
+        review_projection: Default::default(),
         project: project.clone(),
         harness,
         session_id: None,
@@ -67,11 +68,18 @@ pub(super) fn run(
     if load_catalog {
         owner.load_sessions(String::new());
     }
+    let _review_updates = crate::app::reviews::delivery::subscribe();
+    let mut review_revision = crate::app::reviews::delivery::revision();
     owner.publish();
     let mut running = true;
     let mut pending_command = None;
     let mut stream_publish_due = None;
     while running {
+        let revision = crate::app::reviews::delivery::revision();
+        if revision != review_revision {
+            review_revision = revision;
+            owner.publish();
+        }
         while let Ok(result) = history_rx.try_recv() {
             owner.apply_history(result);
         }

@@ -1,4 +1,7 @@
-//! Editor-neutral, advisory review locations carried in MCP tool results.
+//! Editor-neutral, advisory review locations and durable transcript delivery.
+pub(crate) mod artifact;
+pub(crate) mod delivery;
+pub(crate) mod presentation;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};

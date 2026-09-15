@@ -747,6 +747,8 @@ impl RuntimeOwner {
             .or_else(|| active_snapshot.selected_session.clone());
         snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
         snapshot.transcript_changed_from = self.transcript_changed_from.take();
+        self.review_projection
+            .apply(self.state.as_ref(), &mut snapshot);
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
             snapshot: Arc::new(snapshot),

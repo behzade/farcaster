@@ -247,6 +247,14 @@ enum PartialKind {
 }
 
 impl ConversationState {
+    pub(crate) fn prompt_binding_revision(&self) -> usize {
+        self.next_submission_order
+    }
+
+    pub(crate) fn submitted_prompt_item(&self, id: &str) -> Option<&Arc<TranscriptItem>> {
+        self.submitted_users.get(id).map(|entry| &entry.item)
+    }
+
     #[cfg(test)]
     pub(crate) fn push_local_user(
         &mut self,

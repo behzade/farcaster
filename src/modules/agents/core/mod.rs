@@ -13,8 +13,8 @@ mod worker_tasks;
 pub(crate) use worker_tasks::{WorkerAssignment, WorkerExecution, WorkerProfile, WorkerProfiles};
 
 pub(crate) use caller::{
-    CallerContext, CallerIdentity, CallerProfile, CallerRegistry, WorkerFamilyLink,
-    is_child_input_id,
+    CallerContext, CallerIdentity, CallerProfile, CallerRegistry, ExecutionBinding,
+    WorkerFamilyLink, is_child_input_id,
 };
 #[cfg(test)]
 pub(crate) use concurrency::WorkerConcurrency;

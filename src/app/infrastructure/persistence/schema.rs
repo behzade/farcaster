@@ -74,7 +74,7 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15) => {}
+                Some(15 | 16) => {}
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -82,6 +82,7 @@ impl StateStore {
                 }
             }
             super::migrate_v16::migrate(&migration)?;
+            super::migrate_v17::migrate(&migration)?;
             migration
                 .execute(
                     "INSERT INTO meta(key, value) VALUES('schema_version', ?1)

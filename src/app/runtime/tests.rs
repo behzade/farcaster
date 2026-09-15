@@ -90,6 +90,7 @@ pub(super) fn owner_without_process(
     let (history_tx, _history_rx) = mpsc::channel();
     (
         RuntimeOwner {
+            review_projection: Default::default(),
             project: project.clone(),
             harness: Some(Backend::Pi),
             session_id: None,
@@ -2394,6 +2395,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
     let (event_tx, event_rx) = test_event_channel();
     let (history_tx, history_rx) = mpsc::channel();
     let mut owner = RuntimeOwner {
+        review_projection: Default::default(),
         project: temp.path().to_path_buf(),
         harness: Some(Backend::Pi),
         session_id: None,

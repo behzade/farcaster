@@ -10,13 +10,15 @@ use crate::{
 };
 
 #[derive(Clone, Deserialize)]
-pub(super) struct Artifact {
+pub(crate) struct Artifact {
     version: u32,
-    pub(super) project: PathBuf,
-    pub(super) review: Review,
+    #[serde(default)]
+    pub(crate) id: Option<String>,
+    pub(crate) project: PathBuf,
+    pub(crate) review: Review,
 }
 
-pub(super) fn from_item(item: &TranscriptItem) -> Option<Artifact> {
+pub(crate) fn from_item(item: &TranscriptItem) -> Option<Artifact> {
     if item.tool_execution_state() != Some(ToolExecutionState::Succeeded) {
         return None;
     }
@@ -58,5 +60,5 @@ fn find(value: &Value, depth: usize, budget: &mut usize) -> Option<Artifact> {
 }
 
 #[cfg(test)]
-#[path = "review_artifact_tests.rs"]
+#[path = "artifact_tests.rs"]
 mod tests;

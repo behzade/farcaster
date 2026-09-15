@@ -26,13 +26,13 @@ pub(crate) use contract::{
     valid_worker_name,
 };
 pub(crate) use core::{
-    CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool, PromptStore,
-    TokenUsage, ToolCategory, ToolMetadata, ToolReviewState, WorkerActivity, WorkerActivityState,
-    WorkerAssignment, WorkerEvent, WorkerExecution, WorkerFamilyLink, WorkerLaunch,
-    WorkerModelSelection, WorkerPool, WorkerProfile, WorkerProfiles, WorkerSendMode, WorkerSession,
-    WorkerSessionFactory, WorkerUsage, begin_prompt, complete_prompt_with_receipt,
-    enqueue_prompt_with_presentation, fail_prompt, has_queued_prompts_for, is_child_input_id,
-    mark_prompt_delivery_unknown, queued_prompts,
+    CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,
+    ExecutionBinding, PromptStore, TokenUsage, ToolCategory, ToolMetadata, ToolReviewState,
+    WorkerActivity, WorkerActivityState, WorkerAssignment, WorkerEvent, WorkerExecution,
+    WorkerFamilyLink, WorkerLaunch, WorkerModelSelection, WorkerPool, WorkerProfile,
+    WorkerProfiles, WorkerSendMode, WorkerSession, WorkerSessionFactory, WorkerUsage, begin_prompt,
+    complete_prompt_with_receipt, enqueue_prompt_with_presentation, fail_prompt,
+    has_queued_prompts_for, is_child_input_id, mark_prompt_delivery_unknown, queued_prompts,
 };
 
 #[cfg(test)]

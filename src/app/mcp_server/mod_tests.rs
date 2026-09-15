@@ -168,3 +168,82 @@ fn workgraph_schemas_do_not_accept_caller_identity() {
         assert!(tool.output_schema.is_some());
     }
 }
+
+#[tokio::test]
+async fn review_success_is_durable_before_response_and_storage_failure_is_reported() {
+    let temp = tempfile::tempdir().expect("project");
+    let database = temp.path().join("state.sqlite3");
+    let (updates, _) = async_channel::bounded(1);
+    let server = FarcasterMcp::new(
+        database.clone(),
+        worker_pool(temp.path()),
+        updates,
+        notices::NoticeBoard::default(),
+    );
+    let caller = crate::agents::CallerRegistry::shared().issue(
+        temp.path(),
+        crate::agents::CallerProfile {
+            backend: crate::agents::Backend::Cursor,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    caller.bind("review-test");
+    let store = crate::app::persistence::StateStore::open_at(&database).expect("store");
+    let context = crate::agents::CallerRegistry::shared()
+        .resolve(caller.token())
+        .expect("caller");
+    let execution = crate::agents::ExecutionBinding {
+        session_record: store.register_caller_session(&context).expect("session"),
+        turn_id: "test-turn".into(),
+        prompt_id: Some("test-prompt".into()),
+    };
+    store.register_execution(&execution).expect("execution");
+    caller.bind_execution_for_test(execution);
+    let params = || {
+        Parameters(
+            serde_json::from_value(serde_json::json!({
+                "title":"Review", "items":[{"path":"README.md","note":"Inspect"}]
+            }))
+            .unwrap(),
+        )
+    };
+    let parts = || {
+        let request = axum::http::Request::builder()
+            .header(CALLER_HEADER, caller.token())
+            .body(())
+            .unwrap();
+        Extension(request.into_parts().0)
+    };
+    let revision = crate::app::reviews::delivery::revision();
+    let Json(result) = server
+        .submit_review(params(), parts())
+        .await
+        .expect("submit");
+    assert!(crate::app::reviews::delivery::revision() > revision);
+    let store = crate::app::persistence::StateStore::open_at(&database).unwrap();
+    let path = temp.path().join("session-locators/cursor-cli/review-test");
+    let saved = store
+        .session_reviews(crate::agents::Backend::Cursor, temp.path(), &path)
+        .unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].artifact, serde_json::Value::Object(result));
+    rusqlite::Connection::open(&database).unwrap().execute_batch(
+        "CREATE TRIGGER reject_review BEFORE INSERT ON session_reviews BEGIN SELECT RAISE(FAIL,'disk failure'); END;"
+    ).unwrap();
+    let error = server
+        .submit_review(params(), parts())
+        .await
+        .err()
+        .expect("failed commit must fail MCP");
+    assert!(error.contains("disk failure"));
+    assert_eq!(
+        store
+            .session_reviews(crate::agents::Backend::Cursor, temp.path(), &path)
+            .unwrap()
+            .len(),
+        1
+    );
+}

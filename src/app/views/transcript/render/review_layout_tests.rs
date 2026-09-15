@@ -171,3 +171,60 @@ fn no_final_response_leaves_review_at_its_submission_point() {
     state.push_transport_error("Disconnected".into());
     assert_eq!(order(&project_conversation_rows(&state)), vec![0, 1, 2]);
 }
+
+#[test]
+fn streaming_review_history_projects_only_the_changed_tail() {
+    struct Counted<'a> {
+        items: &'a PersistentVec<std::sync::Arc<conversation::TranscriptItem>>,
+        reads: std::cell::Cell<usize>,
+    }
+    impl Indexed<std::sync::Arc<conversation::TranscriptItem>> for Counted<'_> {
+        fn len(&self) -> usize {
+            self.items.len()
+        }
+        fn get(&self, index: usize) -> Option<&std::sync::Arc<conversation::TranscriptItem>> {
+            self.reads.set(self.reads.get() + 1);
+            self.items.get(index)
+        }
+    }
+    let mut state = ConversationState::default();
+    for index in 0..2000 {
+        message(&mut state, "user", "Old prompt");
+        state.reduce(&json!({"type":"agent_start"}));
+        tool(&mut state, &format!("review-{index}"), true);
+        message(&mut state, "assistant", "Completed response");
+        state.reduce(&json!({"type":"agent_settled"}));
+    }
+    message(&mut state, "user", "Current prompt");
+    state.reduce(&json!({"type":"agent_start"}));
+    tool(&mut state, "current-review", true);
+    message(&mut state, "assistant", "Live text");
+    let before = state.clone();
+    let rows = project_conversation_rows(&before);
+    let last = state.items.len() - 1;
+    let mut tail = state.items[last].as_ref().clone();
+    tail.text.push_str(" delta");
+    state.items.set(last, std::sync::Arc::new(tail));
+    let counted = Counted {
+        items: &state.items,
+        reads: std::cell::Cell::new(0),
+    };
+    let update = update_rows_with_run(
+        &rows,
+        &before.items,
+        &counted,
+        Some(last),
+        state.active_run_start(),
+        &state.completed_runs,
+    );
+    assert!(
+        counted.reads.get() < 40,
+        "historical source items were revisited: {}",
+        counted.reads.get()
+    );
+    assert!(update.unchanged_prefix_rows > 5900);
+    assert_eq!(
+        update.rows.expect("updated rows"),
+        project_conversation_rows(&state)
+    );
+}

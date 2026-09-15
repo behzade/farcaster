@@ -97,6 +97,11 @@ impl<T: Clone> Default for PersistentVec<T> {
 }
 
 impl<T: Clone> PersistentVec<T> {
+    /// SumTree clones share the root node and its non-zero-sized summary.
+    pub(crate) fn shares_storage(&self, other: &Self) -> bool {
+        std::ptr::eq(self.tree.summary(), other.tree.summary())
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.tree.summary().count
     }

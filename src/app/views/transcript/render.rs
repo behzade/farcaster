@@ -44,8 +44,7 @@ mod links;
 mod message_rows;
 #[path = "render/review.rs"]
 mod review;
-#[path = "render/review_artifact.rs"]
-mod review_artifact;
+use crate::app::reviews::artifact as review_artifact;
 #[path = "render/rows.rs"]
 mod rows;
 #[path = "render/tool_rows.rs"]
@@ -237,7 +236,7 @@ pub(crate) fn render(
     list_state: &TranscriptListState,
     viewport: TranscriptViewport,
     rows: std::sync::Arc<PersistentVec<TranscriptRow>>,
-    conversation: Arc<conversation::ConversationState>,
+    conversation: Arc<crate::app::reviews::presentation::TranscriptPresentation>,
     disclosure_states: std::collections::HashMap<usize, bool>,
     file_trees: std::collections::HashMap<usize, crate::app::ui::change_tree::ChangeTreeState>,
     markdown_cache: TranscriptMarkdownCache,

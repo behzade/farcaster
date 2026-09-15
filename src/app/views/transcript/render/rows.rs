@@ -196,18 +196,65 @@ pub(crate) fn project_conversation_rows(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn update_conversation_rows(
     previous_rows: &PersistentVec<TranscriptRow>,
     previous: &conversation::ConversationState,
     next: &conversation::ConversationState,
     changed_from: Option<usize>,
 ) -> TranscriptRowUpdate {
+    update_presentation_rows(previous_rows, &previous.into(), &next.into(), changed_from)
+}
+
+pub(crate) fn update_presentation_rows(
+    previous_rows: &PersistentVec<TranscriptRow>,
+    previous: &crate::app::reviews::presentation::TranscriptPresentation,
+    next: &crate::app::reviews::presentation::TranscriptPresentation,
+    changed_from: Option<usize>,
+) -> TranscriptRowUpdate {
+    if changed_from.is_none_or(|dirty| dirty >= next.items.len())
+        && previous.items.shares_storage(&next.items)
+        && previous.active_start == next.active_start
+        && previous.completed_runs == next.completed_runs
+    {
+        return TranscriptRowUpdate {
+            rows: None,
+            unchanged_prefix_rows: previous_rows.len(),
+        };
+    }
+    let changed_from = if previous.active_start != next.active_start
+        || previous.completed_runs != next.completed_runs
+    {
+        Some(
+            changed_from
+                .unwrap_or(next.items.len())
+                .min(previous.active_start.unwrap_or(next.items.len()))
+                .min(next.active_start.unwrap_or(next.items.len())),
+        )
+    } else {
+        changed_from
+    };
     update_rows_with_run(
         previous_rows,
         &previous.items,
         &next.items,
         changed_from,
-        next.active_run_start(),
+        next.active_start,
+        &next.completed_runs,
+    )
+}
+
+pub(crate) fn refresh_presentation_rows(
+    rows: &PersistentVec<TranscriptRow>,
+    next: &crate::app::reviews::presentation::TranscriptPresentation,
+    dirty: usize,
+) -> TranscriptRowUpdate {
+    update_rows_with_run(
+        rows,
+        &next.items,
+        &next.items,
+        Some(dirty),
+        next.active_start,
         &next.completed_runs,
     )
 }
@@ -290,6 +337,66 @@ fn update_rows_with_run(
     active_start: Option<usize>,
     completed_runs: &[std::ops::Range<usize>],
 ) -> TranscriptRowUpdate {
+    if let (Some(active), Some(dirty)) = (active_start, changed_from)
+        && dirty >= active
+        && items.len() >= previous_items.len()
+        && !previous_rows.is_empty()
+    {
+        // Active-run rows are in source order. Completed handoffs remain a
+        // shared prefix; only the changed source suffix needs markdown work.
+        let active_row = previous_rows.partition_point(|row| row.item_end() <= active);
+        let mut keep = previous_rows.partition_point(|row| row.item_end() <= dirty);
+        if keep > active_row {
+            keep -= 1;
+        }
+        let source_start = previous_rows
+            .get(keep)
+            .filter(|row| row.item_start() >= active)
+            .map_or(dirty.min(items.len()), TranscriptRow::item_start);
+        while keep > active_row && previous_rows[keep - 1].item_start() == source_start {
+            keep -= 1;
+        }
+        let tail = review_layout::arrange(
+            project_rows_from(items, source_start),
+            items,
+            active_start,
+            completed_runs,
+        );
+        let mut rows = previous_rows.clone();
+        rows.splice(keep..rows.len(), tail.iter().copied());
+        let new_work = (dirty..items.len()).rev().find(|&index| {
+            items.get(index).is_some_and(|item| {
+                matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
+            })
+        });
+        if let Some(work) = new_work {
+            for index in active_row..keep {
+                if let TranscriptRow::Review {
+                    index: source,
+                    revision,
+                    working,
+                    continued: false,
+                } = rows[index]
+                    && source < work
+                {
+                    rows.set(
+                        index,
+                        TranscriptRow::Review {
+                            index: source,
+                            revision,
+                            working,
+                            continued: true,
+                        },
+                    );
+                }
+            }
+        }
+        let prefix = if new_work.is_some() { active_row } else { keep };
+        return TranscriptRowUpdate {
+            rows: Some(rows),
+            unchanged_prefix_rows: prefix,
+        };
+    }
     // Review handoffs deliberately reorder source items. Keep the monotonic
     // incremental fast path for ordinary transcripts; compare visual rows for
     // review transcripts, including state-only settlement updates.
@@ -302,12 +409,32 @@ fn update_rows_with_run(
                 .is_some_and(|item| review_artifact::from_item(item).is_some())
         })
     {
-        let rows = review_layout::arrange(
-            project_rows_from(items, 0),
+        let dirty = changed_from.unwrap_or(0).min(items.len());
+        let start = active_start
+            .filter(|start| *start <= dirty)
+            .or_else(|| {
+                completed_runs
+                    .iter()
+                    .find(|run| run.start <= dirty && dirty < run.end)
+                    .map(|run| run.start)
+            })
+            .or_else(|| {
+                (0..dirty).rev().find(|&index| {
+                    items
+                        .get(index)
+                        .is_some_and(|item| item.kind == TranscriptKind::User)
+                })
+            })
+            .unwrap_or(0);
+        let keep = previous_rows.partition_point(|row| row.item_end() <= start);
+        let tail = review_layout::arrange(
+            project_rows_from(items, start),
             items,
             active_start,
             completed_runs,
         );
+        let mut rows = previous_rows.clone();
+        rows.splice(keep..rows.len(), tail.iter().copied());
         let prefix = previous_rows
             .iter()
             .zip(rows.iter())

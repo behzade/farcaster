@@ -19,18 +19,15 @@ pub(super) fn arrange(
         let index = row.item_start();
         // History has user-message boundaries. During a live run, steering
         // messages do not complete that run or relocate its existing reviews.
-        let inside_completed = completed_runs
-            .iter()
-            .any(|run| run.start < index && index < run.end);
+        let completed = completed_runs.get(completed_runs.partition_point(|run| run.end < index));
+        let inside_completed = completed.is_some_and(|run| run.start < index && index < run.end);
         let boundary = items
             .get(index)
             .is_some_and(|item| item.kind == TranscriptKind::User)
             && active_start.is_none_or(|start| index <= start)
             && !inside_completed;
         let run_boundary = active_start == Some(index)
-            || completed_runs
-                .iter()
-                .any(|run| run.start == index || run.end == index);
+            || completed.is_some_and(|run| run.start == index || run.end == index);
         if (boundary || run_boundary)
             && span
                 .last()

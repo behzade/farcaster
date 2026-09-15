@@ -870,6 +870,48 @@ fn track_inert_submission(session: &mut AcpWorkerSession, id: &str) {
 
 #[cfg(unix)]
 #[test]
+fn queued_acp_admission_does_not_replace_the_executing_review_turn() {
+    let registry = crate::agents::CallerRegistry::default();
+    registry.set_execution_sinks(
+        Some(std::sync::Arc::new(|_| Ok(1))),
+        Some(std::sync::Arc::new(|_| Ok(()))),
+    );
+    let identity = registry.issue(
+        std::path::Path::new("/project"),
+        crate::agents::CallerProfile {
+            backend: crate::agents::Backend::Cursor,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    identity.bind("one");
+    identity.begin_execution(Some("running"));
+    let token = identity.token().to_owned();
+    let mut session = inert_session().with_identity(identity);
+    session
+        .submit_prompt(
+            "queued".into(),
+            "next".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("admit queue");
+    assert_eq!(
+        registry
+            .resolve_execution(&token)
+            .expect("execution")
+            .1
+            .prompt_id
+            .as_deref(),
+        Some("running")
+    );
+    assert_eq!(session.queued_prompts.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
 fn model_and_service_tier_are_sent_independently() {
     use std::io::{BufRead as _, Write as _};
     use std::os::unix::net::UnixStream;

@@ -375,6 +375,12 @@ impl ClaudeSession {
             }
         };
         self.active_uuid = Some(active_uuid.clone());
+        self.caller.begin_execution(
+            prompt
+                .deliveries
+                .first()
+                .and_then(|delivery| delivery.submission_id.as_deref()),
+        );
         self.active = true;
         self.caller.set_activity(WorkerActivityState::Working);
         self.dispatched.insert(
