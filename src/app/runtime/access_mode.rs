@@ -92,7 +92,7 @@ impl RuntimeOwner {
             SandboxState::Checking
         } else if self.active_snapshot().status == "Failed" {
             SandboxState::Failed
-        } else if self.snapshot.sandbox_adapter.is_none() {
+        } else if self.snapshot.sandbox_adapter.is_none() || self.process.is_none() {
             SandboxState::Active(requested)
         } else {
             match self

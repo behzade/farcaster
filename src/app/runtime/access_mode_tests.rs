@@ -166,3 +166,21 @@ fn sandbox_discovery_rechecks_every_restart_and_mode_changes_wait_for_idle()
     assert!(!temp.path().join("agent-prompts").exists());
     Ok(())
 }
+
+#[test]
+fn cold_catalog_adapter_is_active_until_apply_starts() {
+    use crate::agents::SandboxState;
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.snapshot.sandbox_adapter = Some("pi-nono".into());
+    owner.publish();
+    assert!(owner.process.is_none());
+    assert!(owner.snapshot.sandbox_controls_available());
+    assert_eq!(
+        owner.snapshot.sandbox_state,
+        SandboxState::Active(HarnessAccessMode::Sandboxed)
+    );
+
+    owner.access_mode_changes.applying = true;
+    owner.publish();
+    assert_eq!(owner.snapshot.sandbox_state, SandboxState::Checking);
+}
