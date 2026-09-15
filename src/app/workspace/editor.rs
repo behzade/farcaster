@@ -237,6 +237,17 @@ impl FarcasterApp {
                         return false;
                     }
                     if monitored.read(cx).is_alive(cx) {
+                        if this.workspace.editor.view.as_ref() == Some(&monitored)
+                            && let Some(selection) =
+                                monitored.update(cx, |editor, _| editor.take_review_selection())
+                            && let Some(review) = this.workspace.editor.active_review.as_mut()
+                            && review.target == this.composer.sessions.current_target()
+                            && review.project == key.0
+                            && review.select_from_editor(selection.list_id, selection.selected)
+                        {
+                            this.notify_run_panel(cx);
+                            cx.notify();
+                        }
                         return true;
                     }
                     this.workspace.editor.project_editors.remove(&key);

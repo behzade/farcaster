@@ -94,6 +94,28 @@
   else
     selected = nil
   end
+  if type(review.selection_path) == 'string' then
+    local group = vim.api.nvim_create_augroup('FarcasterReviewSelection', {clear = true})
+    local published
+    local function publish_selection()
+      local current = vim.fn.getqflist({id = 0, idx = 0, context = 0})
+      if current.id ~= list.id or type(current.context) ~= 'table'
+          or not current.context.farcaster_review or current.idx < 1
+          or current.idx == published then
+        return
+      end
+      local ok, status = pcall(vim.fn.writefile, {vim.json.encode({
+        list_id = current.id,
+        selected = current.idx - 1,
+      })}, review.selection_path)
+      if ok and status == 0 then published = current.idx end
+    end
+    vim.api.nvim_create_autocmd({'BufEnter', 'CursorMoved'}, {
+      group = group,
+      callback = publish_selection,
+    })
+    publish_selection()
+  end
   return vim.json.encode({
     list_id = list.id,
     selected = selected and selected - 1 or vim.NIL,

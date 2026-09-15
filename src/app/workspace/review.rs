@@ -57,6 +57,22 @@ impl ActiveReview {
         }
         true
     }
+
+    pub(super) fn select_from_editor(&mut self, list_id: u64, selected: usize) -> bool {
+        let Some(navigation) = self.navigation.as_mut() else {
+            return false;
+        };
+        if self.pending.is_some()
+            || navigation.list_id != list_id
+            || selected >= self.review.items.len()
+            || (self.inspecting == Some(selected) && navigation.selected == Some(selected))
+        {
+            return false;
+        }
+        self.inspecting = Some(selected);
+        navigation.selected = Some(selected);
+        true
+    }
 }
 
 impl FarcasterApp {

@@ -79,6 +79,11 @@ fn late_navigation_cannot_overwrite_a_newer_request() {
             .selected,
         Some(0)
     );
+    let second = review.review.items[0].clone();
+    review.review.items.push(second);
+    assert!(!review.select_from_editor(41, 1));
+    assert!(review.select_from_editor(42, 1));
+    assert_eq!(review.inspecting, Some(1));
     review.pending = Some(8);
     assert!(!review.complete(7, Err("late failure".into())));
     assert!(review.complete(8, Err("List was removed; reopen the review".into())));

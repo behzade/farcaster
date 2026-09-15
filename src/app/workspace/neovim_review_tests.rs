@@ -154,17 +154,26 @@ vim.fn.writefile({vim.json.encode({title = 'Review', items = {
   {path = 'missing.rs', note = 'Deleted'},
   {path = 'first.rs', start_line = 2, end_line = 2, note = 'First'},
   {path = 'second.rs', note = 'Second'},
-}})}, 'review.json')
+}, selection_path = vim.fn.fnamemodify('selection.json', ':p')})}, 'review.json')
 local opened = request('review.json')
 assert(opened.selected == 1)
+local function published()
+  return vim.json.decode(vim.fn.readfile('selection.json')[1])
+end
+assert(published().list_id == opened.list_id and published().selected == 1)
 assert(not opened.locations[1].valid and opened.locations[1].warning:find('Missing'))
 assert(vim.fn.getqflist({idx = 0}).idx == 2)
 assert(vim.api.nvim_get_current_line() == 'two')
 assert(#vim.api.nvim_tabpage_list_wins(0) == 1)
 vim.cmd('cnext')
 assert(vim.api.nvim_get_current_line() == 'other')
+-- Headless scripts do not return to Neovim's input loop between commands.
+vim.api.nvim_exec_autocmds('BufEnter', {})
+assert(published().selected == 2)
 vim.cmd('cprevious')
 assert(vim.api.nvim_get_current_line() == 'two')
+vim.api.nvim_exec_autocmds('BufEnter', {})
+assert(published().selected == 1)
 local first = vim.api.nvim_get_current_buf()
 -- A sidebar selection restores its own list after native list-history changes.
 vim.fn.setqflist({}, ' ', {title = 'Other list', items = {{filename = 'first.rs', lnum = 1}}})
@@ -278,4 +287,26 @@ fn run_review_script(project: &Path, script: &str) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn review_selection_watcher_reads_published_navigation() {
+    let directory = tempfile::tempdir().expect("temporary state directory");
+    let watcher = ReviewSelectionWatcher::start(directory.path()).expect("start selection watcher");
+    std::fs::write(
+        directory.path().join("review-selection.json"),
+        r#"{"list_id":42,"selected":3}"#,
+    )
+    .expect("publish review selection");
+
+    let selection = (0..100).find_map(|_| {
+        let selection = watcher.take_latest();
+        if selection.is_none() {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        selection
+    });
+    let selection = selection.expect("receive review selection");
+    assert_eq!(selection.list_id, 42);
+    assert_eq!(selection.selected, 3);
 }

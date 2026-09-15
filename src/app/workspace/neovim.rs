@@ -11,6 +11,7 @@ use std::{
 
 use gpui::{App, Context, Entity, IntoElement, Render, RenderImage, Task, Window};
 use gpui_libghostty::{Terminal, TerminalOptions};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use crate::app::infrastructure::neovim_launch;
 
@@ -18,6 +19,7 @@ static NEXT_TAB: AtomicU64 = AtomicU64::new(1);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
 const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const SESSION_VIEW: &str = include_str!("neovim_session.lua");
+const REVIEW_SELECTION_FILE: &str = "review-selection.json";
 
 #[path = "neovim_diff.rs"]
 mod diff;
@@ -58,6 +60,71 @@ pub(in crate::app) struct NvimEditor {
     socket_dir: Arc<tempfile::TempDir>,
     terminal: Entity<Terminal>,
     pending: Option<Task<()>>,
+    review_selection: Option<ReviewSelectionWatcher>,
+}
+
+#[derive(serde::Deserialize)]
+pub(super) struct ReviewSelection {
+    pub(super) list_id: u64,
+    pub(super) selected: usize,
+}
+
+struct ReviewSelectionWatcher {
+    watcher: Option<RecommendedWatcher>,
+    updates: async_channel::Receiver<ReviewSelection>,
+}
+
+impl Drop for ReviewSelectionWatcher {
+    fn drop(&mut self) {
+        let Some(watcher) = self.watcher.take() else {
+            return;
+        };
+        let _ = std::thread::Builder::new()
+            .name("neovim-review-watcher-drop".into())
+            .spawn(move || drop(watcher));
+    }
+}
+
+impl ReviewSelectionWatcher {
+    fn start(directory: &Path) -> Result<Self, String> {
+        let path = directory.join(REVIEW_SELECTION_FILE);
+        let watched_path = path.clone();
+        let (send, updates) = async_channel::unbounded();
+        let mut watcher = notify::recommended_watcher(move |result: notify::Result<Event>| {
+            let Ok(event) = result else { return };
+            if matches!(event.kind, EventKind::Access(_))
+                || !event.paths.iter().any(|path| {
+                    path.file_name()
+                        .is_some_and(|name| name == REVIEW_SELECTION_FILE)
+                })
+            {
+                return;
+            }
+            let Ok(contents) = std::fs::read(&watched_path) else {
+                return;
+            };
+            let Ok(selection) = serde_json::from_slice(&contents) else {
+                return;
+            };
+            let _ = send.try_send(selection);
+        })
+        .map_err(|error| format!("watch Neovim review selection: {error}"))?;
+        watcher
+            .watch(directory, RecursiveMode::NonRecursive)
+            .map_err(|error| format!("watch Neovim state directory: {error}"))?;
+        Ok(Self {
+            watcher: Some(watcher),
+            updates,
+        })
+    }
+
+    fn take_latest(&self) -> Option<ReviewSelection> {
+        let mut latest = None;
+        while let Ok(selection) = self.updates.try_recv() {
+            latest = Some(selection);
+        }
+        latest
+    }
 }
 
 impl NvimEditor {
@@ -82,6 +149,11 @@ impl NvimEditor {
                 .tempdir()
                 .map_err(|error| format!("create Neovim socket directory: {error}"))?,
         );
+        let review_selection = ReviewSelectionWatcher::start(socket_dir.path())
+            .inspect_err(|error| {
+                zlog::warn!("{error}");
+            })
+            .ok();
         let launch_file = socket_dir.path().join("launch.json");
         neovim_launch::prepare(
             &launch_file,
@@ -115,6 +187,7 @@ impl NvimEditor {
             socket_dir,
             terminal,
             pending: None,
+            review_selection,
         })
     }
 
@@ -145,6 +218,10 @@ impl NvimEditor {
         self.request(cx, move |executable, project, state_dir| {
             open_target(executable, project, state_dir, tab, target)
         })
+    }
+
+    pub(super) fn take_review_selection(&self) -> Option<ReviewSelection> {
+        self.review_selection.as_ref()?.take_latest()
     }
 
     fn request<T: Send + 'static>(
@@ -274,7 +351,14 @@ fn open_target(
                     }))
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            let payload = serde_json::json!({ "title": review.title, "items": items });
+            let payload = serde_json::json!({
+                "title": review.title,
+                "items": items,
+                "selection_path": state_dir
+                    .join(REVIEW_SELECTION_FILE)
+                    .to_string_lossy()
+                    .into_owned(),
+            });
             let mut file =
                 tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
             serde_json::to_writer(&mut file, &payload).map_err(|error| error.to_string())?;
