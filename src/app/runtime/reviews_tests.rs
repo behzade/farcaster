@@ -249,6 +249,32 @@ fn the_real_cursor_replay_payload_renders_the_review() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn the_prompt_wrapped_update_arguments_render_the_review() -> Result<(), String> {
+    // Captured live: after the completed update merges in, the row's arguments
+    // are re-wrapped as {"prompt": ..., "arguments": {title, items}}.
+    let temp = tempfile::tempdir().expect("project");
+    let mut state = ConversationState::default();
+    state.replace_history(&[
+        json!({
+            "role":"assistant",
+            "content":[{"type":"toolCall","id":"tool-1","name":"farcaster: submit_review",
+                "arguments":{"arguments":{"title":"Review README.md","items":[
+                    {"path":"README.md","start_line":1,"end_line":25,
+                     "note":"Review project overview and features in README.md"}]},
+                    "prompt":"Submitting review on README.md"}
+            }]
+        }),
+        json!({"role":"toolResult","toolCallId":"tool-1","isError":false,
+            "content":[{"type":"text","text":"The review was submitted successfully."}]}),
+    ]);
+    let mut snapshot = snapshot(temp.path(), state);
+    snapshot.transcript_changed_from = Some(0);
+    ReviewProjection::default().apply(&mut snapshot);
+    assert_eq!(cards(&snapshot), 1, "prompt-wrapped arguments render");
+    Ok(())
+}
+
 fn message(state: &mut ConversationState, text: &str) {
     let message = json!({"role":"assistant","content":[{"type":"text","text":text}]});
     state.reduce(&json!({"type":"message_start","message":message}));
