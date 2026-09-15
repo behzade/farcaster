@@ -19,18 +19,44 @@ struct SessionMeta {
     extra: BTreeMap<String, serde_json::Value>,
 }
 
-fn session_root() -> Result<PathBuf, String> {
+/// The config root resolved by the environment that launched cursor-agent
+/// can differ from this process's environment (for example `XDG_CONFIG_HOME`
+/// injected by a project shell), so inspect accepts every root in Cursor's
+/// own precedence order plus the XDG default.
+fn session_roots() -> Result<Vec<PathBuf>, String> {
     let env = |key| {
         std::env::var(key)
             .ok()
             .filter(|value| !value.trim().is_empty())
     };
-    config_root(
-        env("CURSOR_CONFIG_DIR"),
-        env("XDG_CONFIG_HOME"),
-        env("HOME"),
-    )
-    .map(|root| root.join("acp-sessions"))
+    let mut roots = Vec::new();
+    let mut push = |root: Option<PathBuf>| {
+        if let Some(root) = root {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+    };
+    // Cursor's own precedence first, then the common XDG default that other
+    // launch environments may have used.
+    push(
+        config_root(
+            env("CURSOR_CONFIG_DIR"),
+            env("XDG_CONFIG_HOME"),
+            env("HOME"),
+        )
+        .ok(),
+    );
+    if env("CURSOR_CONFIG_DIR").is_none() && env("XDG_CONFIG_HOME").is_none() {
+        push(env("HOME").map(|home| PathBuf::from(home).join(".config/cursor")));
+    }
+    if roots.is_empty() {
+        return Err("HOME is required to inspect Cursor sessions".into());
+    }
+    Ok(roots
+        .into_iter()
+        .map(|root| root.join("acp-sessions"))
+        .collect())
 }
 
 fn config_root(
@@ -69,7 +95,36 @@ fn find_session_at(root: &Path, session_id: &str) -> Result<PathBuf, String> {
 }
 
 fn find_session(session_id: &str) -> Result<PathBuf, String> {
-    find_session_at(&session_root()?, session_id)
+    find_session_in(&session_roots()?, session_id)
+}
+
+fn find_session_in(roots: &[PathBuf], session_id: &str) -> Result<PathBuf, String> {
+    let mut draft = None;
+    for root in roots {
+        let Ok(directory) = find_session_at(root, session_id) else {
+            continue;
+        };
+        match std::fs::symlink_metadata(directory.join("store.db")) {
+            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {
+                return Ok(directory);
+            }
+            Ok(_) => return Err("unsafe Cursor session database".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                draft = draft.or(Some(directory));
+            }
+            Err(_) => return Err("unsafe Cursor session database".into()),
+        }
+    }
+    draft.ok_or_else(|| {
+        format!(
+            "Cursor session was not found in any of: {}",
+            roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
 }
 
 fn metadata(directory: &Path) -> Result<SessionMeta, String> {

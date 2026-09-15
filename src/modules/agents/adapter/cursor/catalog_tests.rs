@@ -46,6 +46,30 @@ fn config_directory_matches_cursor_precedence() {
 }
 
 #[test]
+fn find_session_prefers_the_persisted_store_across_config_roots() {
+    let primary = tempfile::tempdir().expect("test operation should succeed");
+    let secondary = tempfile::tempdir().expect("test operation should succeed");
+    // A draft in the first root must not hide a persisted session in another
+    // root created under a different launch environment.
+    let primary = primary.path().join("acp-sessions");
+    let secondary = secondary.path().join("acp-sessions");
+    fixture(&primary, "draft-elsewhere", false);
+    fixture(&secondary, "persisted-elsewhere", true);
+    fixture(&secondary, "draft-elsewhere", false);
+    let roots = vec![primary, secondary];
+    assert_eq!(
+        find_session_in(&roots, "persisted-elsewhere").expect("test operation should succeed"),
+        roots[1].join("persisted-elsewhere")
+    );
+    assert_eq!(
+        find_session_in(&roots, "draft-elsewhere").expect("test operation should succeed"),
+        roots[0].join("draft-elsewhere")
+    );
+    let error = find_session_in(&roots, "missing").expect_err("missing session");
+    assert!(error.contains("not found in any of"), "{error}");
+}
+
+#[test]
 fn acp_catalog_maps_protocol_entries_and_keeps_storage_checks_scoped() {
     let root = tempfile::tempdir().expect("test operation should succeed");
     fixture(root.path(), "persisted", true);
