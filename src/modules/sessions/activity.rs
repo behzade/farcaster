@@ -68,7 +68,7 @@ impl AgentActivity {
             lifecycle: if session.is_running {
                 AgentLifecycle::Working
             } else {
-                AgentLifecycle::Completed(AgentOutcome::Incomplete)
+                AgentLifecycle::Completed(AgentOutcome::Complete)
             },
             current_tool: None,
             recent_tool: None,

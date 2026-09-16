@@ -17,6 +17,30 @@ fn parses_rfc3339_session_timestamps() {
 }
 
 #[test]
+fn stopped_cached_child_defaults_to_complete() {
+    let session = SessionSummary::from_cached(
+        "child".into(),
+        PathBuf::from("/sessions/child"),
+        PathBuf::from("/project"),
+        "reviewer".into(),
+        String::new(),
+        String::new(),
+        Some("parent".into()),
+        SystemTime::UNIX_EPOCH,
+        0,
+        UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    );
+
+    assert_eq!(
+        AgentActivity::limited_fallback(&session).lifecycle,
+        AgentLifecycle::Completed(AgentOutcome::Complete)
+    );
+}
+
+#[test]
 fn pairs_current_and_recent_tools() {
     let mut builder = ActivityBuilder::default();
     builder.observe_entry(&serde_json::json!({
