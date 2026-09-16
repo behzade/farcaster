@@ -10,12 +10,20 @@ fn pending_controls_coalesce_and_apply_model_before_effort() {
         "old-provider".into(),
         "old-model".into(),
     ));
-    pending.set(SessionControl::Thinking(Some("high".into())));
+    assert!(
+        pending
+            .replace_if_pending(SessionControl::Thinking(Some("high".into())))
+            .is_none()
+    );
     pending.set(SessionControl::ServiceTier("priority".into()));
-    pending.set(SessionControl::Model(
-        "new-provider".into(),
-        "new-model".into(),
-    ));
+    assert!(
+        pending
+            .replace_if_pending(SessionControl::Model(
+                "new-provider".into(),
+                "new-model".into(),
+            ))
+            .is_none()
+    );
 
     let requests = pending
         .take()

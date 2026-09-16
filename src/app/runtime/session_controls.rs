@@ -62,6 +62,15 @@ impl PendingSessionControls {
         }
     }
 
+    fn replace_if_pending(&mut self, control: SessionControl) -> Option<SessionControl> {
+        if self.is_empty() {
+            Some(control)
+        } else {
+            self.set(control);
+            None
+        }
+    }
+
     fn take(&mut self) -> Vec<SessionControl> {
         let mut controls = Vec::with_capacity(2);
         if let Some((provider, model_id)) = self.model.take() {
@@ -194,7 +203,9 @@ impl RuntimeOwner {
             return;
         }
         if !self.snapshot.history_preview && self.process.is_some() {
-            self.send(control.into_request());
+            if let Some(control) = self.pending_session_controls.replace_if_pending(control) {
+                self.send(control.into_request());
+            }
             return;
         }
         if !self.snapshot.history_preview
