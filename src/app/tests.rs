@@ -263,6 +263,7 @@ fn activity(id: &str, text: &str) -> AgentActivity {
         role: String::new(),
         activity: text.into(),
         lifecycle: AgentLifecycle::Working,
+        explicit_outcome: false,
         current_tool: None,
         recent_tool: None,
         tool_call_count: 0,

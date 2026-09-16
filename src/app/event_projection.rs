@@ -36,12 +36,23 @@ fn merge_agent_activity(
             existing.lifecycle,
             crate::agent_activity::AgentLifecycle::Unknown
         ))
+        || (!incoming.explicit_outcome
+            && existing.explicit_outcome
+            && matches!(
+                incoming.lifecycle,
+                crate::agent_activity::AgentLifecycle::Completed(_)
+            )
+            && matches!(
+                existing.lifecycle,
+                crate::agent_activity::AgentLifecycle::Completed(_)
+            ))
     {
         return false;
     }
     let next = if !existing.limited && incoming.limited {
         let mut merged = existing.clone();
         merged.lifecycle = incoming.lifecycle;
+        merged.explicit_outcome = incoming.explicit_outcome;
         merged.ended = incoming.ended;
         merged.elapsed = incoming.elapsed;
         if matches!(

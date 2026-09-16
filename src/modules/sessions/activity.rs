@@ -48,6 +48,7 @@ pub(crate) struct AgentActivity {
     pub role: String,
     pub activity: String,
     pub lifecycle: AgentLifecycle,
+    pub explicit_outcome: bool,
     pub current_tool: Option<AgentToolActivity>,
     pub recent_tool: Option<AgentToolActivity>,
     pub tool_call_count: usize,
@@ -70,6 +71,7 @@ impl AgentActivity {
             } else {
                 AgentLifecycle::Completed(AgentOutcome::Complete)
             },
+            explicit_outcome: false,
             current_tool: None,
             recent_tool: None,
             tool_call_count: 0,
@@ -100,6 +102,7 @@ impl AgentActivity {
                 AgentLifecycle::Completed(AgentOutcome::Incomplete)
             }
         };
+        activity.explicit_outcome = matches!(activity.lifecycle, AgentLifecycle::Completed(_));
         if matches!(activity.lifecycle, AgentLifecycle::Completed(_)) {
             activity.ended = Some(session.modified);
         }
@@ -125,12 +128,14 @@ impl AgentActivity {
             }
         };
         let terminal = matches!(lifecycle, AgentLifecycle::Completed(_));
+        let explicit_outcome = matches!(outcome, Some("complete" | "failed" | "incomplete"));
         Self {
             session_id,
             session_path,
             role: role_label(title),
             activity: String::new(),
             lifecycle,
+            explicit_outcome,
             current_tool: None,
             recent_tool: None,
             tool_call_count: 0,
@@ -254,6 +259,7 @@ impl ActivityBuilder {
         is_running: bool,
         limited: bool,
     ) -> AgentActivity {
+        let explicit_outcome = self.outcome.is_some();
         let lifecycle = if is_running {
             AgentLifecycle::Working
         } else if let Some(outcome) = self.outcome {
@@ -283,6 +289,7 @@ impl ActivityBuilder {
             role: role_label(title),
             activity: bounded(first_user_message, MAX_ACTIVITY_CHARS),
             lifecycle,
+            explicit_outcome,
             current_tool,
             recent_tool,
             tool_call_count: self.tool_call_count,

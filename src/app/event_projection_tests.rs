@@ -157,6 +157,41 @@ fn metadata_refresh_does_not_erase_an_explicit_native_outcome() {
 }
 
 #[test]
+fn explicit_native_outcome_can_replace_an_earlier_explicit_outcome() {
+    let activity = |outcome| {
+        AgentActivity::from_native_child(
+            "child".into(),
+            PathBuf::from("/sessions/child"),
+            "reviewer",
+            false,
+            Some(outcome),
+        )
+    };
+    let mut activities = HashMap::new();
+    assert!(merge_agent_activity(
+        &mut activities,
+        activity("complete"),
+        ActivityUpdateSource::Native,
+    ));
+
+    assert!(merge_agent_activity(
+        &mut activities,
+        activity("incomplete"),
+        ActivityUpdateSource::Native,
+    ));
+    assert_eq!(
+        activities
+            .values()
+            .next()
+            .expect("native activity")
+            .lifecycle,
+        crate::agent_activity::AgentLifecycle::Completed(
+            crate::agent_activity::AgentOutcome::Incomplete
+        )
+    );
+}
+
+#[test]
 fn scoped_paths_keep_same_native_id_in_separate_rows_and_focus_targets() {
     let activity = |path: &str| {
         AgentActivity::from_native_child(
