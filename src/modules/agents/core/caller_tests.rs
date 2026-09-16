@@ -345,6 +345,32 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
         links.lock().expect("test operation should succeed")[0].parent_backend,
         Backend::Pi
     );
+    let worker_id = child
+        .worker_identity()
+        .expect("registered child identity")
+        .0;
+    registry.set_assignment(
+        &worker_id,
+        crate::agents::WorkerAssignment {
+            profile: "fast".into(),
+            execution: crate::agents::WorkerExecution {
+                harness: Backend::OpenCode,
+                provider: "opencode-go".into(),
+                model: "glm-5.3-flash".into(),
+                effort: Some("high".into()),
+            },
+        },
+    )?;
+    let routed = links
+        .lock()
+        .expect("test operation should succeed")
+        .last()
+        .expect("assignment persistence")
+        .routing
+        .clone()
+        .expect("persisted worker routing");
+    assert_eq!(routed.name, "inspect");
+    assert_eq!(routed.assignment.profile, "fast");
     child.select_model("opencode-go", "glm-5.3-flash");
     child.select_effort("high");
     let saved = links

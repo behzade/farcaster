@@ -24,6 +24,15 @@ pub(crate) struct WorkerFamilyLink {
     pub(crate) parent_session: String,
     #[serde(default)]
     pub(crate) execution: Option<super::WorkerExecution>,
+    #[serde(default)]
+    pub(crate) routing: Option<WorkerRouting>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct WorkerRouting {
+    pub(crate) name: String,
+    pub(crate) assignment: super::WorkerAssignment,
+    pub(crate) access_mode: crate::agents::HarnessAccessMode,
 }
 
 pub(crate) type WorkerFamilySink =
@@ -211,6 +220,11 @@ impl CallerRegistry {
                         effort: child.effort.clone(),
                     },
                 ),
+                routing: child.assignment.clone().map(|assignment| WorkerRouting {
+                    name: child.worker_name.clone(),
+                    assignment,
+                    access_mode: child.access_mode,
+                }),
             })
         })();
         let sink = self.family_sink.lock().ok().and_then(|sink| sink.clone());
@@ -456,15 +470,19 @@ impl CallerRegistry {
         worker_id: &str,
         assignment: super::WorkerAssignment,
     ) -> Result<(), String> {
-        let mut callers = self
-            .callers
-            .lock()
-            .map_err(|_| "worker caller registry is unavailable")?;
-        let caller = callers
-            .values_mut()
-            .find(|caller| caller.worker_id == worker_id)
-            .ok_or("worker is not registered")?;
-        caller.assignment = Some(assignment);
+        let token = {
+            let mut callers = self
+                .callers
+                .lock()
+                .map_err(|_| "worker caller registry is unavailable")?;
+            let (token, caller) = callers
+                .iter_mut()
+                .find(|(_, caller)| caller.worker_id == worker_id)
+                .ok_or("worker is not registered")?;
+            caller.assignment = Some(assignment);
+            token.clone()
+        };
+        self.persist_family(&token);
         Ok(())
     }
 
@@ -751,6 +769,14 @@ impl CallerIdentity {
             if activity == WorkerActivityState::Idle {
                 context.execution = None;
             }
+        }
+    }
+
+    pub(crate) fn set_access_mode(&self, access_mode: crate::agents::HarnessAccessMode) {
+        if let Ok(mut callers) = self.registry.callers.lock()
+            && let Some(context) = callers.get_mut(&self.token)
+        {
+            context.access_mode = access_mode;
         }
     }
 

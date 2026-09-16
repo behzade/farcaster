@@ -1075,7 +1075,7 @@ fn failed_resume_send_cleanup_keeps_its_process_capacity_owned() -> Result<(), S
         .fail_new_session_close
         .store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(
-        pool.resume_child(&context, "implementation", "again".into(), None, |_| {
+        pool.resume_child(&context, "implementation", "again".into(), None, |_, _| {
             Some(context.access_mode)
         })?
         .is_some()
@@ -1405,7 +1405,7 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
             "worker-0",
             "wrong parent".into(),
             None,
-            |_| Some(wrong_context.access_mode),
+            |_, _| Some(wrong_context.access_mode),
         )?
         .is_none(),
         "an equal native session string from another backend must not resume the child"
@@ -1429,7 +1429,7 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
             "worker-0",
             "unsafe resume".into(),
             None,
-            |_| None,
+            |_, _| None,
         )
         .expect_err("resume must fail when routing cannot provide protected access");
     assert!(error.contains("no protected access mode"), "{error}");
@@ -1448,7 +1448,7 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
             "worker-0",
             "follow up".into(),
             None,
-            |_| Some(parent_context.access_mode),
+            |_, _| Some(parent_context.access_mode),
         )?
         .ok_or("retired child was not found")?;
     assert!(

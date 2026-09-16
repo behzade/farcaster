@@ -52,7 +52,8 @@ CREATE TABLE session_events (
 );
 CREATE TABLE worker_families (
   child_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
-  execution_json TEXT
+  execution_json TEXT,
+  routing_json TEXT
 );
 CREATE TABLE outbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

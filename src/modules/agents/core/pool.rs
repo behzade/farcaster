@@ -55,6 +55,7 @@ struct WorkerRecord {
     factory: Arc<dyn WorkerSessionFactory>,
     launch: WorkerLaunch,
     assignment: Option<super::WorkerAssignment>,
+    restored_access_mode: Option<crate::agents::HarnessAccessMode>,
     parent_backend: Option<Backend>,
     cleanup_confirmed: Arc<AtomicBool>,
     setup_done: Arc<(Mutex<bool>, Condvar)>,
@@ -109,6 +110,106 @@ impl WorkerPool {
 
     pub(crate) fn updates(&self) -> async_channel::Receiver<()> {
         self.inner.update_receiver.clone()
+    }
+
+    pub(crate) fn restore_families(
+        &self,
+        families: impl IntoIterator<Item = super::WorkerFamilyLink>,
+    ) -> Result<(), String> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable".to_owned())?;
+        for family in families {
+            let Some(routing) = family.routing else {
+                continue;
+            };
+            if !crate::agents::valid_worker_name(&routing.name)
+                || family.child_session.trim().is_empty()
+                || family.parent_session.trim().is_empty()
+                || routing.assignment.execution.harness != family.child_backend
+            {
+                zlog::warn!("Ignore invalid saved worker route for {}", routing.name);
+                continue;
+            }
+            let project = match canonical_directory(&family.project) {
+                Ok(project) => project,
+                Err(error) => {
+                    zlog::warn!("Ignore saved worker route {}: {error}", routing.name);
+                    continue;
+                }
+            };
+            if state.records.values().any(|record| {
+                record.launch.project == project
+                    && record.launch.parent_session == family.parent_session
+                    && record.parent_backend == Some(family.parent_backend)
+                    && record
+                        .launch
+                        .worker_name
+                        .eq_ignore_ascii_case(&routing.name)
+            }) {
+                return Err(format!(
+                    "ambiguous saved worker route for child {}",
+                    routing.name
+                ));
+            }
+            let Some(factory) = self.inner.factories.get(&family.child_backend).cloned() else {
+                zlog::warn!(
+                    "Ignore saved worker route {} for unavailable backend {}",
+                    routing.name,
+                    family.child_backend
+                );
+                continue;
+            };
+            state.sequence = state.sequence.saturating_add(1);
+            let id = worker_id(state.sequence)?;
+            let snapshot = WorkerSnapshot {
+                id: id.clone(),
+                backend: family.child_backend,
+                project: project.clone(),
+                session_locator: Some(family.child_session.clone()),
+                status: WorkerStatus::Idle,
+                output: None,
+                error: None,
+                pending_input: None,
+            };
+            state.records.insert(
+                id.clone(),
+                WorkerRecord {
+                    snapshot: Arc::new(Mutex::new(snapshot)),
+                    commands: None,
+                    thread: None,
+                    factory,
+                    launch: WorkerLaunch {
+                        slot: None,
+                        worker_id: id,
+                        worker_name: routing.name,
+                        project,
+                        parent_session: family.parent_session,
+                        parent_worker_id: None,
+                        context: WorkerContext::Resume {
+                            session_locator: family.child_session,
+                        },
+                        provider: Some(routing.assignment.execution.provider.clone()),
+                        model: Some(routing.assignment.execution.model.clone()),
+                        effort: routing.assignment.execution.effort.clone(),
+                        access_mode: routing.access_mode,
+                        app_proxy: None,
+                        ephemeral: false,
+                    },
+                    assignment: Some(routing.assignment),
+                    restored_access_mode: Some(routing.access_mode),
+                    parent_backend: Some(family.parent_backend),
+                    cleanup_confirmed: Arc::new(AtomicBool::new(true)),
+                    setup_done: Arc::new((Mutex::new(true), Condvar::new())),
+                    setup_cancelled: Arc::new(Mutex::new(false)),
+                    setup_stop_requested: Arc::new(AtomicBool::new(false)),
+                    pending_messages: Vec::new(),
+                },
+            );
+        }
+        Ok(())
     }
 
     pub(crate) fn set_app_proxy(&self, proxy: Option<String>) -> Result<(), String> {
@@ -386,6 +487,7 @@ impl WorkerPool {
                 factory,
                 launch,
                 assignment: assignment.clone(),
+                restored_access_mode: None,
                 parent_backend,
                 cleanup_confirmed: Arc::new(AtomicBool::new(false)),
                 setup_done: Arc::new((Mutex::new(false), Condvar::new())),
@@ -571,7 +673,10 @@ impl WorkerPool {
         name: &str,
         message: String,
         profile: Option<&str>,
-        route: impl Fn(&super::WorkerAssignment) -> Option<crate::agents::HarnessAccessMode>,
+        route: impl Fn(
+            &super::WorkerAssignment,
+            crate::agents::HarnessAccessMode,
+        ) -> Option<crate::agents::HarnessAccessMode>,
     ) -> Result<Option<super::WorkerAssignment>, String> {
         let (reserved, assignment) = {
             let mut state = self
@@ -613,8 +718,18 @@ impl WorkerPool {
                 .clone()
                 .ok_or("retired child has no saved worker assignment")?;
             validate_fixed_profile(&assignment, profile)?;
-            let access_mode = route(&assignment)
+            let requested_access = record.restored_access_mode.unwrap_or(parent.access_mode);
+            crate::agents::validate_child_access(parent.access_mode, requested_access)?;
+            let access_mode = route(&assignment, requested_access)
                 .ok_or("saved child assignment has no protected access mode for this parent")?;
+            if record
+                .restored_access_mode
+                .is_some_and(|saved| access_mode != saved)
+            {
+                return Err(
+                    "saved child access mode is no longer available for this parent".into(),
+                );
+            }
             let slot = self.inner.concurrency.reserve()?;
             record.launch.slot = Some(slot);
             record.launch.parent_worker_id = Some(parent.worker_id.clone());

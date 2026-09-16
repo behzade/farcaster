@@ -98,7 +98,7 @@ pub(super) fn send(
         &to,
         params.message.clone(),
         params.profile.as_deref(),
-        |assignment| route(&assignment.execution, &caller.project, caller.access_mode),
+        |assignment, access_mode| route(&assignment.execution, &caller.project, access_mode),
     )? {
         return Ok(serde_json::json!({
             "worker": to,
@@ -311,3 +311,7 @@ fn new_worker(
 #[cfg(test)]
 #[path = "workers_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workers_restart_tests.rs"]
+mod restart_tests;

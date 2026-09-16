@@ -50,7 +50,7 @@ impl StateStore {
                     migrate_v14_to_v15(&migration)?;
                 }
                 Some(14) => migrate_v14_to_v15(&migration)?,
-                Some(15 | 16) => {}
+                Some(15..=17) => {}
                 Some(version) => {
                     return Err(format!(
                         "GUI state schema {version} is not supported by this build"
@@ -59,6 +59,7 @@ impl StateStore {
             }
             super::migrate_v16::migrate(&migration)?;
             super::migrate_v17::migrate(&migration)?;
+            super::migrate_v18::migrate(&migration)?;
             migration
                 .execute(
                     "INSERT INTO meta(key, value) VALUES('schema_version', ?1)
@@ -104,7 +105,7 @@ impl StateStore {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(|error| format!("read legacy pi-gpui schema version: {error}"))?;
-            if !matches!(version, 7 | 11 | 12 | 13 | 14 | 15 | SCHEMA_VERSION) {
+            if !matches!(version, 7 | 11 | 12 | 13 | 14 | 15 | 17 | SCHEMA_VERSION) {
                 return Err(format!(
                     "legacy pi-gpui state schema {version} is not supported by this build"
                 ));

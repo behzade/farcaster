@@ -114,6 +114,7 @@ fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
         child_backend: Backend::OpenCode,
         child_session: "cross-backend-child".into(),
         execution: None,
+        routing: None,
     })?;
     let cached = store.cached_sessions("")?;
     let cross_backend_child = cached
@@ -589,6 +590,7 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
         child_backend: Backend::Codex,
         child_session: "new-child-id".into(),
         execution: None,
+        routing: None,
     })?;
 
     let rows = store.cached_sessions("")?;
@@ -609,6 +611,7 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
         child_backend: Backend::Codex,
         child_session: "new-child-id".into(),
         execution: None,
+        routing: None,
     })?;
     store.save_worker_family(&crate::agents::WorkerFamilyLink {
         project: temp.path().to_path_buf(),
@@ -617,6 +620,7 @@ fn worker_family_native_ids_get_loadable_unique_locators() -> Result<(), String>
         child_backend: Backend::OpenCode,
         child_session: "new-child-id".into(),
         execution: None,
+        routing: None,
     })?;
     let identities: i64 = store
         .connection
@@ -681,6 +685,19 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
         child_backend: Backend::Codex,
         child_session: "child".into(),
         execution: None,
+        routing: Some(crate::agents::WorkerRouting {
+            name: "research".into(),
+            assignment: crate::agents::WorkerAssignment {
+                profile: "fast".into(),
+                execution: crate::agents::WorkerExecution {
+                    harness: Backend::Codex,
+                    provider: "openai".into(),
+                    model: "saved-model".into(),
+                    effort: None,
+                },
+            },
+            access_mode: crate::agents::HarnessAccessMode::Auto,
+        }),
     })?;
     store
         .connection
@@ -808,6 +825,13 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
     assert_eq!(family.len(), 1);
     assert_eq!(family[0].parent_session, "parent");
     assert_eq!(family[0].child_session, "child");
+    assert_eq!(
+        family[0]
+            .routing
+            .as_ref()
+            .map(|routing| routing.name.as_str()),
+        Some("research")
+    );
     let draft = store
         .load_registry()?
         .drafts
@@ -1066,6 +1090,7 @@ fn v12_migration_preserves_native_id_worker_family_links() -> Result<(), String>
         child_backend: Backend::Codex,
         child_session: "native-child".into(),
         execution: None,
+        routing: None,
     };
     tx.execute(
         "INSERT INTO meta(key,value) VALUES('worker_family:child',?1)",

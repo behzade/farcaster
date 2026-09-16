@@ -154,7 +154,7 @@ impl WorkerProfiles {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct WorkerAssignment {
     pub(crate) profile: String,
     pub(crate) execution: WorkerExecution,

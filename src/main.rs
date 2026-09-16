@@ -60,6 +60,15 @@ fn main() -> std::process::ExitCode {
             if let Err(error) = pool.set_app_proxy(worker_proxy) {
                 return fail(format!("initialize worker proxy: {error}"));
             }
+            if let Some(store) = state_store.as_ref() {
+                let families = match store.load_worker_routes() {
+                    Ok(families) => families,
+                    Err(error) => return fail(format!("load saved worker routes: {error}")),
+                };
+                if let Err(error) = pool.restore_families(families) {
+                    return fail(format!("restore saved worker routes: {error}"));
+                }
+            }
             pool
         }
         Err(error) => return fail(format!("initialize worker pool: {error}")),

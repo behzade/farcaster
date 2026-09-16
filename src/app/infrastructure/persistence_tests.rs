@@ -367,7 +367,7 @@ fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 17);
+    assert_eq!(database_schema_version(&database)?, 18);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -1290,7 +1290,7 @@ fn schema_v1_migrates_to_current_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 17);
+    assert_eq!(database_schema_version(&database)?, 18);
     Ok(())
 }
 
@@ -1328,7 +1328,7 @@ fn schema_v2_migrates_to_current_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 17);
+    assert_eq!(database_schema_version(&database)?, 18);
     Ok(())
 }
 
@@ -1368,7 +1368,7 @@ fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity(
     drop(connection);
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 17);
+    assert_eq!(database_schema_version(&database)?, 18);
     let cached = store.cached_sessions("")?;
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].id, "v3-legacy");
@@ -1402,7 +1402,7 @@ fn schema_v4_migrates_with_a_writable_provisional_title_column()
     // The migration itself adds provisional_title; prove the new column is the
     // registry's title source by writing through it and reopening.
     let mut store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 17);
+    assert_eq!(database_schema_version(&database)?, 18);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     let mut registry = store.load_registry()?;
     registry.drafts[0].title = Some("Migrated column".into());
@@ -1454,7 +1454,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, Backend::Pi);
-    assert_eq!(database_schema_version(&database)?, 17);
+    assert_eq!(database_schema_version(&database)?, 18);
     Ok(())
 }
 
@@ -1796,6 +1796,7 @@ fn worker_identity_binds_a_discovered_locator_without_creating_a_second_session(
         child_backend: Backend::Codex,
         child_session: "child".into(),
         execution: None,
+        routing: None,
     })?;
     let mut child = persistence_summary(temp.path(), "child");
     child.harness = Backend::Codex;
@@ -2026,17 +2027,26 @@ fn settings_save_independently_and_reject_invalid_values() -> Result<(), String>
 fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("settings.sqlite3");
+    let execution = crate::agents::WorkerExecution {
+        harness: Backend::OpenCode,
+        provider: "opencode-go".into(),
+        model: "glm-5.3-flash".into(),
+        effort: None,
+    };
     let link = crate::agents::WorkerFamilyLink {
         project: temp.path().to_owned(),
         child_backend: Backend::OpenCode,
         child_session: "child-session".into(),
         parent_backend: Backend::Pi,
         parent_session: "/sessions/parent.jsonl".into(),
-        execution: Some(crate::agents::WorkerExecution {
-            harness: Backend::OpenCode,
-            provider: "opencode-go".into(),
-            model: "glm-5.3-flash".into(),
-            effort: None,
+        execution: Some(execution.clone()),
+        routing: Some(crate::agents::WorkerRouting {
+            name: "research".into(),
+            assignment: crate::agents::WorkerAssignment {
+                profile: "fast".into(),
+                execution,
+            },
+            access_mode: crate::agents::HarnessAccessMode::Sandboxed,
         }),
     };
     let mut store = StateStore::open_at(&database)?;
@@ -2082,9 +2092,30 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         .as_object_mut()
         .expect("test operation should succeed")
         .remove("execution");
+    legacy
+        .as_object_mut()
+        .expect("test operation should succeed")
+        .remove("routing");
     let legacy: crate::agents::WorkerFamilyLink =
         serde_json::from_value(legacy).map_err(|error| error.to_string())?;
     assert!(legacy.execution.is_none());
+    assert!(legacy.routing.is_none());
+    drop(store);
+    let connection = Connection::open(&database).map_err(|error| error.to_string())?;
+    connection
+        .execute("UPDATE worker_families SET execution_json='{'", [])
+        .map_err(|error| error.to_string())?;
+    drop(connection);
+    let restored = StateStore::open_at(&database)?.load_worker_routes()?;
+    assert_eq!(restored.len(), 1);
+    assert!(restored[0].execution.is_none());
+    assert_eq!(
+        restored[0]
+            .routing
+            .as_ref()
+            .map(|routing| routing.name.as_str()),
+        Some("research")
+    );
     Ok(())
 }
 
@@ -2105,6 +2136,7 @@ fn legacy_worker_family_project_alias_is_normalized_on_read() -> Result<(), Stri
         parent_backend: Backend::Pi,
         parent_session: "parent".into(),
         execution: None,
+        routing: None,
     };
     let store = StateStore::open_at(&database)?;
     store.save_worker_family(&link)?;

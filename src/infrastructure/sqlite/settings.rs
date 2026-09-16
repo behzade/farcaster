@@ -1,7 +1,6 @@
 use super::*;
 use crate::agents::Backend;
 
-#[cfg(test)]
 fn stored_family_identity(
     locator_root: &Path,
     project: &Path,
@@ -131,11 +130,32 @@ impl StateStore {
             .map_err(|error| error.to_string())?;
         let execution =
             serde_json::to_string(&link.execution).map_err(|error| error.to_string())?;
+        let routing = link
+            .routing
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        if let Some(routing) = &link.routing {
+            transaction
+                .execute(
+                    "UPDATE worker_families SET routing_json=NULL
+                       WHERE child_id != ?1
+                         AND child_id IN (SELECT id FROM sessions WHERE parent_id=?2)
+                         AND json_valid(routing_json)
+                         AND lower(json_extract(routing_json, '$.name'))=lower(?3)",
+                    params![child_id, parent_id, routing.name],
+                )
+                .map_err(|error| error.to_string())?;
+        }
         transaction
             .execute(
-                "INSERT INTO worker_families(child_id, execution_json) VALUES(?1, ?2)
-                 ON CONFLICT(child_id) DO UPDATE SET execution_json=excluded.execution_json",
-                params![child_id, execution],
+                "INSERT INTO worker_families(child_id, execution_json, routing_json)
+                 VALUES(?1, ?2, ?3)
+                 ON CONFLICT(child_id) DO UPDATE SET
+                   execution_json=excluded.execution_json,
+                   routing_json=excluded.routing_json",
+                params![child_id, execution, routing],
             )
             .map_err(|error| error.to_string())?;
         if let Some(execution) = &link.execution {
@@ -161,22 +181,44 @@ impl StateStore {
     pub(crate) fn load_worker_families(
         &self,
     ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
+        self.load_worker_families_filtered(false)
+    }
+
+    pub(crate) fn load_worker_routes(
+        &self,
+    ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
+        self.load_worker_families_filtered(true)
+    }
+
+    fn load_worker_families_filtered(
+        &self,
+        active_only: bool,
+    ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
         let locator_root = self
             .image_directory
             .parent()
             .ok_or("state image directory has no parent")?
             .join("session-locators");
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT child.harness, child.locator, child.backend_id,
+        let active_filter = if active_only {
+            "WHERE p.deleted_at IS NULL
+               AND child.archived_at IS NULL
+               AND parent.archived_at IS NULL"
+        } else {
+            ""
+        };
+        let query = format!(
+            "SELECT child.harness, child.locator, child.backend_id,
                         parent.harness, parent.locator, parent.backend_id,
-                        p.path, f.execution_json
+                        p.path, f.execution_json, f.routing_json
                    FROM worker_families f
                    JOIN sessions child ON child.id = f.child_id
                    JOIN sessions parent ON parent.id = child.parent_id
-                   JOIN projects p ON p.id = child.project_id",
-            )
+                   JOIN projects p ON p.id = child.project_id
+                   {active_filter}"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&query)
             .map_err(|error| error.to_string())?;
         statement
             .query_map([], |row| {
@@ -189,6 +231,7 @@ impl StateStore {
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, String>(6)?,
                     row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
                 ))
             })
             .map_err(|error| error.to_string())?
@@ -202,12 +245,23 @@ impl StateStore {
                     parent_backend_id,
                     project,
                     execution,
+                    routing,
                 ) = row.map_err(|error| error.to_string())?;
-                let execution = execution
-                    .map(|value| serde_json::from_str(&value))
-                    .transpose()
-                    .map_err(|error| error.to_string())?
-                    .flatten();
+                let execution = execution.and_then(|value| {
+                    serde_json::from_str(&value)
+                        .map_err(|error| {
+                            zlog::warn!("Ignore malformed worker execution: {error}");
+                        })
+                        .ok()
+                        .flatten()
+                });
+                let routing: Option<crate::agents::WorkerRouting> = routing.and_then(|value| {
+                    serde_json::from_str(&value)
+                        .map_err(|error| {
+                            zlog::warn!("Ignore malformed worker routing: {error}");
+                        })
+                        .ok()
+                });
                 Ok(crate::agents::WorkerFamilyLink {
                     project: crate::sessions::normalize_session_path(Path::new(&project)),
                     child_session: stored_family_identity(
@@ -227,6 +281,7 @@ impl StateStore {
                     ),
                     parent_backend,
                     execution,
+                    routing,
                 })
             })
             .collect()
