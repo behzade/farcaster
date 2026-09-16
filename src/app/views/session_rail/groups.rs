@@ -1,8 +1,4 @@
-use std::{
-    cmp::Reverse,
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::{cmp::Reverse, collections::HashMap, path::Path};
 
 use crate::{
     app::ui::primitives::ReorderPosition,
@@ -42,33 +38,6 @@ impl ActiveSessionItem {
 pub(super) struct SessionRailLists {
     pub(super) active: Vec<ActiveSessionItem>,
     pub(super) archived: Vec<SessionRailItem>,
-}
-
-pub(in crate::app) fn roots_waiting_for_descendants(
-    sessions: &[SessionSummary],
-) -> HashSet<String> {
-    let parent_by_id = sessions
-        .iter()
-        .filter_map(|session| {
-            session
-                .parent_session
-                .as_ref()
-                .map(|parent| (session.id.as_str(), parent.as_str()))
-        })
-        .collect::<HashMap<_, _>>();
-    let mut waiting = HashSet::new();
-    for session in sessions.iter().filter(|session| session.is_running) {
-        let mut current = session.id.as_str();
-        let mut seen = HashSet::new();
-        while seen.insert(current) {
-            let Some(parent) = parent_by_id.get(current).copied() else {
-                break;
-            };
-            waiting.insert(parent.to_owned());
-            current = parent;
-        }
-    }
-    waiting
 }
 
 pub(super) fn session_rail_lists(

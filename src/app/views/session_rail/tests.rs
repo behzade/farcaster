@@ -5,8 +5,7 @@ use super::{
     ARCHIVED_LEADING_GAP, ActiveSessionItem, SessionRailItem, SessionRailKind,
     clamped_session_rail_width, collapsed_inactive_rail_height, first_unsubmitted_draft,
     hover::session_tooltip_lines, minimal_row_splice, replacement_index_after_close,
-    roots_waiting_for_descendants, session_accessible_label, session_badge, status_visual,
-    subagent_counts, visible_session_shortcuts,
+    session_accessible_label, status_visual, subagent_counts, visible_session_shortcuts,
 };
 use crate::{
     app::ui::assets::AppIcon,
@@ -58,76 +57,6 @@ fn shortcuts_number_sessions_without_binding_zero_to_a_draft() {
     assert!(!shortcuts.contains_key(&11));
     assert_eq!(shortcuts.get(&10), Some(&1));
     assert_eq!(shortcuts.get(&9), Some(&2));
-}
-
-#[test]
-fn active_sessions_always_have_a_meaningful_state() {
-    let done = item("done", 2, "/project", SessionRailKind::Project, false);
-    let running = item("running", 1, "/project", SessionRailKind::Project, true);
-
-    assert_eq!(
-        session_badge(&done, None, Some("other"), "Working", false),
-        Some("Done".into())
-    );
-    assert_eq!(
-        session_badge(&done, Some("Ready"), None, "", false),
-        Some("Done".into())
-    );
-    assert_eq!(
-        session_badge(&running, None, None, "", false),
-        Some("Working".into())
-    );
-    assert_eq!(
-        session_badge(&done, None, Some("done"), "Needs input", false),
-        Some("Needs input".into())
-    );
-}
-
-#[test]
-fn archived_sessions_suppress_done_but_keep_active_states() {
-    let archived = item("archived", 2, "/project", SessionRailKind::Archived, false);
-    let running = item("running", 1, "/project", SessionRailKind::Archived, true);
-
-    assert_eq!(
-        session_badge(&archived, Some("Done"), None, "", false),
-        None
-    );
-    assert_eq!(session_badge(&archived, None, None, "", false), None);
-    assert_eq!(
-        session_badge(&running, None, None, "", false),
-        Some("Working".into())
-    );
-}
-
-#[test]
-fn settled_status_overrides_stale_catalog_activity() {
-    let running = item("running", 1, "/project", SessionRailKind::Project, true);
-    assert_eq!(
-        session_badge(&running, Some("Ready"), None, "", false),
-        Some("Done".into()),
-    );
-    assert_eq!(
-        session_badge(&running, None, Some("running"), "Ready", false),
-        Some("Done".into()),
-    );
-    assert_eq!(
-        session_badge(&running, Some("Ready"), None, "", true),
-        Some("Waiting".into()),
-    );
-}
-
-#[test]
-fn completed_parent_waits_while_a_descendant_is_running() {
-    let parent = item("parent", 2, "/project", SessionRailKind::Project, false);
-    let mut child = item("child", 1, "/project", SessionRailKind::Project, true).session;
-    child.parent_session = Some(parent.session.id.clone());
-    let waiting = roots_waiting_for_descendants(&[parent.session.clone(), child]);
-
-    assert!(waiting.contains("parent"));
-    assert_eq!(
-        session_badge(&parent, Some("Done"), None, "", true),
-        Some("Waiting".into())
-    );
 }
 
 #[test]

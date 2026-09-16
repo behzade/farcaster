@@ -33,14 +33,14 @@ use crate::{
     sessions::{SessionSummary, root_session_for_path},
 };
 
-pub(in crate::app) use groups::{SessionRailKind, roots_waiting_for_descendants};
+pub(in crate::app) use groups::SessionRailKind;
 pub(in crate::app) use hover::{session_hover_details, session_hover_panel};
 pub(in crate::app) use rows::{project_label, status_visual};
 
 #[cfg(test)]
 use self::{
     rendering::{ARCHIVED_LEADING_GAP, collapsed_inactive_rail_height, subagent_counts},
-    rows::{session_accessible_label, session_badge},
+    rows::session_accessible_label,
 };
 
 pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {

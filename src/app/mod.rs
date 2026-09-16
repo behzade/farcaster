@@ -27,14 +27,14 @@ use composer::submissions::PendingSubmission;
 use composer::{completion as composer_completion, file_mentions};
 pub(crate) use navigation::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use project::{registry as project_registry, repository};
-use session::{archive, drafts};
+use session::{archive, drafts, status::roots_waiting_for_descendants};
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 pub(crate) use views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 pub(crate) use views::workgraph::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
 use views::workgraph::{WorkGraphBoardView, WorkGraphSidebarView};
 use views::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailKind, SessionRailView,
-    TranscriptView, WorkGraphDetailView, roots_waiting_for_descendants,
+    TranscriptView, WorkGraphDetailView,
 };
 
 use std::{

@@ -7,7 +7,7 @@ use gpui::{
 
 use super::{
     FarcasterApp,
-    groups::{SessionRailKind, roots_waiting_for_descendants, session_rail_lists},
+    groups::{SessionRailKind, session_rail_lists},
     reconcile_list_rows,
     rendering::{
         ARCHIVED_LEADING_GAP, INACTIVE_PREVIEW_LIMIT, inactive_session_badge,
@@ -17,7 +17,8 @@ use super::{
     session_item_identity,
 };
 use crate::{
-    app::ui::primitives::disclosure_button, app::ui::theme::THEME, sessions::root_session_for_path,
+    app::session::status::roots_waiting_for_descendants, app::ui::primitives::disclosure_button,
+    app::ui::theme::THEME, sessions::root_session_for_path,
 };
 
 impl FarcasterApp {

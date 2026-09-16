@@ -14,13 +14,14 @@ use super::{
     FarcasterApp, active_item_identity,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_drop_target, folder_header, folder_rows},
-    groups::{ActiveSessionItem, roots_waiting_for_descendants, session_rail_lists},
+    groups::{ActiveSessionItem, session_rail_lists},
     reconcile_list_rows,
     rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
-    rows::{SessionRow, SessionRowInput, project_label, session_badge},
+    rows::{SessionRow, SessionRowInput, project_label},
     visible_session_shortcuts,
 };
 use crate::{
+    app::session::status::{resolved_session_status, roots_waiting_for_active_descendants},
     app::ui::assets::AppIcon,
     app::ui::primitives::{
         AppIconSize, ButtonTone, FeedbackTone, app_icon, dropdown_button, feedback, icon_button,
@@ -50,7 +51,8 @@ impl FarcasterApp {
             self.snapshot.live_session.as_deref(),
         )
         .map(|session| session.id.clone());
-        let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
+        let waiting_roots =
+            roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents);
         let lists = session_rail_lists(
             &self.sessions.visible,
             &self.sessions.drafts,
@@ -131,13 +133,13 @@ impl FarcasterApp {
                         let selected =
                             active_selected_root.as_deref() == Some(item.session.id.as_str());
                         let target = format!("session:{}", item.session.path.display());
-                        let badge = session_badge(
-                            item,
+                        let badge = Some(resolved_session_status(
+                            &item.session,
                             active_run_statuses.get(&target).map(String::as_str),
                             active_live_root.as_deref(),
                             &active_live_status,
                             active_waiting_roots.contains(&item.session.id),
-                        );
+                        ));
                         let shortcut = session_shortcuts.get(&item.session.app_session_id).copied();
                         let editing =
                             active_editing_path.as_deref() == Some(item.session.path.as_path());

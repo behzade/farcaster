@@ -31,37 +31,6 @@ use crate::{
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
 };
 
-pub(super) fn session_badge(
-    item: &SessionRailItem,
-    explicit_status: Option<&str>,
-    live_session_id: Option<&str>,
-    live_status: &str,
-    waiting_for_descendant: bool,
-) -> Option<String> {
-    let explicit_status = explicit_status.and_then(normalized_session_status);
-    let live_status = (live_session_id == Some(item.session.id.as_str()))
-        .then(|| normalized_session_status(live_status))
-        .flatten();
-    let status = explicit_status
-        .filter(|status| status != "Done" || !waiting_for_descendant)
-        .or_else(|| live_status.filter(|status| status != "Done" || !waiting_for_descendant))
-        .or_else(|| waiting_for_descendant.then(|| "Waiting".into()))
-        .or_else(|| item.session.is_running.then(|| "Working".into()))
-        .or_else(|| (item.kind == SessionRailKind::Project).then(|| "Done".into()));
-    match (item.kind, status.as_deref()) {
-        (SessionRailKind::Archived, Some("Done")) | (_, None) => None,
-        _ => status,
-    }
-}
-
-fn normalized_session_status(status: &str) -> Option<String> {
-    match status {
-        "" | "Idle" => None,
-        "Ready" => Some("Done".into()),
-        status => Some(status.into()),
-    }
-}
-
 pub(super) struct SessionRowInput {
     pub(super) selected: bool,
     pub(super) status: Option<String>,

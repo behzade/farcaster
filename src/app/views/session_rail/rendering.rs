@@ -9,10 +9,12 @@ use super::{
     FarcasterApp,
     drag::DraggedSession,
     groups::{SessionRailItem, SessionRailKind},
-    rows::session_badge,
 };
 use crate::{
-    app::ui::{primitives::ReorderPosition, theme::THEME},
+    app::{
+        session::status::resolved_session_status,
+        ui::{primitives::ReorderPosition, theme::THEME},
+    },
     sessions::SessionSummary,
 };
 
@@ -124,13 +126,14 @@ pub(super) fn inactive_session_badge(
         return None;
     }
     let target = format!("session:{}", item.session.path.display());
-    session_badge(
-        item,
+    let status = resolved_session_status(
+        &item.session,
         run_statuses.get(&target).map(String::as_str),
         live_root,
         live_status,
         waiting_roots.contains(&item.session.id),
-    )
+    );
+    (status != "Done").then_some(status)
 }
 
 pub(super) fn collapsed_inactive_rail_height(count: usize, leading_gap: bool) -> gpui::Pixels {

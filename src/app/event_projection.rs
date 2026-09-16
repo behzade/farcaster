@@ -317,6 +317,7 @@ impl FarcasterApp {
         self.sessions.visible = sessions;
         self.sessions.all = all_sessions;
         if let Some((activities, _exhaustive)) = activities {
+            dirty.rail = true;
             for activity in activities.into_values() {
                 dirty.run |= merge_agent_activity(
                     &mut self.activity.agents,
@@ -718,6 +719,7 @@ impl FarcasterApp {
                     activity,
                     ActivityUpdateSource::Native,
                 );
+                dirty.rail = true;
                 self.activity
                     .row_focus
                     .entry(activity_key)

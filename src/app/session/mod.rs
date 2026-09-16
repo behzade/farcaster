@@ -10,4 +10,5 @@ pub(in crate::app) mod drafts;
 mod expiries;
 pub(in crate::app) mod import;
 pub(in crate::app) mod lifecycle;
+pub(in crate::app) mod status;
 mod titles;
