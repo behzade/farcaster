@@ -685,11 +685,13 @@ fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
     )
 }
 
-pub(super) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
+pub(in crate::app) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
     match status {
         "" => None,
-        "Done" => Some((AppIcon::CheckCircle, THEME.colors.success)),
-        "Needs input" | "Delivery unknown" => Some((AppIcon::WarningCircle, THEME.colors.warning)),
+        "Done" | "Complete" => Some((AppIcon::CheckCircle, THEME.colors.success)),
+        "Needs input" | "Delivery unknown" | "Incomplete" => {
+            Some((AppIcon::WarningCircle, THEME.colors.warning))
+        }
         "Waiting" => Some((AppIcon::Hourglass, THEME.colors.accent)),
         "Failed" => Some((AppIcon::XCircle, THEME.colors.error)),
         "Working" => Some((AppIcon::SpinnerGap, THEME.colors.accent)),

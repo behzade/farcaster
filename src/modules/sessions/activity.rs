@@ -68,7 +68,7 @@ impl AgentActivity {
             lifecycle: if session.is_running {
                 AgentLifecycle::Working
             } else {
-                AgentLifecycle::Unknown
+                AgentLifecycle::Completed(AgentOutcome::Incomplete)
             },
             current_tool: None,
             recent_tool: None,
@@ -76,7 +76,7 @@ impl AgentActivity {
             limited: true,
             usage: session.usage,
             started: session.modified,
-            ended: None,
+            ended: (!session.is_running).then_some(session.modified),
             elapsed: None,
         }
     }
@@ -87,7 +87,9 @@ impl AgentActivity {
     ) -> Self {
         let mut activity = Self::limited_fallback(session);
         activity.lifecycle = match snapshot.status {
-            crate::agents::WorkerStatus::Running => AgentLifecycle::Working,
+            crate::agents::WorkerStatus::Pending | crate::agents::WorkerStatus::Running => {
+                AgentLifecycle::Working
+            }
             crate::agents::WorkerStatus::NeedsInput => AgentLifecycle::NeedsInput,
             crate::agents::WorkerStatus::Idle if snapshot.output.is_some() => {
                 AgentLifecycle::Completed(AgentOutcome::Complete)
@@ -119,7 +121,7 @@ impl AgentActivity {
                 Some("complete") => AgentLifecycle::Completed(AgentOutcome::Complete),
                 Some("failed") => AgentLifecycle::Completed(AgentOutcome::Failed),
                 Some("incomplete") => AgentLifecycle::Completed(AgentOutcome::Incomplete),
-                _ => AgentLifecycle::Unknown,
+                _ => AgentLifecycle::Completed(AgentOutcome::Incomplete),
             }
         };
         let terminal = matches!(lifecycle, AgentLifecycle::Completed(_));
@@ -256,6 +258,8 @@ impl ActivityBuilder {
             AgentLifecycle::Working
         } else if let Some(outcome) = self.outcome {
             AgentLifecycle::Completed(outcome)
+        } else if limited {
+            AgentLifecycle::Completed(AgentOutcome::Incomplete)
         } else {
             AgentLifecycle::Unknown
         };

@@ -191,11 +191,19 @@ fn session_states_use_semantic_icons() {
         Some(AppIcon::CheckCircle)
     );
     assert_eq!(
+        status_visual("Complete").map(|(icon, _)| icon),
+        Some(AppIcon::CheckCircle)
+    );
+    assert_eq!(
         status_visual("Working").map(|(icon, _)| icon),
         Some(AppIcon::SpinnerGap)
     );
     assert_eq!(
         status_visual("Needs input").map(|(icon, _)| icon),
+        Some(AppIcon::WarningCircle)
+    );
+    assert_eq!(
+        status_visual("Incomplete").map(|(icon, _)| icon),
         Some(AppIcon::WarningCircle)
     );
     assert_eq!(

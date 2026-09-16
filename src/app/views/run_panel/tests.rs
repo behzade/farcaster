@@ -88,11 +88,15 @@ fn restored_child_without_activity_gets_a_visible_selectable_fallback() {
     assert_eq!(fallback.session_id, session.id);
     assert_eq!(fallback.session_path, session.path);
     assert_eq!(fallback.activity, "Review the patch");
-    assert_eq!(fallback.lifecycle, AgentLifecycle::Unknown);
+    assert_eq!(
+        fallback.lifecycle,
+        AgentLifecycle::Completed(AgentOutcome::Incomplete)
+    );
+    assert_eq!(fallback.ended, Some(session.modified));
     assert!(fallback.limited);
     assert_eq!(
         agent_section(fallback.lifecycle, fallback.limited, session.is_running),
-        AgentSection::Limited
+        AgentSection::Completed
     );
 }
 
@@ -167,7 +171,7 @@ fn production_rows_include_restored_children_from_an_empty_activity_map() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].2.path, child.path);
     assert_eq!(rows[0].0.session_path, child.path);
-    assert_eq!(rows[0].3, AgentSection::Limited);
+    assert_eq!(rows[0].3, AgentSection::Completed);
 }
 
 #[test]

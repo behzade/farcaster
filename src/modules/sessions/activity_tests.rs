@@ -136,7 +136,7 @@ fn terminal_outcomes_use_only_explicit_stop_reasons() {
 }
 
 #[test]
-fn native_child_status_requires_an_explicit_terminal_outcome() {
+fn native_child_without_an_explicit_outcome_is_incomplete() {
     for (outcome, expected) in [
         (
             Some("complete"),
@@ -150,7 +150,7 @@ fn native_child_status_requires_an_explicit_terminal_outcome() {
             Some("incomplete"),
             AgentLifecycle::Completed(AgentOutcome::Incomplete),
         ),
-        (None, AgentLifecycle::Unknown),
+        (None, AgentLifecycle::Completed(AgentOutcome::Incomplete)),
     ] {
         let activity = AgentActivity::from_native_child(
             "child".into(),

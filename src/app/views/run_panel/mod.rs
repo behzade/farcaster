@@ -158,7 +158,7 @@ impl FarcasterApp {
                             active.len()
                         )))
                         .children(active.iter().filter_map(|(activity, depth, session)| {
-                            self.agent_card(activity, session, *depth, false, entity.clone())
+                            self.agent_card(activity, session, *depth, entity.clone())
                         })),
                 )
             })
@@ -197,7 +197,6 @@ impl FarcasterApp {
                                                 activity,
                                                 session,
                                                 *depth,
-                                                false,
                                                 entity.clone(),
                                             )
                                         }),
@@ -233,7 +232,7 @@ impl FarcasterApp {
                         .when(limited_agents_expanded, |section| {
                             section.children(limited.iter().filter_map(
                                 |(activity, depth, session)| {
-                                    self.agent_card(activity, session, *depth, true, entity.clone())
+                                    self.agent_card(activity, session, *depth, entity.clone())
                                 },
                             ))
                         }),

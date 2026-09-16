@@ -1,10 +1,10 @@
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
 use super::super::super::{FarcasterApp, RunPanelView};
-use super::super::session_rail::{session_hover_details, session_hover_panel};
+use super::super::session_rail::{session_hover_details, session_hover_panel, status_visual};
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
@@ -20,7 +20,6 @@ impl FarcasterApp {
         activity: &AgentActivity,
         session: &crate::sessions::SessionSummary,
         depth: usize,
-        limited: bool,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         let activity_key = crate::agent_activity::agent_activity_key(&session.path);
@@ -30,12 +29,7 @@ impl FarcasterApp {
         let key_path = path.clone();
         let key_project = project.clone();
         let key_entity = entity.clone();
-        let displayed_lifecycle = if limited {
-            AgentLifecycle::Unknown
-        } else {
-            activity.lifecycle
-        };
-        let state = lifecycle_label(displayed_lifecycle);
+        let state = lifecycle_label(activity.lifecycle);
         let role = activity.role.clone();
         let hover_id = format!("agent-hover-{activity_key}");
         let registry = crate::agents::CallerRegistry::shared();
@@ -112,6 +106,14 @@ impl FarcasterApp {
                     .gap(THEME.space.xs)
                     .text_size(THEME.type_scale.caption)
                     .text_color(THEME.colors.muted)
+                    .when_some(status_visual(state), |row, (icon, color)| {
+                        row.child(
+                            div()
+                                .flex_none()
+                                .text_color(color)
+                                .child(app_icon(icon, AppIconSize::Inline)),
+                        )
+                    })
                     .child(app_icon(
                         AppIcon::for_harness(session.harness),
                         AppIconSize::Inline,
@@ -122,7 +124,7 @@ impl FarcasterApp {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .child(format!("{state} · {execution}")),
+                            .child(execution),
                     ),
             )
             .into_any_element();
