@@ -185,7 +185,7 @@ pub(crate) fn project_rows(
 }
 
 pub(crate) fn project_presentation_rows(
-    presentation: &crate::app::reviews::presentation::TranscriptPresentation,
+    presentation: &crate::reviews::presentation::TranscriptPresentation,
 ) -> PersistentVec<TranscriptRow> {
     review_layout::arrange(
         project_rows_from(&presentation.items, 0),
@@ -214,8 +214,8 @@ pub(crate) fn update_conversation_rows(
 
 pub(crate) fn update_presentation_rows(
     previous_rows: &PersistentVec<TranscriptRow>,
-    previous: &crate::app::reviews::presentation::TranscriptPresentation,
-    next: &crate::app::reviews::presentation::TranscriptPresentation,
+    previous: &crate::reviews::presentation::TranscriptPresentation,
+    next: &crate::reviews::presentation::TranscriptPresentation,
     changed_from: Option<usize>,
 ) -> TranscriptRowUpdate {
     if changed_from.is_none_or(|dirty| dirty >= next.items.len())
@@ -252,7 +252,7 @@ pub(crate) fn update_presentation_rows(
 
 pub(crate) fn refresh_presentation_rows(
     rows: &PersistentVec<TranscriptRow>,
-    next: &crate::app::reviews::presentation::TranscriptPresentation,
+    next: &crate::reviews::presentation::TranscriptPresentation,
     dirty: usize,
 ) -> TranscriptRowUpdate {
     update_rows_with_run(

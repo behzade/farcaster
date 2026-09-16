@@ -68,14 +68,14 @@ pub(super) fn run(
     if load_catalog {
         owner.load_sessions(String::new());
     }
-    let _review_updates = crate::app::reviews::delivery::subscribe();
-    let mut review_revision = crate::app::reviews::delivery::revision();
+    let _review_updates = crate::reviews::delivery::subscribe();
+    let mut review_revision = crate::reviews::delivery::revision();
     owner.publish();
     let mut running = true;
     let mut pending_command = None;
     let mut stream_publish_due = None;
     while running {
-        let revision = crate::app::reviews::delivery::revision();
+        let revision = crate::reviews::delivery::revision();
         if revision != review_revision {
             review_revision = revision;
             owner.publish();

@@ -227,9 +227,9 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
         project.path(),
         a.path(),
         11,
-        EditorTarget::Review(crate::app::reviews::Review {
+        EditorTarget::Review(crate::reviews::Review {
             title: "Inspect | `changes`".into(),
-            items: vec![crate::app::reviews::ReviewLocation {
+            items: vec![crate::reviews::ReviewLocation {
                 path: "it's | shared.rs".into(),
                 start_line: Some(2),
                 end_line: Some(4),

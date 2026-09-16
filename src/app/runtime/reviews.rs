@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::reviews::{artifact, presentation::TranscriptPresentation};
+use crate::reviews::{artifact, presentation::TranscriptPresentation};
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 /// Builds the transcript presentation for the active snapshot. Review cards

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui::{Context, Window};
 
 use super::{AppSurface, FarcasterApp, neovim::EditorTarget};
-use crate::app::reviews::{Review, ReviewNavigation, resolve_path};
+use crate::reviews::{Review, ReviewNavigation, resolve_path};
 
 pub(in crate::app) struct ActiveReview {
     pub id: u64,

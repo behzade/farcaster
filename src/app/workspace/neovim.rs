@@ -42,7 +42,7 @@ pub(super) enum EditorTarget {
     File(PathBuf, Option<u64>),
     Diff(PathBuf, Option<u64>),
     Transcript(String),
-    Review(crate::app::reviews::Review),
+    Review(crate::reviews::Review),
     ReviewLocation {
         list_id: u64,
         index: usize,
@@ -214,7 +214,7 @@ impl NvimEditor {
         tab: u64,
         target: EditorTarget,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<crate::app::reviews::ReviewNavigation>, String>> {
+    ) -> Task<Result<Option<crate::reviews::ReviewNavigation>, String>> {
         self.request(cx, move |executable, project, state_dir| {
             open_target(executable, project, state_dir, tab, target)
         })
@@ -312,7 +312,7 @@ fn open_target(
     state_dir: &Path,
     tab: u64,
     target: EditorTarget,
-) -> Result<Option<crate::app::reviews::ReviewNavigation>, String> {
+) -> Result<Option<crate::reviews::ReviewNavigation>, String> {
     let review_request = matches!(
         &target,
         EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
@@ -342,7 +342,7 @@ fn open_target(
                 .items
                 .iter()
                 .map(|location| {
-                    let path = crate::app::reviews::resolve_path(project, &location.path)?;
+                    let path = crate::reviews::resolve_path(project, &location.path)?;
                     Ok(serde_json::json!({
                         "path": path,
                         "start_line": location.start_line,

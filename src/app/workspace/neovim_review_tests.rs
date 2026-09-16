@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::reviews::{Review, ReviewLocation};
+use crate::reviews::{Review, ReviewLocation};
 
 #[test]
 #[ignore = "requires a Neovim executable; exercises real quickfix windows"]

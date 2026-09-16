@@ -118,7 +118,7 @@ impl FarcasterMcp {
             let artifact = reviews::submit(&caller, params)?;
             crate::app::persistence::StateStore::open_at(&database)?
                 .save_review(&caller, &execution, &artifact)?;
-            crate::app::reviews::delivery::notify();
+            crate::reviews::delivery::notify();
             Ok::<_, String>(artifact)
         })
         .await

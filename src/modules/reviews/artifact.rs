@@ -5,8 +5,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
-    app::reviews::{Review, ReviewLocation},
     conversation::{ToolExecutionState, TranscriptItem, TranscriptKind},
+    reviews::{Review, ReviewLocation},
 };
 
 #[derive(Clone, Deserialize)]

@@ -4,8 +4,8 @@ use super::*;
 fn review_button_survives_switching_back_to_a_resident_history_snapshot(
     cx: &mut gpui::TestAppContext,
 ) {
-    use crate::app::reviews::{artifact, presentation::TranscriptPresentation};
     use crate::conversation::ConversationState;
+    use crate::reviews::{artifact, presentation::TranscriptPresentation};
     use serde_json::json;
 
     crate::app::test_support::with_offline_app(

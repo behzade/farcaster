@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::reviews::{ReviewLocation, ReviewLocationStatus};
+use crate::reviews::{ReviewLocation, ReviewLocationStatus};
 
 fn active() -> ActiveReview {
     ActiveReview::new(

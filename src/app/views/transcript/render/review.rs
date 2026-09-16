@@ -1,5 +1,6 @@
-use crate::app::{
-    FarcasterApp, reviews::Review, ui::theme::THEME, views::transcript::tool_changes,
+use crate::{
+    app::{FarcasterApp, ui::theme::THEME, views::transcript::tool_changes},
+    reviews::Review,
 };
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,

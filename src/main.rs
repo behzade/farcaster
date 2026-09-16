@@ -9,7 +9,9 @@ use app::infrastructure::performance::StartupTiming;
 pub(crate) use app::runtime;
 pub(crate) use modules::agents::extensions as protocol;
 pub(crate) use modules::sessions::activity as agent_activity;
-pub(crate) use modules::{access, agents, conversation, projects, repository, sessions, utility};
+pub(crate) use modules::{
+    access, agents, conversation, projects, repository, reviews, sessions, utility,
+};
 
 fn main() -> std::process::ExitCode {
     if let Err(error) = app::infrastructure::neovim_launch::run_if_requested() {

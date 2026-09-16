@@ -217,12 +217,12 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
             .unwrap();
         Extension(request.into_parts().0)
     };
-    let revision = crate::app::reviews::delivery::revision();
+    let revision = crate::reviews::delivery::revision();
     let Json(result) = server
         .submit_review(params(), parts())
         .await
         .expect("submit");
-    assert!(crate::app::reviews::delivery::revision() > revision);
+    assert!(crate::reviews::delivery::revision() > revision);
     let store = crate::app::persistence::StateStore::open_at(&database).unwrap();
     drop(store);
     let connection = rusqlite::Connection::open(&database).unwrap();

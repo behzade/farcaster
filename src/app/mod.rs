@@ -14,7 +14,6 @@ pub(crate) use infrastructure::{launch, paths, persistence, shell_environment};
 pub(crate) mod mcp_server;
 mod navigation;
 mod project;
-pub(crate) mod reviews;
 pub(crate) mod runtime;
 mod session;
 mod session_folders;

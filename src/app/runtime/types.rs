@@ -243,13 +243,13 @@ pub(crate) struct RuntimeSnapshot {
     pub sandbox_state: crate::agents::SandboxState,
     pub pending_question: Option<ExtensionUiRequest>,
     pub transcript_changed_from: Option<usize>,
-    pub transcript: Option<Arc<crate::app::reviews::presentation::TranscriptPresentation>>,
+    pub transcript: Option<Arc<crate::reviews::presentation::TranscriptPresentation>>,
 }
 
 impl RuntimeSnapshot {
     pub(crate) fn transcript_presentation(
         &self,
-    ) -> Arc<crate::app::reviews::presentation::TranscriptPresentation> {
+    ) -> Arc<crate::reviews::presentation::TranscriptPresentation> {
         self.transcript
             .clone()
             .unwrap_or_else(|| Arc::new(self.conversation.as_ref().into()))
