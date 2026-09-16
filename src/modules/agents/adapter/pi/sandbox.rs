@@ -8,14 +8,9 @@ pub(super) trait PiSandboxAdapter: Sync {
     fn control_command<'a>(&self, commands: &'a [PiCommand]) -> Result<Option<&'a str>, String>;
     fn access_modes(&self) -> &'static [HarnessAccessMode];
     fn launch_mode(&self, requested: HarnessAccessMode) -> Result<HarnessAccessMode, String> {
-        let modes = self.access_modes();
-        let selected = if requested == HarnessAccessMode::Auto {
-            modes.first().copied()
-        } else {
-            Some(requested)
-        };
-        selected
-            .filter(|mode| modes.contains(mode))
+        self.access_modes()
+            .contains(&requested)
+            .then_some(requested)
             .ok_or_else(|| format!("{} does not support the requested sandbox mode", self.id()))
     }
     fn confirm(
@@ -50,9 +45,8 @@ pub(super) fn discover(
 pub(in crate::modules::agents::adapter) fn access_modes(
     id: Option<&str>,
 ) -> &'static [HarnessAccessMode] {
-    // Auto is only an internal launch preference until discovery completes.
     let Some(id) = id else {
-        return &[HarnessAccessMode::Auto];
+        return &[HarnessAccessMode::Full];
     };
     ADAPTERS
         .iter()

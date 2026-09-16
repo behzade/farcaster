@@ -429,7 +429,7 @@ impl PiRpcProcess {
             let mode = adapter.launch_mode(requested)?;
             adapter.confirm(self, control, mode)?;
             self.sandbox_mode = Some(mode);
-        } else if requested != HarnessAccessMode::Auto {
+        } else if requested != HarnessAccessMode::Full {
             return Err("Pi cannot confirm the requested access mode: no supported sandbox control was detected".into());
         }
         Ok(())

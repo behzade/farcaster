@@ -21,6 +21,12 @@ impl Drop for DisabledMcp {
     }
 }
 
+fn pi_test_command(script: &Path, arguments: Vec<String>) -> AgentLaunchConfig {
+    let mut command = AgentLaunchConfig::test_script(script, arguments);
+    command.access_mode = HarnessAccessMode::Full;
+    command
+}
+
 fn fake(case: &str) -> TestResult<(tempfile::TempDir, AgentLaunchConfig)> {
     let temp = tempdir()?;
     let script = temp.path().join("fake.sh");
@@ -28,8 +34,7 @@ fn fake(case: &str) -> TestResult<(tempfile::TempDir, AgentLaunchConfig)> {
         &script,
         include_str!("../../../../../tests/fixtures/fake-pi.sh"),
     )?;
-    let command = AgentLaunchConfig::test_script(&script, vec![case.into()]);
-    Ok((temp, command))
+    Ok((temp, pi_test_command(&script, vec![case.into()])))
 }
 
 fn queue_rpc_fixture(project: &Path) -> TestResult<AgentLaunchConfig> {
@@ -39,7 +44,7 @@ fn queue_rpc_fixture(project: &Path) -> TestResult<AgentLaunchConfig> {
 fn queue_rpc_fixture_case(project: &Path, case: &str) -> TestResult<AgentLaunchConfig> {
     let script = project.join("queue-rpc.sh");
     fs::write(&script, include_str!("test_queue_rpc.sh"))?;
-    Ok(AgentLaunchConfig::test_script(&script, vec![case.into()]))
+    Ok(pi_test_command(&script, vec![case.into()]))
 }
 
 #[test]
@@ -104,7 +109,7 @@ fn installed_pi_fixture(project: &Path) -> TestResult<AgentLaunchConfig> {
     fs::write(&wrapper, include_str!("test_installed_pi.sh"))?;
     let extension = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("src/modules/agents/adapter/pi/test_fixture_provider.js");
-    Ok(AgentLaunchConfig::test_script(
+    Ok(pi_test_command(
         &wrapper,
         vec![
             pi.to_string_lossy().into_owned(),
@@ -176,7 +181,7 @@ fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> Tes
             provider: Some("farcaster-fixture".into()),
             model: Some("fixture-child".into()),
             effort: Some("high".into()),
-            access_mode: HarnessAccessMode::Auto,
+            access_mode: HarnessAccessMode::Full,
             app_proxy: None,
             ephemeral: false,
         })?;
@@ -844,6 +849,7 @@ fn abort_reports_second_launch_failure_after_confirming_the_old_exit() -> TestRe
     let command = AgentLaunchConfig {
         program: script.clone(),
         prefix_args: vec!["normal".into()],
+        access_mode: HarnessAccessMode::Full,
         ..AgentLaunchConfig::default()
     };
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
@@ -1347,6 +1353,23 @@ fn sandbox_adapter_detects_each_launch_and_blocks_failed_control() -> TestResult
 }
 
 #[test]
+fn missing_sandbox_registers_the_caller_as_full_access() -> TestResult {
+    let (temp, command) = fake("normal")?;
+    assert_eq!(command.access_mode, HarnessAccessMode::Full);
+    let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
+    assert_eq!(process.confirmed_sandbox_mode(), None);
+    process.caller_identity.bind("parent-session");
+    assert_eq!(
+        crate::agents::CallerRegistry::shared()
+            .resolve(process.caller_identity.token())?
+            .access_mode,
+        HarnessAccessMode::Full
+    );
+    process.terminate()?;
+    Ok(())
+}
+
+#[test]
 fn sandbox_control_needs_more_than_a_successful_rpc_response() -> TestResult {
     let (temp, command) = fake("quiet")?;
     let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
@@ -1393,7 +1416,8 @@ fn sandbox_mode_drift_revokes_confirmation_and_blocks_further_prompts() -> TestR
 
 #[test]
 fn sandbox_worker_discovers_control_and_rechecks_after_fork() -> TestResult {
-    let (temp, command) = fake("sandbox-ready")?;
+    let (temp, mut command) = fake("sandbox-ready")?;
+    command.access_mode = HarnessAccessMode::Sandboxed;
     let mut worker = PiRpcProcess::spawn_worker(
         &command,
         temp.path(),
@@ -1450,7 +1474,8 @@ fn sandbox_discovery_ignores_unrelated_commands_without_sending_control() -> Tes
 
 #[test]
 fn sandbox_discovery_uses_the_qualified_command_name() -> TestResult {
-    let (temp, command) = fake("sandbox-collision")?;
+    let (temp, mut command) = fake("sandbox-collision")?;
+    command.access_mode = HarnessAccessMode::Sandboxed;
     let process = PiRpcProcess::spawn(&command, temp.path(), None)?;
     assert_eq!(
         process.confirmed_sandbox_mode(),
@@ -1489,7 +1514,7 @@ fn live_pi_nono_sandbox_discovery_without_inference() -> TestResult {
         let command = AgentLaunchConfig {
             program: "/usr/bin/env".into(),
             prefix_args: args,
-            access_mode: mode.unwrap_or(HarnessAccessMode::Auto),
+            access_mode: mode.unwrap_or(HarnessAccessMode::Full),
             ..Default::default()
         };
         // Use the worker launch path to omit the unrelated MCP extension flag.

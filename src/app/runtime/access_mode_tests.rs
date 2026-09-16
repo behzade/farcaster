@@ -135,14 +135,14 @@ fn sandbox_discovery_rechecks_every_restart_and_mode_changes_wait_for_idle()
     });
     assert_eq!(
         owner.snapshot.sandbox_state,
-        SandboxState::Active(HarnessAccessMode::Sandboxed)
+        SandboxState::Active(HarnessAccessMode::Full)
     );
     let generation = owner.process_generation;
     conversation_mut(owner.active_snapshot_mut()).running = true;
-    owner.set_access_mode(HarnessAccessMode::Full);
+    owner.set_access_mode(HarnessAccessMode::Sandboxed);
     assert_eq!(
         owner.snapshot.sandbox_state,
-        SandboxState::Pending(HarnessAccessMode::Sandboxed)
+        SandboxState::Pending(HarnessAccessMode::Full)
     );
     owner.access_mode_changes.make_due();
     owner.apply_queued_access_mode_change();
@@ -154,10 +154,10 @@ fn sandbox_discovery_rechecks_every_restart_and_mode_changes_wait_for_idle()
     });
     assert_eq!(
         owner.snapshot.sandbox_state,
-        SandboxState::Active(HarnessAccessMode::Full)
+        SandboxState::Active(HarnessAccessMode::Sandboxed)
     );
     assert_eq!(owner.process_generation, generation + 1);
-    owner.set_access_mode(HarnessAccessMode::Sandboxed);
+    owner.set_access_mode(HarnessAccessMode::Full);
     owner.process_command.prefix_args[1] = "sandbox-failed".into();
     owner.access_mode_changes.make_due();
     owner.apply_queued_access_mode_change();

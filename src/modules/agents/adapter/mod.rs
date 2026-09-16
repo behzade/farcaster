@@ -238,12 +238,10 @@ fn configuration_access_mode(
     harness: Backend,
     requested: crate::agents::HarnessAccessMode,
 ) -> Result<crate::agents::HarnessAccessMode, String> {
-    use crate::agents::HarnessAccessMode::{Auto, Sandboxed};
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
 
-    // Pi learns its modes from the loaded extension command catalog. Its adapter
-    // resolves Auto to a confirmed mode before Pi configuration is returned.
     if supports_sandbox_discovery(harness) {
-        return Ok(requested);
+        return Ok(if requested == Auto { Full } else { requested });
     }
     let descriptor = harness.descriptor();
     let supported = descriptor.capabilities.configuration.access_modes;
