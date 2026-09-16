@@ -782,6 +782,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
         None,
     );
     let mut worker = OpenCodeWorkerSession {
+        catalog_directory: None,
         caller_identity,
         server,
         session_id: "session-1".into(),
@@ -966,6 +967,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         None,
     );
     let mut worker = OpenCodeWorkerSession {
+        catalog_directory: None,
         caller_identity,
         server,
         session_id: "session-1".into(),
@@ -1072,6 +1074,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         None,
     );
     let mut worker = OpenCodeWorkerSession {
+        catalog_directory: None,
         caller_identity,
         server,
         session_id: "session-1".into(),
@@ -1373,6 +1376,7 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
         None,
     );
     let worker = OpenCodeWorkerSession {
+        catalog_directory: None,
         caller_identity,
         server,
         session_id: "session-1".into(),

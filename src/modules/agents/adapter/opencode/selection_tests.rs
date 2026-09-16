@@ -8,7 +8,7 @@ use std::{
     net::TcpListener,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 
@@ -37,6 +37,96 @@ fn context_limit(transport: &mut main_session::WorkerSessionTransport) -> u64 {
     usage.context_usage.expect("context usage").context_window
 }
 
+fn wait_for_context_window(
+    transport: &mut main_session::WorkerSessionTransport,
+    expected: u64,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(SessionEvent::Response(response)) = transport.poll()
+            && let Ok(Payload::LoadState(state)) = response.result
+            && state
+                .model
+                .as_ref()
+                .is_some_and(|model| model.context_window == expected)
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "catalog.updated did not publish context window {expected}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+#[ignore = "requires installed OpenCode and FARCASTER_LIVE_PROJECT/FARCASTER_LIVE_SESSION"]
+fn live_catalog_event_corrects_resumed_sol_context_limit() -> Result<(), String> {
+    let project = std::path::PathBuf::from(
+        std::env::var("FARCASTER_LIVE_PROJECT").map_err(|error| error.to_string())?,
+    );
+    let command = AgentLaunchConfig {
+        program: std::path::PathBuf::from(
+            std::env::var("FARCASTER_LIVE_OPENCODE").unwrap_or_else(|_| "opencode".into()),
+        ),
+        prefix_args: Vec::new(),
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let launch = crate::agents::SessionLaunch {
+        harness: Backend::OpenCode,
+        session_id: Some(
+            std::env::var("FARCASTER_LIVE_SESSION").map_err(|error| error.to_string())?,
+        ),
+        project: project.clone(),
+        start: crate::agents::SessionStart::Resume(project.join("unused")),
+        wake: None,
+    };
+    let (worker, locator, metadata) = spawn_main(&command, &launch)?;
+    let mut transport = main_session::WorkerSessionTransport::new(
+        &project,
+        Backend::OpenCode,
+        locator,
+        worker,
+        metadata,
+        None,
+    )?;
+    let initial = state(&mut transport)
+        .model
+        .ok_or("missing selected model")?;
+    if initial.provider != "openai" || initial.id != "gpt-5.6-sol" {
+        return Err(format!(
+            "live session selected {}/{}, expected openai/gpt-5.6-sol",
+            initial.provider, initial.id
+        ));
+    }
+    if initial.context_window != 272_000 {
+        wait_for_context_window(&mut transport, 272_000)?;
+    }
+    transport.send(SessionCommand::LoadUsage)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let usage_limit = loop {
+        if let Some(SessionEvent::Response(response)) = transport.poll()
+            && let Ok(Payload::LoadUsage(usage)) = response.result
+        {
+            break usage
+                .context_usage
+                .ok_or("missing context usage")?
+                .context_window;
+        }
+        if Instant::now() >= deadline {
+            return Err("missing live usage response".into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    transport.close()?;
+    assert_eq!(usage_limit, 272_000);
+    Ok(())
+}
+
 #[test]
 fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
@@ -48,11 +138,23 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
     let recorded = requests.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
+    let catalog_limit = Arc::new(AtomicU64::new(272_000));
+    let served_catalog_limit = catalog_limit.clone();
+    let (catalog_refresh, refresh_requested) = mpsc::channel();
     let (event_ready, event_connected) = mpsc::channel();
     let server = thread::spawn(move || -> Result<(), String> {
         let mut selection = json!({"id": "astra", "providerID": "openai", "variant": "high"});
-        let mut event_stream = None;
+        let mut event_stream: Option<std::net::TcpStream> = None;
         while !stopped.load(Ordering::Relaxed) {
+            if let Ok(limit) = refresh_requested.try_recv() {
+                served_catalog_limit.store(limit, Ordering::Relaxed);
+                writeln!(
+                    event_stream.as_mut().expect("event stream"),
+                    "data: {}\n",
+                    json!({"type": "catalog.updated", "data": {}})
+                )
+                .map_err(|error| error.to_string())?;
+            }
             let mut stream = match listener.accept() {
                 Ok((stream, _)) => stream,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -97,7 +199,7 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
                     200,
                     json!({"data": [
                         {"id": "astra", "name": "Astra", "providerID": "provider", "variants": ["thinking"], "limit": {"context": 1050000}},
-                        {"id": "astra", "name": "Astra", "providerID": "openai", "variants": ["high", "low"], "limit": {"context": 400000, "input": 272000}},
+                        {"id": "astra", "name": "Astra", "providerID": "openai", "variants": ["high", "low"], "limit": {"context": 400000, "input": served_catalog_limit.load(Ordering::Relaxed)}},
                         {"id": "fixed", "name": "Fixed", "providerID": "openai", "variants": [], "limit": {"context": 64000, "input": 0}}
                     ]}),
                 )
@@ -192,6 +294,11 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
         assert_eq!(model.context_window, 272000);
         assert_eq!(context_limit(&mut transport), 272000);
         assert_eq!(model.efforts.expect("model variants"), ["high", "low"]);
+        catalog_refresh
+            .send(200_000)
+            .map_err(|error| error.to_string())?;
+        wait_for_context_window(&mut transport, 200_000)?;
+        assert_eq!(context_limit(&mut transport), 200_000);
         assert_eq!(
             request(&mut transport, SessionCommand::ListReasoningLevels),
             Payload::ListReasoningLevels(vec!["low".into(), "high".into()])
@@ -211,7 +318,7 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
                 .is_err()
         );
         assert_eq!(state(&mut transport).thinking_level.as_deref(), Some("low"));
-        assert_eq!(context_limit(&mut transport), 272000);
+        assert_eq!(context_limit(&mut transport), 200000);
         // A preset advertised only by another model must not be sent.
         assert!(
             transport

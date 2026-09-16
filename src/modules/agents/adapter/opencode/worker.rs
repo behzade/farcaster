@@ -118,6 +118,7 @@ impl WorkerSessionFactory for OpenCodeWorkerFactory {
             caller_identity,
             server,
             session_id: session_id.clone(),
+            catalog_directory: None,
             provider: launch.provider,
             model: launch.model,
             effort: launch.effort,
@@ -213,10 +214,6 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
     child_stderr::capture(&mut child, "opencode-main-session")?;
     let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
     let mut client = server.client();
-    let mut metadata = load_main_metadata(&mut client, &launch.project.to_string_lossy())?;
-    if let Err(error) = complete_model_catalog(command, &launch.project, &mut metadata) {
-        zlog::warn!("OpenCode started without a refreshed model catalog: {error}");
-    }
     let session = match &launch.start {
         crate::agents::SessionStart::New => {
             client.create_session(&launch.project.to_string_lossy(), None, None)?
@@ -236,6 +233,13 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
             client.fork_session(&session_id, None)?
         }
     };
+    let session_id = session.id;
+    let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;
+    let directory = launch.project.to_string_lossy().into_owned();
+    let mut metadata = load_main_metadata(&mut client, &directory)?;
+    if let Err(error) = complete_model_catalog(command, &launch.project, &mut metadata) {
+        zlog::warn!("OpenCode started without a refreshed model catalog: {error}");
+    }
     let selection = match session.model {
         Some(selection) => Some(selection),
         None => client.default_model(&launch.project.to_string_lossy())?,
@@ -255,38 +259,21 @@ pub(in crate::modules::agents::adapter) fn spawn_main(
         caller_identity.set_effort(selected.variant.as_deref());
     }
     metadata.session_name = session.title;
-    let session_id = session.id;
-    let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;
     caller_identity.bind(session_id.clone());
     Ok((
         Box::new(OpenCodeWorkerSession {
             caller_identity,
             server,
             session_id: session_id.clone(),
+            catalog_directory: Some(directory),
             provider: selection
                 .as_ref()
                 .map(|selected| selected.provider_id.clone()),
             model: selection.as_ref().map(|selected| selected.id.clone()),
             effort: selection.and_then(|selected| selected.variant),
             effort_catalog: effort_catalog(&metadata),
-            context_windows: metadata
-                .models
-                .iter()
-                .filter_map(|model| {
-                    Some((
-                        (
-                            model.get("provider")?.as_str()?.to_owned(),
-                            model.get("id")?.as_str()?.to_owned(),
-                        ),
-                        model.get("contextWindow")?.as_u64()?,
-                    ))
-                })
-                .collect(),
-            commands: metadata
-                .commands
-                .iter()
-                .filter_map(|command| command["name"].as_str().map(str::to_owned))
-                .collect(),
+            context_windows: context_window_catalog(&metadata.models),
+            commands: command_names(&metadata.commands),
             access_mode: command.access_mode,
             incoming,
             reasoning_started: false,
@@ -469,6 +456,28 @@ fn effort_catalog(
         .collect()
 }
 
+fn context_window_catalog(models: &[Value]) -> HashMap<(String, String), u64> {
+    models
+        .iter()
+        .filter_map(|model| {
+            Some((
+                (
+                    model.get("provider")?.as_str()?.to_owned(),
+                    model.get("id")?.as_str()?.to_owned(),
+                ),
+                model.get("contextWindow")?.as_u64()?,
+            ))
+        })
+        .collect()
+}
+
+fn command_names(commands: &[Value]) -> HashSet<String> {
+    commands
+        .iter()
+        .filter_map(|command| command["name"].as_str().map(str::to_owned))
+        .collect()
+}
+
 fn variant_for_model(effort: Option<&str>, known: Option<&Vec<String>>) -> Option<String> {
     let effort = effort?;
     match known {
@@ -547,6 +556,7 @@ struct OpenCodeWorkerSession {
     caller_identity: crate::modules::agents::core::CallerIdentity,
     server: OpenCodeServerProcess,
     session_id: String,
+    catalog_directory: Option<String>,
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
@@ -575,6 +585,48 @@ struct OpenCodeWorkerSession {
 }
 
 impl OpenCodeWorkerSession {
+    fn refresh_catalog(&mut self) -> Result<Option<WorkerEvent>, String> {
+        let Some(directory) = self.catalog_directory.clone() else {
+            return Ok(None);
+        };
+        let metadata = load_main_metadata(&mut self.server.client(), &directory)?;
+        let selected_model = self
+            .provider
+            .as_ref()
+            .zip(self.model.as_ref())
+            .and_then(|(provider, id)| {
+                metadata
+                    .models
+                    .iter()
+                    .find(|model| model["provider"] == *provider && model["id"] == *id)
+            })
+            .cloned();
+        self.effort_catalog = effort_catalog(&metadata);
+        self.context_windows = context_window_catalog(&metadata.models);
+        self.context_window = selected_model
+            .as_ref()
+            .and_then(|model| model.get("contextWindow"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let commands = command_names(&metadata.commands);
+        if commands != self.commands {
+            self.commands = commands;
+            self.pending
+                .push_back(WorkerEvent::Activity(WorkerActivity::CommandsChanged {
+                    commands: metadata.commands.clone(),
+                }));
+        }
+        Ok(Some(WorkerEvent::Activity(
+            WorkerActivity::ConfigurationChanged {
+                models: metadata.models,
+                efforts: metadata.efforts,
+                modes: metadata.modes,
+                selected_model,
+                selected_effort: self.effort.clone(),
+            },
+        )))
+    }
+
     fn apply_effort(&mut self, effort: Option<&str>) -> Result<(), String> {
         let (provider, model) = self
             .provider
@@ -845,6 +897,16 @@ impl OpenCodeWorkerSession {
                 Ok(None) => {}
                 Err(error) => {
                     zlog::warn!("Failed to read OpenCode child session: {error}");
+                }
+            }
+            if unversioned_opencode_event_type(reported_event_type) == "catalog.updated" {
+                match self.refresh_catalog() {
+                    Ok(Some(event)) => return Some(event),
+                    Ok(None) => continue,
+                    Err(error) => {
+                        zlog::warn!("Failed to refresh OpenCode catalog: {error}");
+                        continue;
+                    }
                 }
             }
             if !opencode_event_is_for_session(&event, reported_event_type, &self.session_id) {
