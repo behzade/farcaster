@@ -57,7 +57,6 @@ pub(crate) enum TranscriptRow {
         index: usize,
         revision: usize,
         working: bool,
-        continued: bool,
     },
     Item {
         index: usize,
@@ -371,37 +370,9 @@ fn update_rows_with_run(
         );
         let mut rows = previous_rows.clone();
         rows.splice(keep..rows.len(), tail.iter().copied());
-        let new_work = (dirty..items.len()).rev().find(|&index| {
-            items.get(index).is_some_and(|item| {
-                matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
-            })
-        });
-        if let Some(work) = new_work {
-            for index in active_row..keep {
-                if let TranscriptRow::Review {
-                    index: source,
-                    revision,
-                    working,
-                    continued: false,
-                } = rows[index]
-                    && source < work
-                {
-                    rows.set(
-                        index,
-                        TranscriptRow::Review {
-                            index: source,
-                            revision,
-                            working,
-                            continued: true,
-                        },
-                    );
-                }
-            }
-        }
-        let prefix = if new_work.is_some() { active_row } else { keep };
         return TranscriptRowUpdate {
             rows: Some(rows),
-            unchanged_prefix_rows: prefix,
+            unchanged_prefix_rows: keep,
         };
     }
     // Review handoffs deliberately reorder source items. Keep the monotonic
@@ -634,7 +605,6 @@ fn project_rows_from(
                 index,
                 revision: item_revision(items, index..index + 1),
                 working: false,
-                continued: false,
             });
             index += 1;
             continue;

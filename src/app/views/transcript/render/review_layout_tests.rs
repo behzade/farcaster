@@ -44,11 +44,7 @@ fn live_review_stays_inline_then_moves_after_final_response_on_state_only_settle
     assert_eq!(order(&live), vec![0, 1, 2, 3, 4]);
     assert!(matches!(
         live[1],
-        TranscriptRow::Review {
-            working: true,
-            continued: true,
-            ..
-        }
+        TranscriptRow::Review { working: true, .. }
     ));
     let before = state.clone();
     state.reduce(&json!({"type":"agent_settled"}));
@@ -59,11 +55,7 @@ fn live_review_stays_inline_then_moves_after_final_response_on_state_only_settle
     assert_eq!(order(&settled), vec![0, 2, 3, 4, 1]);
     assert!(matches!(
         settled[4],
-        TranscriptRow::Review {
-            working: false,
-            continued: true,
-            ..
-        }
+        TranscriptRow::Review { working: false, .. }
     ));
     let copied = copy_transcript_row_range(&state.items, &settled, 3..=4);
     assert!(copied.starts_with("Final response\n\nTool: submit_review"));
@@ -91,22 +83,6 @@ fn multiple_reviews_remain_separate_and_do_not_cross_into_the_next_turn() {
     tool(&mut state, "third", true);
     let rows = project_conversation_rows(&state);
     assert_eq!(order(&rows), vec![0, 3, 1, 2, 4, 5]);
-    assert!(matches!(
-        rows[2],
-        TranscriptRow::Review {
-            working: false,
-            continued: true,
-            ..
-        }
-    ));
-    assert!(matches!(
-        rows[3],
-        TranscriptRow::Review {
-            working: false,
-            continued: false,
-            ..
-        }
-    ));
     assert!(matches!(
         rows[5],
         TranscriptRow::Review { working: true, .. }

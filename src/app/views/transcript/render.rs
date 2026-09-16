@@ -505,19 +505,11 @@ fn render_row(
     let key = row.key();
     let follows_tool = message_follows_tool(row, items);
     match row {
-        TranscriptRow::Review {
-            index,
-            working,
-            continued,
-            ..
-        } => review_artifact::from_item(&items[index]).map_or_else(
-            || div().into_any_element(),
-            |artifact| {
-                review::render(
-                    font_scale, key, artifact, expanded, working, continued, entity,
-                )
-            },
-        ),
+        TranscriptRow::Review { index, working, .. } => review_artifact::from_item(&items[index])
+            .map_or_else(
+                || div().into_any_element(),
+                |artifact| review::render(font_scale, key, artifact, expanded, working, entity),
+            ),
         TranscriptRow::ActivityGroup { start, len, .. } => render_activity_group(
             font_scale,
             row.disclosure_key(),

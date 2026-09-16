@@ -15,7 +15,6 @@ pub(super) fn render(
     artifact: Artifact,
     expanded: bool,
     working: bool,
-    continued: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     use crate::app::ui::{
@@ -48,12 +47,12 @@ pub(super) fn render(
                 });
             },
         ))
-        .when(working || continued, |row| {
-            row.child(div().text_color(THEME.colors.muted).child(if working {
-                "Agent still working"
-            } else {
-                "Submitted before the agent finished"
-            }))
+        .when(working, |row| {
+            row.child(
+                div()
+                    .text_color(THEME.colors.muted)
+                    .child("Agent still working"),
+            )
         })
         .when(expanded, |row| {
             row.child(

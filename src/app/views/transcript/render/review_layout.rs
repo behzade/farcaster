@@ -54,26 +54,16 @@ fn finish(
             .get(row.item_start())
             .is_some_and(|item| item.kind == TranscriptKind::Assistant)
     });
-    // A final response alone is the handoff, not evidence of further work.
-    let last_work = span.iter().rposition(|row| {
-        (row.item_start()..row.item_end()).any(|index| {
-            items.get(index).is_some_and(|item| {
-                matches!(item.kind, TranscriptKind::Tool | TranscriptKind::Thinking)
-            })
-        })
-    });
     let mut handoffs = Vec::new();
     for (position, row) in span.iter().copied().enumerate() {
         if let TranscriptRow::Review {
             index, revision, ..
         } = row
         {
-            let continued = last_work.is_some_and(|last| last > position);
             let review = TranscriptRow::Review {
                 index,
                 revision,
                 working,
-                continued,
             };
             if !working && final_response.is_some_and(|last| last > position) {
                 handoffs.push(review);
