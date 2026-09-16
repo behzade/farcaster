@@ -59,6 +59,8 @@ pub(crate) struct SessionMetadata {
     pub thinking_level: Option<String>,
     #[serde(default)]
     pub service_tier: Option<String>,
+    #[serde(default)]
+    pub access_mode: Option<HarnessAccessMode>,
     pub usage: Option<DiscoveredUsage>,
     pub is_running: bool,
 }

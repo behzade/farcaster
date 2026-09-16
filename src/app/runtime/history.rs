@@ -257,6 +257,7 @@ impl RuntimeOwner {
             prefill_thinking_level: history.thinking_level,
             ..RuntimeSnapshot::default()
         };
+        self.snapshot.access_mode = self.process_command.access_mode;
         if !refreshing_visible_history {
             let _ = self.event_tx.send(RuntimeEvent::HistoryReset {
                 generation: self.process_generation,

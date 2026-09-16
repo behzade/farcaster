@@ -32,7 +32,7 @@ fn upgrades_v17_worker_families_without_changing_existing_execution()
             [],
             |row| row.get::<_, i64>(0),
         )?,
-        18
+        19
     );
     Ok(())
 }

@@ -238,6 +238,83 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     );
 }
 
+#[test]
+fn restart_injects_the_sessions_saved_access_mode_before_launch()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
+
+    let temp = tempfile::tempdir()?;
+    let project = temp.path().to_owned();
+    let session = temp.path().join("session-locators/codex-cli/session-1");
+    let mut state = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    state.update_session_metadata(&crate::agents::SessionMetadata {
+        harness: Backend::Codex,
+        id: "session-1".into(),
+        path: session.clone(),
+        project: project.clone(),
+        title: None,
+        first_user_message: None,
+        parent_session: None,
+        message_count: None,
+        model: None,
+        thinking_level: None,
+        service_tier: None,
+        access_mode: Some(Full),
+        usage: None,
+        is_running: false,
+    })?;
+    let key = format!("session:{}", session.display());
+    let mut fixture =
+        SupervisorFixture::new(&key, project.clone(), Some(state), Default::default());
+    fixture.supervisor.latest.insert(
+        key.clone(),
+        Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Codex),
+            project: project.clone(),
+            selected_session: Some(session.clone()),
+            access_mode: Sandboxed,
+            ..RuntimeSnapshot::default()
+        }),
+    );
+    let actor_commands = fixture.add_recording_actor(&key);
+    fixture.commands.send(RuntimeCommand::RestartSession {
+        path: session.clone(),
+        harness: Backend::Codex,
+        session_id: "session-1".into(),
+        project,
+    })?;
+
+    assert!(fixture.supervisor.process_next_command());
+    assert!(matches!(
+        actor_commands.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::RestoreAccessMode(Full))
+    ));
+    assert!(matches!(
+        actor_commands.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::RestartSession { .. })
+    ));
+    assert_eq!(fixture.supervisor.latest[&key].access_mode, Full);
+
+    fixture
+        .commands
+        .send(RuntimeCommand::SetAccessMode(Sandboxed))?;
+    assert!(fixture.supervisor.process_next_command());
+    assert!(matches!(
+        actor_commands.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::SetAccessMode(Sandboxed))
+    ));
+    assert_eq!(
+        fixture
+            .supervisor
+            .catalog_state
+            .as_ref()
+            .expect("catalog state")
+            .session_access_mode(&session)?,
+        Some(Sandboxed)
+    );
+    Ok(())
+}
+
 impl Drop for SupervisorFixture {
     fn drop(&mut self) {
         for actor in self.supervisor.actors.values() {

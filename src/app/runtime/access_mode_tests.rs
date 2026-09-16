@@ -184,3 +184,47 @@ fn cold_catalog_adapter_is_active_until_apply_starts() {
     owner.publish();
     assert_eq!(owner.snapshot.sandbox_state, SandboxState::Checking);
 }
+
+#[test]
+fn saved_session_access_mode_is_restored_after_runtime_restart()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session-locators/codex-cli/session-1");
+    let mut state = StateStore::open_at(&database)?;
+    state.update_session_metadata(&crate::agents::SessionMetadata {
+        harness: Backend::Codex,
+        id: "session-1".into(),
+        path: session.clone(),
+        project: temp.path().to_owned(),
+        title: None,
+        first_user_message: None,
+        parent_session: None,
+        message_count: None,
+        model: None,
+        thinking_level: None,
+        service_tier: None,
+        access_mode: Some(HarnessAccessMode::Full),
+        usage: None,
+        is_running: false,
+    })?;
+    drop(state);
+
+    let (mut owner, _events) = owner_without_process(temp.path().to_owned());
+    owner.state = Some(StateStore::open_at(&database)?);
+    owner.harness = Some(Backend::Codex);
+    owner.snapshot.harness = Some(Backend::Codex);
+    owner.process_command.access_mode = HarnessAccessMode::Sandboxed;
+    owner.snapshot.access_mode = HarnessAccessMode::Sandboxed;
+    let restored = owner
+        .state
+        .as_ref()
+        .expect("state store")
+        .session_access_mode(&session)?
+        .expect("saved access mode");
+    owner.apply_command(RuntimeCommand::RestoreAccessMode(restored));
+
+    assert_eq!(owner.process_command.access_mode, HarnessAccessMode::Full);
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Full);
+    Ok(())
+}

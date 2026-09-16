@@ -110,6 +110,7 @@ pub(crate) enum RuntimeCommand {
     ResetThinking,
     SetServiceTier(String),
     SetAccessMode(HarnessAccessMode),
+    RestoreAccessMode(HarnessAccessMode),
     SetAppProxy(Option<String>),
     ExtensionResponse(ExtensionUiResponse),
     DeliverQueued(crate::agents::QueuedPrompt),

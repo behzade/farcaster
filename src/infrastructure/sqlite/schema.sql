@@ -31,6 +31,7 @@ CREATE TABLE sessions (
   cache_write_tokens INTEGER NOT NULL DEFAULT 0,
   total_tokens INTEGER NOT NULL DEFAULT 0,
   cost_micros INTEGER NOT NULL DEFAULT 0,
+  access_mode TEXT CHECK (access_mode IN ('sandboxed', 'auto', 'full')),
   created_ms INTEGER NOT NULL,
   submitted INTEGER NOT NULL DEFAULT 0,
   UNIQUE (harness, locator)

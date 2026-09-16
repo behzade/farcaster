@@ -29,6 +29,7 @@ mod migrate_v12;
 mod migrate_v16;
 mod migrate_v17;
 mod migrate_v18;
+mod migrate_v19;
 mod projects;
 mod prompts;
 mod reviews;
@@ -40,7 +41,7 @@ mod transcript;
 
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
-const SCHEMA_VERSION: i64 = 18;
+const SCHEMA_VERSION: i64 = 19;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];

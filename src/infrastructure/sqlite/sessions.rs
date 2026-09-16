@@ -1,6 +1,59 @@
 use super::*;
 
 impl StateStore {
+    pub(crate) fn session_access_mode(
+        &self,
+        session: &Path,
+    ) -> Result<Option<crate::agents::HarnessAccessMode>, String> {
+        let locator = crate::sessions::normalize_session_path(session);
+        let value = self
+            .connection
+            .query_row(
+                "SELECT access_mode FROM sessions WHERE locator=?1",
+                [locator.to_string_lossy()],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("read session access mode: {error}"))?
+            .flatten();
+        value
+            .map(|value| match value.as_str() {
+                "sandboxed" => Ok(crate::agents::HarnessAccessMode::Sandboxed),
+                "auto" => Ok(crate::agents::HarnessAccessMode::Auto),
+                "full" => Ok(crate::agents::HarnessAccessMode::Full),
+                _ => Err(format!("session has invalid access mode: {value}")),
+            })
+            .transpose()
+    }
+
+    pub(crate) fn set_session_access_mode(
+        &self,
+        session: &Path,
+        mode: crate::agents::HarnessAccessMode,
+    ) -> Result<(), String> {
+        let locator = crate::sessions::normalize_session_path(session);
+        let mode = match mode {
+            crate::agents::HarnessAccessMode::Sandboxed => "sandboxed",
+            crate::agents::HarnessAccessMode::Auto => "auto",
+            crate::agents::HarnessAccessMode::Full => "full",
+        };
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE sessions SET access_mode=?2 WHERE locator=?1",
+                params![locator.to_string_lossy(), mode],
+            )
+            .map_err(|error| format!("save session access mode: {error}"))?;
+        if changed == 1 {
+            Ok(())
+        } else {
+            Err(format!(
+                "cannot save access mode for missing session: {}",
+                locator.display()
+            ))
+        }
+    }
+
     pub(crate) fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
         Ok(crate::sessions::filter_session_tree(
             Self::read_cached_sessions(&self.connection, None)?,
@@ -62,6 +115,11 @@ impl StateStore {
             .transaction()
             .map_err(|error| error.to_string())?;
         let now = u64_to_i64(now_ms());
+        let access_mode = update.access_mode.map(|mode| match mode {
+            crate::agents::HarnessAccessMode::Sandboxed => "sandboxed",
+            crate::agents::HarnessAccessMode::Auto => "auto",
+            crate::agents::HarnessAccessMode::Full => "full",
+        });
         let project = ensure_project(&tx, &update.project, now)?;
         let mut statement = tx
             .prepare(
@@ -121,11 +179,12 @@ impl StateStore {
                parent_backend_id=COALESCE(?7,parent_backend_id),
                parent_id=COALESCE(parent_id,(SELECT id FROM sessions
                  WHERE harness=?8 AND project_id=?2 AND backend_id=?7 LIMIT 1)),
-               message_count=COALESCE(?9,message_count), modified_ms=?10
-             WHERE id=?1",
+                message_count=COALESCE(?9,message_count), modified_ms=?10,
+                access_mode=COALESCE(?11,access_mode)
+              WHERE id=?1",
             params![id, project, path.to_string_lossy(), update.id, update.title,
                 update.first_user_message, update.parent_session, update.harness,
-                update.message_count.map(|n| n as i64), now],
+                update.message_count.map(|n| n as i64), now, access_mode],
         ).map_err(|error| format!("update live session metadata: {error}"))?;
         tx.execute(
             "UPDATE sessions SET search_text=LOWER(title || ' ' || first_user_message)

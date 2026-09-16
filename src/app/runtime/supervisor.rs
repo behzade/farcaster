@@ -347,10 +347,25 @@ fn persist_configurations(state: Option<&StateStore>, configurations: &HarnessCo
     }
 }
 
+fn saved_access_mode(
+    state: Option<&StateStore>,
+    session: &std::path::Path,
+) -> Option<HarnessAccessMode> {
+    let state = state?;
+    match state.session_access_mode(session) {
+        Ok(mode) => mode,
+        Err(error) => {
+            zlog::error!("Restore session access mode: {error}");
+            None
+        }
+    }
+}
+
 fn send_configured_command(
     actor: &SessionRuntimeHandle,
     command: RuntimeCommand,
     configurations: &HarnessConfigurationStore,
+    access_mode: Option<HarnessAccessMode>,
 ) {
     let selection = match &command {
         RuntimeCommand::NewSession { harness, .. }
@@ -370,6 +385,9 @@ fn send_configured_command(
     ) && let Some(catalog) = &catalog
     {
         actor.send(catalog.clone());
+    }
+    if let Some(mode) = access_mode {
+        actor.send(RuntimeCommand::RestoreAccessMode(mode));
     }
     actor.send(command);
     // The actor may have changed projects and rejected the earlier update.
@@ -549,7 +567,10 @@ impl Supervisor {
             configurations.restore(defaults);
         }
         if let Some(actor) = actors.get(&initial_key) {
-            send_configured_command(actor, initial_command, &configurations);
+            let access_mode = initial_session
+                .as_ref()
+                .and_then(|session| saved_access_mode(catalog_state.as_ref(), &session.path));
+            send_configured_command(actor, initial_command, &configurations, access_mode);
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();

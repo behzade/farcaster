@@ -14,6 +14,7 @@ impl Supervisor {
             return;
         };
         let key = if let Some(session) = session {
+            let access_mode = saved_access_mode(self.catalog_state.as_ref(), &session.path);
             let select = RuntimeCommand::SelectSession {
                 path: session.path.clone(),
                 harness: session.harness,
@@ -36,7 +37,7 @@ impl Supervisor {
                 )
             });
             if target_command_needs_actor_message(&select, resident.map(Arc::as_ref)) {
-                send_configured_command(actor, select, &self.configurations);
+                send_configured_command(actor, select, &self.configurations, access_mode);
             }
             self.actor_paths.insert(session.path.clone(), key.clone());
             key
@@ -265,6 +266,16 @@ impl Supervisor {
                         self.selected.clone(),
                         (harness, snapshot.project.clone(), *mode),
                     );
+                    // A live actor persists its effective mode through session
+                    // metadata after the restart succeeds. History-only sessions
+                    // have no later metadata event, so save their selection here.
+                    if snapshot.live_session.is_none()
+                        && let Some(session) = snapshot.selected_session.as_deref()
+                        && let Some(state) = self.catalog_state.as_ref()
+                        && let Err(error) = state.set_session_access_mode(session, *mode)
+                    {
+                        zlog::error!("Save session access mode: {error}");
+                    }
                 }
                 let identity_changed = self.latest.get(&self.selected).is_some_and(|snapshot| {
                     adopts_selected_configuration(snapshot, &self.catalog_sessions)
@@ -330,6 +341,14 @@ impl Supervisor {
                     self.selected_project = project.clone();
                     self.selected_session = next_selected_session;
                     let resident_snapshot = self.latest.get(&key).cloned();
+                    let access_mode = match &command {
+                        RuntimeCommand::ForkSession { path, .. }
+                        | RuntimeCommand::SelectSession { path, .. }
+                        | RuntimeCommand::RestartSession { path, .. } => {
+                            saved_access_mode(self.catalog_state.as_ref(), path)
+                        }
+                        _ => None,
+                    };
                     let recovery_can_publish = resident_snapshot.is_some();
                     if let RuntimeCommand::SelectSession { path, .. }
                     | RuntimeCommand::RestartSession { path, .. } = &command
@@ -346,11 +365,14 @@ impl Supervisor {
                         )
                     });
                     if target_command_needs_actor_message(&command, resident_snapshot.as_deref()) {
-                        send_configured_command(actor, command, &self.configurations);
+                        send_configured_command(actor, command, &self.configurations, access_mode);
                     }
                     if let Some(mut snapshot) = resident_snapshot {
                         self.configurations
                             .refresh_snapshot_catalog(Arc::make_mut(&mut snapshot));
+                        if let Some(mode) = access_mode {
+                            Arc::make_mut(&mut snapshot).access_mode = mode;
+                        }
                         if view_only {
                             Arc::make_mut(&mut snapshot).transcript_changed_from = None;
                         }

@@ -66,6 +66,7 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
         model: None,
         thinking_level: None,
         service_tier: None,
+        access_mode: None,
         usage: None,
         is_running: false,
     })?;

@@ -171,6 +171,7 @@ impl RuntimeOwner {
                         model: None,
                         thinking_level: None,
                         service_tier: None,
+                        access_mode: None,
                         usage: None,
                         is_running: false,
                     }),
@@ -239,6 +240,11 @@ impl RuntimeOwner {
             RuntimeCommand::ResetThinking => self.reset_thinking(),
             RuntimeCommand::SetServiceTier(tier) => self.set_service_tier(tier),
             RuntimeCommand::SetAccessMode(mode) => self.set_access_mode(mode),
+            RuntimeCommand::RestoreAccessMode(mode) => {
+                self.process_command.access_mode = mode;
+                self.access_mode_changes = Default::default();
+                self.snapshot.access_mode = mode;
+            }
             RuntimeCommand::SetAppProxy(proxy) => self.set_app_proxy(proxy),
             RuntimeCommand::ExtensionResponse(response) => {
                 if self.respond_to_child_input(&response) {

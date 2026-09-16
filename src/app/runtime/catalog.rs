@@ -51,6 +51,7 @@ impl RuntimeOwner {
                     .map(|model| (model.provider.clone(), model.id.clone())),
                 thinking_level: session.thinking_level.clone(),
                 service_tier: session.service_tier.clone(),
+                access_mode: Some(self.process_command.access_mode),
                 usage: snapshot
                     .stats
                     .get("tokens")

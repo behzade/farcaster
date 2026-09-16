@@ -17,9 +17,33 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
         model: None,
         thinking_level: None,
         service_tier: None,
+        access_mode: None,
         usage: None,
         is_running: true,
     }
+}
+
+#[test]
+fn session_access_mode_round_trips_by_locator() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let session = metadata("sandbox-session");
+    store.update_session_metadata(&session)?;
+
+    assert_eq!(store.session_access_mode(&session.path)?, None);
+    store.set_session_access_mode(&session.path, crate::agents::HarnessAccessMode::Sandboxed)?;
+    assert_eq!(
+        store.session_access_mode(&session.path)?,
+        Some(crate::agents::HarnessAccessMode::Sandboxed)
+    );
+
+    drop(store);
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    assert_eq!(
+        store.session_access_mode(&session.path)?,
+        Some(crate::agents::HarnessAccessMode::Sandboxed)
+    );
+    Ok(())
 }
 
 #[test]
