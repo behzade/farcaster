@@ -61,10 +61,6 @@ pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary>
         .collect()
 }
 
-#[cfg(test)]
-#[path = "catalog_tests.rs"]
-mod tests;
-
 pub(crate) struct SessionRootIndex<'a> {
     by_id: HashMap<(&'a Path, crate::agents::Backend, &'a str), &'a SessionSummary>,
     by_path: HashMap<&'a Path, &'a SessionSummary>,

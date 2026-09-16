@@ -1,3 +1,5 @@
+//! SQLite adapter for application state and domain persistence ports.
+
 use crate::agents::Backend;
 use std::{
     collections::{BTreeMap, HashSet},

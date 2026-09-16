@@ -1,4 +1,4 @@
-pub(crate) use crate::persistence::*;
+pub(crate) use crate::infrastructure::sqlite::*;
 
 use std::path::PathBuf;
 
