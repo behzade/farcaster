@@ -76,13 +76,31 @@ impl Default for WorkerProfiles {
 
 impl WorkerProfiles {
     pub(crate) fn from_saved(value: serde_json::Value) -> Result<Self, String> {
-        let profiles: Self = if value.get("profiles").is_some() {
+        let mut profiles: Self = if value.get("profiles").is_some() {
             serde_json::from_value(value).map_err(|error| error.to_string())?
         } else {
             legacy::migrate(value)?
         };
+        profiles.migrate_deprecated_cursor_model_ids();
         profiles.validate()?;
         Ok(profiles)
+    }
+
+    fn migrate_deprecated_cursor_model_ids(&mut self) {
+        for profile in &mut self.profiles {
+            for execution in &mut profile.models {
+                if execution.harness != Backend::Cursor
+                    || execution.provider != Backend::Cursor.as_str()
+                {
+                    continue;
+                }
+                execution.model = match execution.model.as_str() {
+                    "grok-4.6[effort=high,fast=true]" => "grok-4.6".into(),
+                    "composer-2.5[fast=true]" => "composer-2.5".into(),
+                    _ => continue,
+                };
+            }
+        }
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {

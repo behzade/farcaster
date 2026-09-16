@@ -68,6 +68,24 @@ fn model_order_controls_selection() {
     );
 }
 
+#[test]
+fn saved_profiles_migrate_deprecated_cursor_model_ids() {
+    let mut saved =
+        serde_json::to_value(WorkerProfiles::default()).expect("test operation should succeed");
+    saved["profiles"][0]["models"][3]["model"] = "grok-4.6[effort=high,fast=true]".into();
+    saved["profiles"][2]["models"][2]["model"] = "composer-2.5[fast=true]".into();
+    saved["profiles"][2]["models"][2]["provider"] = "custom".into();
+    saved["profiles"][3]["models"][4]["model"] = "composer-2.5[fast=true]".into();
+
+    let profiles = WorkerProfiles::from_saved(saved).expect("test operation should succeed");
+    assert_eq!(profiles.profiles[0].models[3].model, "grok-4.6");
+    assert_eq!(
+        profiles.profiles[2].models[2].model,
+        "composer-2.5[fast=true]"
+    );
+    assert_eq!(profiles.profiles[3].models[4].model, "composer-2.5");
+}
+
 fn legacy_task(name: &str) -> serde_json::Value {
     let execution = |model, effort| {
         serde_json::json!({

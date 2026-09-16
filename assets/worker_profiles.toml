@@ -8,14 +8,14 @@ models = [
   { harness = "codex-cli", provider = "openai", model = "gpt-6-astra", effort = "medium" },
   { harness = "pi", provider = "openai-codex", model = "gpt-6-astra", effort = "medium" },
   { harness = "opencode", provider = "openai", model = "gpt-6-astra", effort = "medium" },
-  { harness = "cursor-cli", provider = "cursor-cli", model = "grok-4.6[effort=high,fast=true]" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "grok-4.6" },
 ]
 
 [[profiles]]
 name = "fast"
 description = "Everyday implementation where speed matters. The usual worker choice."
 models = [
-  { harness = "cursor-cli", provider = "cursor-cli", model = "grok-4.6[effort=high,fast=true]" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "grok-4.6" },
   { harness = "opencode", provider = "opencode-go", model = "glm-5.3-flash" },
   { harness = "codex-cli", provider = "openai", model = "gpt-5.6-luna", effort = "high" },
   { harness = "pi", provider = "openai-codex", model = "gpt-5.6-luna", effort = "high" },
@@ -27,7 +27,7 @@ description = "Harder implementation that needs more care; slower than fast."
 models = [
   { harness = "codex-cli", provider = "openai", model = "gpt-5.6-sol", effort = "medium" },
   { harness = "pi", provider = "openai-codex", model = "gpt-5.6-sol", effort = "medium" },
-  { harness = "cursor-cli", provider = "cursor-cli", model = "composer-2.5[fast=true]" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "composer-2.5" },
   { harness = "opencode", provider = "openai", model = "gpt-5.6-sol", effort = "medium" },
 ]
 
@@ -39,5 +39,5 @@ models = [
   { harness = "pi", provider = "opencode-go", model = "glm-5.3-flash" },
   { harness = "codex-cli", provider = "openai", model = "gpt-5.6-luna", effort = "high" },
   { harness = "pi", provider = "openai-codex", model = "gpt-5.6-luna", effort = "high" },
-  { harness = "cursor-cli", provider = "cursor-cli", model = "composer-2.5[fast=true]" },
+  { harness = "cursor-cli", provider = "cursor-cli", model = "composer-2.5" },
 ]
