@@ -419,24 +419,27 @@ impl CallerRegistry {
             .ok_or_else(|| "unknown Farcaster caller".to_owned())
     }
 
-    pub(crate) fn session_profile(
+    pub(crate) fn session_caller(
         &self,
         project: &Path,
         backend: Backend,
         session: &str,
-    ) -> Option<CallerProfile> {
+    ) -> Option<(String, CallerProfile)> {
         let callers = self.callers.lock().ok()?;
         let caller = callers.values().find(|caller| {
             caller.project == project
                 && caller.backend == backend
                 && caller.session.as_deref() == Some(session)
         })?;
-        Some(CallerProfile {
-            backend: caller.backend,
-            provider: caller.provider.clone(),
-            model: caller.model.clone(),
-            effort: caller.effort.clone(),
-        })
+        Some((
+            caller.worker_name.clone(),
+            CallerProfile {
+                backend: caller.backend,
+                provider: caller.provider.clone(),
+                model: caller.model.clone(),
+                effort: caller.effort.clone(),
+            },
+        ))
     }
 
     pub(crate) fn session_parent(&self, backend: Backend, session: &str) -> Option<String> {

@@ -1,12 +1,12 @@
 use super::{
-    agents::{AgentSection, agent_section, lifecycle_label, role_icon},
+    agents::{AgentSection, agent_section, lifecycle_label},
     resize::clamped_run_panel_width,
     run_panel_agent_rows,
 };
 use crate::agents::Backend;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
-    app::ui::{assets::AppIcon, theme::THEME},
+    app::ui::theme::THEME,
 };
 use std::{
     path::{Path, PathBuf},
@@ -27,15 +27,6 @@ fn lifecycle_labels_are_truthful() {
         "Failed"
     );
     assert_eq!(lifecycle_label(AgentLifecycle::Unknown), "Unknown");
-}
-
-#[test]
-fn agent_roles_use_semantic_icons() {
-    assert_eq!(role_icon("reviewer"), AppIcon::Eye);
-    assert_eq!(role_icon("scout"), AppIcon::Binoculars);
-    assert_eq!(role_icon("researcher"), AppIcon::Microscope);
-    assert_eq!(role_icon("worker"), AppIcon::Hammer);
-    assert_eq!(role_icon("other"), AppIcon::UserFocus);
 }
 
 #[test]

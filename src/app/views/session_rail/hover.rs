@@ -21,13 +21,13 @@ const MAX_PANEL_WIDTH: f32 = 360.0;
 const PREVIEW_CHARS: usize = 160;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct SessionHoverDetails {
+pub(in crate::app) struct SessionHoverDetails {
     pub title: String,
     pub rows: Vec<(String, String)>,
     pub preview: Option<String>,
 }
 
-pub(super) fn session_hover_details(
+pub(in crate::app) fn session_hover_details(
     session: &SessionSummary,
     status: &str,
     age: &str,
@@ -103,7 +103,7 @@ pub(super) fn flatten_details(details: &SessionHoverDetails) -> Vec<String> {
     lines
 }
 
-pub(super) fn session_hover_panel(
+pub(in crate::app) fn session_hover_panel(
     id: impl Into<SharedString>,
     details: SessionHoverDetails,
     trigger: AnyElement,

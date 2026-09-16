@@ -92,7 +92,6 @@ pub(crate) struct ControlScale {
     pub icon_button: Pixels,
     pub utility_row: Pixels,
     pub archived_preview_row: Pixels,
-    pub agent_marker: Pixels,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Layout {
@@ -184,7 +183,6 @@ pub(crate) const THEME: Theme = Theme {
         icon_button: px(28.0),
         utility_row: px(44.0),
         archived_preview_row: px(49.0),
-        agent_marker: px(18.0),
     },
     radius: px(4.0),
     border: px(1.0),

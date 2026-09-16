@@ -34,6 +34,7 @@ use crate::{
 };
 
 pub(in crate::app) use groups::{SessionRailKind, roots_waiting_for_descendants};
+pub(in crate::app) use hover::{session_hover_details, session_hover_panel};
 pub(in crate::app) use rows::project_label;
 
 #[cfg(test)]

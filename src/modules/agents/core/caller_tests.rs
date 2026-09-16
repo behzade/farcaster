@@ -156,20 +156,21 @@ fn resolves_session_with_the_project_and_profile_that_launched_it() {
     assert_eq!(resolved.model.as_deref(), Some("sonnet"));
     assert_eq!(resolved.effort.as_deref(), Some("high"));
     assert_eq!(resolved.parent_worker_id, None);
-    let profile = registry
-        .session_profile(Path::new("/project/two"), Backend::Pi, "session-2")
-        .expect("bound profile");
-    assert_eq!(profile.provider, resolved.provider);
-    assert_eq!(profile.model, resolved.model);
-    assert_eq!(profile.effort, resolved.effort);
+    let caller = registry
+        .session_caller(Path::new("/project/two"), Backend::Pi, "session-2")
+        .expect("bound caller");
+    assert_eq!(caller.0, resolved.worker_name);
+    assert_eq!(caller.1.provider, resolved.provider);
+    assert_eq!(caller.1.model, resolved.model);
+    assert_eq!(caller.1.effort, resolved.effort);
     assert!(
         registry
-            .session_profile(Path::new("/other"), Backend::Pi, "session-2")
+            .session_caller(Path::new("/other"), Backend::Pi, "session-2")
             .is_none()
     );
     assert!(
         registry
-            .session_profile(Path::new("/project/two"), Backend::Codex, "session-2")
+            .session_caller(Path::new("/project/two"), Backend::Codex, "session-2")
             .is_none()
     );
 }

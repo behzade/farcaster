@@ -4,6 +4,7 @@ use gpui::{
 };
 
 use super::super::super::{FarcasterApp, RunPanelView};
+use super::super::session_rail::{session_hover_details, session_hover_panel};
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
@@ -35,114 +36,97 @@ impl FarcasterApp {
             activity.lifecycle
         };
         let state = lifecycle_label(displayed_lifecycle);
-        let activity_text = activity.activity.clone();
         let role = activity.role.clone();
-        let marker = role_icon(&role);
+        let hover_id = format!("agent-hover-{activity_key}");
         let registry = crate::agents::CallerRegistry::shared();
-        let profile = registry
-            .session_profile(&session.project, session.harness, &session.id)
+        let caller = registry
+            .session_caller(&session.project, session.harness, &session.id)
             .or_else(|| {
-                registry.session_profile(
+                registry.session_caller(
                     &session.project,
                     session.harness,
                     &session.path.to_string_lossy(),
                 )
             });
+        let mut hover_details = session_hover_details(session, state, "", 0);
+        hover_details.rows.insert(
+            0,
+            (
+                "Name".into(),
+                caller
+                    .as_ref()
+                    .map(|(name, _)| name.clone())
+                    .unwrap_or_else(|| role.clone()),
+            ),
+        );
         let execution = execution_label(
-            profile.as_ref(),
+            caller.as_ref().map(|(_, profile)| profile),
             session.model.as_ref(),
             session.thinking_level.as_deref(),
         );
-        Some(
-            div()
-                .id(format!("agent-card-{activity_key}"))
-                .debug_selector(move || format!("agent-card-{activity_key}"))
-                .track_focus(&focus)
-                .role(Role::Button)
-                .aria_label(format!("Show {role} transcript: {state}"))
-                .tab_index(0)
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    crate::app::ui::primitives::preserve_pointer_focus,
-                )
-                .ml(px(depth.saturating_sub(1) as f32 * 8.0))
-                .px(px(2.0))
-                .py(px(3.0))
-                .flex()
-                .items_stretch()
-                .gap(THEME.space.sm)
-                .hover(|card| card.bg(THEME.colors.surface))
-                .focus(|card| card.bg(THEME.colors.surface))
-                .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        this.select_session_and_focus(path.clone(), project.clone(), window, cx);
-                    });
-                })
-                .on_key_down(move |event, window, cx| {
-                    if activates_button(event) {
-                        cx.stop_propagation();
-                        let _ = key_entity.update(cx, |this, cx| {
-                            this.select_session_and_focus(
-                                key_path.clone(),
-                                key_project.clone(),
-                                window,
-                                cx,
-                            )
-                        });
-                    }
-                })
-                .child(
-                    div()
-                        .w(THEME.controls.agent_marker)
-                        .flex_none()
-                        .text_color(THEME.colors.muted)
-                        .child(app_icon(marker, AppIconSize::Inline)),
-                )
-                .child(
-                    div()
-                        .w_0()
-                        .min_w_0()
-                        .flex_1()
-                        .overflow_hidden()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_size(THEME.type_scale.body_small)
-                                .text_color(THEME.colors.text)
-                                .child(if activity_text.is_empty() {
-                                    role
-                                } else {
-                                    activity_text
-                                }),
+        let card = div()
+            .id(format!("agent-card-{activity_key}"))
+            .debug_selector(move || format!("agent-card-{activity_key}"))
+            .track_focus(&focus)
+            .role(Role::Button)
+            .aria_label(format!("Show {role} transcript: {state}"))
+            .tab_index(0)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                crate::app::ui::primitives::preserve_pointer_focus,
+            )
+            .ml(px(depth.saturating_sub(1) as f32 * 8.0))
+            .px(px(2.0))
+            .py(px(3.0))
+            .flex()
+            .items_stretch()
+            .hover(|card| card.bg(THEME.colors.surface))
+            .focus(|card| card.bg(THEME.colors.surface))
+            .cursor_pointer()
+            .on_click(move |_, window, cx| {
+                let _ = entity.update(cx, |this, cx| {
+                    this.select_session_and_focus(path.clone(), project.clone(), window, cx);
+                });
+            })
+            .on_key_down(move |event, window, cx| {
+                if activates_button(event) {
+                    cx.stop_propagation();
+                    let _ = key_entity.update(cx, |this, cx| {
+                        this.select_session_and_focus(
+                            key_path.clone(),
+                            key_project.clone(),
+                            window,
+                            cx,
                         )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(THEME.space.xs)
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
-                                .child(app_icon(
-                                    AppIcon::for_harness(session.harness),
-                                    AppIconSize::Inline,
-                                ))
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .child(format!("{state} · {execution}")),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
+                    });
+                }
+            })
+            .child(
+                div()
+                    .w_0()
+                    .min_w_0()
+                    .flex_1()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .gap(THEME.space.xs)
+                    .text_size(THEME.type_scale.caption)
+                    .text_color(THEME.colors.muted)
+                    .child(app_icon(
+                        AppIcon::for_harness(session.harness),
+                        AppIconSize::Inline,
+                    ))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(format!("{state} · {execution}")),
+                    ),
+            )
+            .into_any_element();
+        Some(session_hover_panel(hover_id, hover_details, card))
     }
 }
 
@@ -241,16 +225,6 @@ pub(super) fn disclosure_control(
             cx.notify();
         });
     })
-}
-
-pub(super) fn role_icon(role: &str) -> AppIcon {
-    match role.to_ascii_lowercase().as_str() {
-        "reviewer" => AppIcon::Eye,
-        "scout" => AppIcon::Binoculars,
-        "researcher" => AppIcon::Microscope,
-        "worker" => AppIcon::Hammer,
-        _ => AppIcon::UserFocus,
-    }
 }
 
 pub(super) fn lifecycle_label(lifecycle: AgentLifecycle) -> &'static str {
