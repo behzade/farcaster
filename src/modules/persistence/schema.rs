@@ -1,27 +1,7 @@
 use super::*;
 
 impl StateStore {
-    pub(crate) fn open() -> Result<Self, String> {
-        let _startup_timing =
-            crate::app::infrastructure::performance::StartupTiming::new("db.open_total");
-        let path = state_path()?;
-        let mut store = Self::open_at(&path)?;
-        if let Some(legacy) = legacy_pi_gpui_state_path()
-            && legacy != path
-            && legacy.is_file()
-        {
-            store.import_legacy_pi_gpui_state(&legacy)?;
-        }
-        Ok(store)
-    }
-
     pub(crate) fn open_at(path: &Path) -> Result<Self, String> {
-        let _startup_timing =
-            crate::app::infrastructure::performance::StartupTiming::new("db.open_at");
-        let _timing = crate::app::infrastructure::performance::OperationTiming::new(
-            crate::app::infrastructure::performance::OperationKind::StateDatabase,
-            1,
-        );
         let parent = path
             .parent()
             .ok_or_else(|| format!("state database has no parent: {}", path.display()))?;
@@ -33,15 +13,11 @@ impl StateStore {
             .busy_timeout(DATABASE_BUSY_TIMEOUT)
             .map_err(|error| format!("configure database lock wait: {error}"))?;
         {
-            let _timing =
-                crate::app::infrastructure::performance::StartupTiming::new("db.enable_wal");
             enable_wal(&connection)?;
         }
         connection
             .pragma_update(None, "foreign_keys", true)
             .map_err(|error| format!("enable foreign keys: {error}"))?;
-        let _schema_timing =
-            crate::app::infrastructure::performance::StartupTiming::new("db.ensure_schema");
         if schema_version(&connection)? != Some(SCHEMA_VERSION) {
             let migration = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)

@@ -12,8 +12,6 @@ impl StateStore {
         connection: &Connection,
         id: Option<i64>,
     ) -> Result<Vec<SessionSummary>, String> {
-        let _startup_timing =
-            crate::app::infrastructure::performance::StartupTiming::new("db.cached_sessions");
         let mut statement = connection
             .prepare(&format!(
                 "SELECT s.id, s.locator, p.path, s.title, s.first_user_message, s.timestamp,

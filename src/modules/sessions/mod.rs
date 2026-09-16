@@ -1,6 +1,7 @@
 pub(crate) mod activity;
 mod contract;
 mod core;
+mod folders;
 
 pub(crate) use contract::{
     LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion, SessionDiscovery, SessionImport,
@@ -15,3 +16,6 @@ pub(crate) use core::{
     normalize_session_path, relocate_state, root_session_for_path, root_sessions,
     session_family_for_path, set_archived, take_catalog_metrics,
 };
+#[cfg(test)]
+pub(crate) use folders::SessionFolder;
+pub(crate) use folders::{FolderDestination, SessionFolders};

@@ -18,9 +18,9 @@ fn transcript_font_size_survives_reopen_and_rejects_invalid_values() -> Result<(
         assert!(store.save_transcript_font_size(size).is_err());
         assert_eq!(store.load_transcript_font_size()?, default);
     }
+    let connection = rusqlite::Connection::open(&path).map_err(|error| error.to_string())?;
     for value in ["invalid", "NaN", "inf", "9", "33"] {
-        store
-            .connection
+        connection
             .execute(
                 "UPDATE meta SET value=?1 WHERE key='transcript_font_size'",
                 [value],

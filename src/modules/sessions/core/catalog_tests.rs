@@ -4,8 +4,7 @@ use crate::agents::Backend;
 #[test]
 fn imported_orphan_child_is_exposed_as_a_root() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let mut store =
-        crate::app::persistence::StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let mut store = crate::persistence::StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let unrelated_parent = SessionSummary::from_cached_for_harness(
         "not-imported-parent".into(),
         Backend::Pi,

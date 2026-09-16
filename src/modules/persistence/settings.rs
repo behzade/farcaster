@@ -492,9 +492,7 @@ fn validate_repository_backend_preferences(
 }
 
 impl StateStore {
-    pub(crate) fn load_session_folders(
-        &self,
-    ) -> Result<crate::app::session_folders::SessionFolders, String> {
+    pub(crate) fn load_session_folders(&self) -> Result<crate::sessions::SessionFolders, String> {
         let json: Option<String> = self
             .connection
             .query_row(
@@ -513,7 +511,7 @@ impl StateStore {
 
     pub(crate) fn save_session_folders(
         &self,
-        folders: &crate::app::session_folders::SessionFolders,
+        folders: &crate::sessions::SessionFolders,
     ) -> Result<(), String> {
         let json = serde_json::to_string(folders)
             .map_err(|error| format!("encode session folders: {error}"))?;
