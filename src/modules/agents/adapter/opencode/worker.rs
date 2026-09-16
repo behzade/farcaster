@@ -2053,9 +2053,21 @@ fn configure_opencode_server(
     command: &mut std::process::Command,
     mode: crate::agents::HarnessAccessMode,
 ) -> Result<(), String> {
-    if matches!(mode, crate::agents::HarnessAccessMode::Auto) {
-        return Err("OpenCode does not support model-reviewed automatic approvals".into());
-    }
+    let permission = match mode {
+        crate::agents::HarnessAccessMode::Sandboxed => serde_json::json!({
+            "bash": "ask",
+            "external_directory": "ask"
+        }),
+        crate::agents::HarnessAccessMode::Full => serde_json::json!("allow"),
+        crate::agents::HarnessAccessMode::Auto => {
+            return Err("OpenCode does not support model-reviewed automatic approvals".into());
+        }
+    };
+    merge_opencode_config(
+        command,
+        serde_json::json!({"permission": permission}),
+        "access-mode",
+    )?;
     command
         .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
         .args(["serve", "--stdio", "--print-logs"]);
@@ -2066,23 +2078,8 @@ fn configure_farcaster_mcp(
     command: &mut std::process::Command,
     caller_token: &str,
 ) -> Result<(), String> {
-    let existing = command
-        .get_envs()
-        .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
-        .and_then(|(_, value)| value)
-        .map(|value| value.to_string_lossy().into_owned());
-    let mut config = existing.map_or_else(
-        || Ok(serde_json::json!({})),
-        |value| {
-            serde_json::from_str::<Value>(&value)
-                .map_err(|error| format!("parse OPENCODE_CONFIG_CONTENT: {error}"))
-        },
-    )?;
-    if !config.is_object() {
-        return Err("OPENCODE_CONFIG_CONTENT must be a JSON object".into());
-    }
-    merge_json(
-        &mut config,
+    merge_opencode_config(
+        command,
         serde_json::json!({
             "mcp": {
                 "servers": {
@@ -2096,11 +2093,35 @@ fn configure_farcaster_mcp(
                 }
             }
         }),
-    );
+        "MCP",
+    )
+}
+
+fn merge_opencode_config(
+    command: &mut std::process::Command,
+    overlay: Value,
+    purpose: &str,
+) -> Result<(), String> {
+    let existing = command
+        .get_envs()
+        .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
+        .and_then(|(_, value)| value)
+        .map(|value| value.to_string_lossy().into_owned());
+    let mut config = existing.map_or_else(
+        || Ok(serde_json::json!({})),
+        |value| {
+            serde_json::from_str::<Value>(&value)
+                .map_err(|error| format!("parse OpenCode {purpose} configuration: {error}"))
+        },
+    )?;
+    if !config.is_object() {
+        return Err("OPENCODE_CONFIG_CONTENT must be a JSON object".into());
+    }
+    merge_json(&mut config, overlay);
     command.env(
         "OPENCODE_CONFIG_CONTENT",
         serde_json::to_string(&config)
-            .map_err(|error| format!("encode OpenCode MCP configuration: {error}"))?,
+            .map_err(|error| format!("encode OpenCode {purpose} configuration: {error}"))?,
     );
     Ok(())
 }

@@ -266,7 +266,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
                 path_segment(session_id),
                 path_segment(request_id)
             ),
-            Some(json!({"reply": reply})),
+            Some(json!({"decision": reply})),
         )?;
         ensure_success(&response)
     }

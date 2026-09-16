@@ -305,7 +305,7 @@ fn permission_replies_use_requested_session() -> Result<(), String> {
         request.path,
         "/api/session/child%2F1/permission/permission%2F1/reply"
     );
-    assert_eq!(body(request), json!({"reply": "once"}));
+    assert_eq!(body(request), json!({"decision": "once"}));
     Ok(())
 }
 

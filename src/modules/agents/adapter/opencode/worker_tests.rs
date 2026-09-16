@@ -555,12 +555,19 @@ fn permission_requests_keep_child_session_identity() {
 }
 
 #[test]
-fn supported_modes_use_the_opencode_server_without_auto_approval() {
-    for mode in [
-        crate::agents::HarnessAccessMode::Sandboxed,
-        crate::agents::HarnessAccessMode::Full,
+fn supported_modes_configure_opencode_permissions() {
+    for (mode, permission) in [
+        (
+            crate::agents::HarnessAccessMode::Sandboxed,
+            json!({"bash": "ask", "external_directory": "ask"}),
+        ),
+        (crate::agents::HarnessAccessMode::Full, json!("allow")),
     ] {
         let mut command = std::process::Command::new("opencode");
+        command.env(
+            "OPENCODE_CONFIG_CONTENT",
+            r#"{"model":"provider/model","permission":{"bash":"deny"}}"#,
+        );
         configure_opencode_server(&mut command, mode).expect("supported OpenCode mode");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
@@ -573,6 +580,14 @@ fn supported_modes_use_the_opencode_server_without_auto_approval() {
                 .and_then(|(_, value)| value),
             Some(std::ffi::OsStr::new("true"))
         );
+        let config = command
+            .get_envs()
+            .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
+            .and_then(|(_, value)| value)
+            .and_then(|value| serde_json::from_str::<Value>(&value.to_string_lossy()).ok())
+            .expect("inline config");
+        assert_eq!(config["model"], "provider/model");
+        assert_eq!(config["permission"], permission);
     }
 
     let mut command = std::process::Command::new("opencode");
