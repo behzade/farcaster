@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 #[path = "../src/modules/agents/contract/backend.rs"]
 mod backend;
-#[path = "../src/app/reviews.rs"]
+#[path = "../src/modules/reviews.rs"]
 mod reviews;
 
 mod app {
@@ -313,6 +313,7 @@ struct TranscriptBenchView {
     list: transcript_list::TranscriptListState,
     rows: Arc<persistent_vec::PersistentVec<transcript::TranscriptRow>>,
     conversation: Arc<conversation::ConversationState>,
+    presentation: Arc<reviews::presentation::TranscriptPresentation>,
     markdown_cache: transcript_markdown::TranscriptMarkdownCache,
 }
 
@@ -329,6 +330,7 @@ impl TranscriptBenchView {
             "assistantMessageEvent": {"type": "text_start", "contentIndex": 0}
         }));
 
+        let presentation = Arc::new((&conversation).into());
         let conversation = Arc::new(conversation);
         let rows = Arc::new(transcript::project_rows(&conversation.items));
         let list = transcript_list::TranscriptListState::new();
@@ -343,6 +345,7 @@ impl TranscriptBenchView {
             list,
             rows,
             conversation,
+            presentation,
             markdown_cache: transcript_markdown::TranscriptMarkdownCache::default(),
         }
     }
@@ -357,6 +360,9 @@ impl TranscriptBenchView {
             changed_from
         };
         let reduce = reduce_started.elapsed();
+        if let Some(dirty) = changed_from {
+            Arc::make_mut(&mut self.presentation).update_source(&self.conversation, dirty);
+        }
 
         let projection_started = Instant::now();
         let update = transcript::update_rows_incremental(
@@ -367,6 +373,13 @@ impl TranscriptBenchView {
         );
         let _changed = update.apply(&self.list, &mut self.rows, &self.conversation.items);
         (reduce, projection_started.elapsed())
+    }
+
+    fn scroll_to_row(&self, index: usize) {
+        self.list.scroll_to(gpui::ListOffset {
+            item_ix: index.min(self.rows.len().saturating_sub(1)),
+            offset_in_item: gpui::px(0.0),
+        });
     }
 }
 
@@ -385,7 +398,7 @@ impl Render for TranscriptBenchView {
                 tail_reserve: transcript::tail_reserve(window.viewport_size().height),
             },
             self.rows.clone(),
-            self.conversation.clone(),
+            self.presentation.clone(),
             HashMap::new(),
             HashMap::new(),
             self.markdown_cache.clone(),
@@ -466,6 +479,32 @@ fn run_scenario(history_size: usize, output: &mut impl io::Write) -> io::Result<
     ] {
         write_summary(output, history_size, projected_rows, name, durations)?;
     }
+
+    let total_frames = WARMUP_FRAMES + SAMPLE_FRAMES;
+    let frames_per_direction = total_frames.div_ceil(2);
+    let mut scroll_draws = Vec::with_capacity(SAMPLE_FRAMES);
+    for frame in 0..total_frames {
+        let progress = frame % frames_per_direction;
+        let row = progress.saturating_mul(projected_rows) / frames_per_direction;
+        let row = if frame < frames_per_direction {
+            row
+        } else {
+            projected_rows.saturating_sub(row + 1)
+        };
+        window.update(|view, _, _| view.scroll_to_row(row));
+        let draw_started = Instant::now();
+        window.draw();
+        if frame >= WARMUP_FRAMES {
+            scroll_draws.push(draw_started.elapsed());
+        }
+    }
+    write_summary(
+        output,
+        history_size,
+        projected_rows,
+        "scroll-draw",
+        scroll_draws,
+    )?;
     Ok(())
 }
 

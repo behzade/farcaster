@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, agent_activity_key},
@@ -42,17 +45,45 @@ pub(in crate::app) fn roots_waiting_for_active_descendants(
     sessions: &[SessionSummary],
     activities: &HashMap<String, AgentActivity>,
 ) -> HashSet<String> {
+    let active_paths = active_activity_session_paths(sessions, activities);
     roots_waiting_for_descendants_where(sessions, |session| {
-        session.is_running
-            || activities
-                .get(&agent_activity_key(&session.path))
-                .is_some_and(|activity| {
-                    matches!(
-                        activity.lifecycle,
-                        AgentLifecycle::NeedsInput | AgentLifecycle::Working
-                    )
-                })
+        session.is_running || active_paths.contains(session.path.as_path())
     })
+}
+
+fn active_activity_session_paths<'a>(
+    sessions: &'a [SessionSummary],
+    activities: &HashMap<String, AgentActivity>,
+) -> HashSet<&'a Path> {
+    let sessions_by_path = sessions
+        .iter()
+        .map(|session| (session.path.as_path(), session))
+        .collect::<HashMap<_, _>>();
+    activities
+        .iter()
+        .filter(|(_, activity)| agent_activity_keeps_parent_waiting(activity))
+        .filter_map(|(key, activity)| {
+            sessions_by_path
+                .get(activity.session_path.as_path())
+                .copied()
+                // Activity keys are canonicalized at ingestion. The fallback
+                // preserves alias matching without canonicalizing every session
+                // during every frame.
+                .or_else(|| {
+                    sessions
+                        .iter()
+                        .find(|session| agent_activity_key(&session.path) == *key)
+                })
+                .map(|session| session.path.as_path())
+        })
+        .collect()
+}
+
+fn agent_activity_keeps_parent_waiting(activity: &AgentActivity) -> bool {
+    matches!(
+        activity.lifecycle,
+        AgentLifecycle::NeedsInput | AgentLifecycle::Working
+    )
 }
 
 fn roots_waiting_for_descendants_where(

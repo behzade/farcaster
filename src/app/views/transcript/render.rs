@@ -142,6 +142,17 @@ pub(super) fn copy_transcript_row_range(
         .join("\n\n")
 }
 
+pub(super) fn selection_group_start(rows: &PersistentVec<TranscriptRow>, index: usize) -> usize {
+    let Some(key) = rows.get(index).map(TranscriptRow::key) else {
+        return index;
+    };
+    let mut start = index;
+    while start > 0 && rows[start - 1].key() == key {
+        start -= 1;
+    }
+    start
+}
+
 pub(in crate::app) fn transcript_scratch_text(
     items: &PersistentVec<Arc<TranscriptItem>>,
 ) -> String {
@@ -252,25 +263,14 @@ pub(crate) fn render(
     let row_entity = entity;
     // Selection keys follow visual order, while disclosure keys retain source
     // identity. Reviews can move behind later messages without reversing a drag.
-    let mut group_start = 0;
-    let selection_keys: Arc<Vec<usize>> = Arc::new(
-        rows.iter()
-            .enumerate()
-            .map(|(index, row)| {
-                if index == 0 || rows[index - 1].key() != row.key() {
-                    group_start = index;
-                }
-                group_start
-            })
-            .collect(),
-    );
-    let selection_groups = selection_keys.clone();
+    let selection_groups = rows.clone();
+    let row_selection_groups = rows.clone();
     let selection_copy_rows = rows.clone();
     let selection_items = conversation.items.clone();
     let selection_state = list_state.clone();
     let view = transcript_list_grouped(
         list_state.clone(),
-        move |index| selection_groups.get(index).copied().unwrap_or(index),
+        move |index| selection_group_start(&selection_groups, index),
         move |range| copy_transcript_row_range(&selection_items, &selection_copy_rows, range),
         move |index, _, cx| {
             let _timing = crate::app::infrastructure::performance::OperationTiming::new(
@@ -294,7 +294,10 @@ pub(crate) fn render(
                     div()
                         .w_full()
                         .when(
-                            selection_state.selection_contains(selection_keys[index]),
+                            selection_state.selection_contains(selection_group_start(
+                                &row_selection_groups,
+                                index,
+                            )),
                             |row| row.bg(THEME.colors.selection),
                         )
                         .child(div().w_full().child(render_row(

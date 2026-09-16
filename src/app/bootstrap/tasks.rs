@@ -63,32 +63,31 @@ pub(super) fn start_performance_monitor(
     cx: &mut Context<FarcasterApp>,
 ) -> PerformanceState {
     let debug = std::env::var("DEBUG").ok().as_deref() == Some("true");
-    let monitor = debug.then(|| {
+    let monitor = Some(
         crate::app::infrastructure::performance::PerformanceMonitor::new(
             window.window_handle().window_id(),
-        )
-    });
-    let task = debug.then(|| {
-        cx.spawn(async move |weak, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(crate::app::infrastructure::performance::sample_interval())
-                    .await;
-                if weak
-                    .update(cx, |this, cx| {
-                        if this.lifecycle.performance_monitor.as_mut().is_some_and(
-                            crate::app::infrastructure::performance::PerformanceMonitor::sample_if_due,
-                        ) {
-                            this.notify_run_panel(cx);
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
-                }
+            debug,
+        ),
+    );
+    let task = Some(cx.spawn(async move |weak, cx| {
+        loop {
+            cx.background_executor()
+                .timer(crate::app::infrastructure::performance::sample_interval())
+                .await;
+            if weak
+                .update(cx, |this, cx| {
+                    if this.lifecycle.performance_monitor.as_mut().is_some_and(
+                        crate::app::infrastructure::performance::PerformanceMonitor::sample_if_due,
+                    ) {
+                        this.notify_run_panel(cx);
+                    }
+                })
+                .is_err()
+            {
+                break;
             }
-        })
-    });
+        }
+    }));
 
     PerformanceState { monitor, task }
 }

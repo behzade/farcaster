@@ -19,3 +19,36 @@ fn individual_timing_logs_only_slow_operations() {
     assert!(!should_log_duration(Duration::from_millis(1)));
     assert!(should_log_duration(Duration::from_millis(2)));
 }
+
+#[test]
+fn high_latency_requires_a_dropped_frame_or_long_render_queue() {
+    let mut summary = PerformanceSummary {
+        draw_max: HIGH_LATENCY_DRAW - Duration::from_millis(1),
+        dirty_to_draw_p95: HIGH_LATENCY_DIRTY_TO_DRAW - Duration::from_millis(1),
+        ..PerformanceSummary::default()
+    };
+    assert!(!is_high_latency(&summary));
+
+    summary.draw_max = HIGH_LATENCY_DRAW;
+    assert!(is_high_latency(&summary));
+
+    summary.draw_max = Duration::default();
+    summary.dirty_to_draw_p95 = HIGH_LATENCY_DIRTY_TO_DRAW;
+    assert!(is_high_latency(&summary));
+}
+
+#[test]
+fn high_latency_reports_are_rate_limited() {
+    let summary = PerformanceSummary {
+        draw_max: HIGH_LATENCY_DRAW,
+        ..PerformanceSummary::default()
+    };
+    let now = Instant::now();
+    assert!(should_report_high_latency(&summary, None, now));
+    assert!(!should_report_high_latency(&summary, Some(now), now));
+    assert!(should_report_high_latency(
+        &summary,
+        Some(now - HIGH_LATENCY_REPORT_COOLDOWN),
+        now,
+    ));
+}

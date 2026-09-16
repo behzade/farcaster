@@ -147,7 +147,10 @@ impl FarcasterApp {
             .gap(THEME.space.sm)
             .child(self.views.workgraph_sidebar.clone())
             .when_some(
-                self.lifecycle.performance_monitor.as_ref(),
+                self.lifecycle
+                    .performance_monitor
+                    .as_ref()
+                    .filter(|monitor| monitor.is_detailed()),
                 |run, monitor| run.child(render_performance(&monitor.summary)),
             )
             .when(!active.is_empty(), |run| {

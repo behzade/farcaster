@@ -1,6 +1,9 @@
 //! Editor-neutral, advisory review locations and durable transcript delivery.
+#[path = "reviews/artifact.rs"]
 pub(crate) mod artifact;
+#[path = "reviews/delivery.rs"]
 pub(crate) mod delivery;
+#[path = "reviews/presentation.rs"]
 pub(crate) mod presentation;
 use std::path::{Component, Path, PathBuf};
 

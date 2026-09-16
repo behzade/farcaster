@@ -8,8 +8,12 @@ use gpui::{FrameTimingCollector, TasksIncluded, TouchPhase, WindowId, profiler};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 const SLOW_OPERATION: Duration = Duration::from_millis(2);
+const HIGH_LATENCY_DRAW: Duration = Duration::from_millis(32);
+const HIGH_LATENCY_DIRTY_TO_DRAW: Duration = Duration::from_millis(50);
+const HIGH_LATENCY_REPORT_COOLDOWN: Duration = Duration::from_secs(15);
 
-static ENABLED: AtomicBool = AtomicBool::new(false);
+static MONITORING: AtomicBool = AtomicBool::new(false);
+static DETAILED: AtomicBool = AtomicBool::new(false);
 static SNAPSHOTS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
 static STREAM_EVENTS_OBSERVED: AtomicU64 = AtomicU64::new(0);
 static STREAM_EVENTS_COALESCED: AtomicU64 = AtomicU64::new(0);
@@ -109,7 +113,7 @@ pub(crate) const fn sample_interval() -> Duration {
 }
 
 fn add_counter(counter: &AtomicU64, count: u64) {
-    if ENABLED.load(Ordering::Relaxed) {
+    if MONITORING.load(Ordering::Relaxed) {
         counter.fetch_add(count, Ordering::Relaxed);
     }
 }
@@ -182,7 +186,7 @@ pub(crate) fn count_markdown_cache_hit() {
 }
 
 pub(crate) fn record_scroll_event(phase: TouchPhase) {
-    if !ENABLED.load(Ordering::Relaxed) {
+    if !MONITORING.load(Ordering::Relaxed) {
         return;
     }
     let now = Instant::now();
@@ -225,7 +229,7 @@ pub(crate) fn record_scroll_event(phase: TouchPhase) {
 }
 
 pub(crate) fn record_scroll_defer(elapsed: Duration) {
-    if ENABLED.load(Ordering::Relaxed) {
+    if MONITORING.load(Ordering::Relaxed) {
         SCROLL_DEFERRED_UPDATES.fetch_add(1, Ordering::Relaxed);
         SCROLL_DEFER_MAX_NS.fetch_max(duration_nanos(elapsed), Ordering::Relaxed);
     }
@@ -246,7 +250,7 @@ impl OperationTiming {
     pub(crate) fn new(kind: OperationKind, work: usize) -> Self {
         Self {
             kind,
-            started_at: ENABLED.load(Ordering::Relaxed).then(Instant::now),
+            started_at: DETAILED.load(Ordering::Relaxed).then(Instant::now),
             work: work as u64,
         }
     }
@@ -321,7 +325,7 @@ impl Timing {
     pub(crate) fn new(name: &'static str) -> Self {
         Self {
             name,
-            started_at: ENABLED.load(Ordering::Relaxed).then(Instant::now),
+            started_at: DETAILED.load(Ordering::Relaxed).then(Instant::now),
         }
     }
 
@@ -350,6 +354,9 @@ pub(crate) struct PerformanceMonitor {
     frames: FrameTimingCollector,
     window_id: WindowId,
     sampled_at: Instant,
+    detailed: bool,
+    capturing_slow_interval: bool,
+    last_slow_report: Option<Instant>,
     pub(crate) summary: PerformanceSummary,
 }
 
@@ -397,17 +404,25 @@ pub(crate) struct OperationSummary {
 }
 
 impl PerformanceMonitor {
-    pub(crate) fn new(window_id: WindowId) -> Self {
+    pub(crate) fn new(window_id: WindowId, detailed: bool) -> Self {
         reset_counters();
-        ENABLED.store(true, Ordering::Relaxed);
-        profiler::set_trace_enabled(true);
+        MONITORING.store(true, Ordering::Relaxed);
+        DETAILED.store(detailed, Ordering::Relaxed);
+        profiler::set_trace_enabled(detailed);
         profiler::set_frame_trace_enabled(true);
         Self {
             frames: FrameTimingCollector::new(),
             window_id,
             sampled_at: Instant::now(),
+            detailed,
+            capturing_slow_interval: false,
+            last_slow_report: None,
             summary: PerformanceSummary::default(),
         }
+    }
+
+    pub(crate) const fn is_detailed(&self) -> bool {
+        self.detailed
     }
 
     pub(crate) fn sample_if_due(&mut self) -> bool {
@@ -417,15 +432,35 @@ impl PerformanceMonitor {
             return false;
         }
         self.sampled_at = now;
-        self.summary = collect_summary(&mut self.frames, self.window_id, sample_interval);
-        log_summary(&self.summary);
-        true
+        let collecting_details = self.detailed || self.capturing_slow_interval;
+        self.summary = collect_summary(
+            &mut self.frames,
+            self.window_id,
+            sample_interval,
+            collecting_details,
+        );
+        if self.detailed {
+            log_summary(&self.summary);
+        } else if self.capturing_slow_interval {
+            log_slow_capture(&self.summary);
+            self.capturing_slow_interval = false;
+            self.last_slow_report = Some(now);
+            DETAILED.store(false, Ordering::Relaxed);
+            profiler::set_trace_enabled(false);
+        } else if should_report_high_latency(&self.summary, self.last_slow_report, now) {
+            log_high_latency(&self.summary);
+            self.capturing_slow_interval = true;
+            DETAILED.store(true, Ordering::Relaxed);
+            profiler::set_trace_enabled(true);
+        }
+        self.detailed
     }
 }
 
 impl Drop for PerformanceMonitor {
     fn drop(&mut self) {
-        ENABLED.store(false, Ordering::Relaxed);
+        MONITORING.store(false, Ordering::Relaxed);
+        DETAILED.store(false, Ordering::Relaxed);
         profiler::set_trace_enabled(false);
         profiler::set_frame_trace_enabled(false);
     }
@@ -435,6 +470,7 @@ fn collect_summary(
     frames: &mut FrameTimingCollector,
     window_id: WindowId,
     sample_interval: Duration,
+    detailed: bool,
 ) -> PerformanceSummary {
     record_catalog_metrics(crate::sessions::take_catalog_metrics());
     let frames = frames
@@ -457,23 +493,28 @@ fn collect_summary(
     draw.sort_unstable();
     dirty_to_draw.sort_unstable();
 
-    let slowest_task = profiler::take_all_stats(TasksIncluded::CompletedAndRunning)
-        .into_iter()
-        .flat_map(|thread| thread.stats.longest_poll_times)
-        .max_by_key(|timing| timing.poll_duration())
-        .filter(|timing| !timing.poll_duration().is_zero())
-        .map(|timing| {
-            format!(
-                "{} · {}:{}",
-                duration_label(timing.poll_duration()),
-                timing.location.file(),
-                timing.location.line()
-            )
-        });
-    let slowest_action = profiler::take_action_stats()
-        .longest_runtimes(true)
-        .max_by_key(|timing| timing.runtime())
-        .map(|timing| format!("{} · {}", duration_label(timing.runtime()), timing.name));
+    let (slowest_task, slowest_action) = if detailed {
+        let task = profiler::take_all_stats(TasksIncluded::CompletedAndRunning)
+            .into_iter()
+            .flat_map(|thread| thread.stats.longest_poll_times)
+            .max_by_key(|timing| timing.poll_duration())
+            .filter(|timing| !timing.poll_duration().is_zero())
+            .map(|timing| {
+                format!(
+                    "{} · {}:{}",
+                    duration_label(timing.poll_duration()),
+                    timing.location.file(),
+                    timing.location.line()
+                )
+            });
+        let action = profiler::take_action_stats()
+            .longest_runtimes(true)
+            .max_by_key(|timing| timing.runtime())
+            .map(|timing| format!("{} · {}", duration_label(timing.runtime()), timing.name));
+        (task, action)
+    } else {
+        (None, None)
+    };
 
     PerformanceSummary {
         sample_interval,
@@ -535,12 +576,58 @@ fn should_log_duration(duration: Duration) -> bool {
     duration >= SLOW_OPERATION
 }
 
+fn is_high_latency(summary: &PerformanceSummary) -> bool {
+    summary.draw_max >= HIGH_LATENCY_DRAW || summary.dirty_to_draw_p95 >= HIGH_LATENCY_DIRTY_TO_DRAW
+}
+
+fn should_report_high_latency(
+    summary: &PerformanceSummary,
+    last_report: Option<Instant>,
+    now: Instant,
+) -> bool {
+    is_high_latency(summary)
+        && last_report
+            .is_none_or(|reported| now.duration_since(reported) >= HIGH_LATENCY_REPORT_COOLDOWN)
+}
+
+fn log_high_latency(summary: &PerformanceSummary) {
+    zlog::warn!(
+        "PERF_SLOW interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} scrolling={} scroll_events={} transcript_remeasured={} markdown_cache_hits={}",
+        summary.sample_interval.as_secs_f64() * 1_000.0,
+        summary.frame_count,
+        summary.draw_p95.as_secs_f64() * 1_000.0,
+        summary.draw_max.as_secs_f64() * 1_000.0,
+        summary.dirty_to_draw_p95.as_secs_f64() * 1_000.0,
+        summary.dirty_requests_average,
+        summary.dirty_requests_max,
+        summary.scroll_events > 0,
+        summary.scroll_events,
+        summary.transcript_rows_remeasured,
+        summary.markdown_cache_hits,
+    );
+}
+
+fn log_slow_capture(summary: &PerformanceSummary) {
+    let active_operations = active_operations(summary);
+    zlog::warn!(
+        "PERF_CAPTURE interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} scrolling={} scroll_events={} operations={:?} slowest_task={:?} slowest_action={:?}",
+        summary.sample_interval.as_secs_f64() * 1_000.0,
+        summary.frame_count,
+        summary.draw_p95.as_secs_f64() * 1_000.0,
+        summary.draw_max.as_secs_f64() * 1_000.0,
+        summary.dirty_to_draw_p95.as_secs_f64() * 1_000.0,
+        summary.dirty_requests_average,
+        summary.dirty_requests_max,
+        summary.scroll_events > 0,
+        summary.scroll_events,
+        active_operations,
+        summary.slowest_task,
+        summary.slowest_action,
+    );
+}
+
 fn log_summary(summary: &PerformanceSummary) {
-    let active_operations = summary
-        .operations
-        .iter()
-        .filter(|operation| operation.calls > 0)
-        .collect::<Vec<_>>();
+    let active_operations = active_operations(summary);
     zlog::info!(
         "PERF interval_ms={:.2} frames={} draw_p95_ms={:.2} draw_max_ms={:.2} dirty_to_draw_p95_ms={:.2} dirty_requests_avg={:.1} dirty_requests_max={} snapshots={} stream_events={} stream_coalesced={} transcript_compared={} transcript_projected={} transcript_remeasured={} catalog_scans={} catalog_parses={} catalog_cache_hits={} markdown_cache_hits={} scroll_events={} scroll_phases={}/{}/{} scroll_after_end={} scroll_after_end_max_ms={:.2} scroll_gap_max_ms={:.2} scroll_defers={} scroll_defer_max_ms={:.2} operations={:?} slowest_task={:?} slowest_action={:?}",
         summary.sample_interval.as_secs_f64() * 1_000.0,
@@ -573,6 +660,14 @@ fn log_summary(summary: &PerformanceSummary) {
         summary.slowest_task,
         summary.slowest_action,
     );
+}
+
+fn active_operations(summary: &PerformanceSummary) -> Vec<&OperationSummary> {
+    summary
+        .operations
+        .iter()
+        .filter(|operation| operation.calls > 0)
+        .collect()
 }
 
 fn percentile(values: &[Duration], percentile: usize) -> Duration {

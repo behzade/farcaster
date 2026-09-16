@@ -77,6 +77,41 @@ fn tail_reserve_is_responsive_but_bounded() {
 }
 
 #[test]
+fn selection_groups_are_resolved_from_adjacent_visual_rows() {
+    let rows = [
+        TranscriptRow::Item {
+            index: 5,
+            revision: 0,
+        },
+        TranscriptRow::StreamChunk {
+            index: 8,
+            chunk: 0,
+            revision: 0,
+            first: true,
+            last: false,
+        },
+        TranscriptRow::StreamChunk {
+            index: 8,
+            chunk: 1,
+            revision: 0,
+            first: false,
+            last: true,
+        },
+        TranscriptRow::Item {
+            index: 2,
+            revision: 0,
+        },
+    ]
+    .into_iter()
+    .collect();
+
+    assert_eq!(render::selection_group_start(&rows, 0), 0);
+    assert_eq!(render::selection_group_start(&rows, 1), 1);
+    assert_eq!(render::selection_group_start(&rows, 2), 1);
+    assert_eq!(render::selection_group_start(&rows, 3), 3);
+}
+
+#[test]
 fn expanded_latest_tools_keep_space_above_the_composer() {
     let mut items = PersistentVec::default();
     items.push(item(TranscriptKind::Tool, "Read", ""));
