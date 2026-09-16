@@ -10,6 +10,117 @@ pub(super) struct RetiredPrompt {
 }
 
 impl RuntimeOwner {
+    pub(super) fn apply_retired_prompt_delivery(
+        &mut self,
+        event: &Value,
+    ) -> Option<SnapshotChange> {
+        if event.get("type").and_then(Value::as_str) != Some("prompt_delivery") {
+            return None;
+        }
+        let receipt_id = event.get("submissionId").and_then(Value::as_str)?;
+        let retired = self.retired_prompts.get(receipt_id).cloned()?;
+        let status = event
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(status, "accepted" | "delivered") {
+            self.reconcile_retired_prompt(receipt_id, status == "delivered");
+            if retired.session == self.active_session && !retired.delivered {
+                let mut message = event.get("message").cloned().unwrap_or_default();
+                if !message.is_object() {
+                    message = json!({});
+                }
+                message["queued"] = true.into();
+                conversation_mut(self.active_snapshot_mut())
+                    .record_prompt_delivery(receipt_id, &message, status);
+                return Some(SnapshotChange::Immediate);
+            }
+        }
+        Some(SnapshotChange::None)
+    }
+
+    pub(super) fn apply_prompt_delivery_receipt(&mut self, event: &Value) {
+        if event.get("type").and_then(Value::as_str) != Some("prompt_delivery")
+            || event.get("status").and_then(Value::as_str) != Some("delivered")
+        {
+            return;
+        }
+        let Some(receipt_id) = event.get("submissionId").and_then(Value::as_str) else {
+            return;
+        };
+        let current = self.pending_prompt_id.as_deref() == Some(receipt_id);
+        let queued = self.pending_queued_prompts.get(receipt_id).cloned();
+        let outbox_id = if current {
+            self.pending_outbox_id
+        } else {
+            queued.as_ref().map(|pending| pending.outbox_id)
+        };
+        let prompt = if current {
+            self.pending_prompt_target.as_ref().map(|target| {
+                (
+                    target.clone(),
+                    self.active_session.clone(),
+                    self.pending_prompt_delivery_tracked,
+                )
+            })
+        } else {
+            queued.as_ref().map(|pending| {
+                (
+                    pending.target.clone(),
+                    pending.session.clone(),
+                    pending.delivery_tracked,
+                )
+            })
+        };
+        let mut saved = false;
+        if let Some(state) = self.state.as_mut() {
+            let result = match (outbox_id, prompt) {
+                (Some(outbox_id), Some((target, session, delivery_tracked))) => state
+                    .complete_delivered_prompt(
+                        outbox_id,
+                        &target,
+                        session.as_deref(),
+                        receipt_id,
+                        delivery_tracked,
+                    ),
+                _ => state.record_prompt_receipt_delivered(receipt_id, outbox_id),
+            };
+            match result {
+                Ok(()) => saved = true,
+                Err(error) => {
+                    zlog::error!("Record prompt delivery receipt: {error}");
+                }
+            }
+        }
+        if current && saved {
+            self.pending_outbox_id = None;
+        }
+        if current && !self.pending_prompt_result_emitted {
+            if let (Some(submission_id), Some(target)) = (
+                self.pending_submission_id.clone(),
+                self.pending_prompt_target.clone(),
+            ) {
+                self.emit_prompt_result(
+                    Some(&submission_id),
+                    &target,
+                    crate::agents::PromptOutcome::Accepted,
+                );
+                self.pending_prompt_result_emitted = true;
+            }
+        } else if let Some(pending) = queued
+            && !pending.result_emitted
+        {
+            self.emit_prompt_result(
+                Some(&pending.submission_id),
+                &pending.target,
+                crate::agents::PromptOutcome::Accepted,
+            );
+            if let Some(pending) = self.pending_queued_prompts.get_mut(receipt_id) {
+                pending.result_emitted = true;
+            }
+        }
+    }
+
     pub(super) fn retire_queued_unknown_prompt(
         &mut self,
         id: &str,
@@ -85,5 +196,95 @@ impl RuntimeOwner {
             retired.delivered |= delivered;
         }
         true
+    }
+
+    pub(super) fn mark_outbox_failed(&mut self, error: &str) {
+        if let Some(id) = self.pending_outbox_id.take()
+            && let Some(state) = &self.state
+            && let Err(database_error) = agents::fail_prompt(state, id, error)
+        {
+            zlog::error!("Failed to mark queued prompt {id} as failed: {database_error}");
+        }
+    }
+
+    pub(super) fn fail_pending_queued_prompts(&mut self, error: &str) {
+        let pending = std::mem::take(&mut self.pending_queued_prompts);
+        for (receipt_id, queued) in pending {
+            if queued.result_emitted {
+                if let Some(state) = self.state.as_mut()
+                    && let Err(database_error) = state.complete_delivered_prompt(
+                        queued.outbox_id,
+                        &queued.target,
+                        queued.session.as_deref(),
+                        &receipt_id,
+                        queued.delivery_tracked,
+                    )
+                {
+                    zlog::error!(
+                        "Save proven queued delivery {}: {database_error}",
+                        queued.outbox_id
+                    );
+                }
+                continue;
+            }
+            if let Some(state) = &self.state
+                && let Err(database_error) =
+                    agents::mark_prompt_delivery_unknown(state, queued.outbox_id, error)
+            {
+                zlog::error!(
+                    "Mark pending queued prompt {} unknown: {database_error}",
+                    queued.outbox_id
+                );
+            }
+            self.emit_prompt_result(
+                Some(&queued.submission_id),
+                &queued.target,
+                crate::agents::PromptOutcome::DeliveryUnknown,
+            );
+        }
+    }
+
+    pub(super) fn complete_current_delivered_prompt(&mut self) {
+        if !self.pending_prompt_result_emitted {
+            return;
+        }
+        let Some((outbox_id, receipt_id, target)) = self
+            .pending_outbox_id
+            .zip(self.pending_prompt_id.clone())
+            .zip(self.pending_prompt_target.clone())
+            .map(|((outbox_id, receipt_id), target)| (outbox_id, receipt_id, target))
+        else {
+            return;
+        };
+        let session = self.active_session.clone();
+        let delivery_tracked = self.pending_prompt_delivery_tracked;
+        let Some(state) = self.state.as_mut() else {
+            return;
+        };
+        match state.complete_delivered_prompt(
+            outbox_id,
+            &target,
+            session.as_deref(),
+            &receipt_id,
+            delivery_tracked,
+        ) {
+            Ok(()) => self.pending_outbox_id = None,
+            Err(error) => {
+                zlog::error!("Save proven prompt delivery {outbox_id}: {error}");
+            }
+        }
+    }
+
+    pub(super) fn mark_outbox_delivery_unknown(&mut self, error: &str) {
+        if let Some(id) = self.pending_outbox_id
+            && let Some(state) = &self.state
+            && let Err(database_error) = agents::mark_prompt_delivery_unknown(state, id, error)
+        {
+            zlog::error!("Failed to mark queued prompt {id} delivery unknown: {database_error}");
+            conversation_mut(self.active_snapshot_mut()).push_local_error(
+                "Delivery state not saved",
+                format!("{database_error}. The saved sending record remains recoverable; do not resend it automatically."),
+            );
+        }
     }
 }
