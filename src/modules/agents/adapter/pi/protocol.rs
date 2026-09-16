@@ -96,11 +96,7 @@ impl SessionTransport for PiRpcProcess {
         self.sandbox_adapter_id()
     }
     fn sandbox_mode(&self) -> Option<crate::agents::HarnessAccessMode> {
-        self.confirmed_sandbox_mode().or_else(|| {
-            self.sandbox_adapter_id()
-                .is_none()
-                .then_some(crate::agents::HarnessAccessMode::Full)
-        })
+        self.effective_access_mode()
     }
     fn send(&mut self, request: SessionCommand) -> Result<String, String> {
         self.send_request(request)

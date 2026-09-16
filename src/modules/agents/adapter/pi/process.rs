@@ -421,6 +421,7 @@ impl PiRpcProcess {
     }
 
     fn configure_sandbox(&mut self, requested: HarnessAccessMode) -> Result<(), String> {
+        self.sandbox_adapter = None;
         self.sandbox_mode = None;
         self.request_and_wait(SessionCommand::ListCommands)?;
         let commands = std::mem::take(&mut self.commands);
@@ -999,8 +1000,17 @@ impl PiRpcProcess {
         self.sandbox_adapter.map(|adapter| adapter.id())
     }
 
+    #[cfg(test)]
     pub(super) fn confirmed_sandbox_mode(&self) -> Option<HarnessAccessMode> {
         self.sandbox_mode
+    }
+
+    pub(super) fn effective_access_mode(&self) -> Option<HarnessAccessMode> {
+        self.sandbox_mode.or_else(|| {
+            self.sandbox_adapter
+                .is_none()
+                .then_some(HarnessAccessMode::Full)
+        })
     }
 
     fn write(&self, bytes: &[u8]) -> Result<(), String> {
