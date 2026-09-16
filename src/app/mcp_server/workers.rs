@@ -16,7 +16,11 @@ pub(super) fn send(
     params: SendParams,
     caller_token: Option<String>,
     tasks: &crate::agents::WorkerProfiles,
-    available: impl Fn(&crate::agents::WorkerExecution, &std::path::Path) -> bool,
+    route: impl Fn(
+        &crate::agents::WorkerExecution,
+        &std::path::Path,
+        crate::agents::HarnessAccessMode,
+    ) -> Option<crate::agents::HarnessAccessMode>,
 ) -> Result<serde_json::Value, String> {
     if params.message.trim().is_empty() {
         return Err("worker message must not be empty".into());
@@ -47,19 +51,7 @@ pub(super) fn send(
     if !crate::agents::valid_worker_name(&to) {
         return Err("child name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
     }
-    if let Some(assignment) = registry.child_assignment(&caller, &to)? {
-        validate_reuse(&assignment, params.profile.as_deref())?;
-        let worker = registry
-            .send(token, &to, params.message.clone())?
-            .ok_or("child became unavailable; retry with a new child name")?;
-        return Ok(serde_json::json!({
-            "worker": worker,
-            "created": false,
-            "queued": true,
-            "assignment": assignment,
-        }));
-    }
-    if let Some(assignment) = pool.resume_child(
+    if let Some(assignment) = pool.queue_pending_child(
         &caller,
         &to,
         params.message.clone(),
@@ -69,6 +61,50 @@ pub(super) fn send(
             "worker": to,
             "created": false,
             "queued": true,
+            "pending": true,
+            "assignment": assignment,
+        }));
+    }
+    if let Some((assignment, child_access_mode)) = registry.child_assignment(&caller, &to)? {
+        validate_reuse(&assignment, params.profile.as_deref())?;
+        crate::agents::validate_child_access(caller.access_mode, child_access_mode)?;
+        let worker = registry
+            .send(token, &to, params.message.clone())?
+            .ok_or("child became unavailable; retry with a new child name")?;
+        return Ok(serde_json::json!({
+            "worker": worker,
+            "created": false,
+            "queued": true,
+            "pending": false,
+            "assignment": assignment,
+        }));
+    }
+    if let Some(assignment) = pool.queue_pending_child(
+        &caller,
+        &to,
+        params.message.clone(),
+        params.profile.as_deref(),
+    )? {
+        return Ok(serde_json::json!({
+            "worker": to,
+            "created": false,
+            "queued": true,
+            "pending": true,
+            "assignment": assignment,
+        }));
+    }
+    if let Some(assignment) = pool.resume_child(
+        &caller,
+        &to,
+        params.message.clone(),
+        params.profile.as_deref(),
+        |assignment| route(&assignment.execution, &caller.project, caller.access_mode),
+    )? {
+        return Ok(serde_json::json!({
+            "worker": to,
+            "created": false,
+            "queued": true,
+            "pending": true,
             "assignment": assignment,
         }));
     }
@@ -78,17 +114,137 @@ pub(super) fn send(
     let profile = params.profile.as_deref().ok_or(
         "new children require a configured `profile`; omit profile only when reusing a child",
     )?;
-    let assignment = tasks.resolve(profile, |model| available(model, &caller.project))?;
-    pool.start_assigned(
-        new_worker(caller, name.clone(), params.message, &assignment),
-        Some(assignment.clone()),
+    let (assignment, child_access_mode) =
+        resolve_child(tasks, profile, &caller.project, caller.access_mode, route)?;
+    let initial_message = params.message;
+    let concurrent_message = crate::agents::PeerMessage {
+        from: caller.worker_name.clone(),
+        message: initial_message.clone(),
+    };
+    let (assignment, created, pending) = pool.queue_assigned(
+        new_worker(
+            caller,
+            name.clone(),
+            initial_message.clone(),
+            &assignment,
+            child_access_mode,
+        ),
+        assignment,
+        concurrent_message,
     )?;
+    let worker = if pending {
+        name
+    } else {
+        registry
+            .send(token, &name, initial_message)?
+            .ok_or("child became unavailable; retry with a new child name")?
+    };
     Ok(serde_json::json!({
-        "worker": name,
-        "created": true,
+        "worker": worker,
+        "created": created,
         "queued": true,
+        "pending": pending,
         "assignment": assignment,
     }))
+}
+
+fn resolve_child(
+    profiles: &crate::agents::WorkerProfiles,
+    profile: &str,
+    project: &std::path::Path,
+    parent_access_mode: crate::agents::HarnessAccessMode,
+    route: impl Fn(
+        &crate::agents::WorkerExecution,
+        &std::path::Path,
+        crate::agents::HarnessAccessMode,
+    ) -> Option<crate::agents::HarnessAccessMode>,
+) -> Result<
+    (
+        crate::agents::WorkerAssignment,
+        crate::agents::HarnessAccessMode,
+    ),
+    String,
+> {
+    let prefer_auto = parent_access_mode == crate::agents::HarnessAccessMode::Auto
+        && profiles
+            .profiles
+            .iter()
+            .find(|definition| definition.name == profile)
+            .is_some_and(|definition| {
+                definition.models.iter().any(|model| {
+                    route(model, project, parent_access_mode)
+                        == Some(crate::agents::HarnessAccessMode::Auto)
+                })
+            });
+    let assignment = profiles.resolve(profile, |model| {
+        let Some(access_mode) = route(model, project, parent_access_mode) else {
+            return false;
+        };
+        !prefer_auto || access_mode == crate::agents::HarnessAccessMode::Auto
+    })?;
+    let access_mode = route(&assignment.execution, project, parent_access_mode)
+        .ok_or("selected worker model no longer supports the required child access mode")?;
+    Ok((assignment, access_mode))
+}
+
+pub(super) fn child_access_mode(
+    model: &crate::agents::WorkerExecution,
+    project: &std::path::Path,
+    parent_access_mode: crate::agents::HarnessAccessMode,
+    backends: &[crate::agents::Backend],
+    catalogs: &[crate::app::persistence::CachedConfigurationCatalog],
+) -> Option<crate::agents::HarnessAccessMode> {
+    if !model_available(model, project, backends, catalogs) {
+        return None;
+    }
+    if parent_access_mode == crate::agents::HarnessAccessMode::Full {
+        return Some(parent_access_mode);
+    }
+    let catalogs_for_harness = catalogs
+        .iter()
+        .filter(|entry| entry.harness == model.harness && entry.project == project)
+        .collect::<Vec<_>>();
+    let catalog_model = catalogs_for_harness.iter().find_map(|entry| {
+        entry
+            .catalog
+            .models
+            .iter()
+            .find(|candidate| candidate.provider == model.provider && candidate.id == model.model)
+            .map(|candidate| (*entry, candidate))
+    });
+    if model.harness == crate::agents::Backend::Pi
+        && catalog_model
+            .and_then(|(entry, _)| entry.catalog.sandbox_adapter.as_deref())
+            .is_none()
+    {
+        return None;
+    }
+    let modes = match catalog_model {
+        Some((entry, candidate)) => crate::agents::available_access_modes(
+            model.harness,
+            Some(candidate),
+            entry.catalog.sandbox_adapter.as_deref(),
+        ),
+        None if catalogs_for_harness.is_empty() => {
+            crate::agents::available_access_modes(model.harness, None, None)
+        }
+        None => Vec::new(),
+    };
+    match parent_access_mode {
+        crate::agents::HarnessAccessMode::Auto
+            if modes.contains(&crate::agents::HarnessAccessMode::Auto) =>
+        {
+            Some(crate::agents::HarnessAccessMode::Auto)
+        }
+        crate::agents::HarnessAccessMode::Auto | crate::agents::HarnessAccessMode::Sandboxed
+            if modes.contains(&crate::agents::HarnessAccessMode::Sandboxed) =>
+        {
+            Some(crate::agents::HarnessAccessMode::Sandboxed)
+        }
+        crate::agents::HarnessAccessMode::Auto
+        | crate::agents::HarnessAccessMode::Sandboxed
+        | crate::agents::HarnessAccessMode::Full => None,
+    }
 }
 
 pub(super) fn model_available(
@@ -132,6 +288,7 @@ fn new_worker(
     name: String,
     message: String,
     assignment: &crate::agents::WorkerAssignment,
+    access_mode: crate::agents::HarnessAccessMode,
 ) -> StartWorker {
     StartWorker {
         project: caller.project,
@@ -147,7 +304,7 @@ fn new_worker(
         provider: Some(assignment.execution.provider.clone()),
         model: Some(assignment.execution.model.clone()),
         effort: assignment.execution.effort.clone(),
-        access_mode: caller.access_mode,
+        access_mode,
     }
 }
 

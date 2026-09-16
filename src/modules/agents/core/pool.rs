@@ -3,20 +3,25 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
+use self::setup::{
+    canonical_directory, validate_fixed_profile, validate_start, wait_for_setup, worker_id,
+};
 use super::{
     concurrency::WorkerConcurrency,
-    run::{self, RunCommand},
-    worker::{WorkerLaunch, WorkerSendMode, WorkerSession, WorkerSessionFactory},
+    run::RunCommand,
+    worker::{WorkerLaunch, WorkerSessionFactory},
 };
 use crate::modules::agents::contract::{StartWorker, WorkerContext, WorkerSnapshot, WorkerStatus};
+
+#[path = "pool_setup.rs"]
+mod setup;
 
 const MAX_TERMINAL_HISTORY: usize = 64;
 
@@ -52,6 +57,25 @@ struct WorkerRecord {
     assignment: Option<super::WorkerAssignment>,
     parent_backend: Option<Backend>,
     cleanup_confirmed: Arc<AtomicBool>,
+    setup_done: Arc<(Mutex<bool>, Condvar)>,
+    setup_cancelled: Arc<Mutex<bool>>,
+    setup_stop_requested: Arc<AtomicBool>,
+    pending_messages: Vec<crate::agents::PeerMessage>,
+}
+
+struct ReservedStart {
+    id: String,
+    prompt: String,
+    parent: Option<super::caller::WorkerParent>,
+    assignment: Option<super::WorkerAssignment>,
+}
+
+enum ReservedStartResult {
+    Reserved(ReservedStart),
+    Existing {
+        assignment: super::WorkerAssignment,
+        pending: bool,
+    },
 }
 
 impl WorkerPool {
@@ -97,6 +121,21 @@ impl WorkerPool {
     }
 
     #[cfg(test)]
+    pub(crate) fn fence_family(&self, parent: &super::CallerContext) -> Result<(), String> {
+        self.inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable".to_owned())?
+            .stopping_families
+            .insert((
+                parent.project.clone(),
+                parent.backend,
+                parent.session.clone(),
+            ));
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn app_proxy(&self) -> Result<Option<String>, String> {
         self.inner
             .app_proxy
@@ -120,11 +159,92 @@ impl WorkerPool {
         self.start_assigned(request, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn start_assigned(
         &self,
         request: StartWorker,
         assignment: Option<super::WorkerAssignment>,
     ) -> Result<WorkerSnapshot, String> {
+        let reserved = self.reserve_start(request, assignment, false, None)?;
+        self.provision_reserved(reserved)
+    }
+
+    pub(crate) fn queue_pending_child(
+        &self,
+        parent: &super::CallerContext,
+        name: &str,
+        message: String,
+        profile: Option<&str>,
+    ) -> Result<Option<super::WorkerAssignment>, String> {
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| "worker pool state is unavailable".to_owned())?;
+        if state.stopping_families.contains(&(
+            parent.project.clone(),
+            parent.backend,
+            parent.session.clone(),
+        )) {
+            return Err("worker session family is stopping".into());
+        }
+        let Some(record) = find_pending_child(&mut state, parent, name) else {
+            return Ok(None);
+        };
+        let assignment = record
+            .assignment
+            .clone()
+            .ok_or("pending child has no saved worker assignment")?;
+        validate_fixed_profile(&assignment, profile)?;
+        crate::agents::validate_child_access(parent.access_mode, record.launch.access_mode)?;
+        record.pending_messages.push(crate::agents::PeerMessage {
+            from: parent.worker_name.clone(),
+            message,
+        });
+        Ok(Some(assignment))
+    }
+
+    pub(crate) fn queue_assigned(
+        &self,
+        request: StartWorker,
+        assignment: super::WorkerAssignment,
+        concurrent_message: crate::agents::PeerMessage,
+    ) -> Result<(super::WorkerAssignment, bool, bool), String> {
+        let reserved =
+            match self.reserve_start(request, Some(assignment), true, Some(concurrent_message))? {
+                ReservedStartResult::Existing {
+                    assignment,
+                    pending,
+                } => return Ok((assignment, false, pending)),
+                ReservedStartResult::Reserved(reserved) => reserved,
+            };
+        let queued_assignment = reserved
+            .assignment
+            .clone()
+            .ok_or("queued child has no saved worker assignment")?;
+        let worker_id = reserved.id.clone();
+        let pool = self.clone();
+        if let Err(error) = thread::Builder::new()
+            .name(format!("farcaster-worker-setup-{worker_id}"))
+            .spawn(move || {
+                let _ = pool.provision_reserved(ReservedStartResult::Reserved(reserved));
+            })
+        {
+            let error = format!("queue worker setup: {error}");
+            self.fail_reserved_setup(&worker_id, error.clone(), true);
+            return Err(error);
+        }
+        notify(&self.inner.updates);
+        Ok((queued_assignment, true, true))
+    }
+
+    fn reserve_start(
+        &self,
+        request: StartWorker,
+        assignment: Option<super::WorkerAssignment>,
+        deduplicate_child: bool,
+        concurrent_message: Option<crate::agents::PeerMessage>,
+    ) -> Result<ReservedStartResult, String> {
         validate_start(&request)?;
         let project = canonical_directory(&request.project)?;
         if !self
@@ -159,7 +279,12 @@ impl WorkerPool {
             .get(&request.backend)
             .ok_or_else(|| format!("unsupported worker backend: {}", request.backend))?
             .clone();
-
+        let app_proxy = self
+            .inner
+            .app_proxy
+            .lock()
+            .map_err(|_| "worker proxy configuration is unavailable".to_owned())?
+            .clone();
         let parent = request.parent_worker_id.as_ref().map(|parent_id| {
             super::caller::WorkerParent::new(
                 parent_id.clone(),
@@ -169,6 +294,14 @@ impl WorkerPool {
             )
         });
         let parent_backend = parent.as_ref().and_then(|parent| parent.backend);
+        let prompt = if parent.is_some() {
+            format!(
+                "You are a Farcaster child worker. Your final answer is automatically sent to your parent after each turn. Farcaster MCP is not available in this child session.\n\n{}",
+                request.prompt
+            )
+        } else {
+            request.prompt
+        };
 
         let mut state = self
             .inner
@@ -184,15 +317,43 @@ impl WorkerPool {
         }) {
             return Err("worker session family is stopping".into());
         }
+        if deduplicate_child
+            && let Some(parent_backend) = parent_backend
+            && let Some(record) = state.records.values_mut().find(|record| {
+                record.launch.project == project
+                    && record.launch.parent_session == request.parent_session
+                    && record.parent_backend == Some(parent_backend)
+                    && record
+                        .launch
+                        .worker_name
+                        .eq_ignore_ascii_case(&request.name)
+                    && snapshot(record).is_ok_and(|snapshot| !snapshot.status.terminal())
+            })
+        {
+            let existing = record
+                .assignment
+                .clone()
+                .ok_or("existing child has no saved worker assignment")?;
+            if let Some(requested) = assignment.as_ref() {
+                validate_fixed_profile(&existing, Some(&requested.profile))?;
+            }
+            let pending = snapshot(record)?.status == WorkerStatus::Pending;
+            if pending && let Some(message) = concurrent_message {
+                record.pending_messages.push(message);
+            }
+            return Ok(ReservedStartResult::Existing {
+                assignment: existing,
+                pending,
+            });
+        }
         join_terminal_runs(&mut state)?;
         reap_terminal(&mut state);
         retire_idle_for_new_worker(&mut state, self.inner.process_limit)?;
         let slot = self.inner.concurrency.reserve()?;
         state.sequence = state.sequence.saturating_add(1);
         let id = worker_id(state.sequence)?;
-
-        let mut launch = WorkerLaunch {
-            slot: Some(slot.clone()),
+        let launch = WorkerLaunch {
+            slot: Some(slot),
             worker_id: id.clone(),
             worker_name: request.name,
             project: project.clone(),
@@ -203,102 +364,42 @@ impl WorkerPool {
             model: request.model,
             effort: request.effort,
             access_mode: request.access_mode,
-            app_proxy: self
-                .inner
-                .app_proxy
-                .lock()
-                .map_err(|_| "worker proxy configuration is unavailable".to_owned())?
-                .clone(),
+            app_proxy,
             ephemeral: false,
         };
-        let mut session = factory.create(launch.clone())?;
-        if let Some(assignment) = assignment.clone()
-            && let Err(error) =
-                super::CallerRegistry::shared().set_assignment(&id, assignment.clone())
-        {
-            let (error, cleanup_confirmed) = close_setup_session(&mut *session, error);
-            if !cleanup_confirmed {
-                slot.release();
-                launch.slot = None;
-                retain_failed_setup(
-                    &mut state,
-                    &id,
-                    request.backend,
-                    &project,
-                    factory,
-                    launch,
-                    Some(assignment),
-                    parent_backend,
-                    error.clone(),
-                );
-                notify(&self.inner.updates);
-            }
-            return Err(error);
-        }
-        let prompt = if parent.is_some() {
-            format!(
-                "You are a Farcaster child worker. Your final answer is automatically sent to your parent after each turn. Farcaster MCP is not available in this child session.\n\n{}",
-                request.prompt
-            )
-        } else {
-            request.prompt
-        };
-        if let Err(error) = session.send(prompt, WorkerSendMode::Prompt) {
-            let (error, cleanup_confirmed) = close_setup_session(&mut *session, error);
-            if !cleanup_confirmed {
-                slot.release();
-                launch.slot = None;
-                retain_failed_setup(
-                    &mut state,
-                    &id,
-                    request.backend,
-                    &project,
-                    factory,
-                    launch,
-                    assignment,
-                    parent_backend,
-                    error.clone(),
-                );
-                notify(&self.inner.updates);
-            }
-            return Err(error);
-        }
         let initial = WorkerSnapshot {
             id: id.clone(),
             backend: request.backend,
             project,
             session_locator: None,
-            status: WorkerStatus::Running,
+            status: WorkerStatus::Pending,
             output: None,
             error: None,
             pending_input: None,
         };
-        let shared = Arc::new(Mutex::new(initial.clone()));
-        let cleanup_confirmed = Arc::new(AtomicBool::new(false));
-        let (commands, handle) = run::spawn(
-            &id,
-            session,
-            shared.clone(),
-            slot.clone(),
-            parent,
-            self.inner.updates.clone(),
-            cleanup_confirmed.clone(),
-        )?;
         state.records.insert(
-            id,
+            id.clone(),
             WorkerRecord {
-                snapshot: shared,
-                commands: Some(commands),
-                thread: Some(handle),
+                snapshot: Arc::new(Mutex::new(initial.clone())),
+                commands: None,
+                thread: None,
                 factory,
                 launch,
-                assignment,
+                assignment: assignment.clone(),
                 parent_backend,
-                cleanup_confirmed,
+                cleanup_confirmed: Arc::new(AtomicBool::new(false)),
+                setup_done: Arc::new((Mutex::new(false), Condvar::new())),
+                setup_cancelled: Arc::new(Mutex::new(false)),
+                setup_stop_requested: Arc::new(AtomicBool::new(false)),
+                pending_messages: Vec::new(),
             },
         );
-        notify(&self.inner.updates);
-        Ok(initial)
+        Ok(ReservedStartResult::Reserved(ReservedStart {
+            id,
+            prompt,
+            parent,
+            assignment,
+        }))
     }
 
     pub(crate) fn snapshots(&self) -> Result<Vec<WorkerSnapshot>, String> {
@@ -352,27 +453,82 @@ impl WorkerPool {
                 .then(|| id.clone())
             })
             .collect::<Vec<_>>();
+        let setup_waiters = ids
+            .iter()
+            .filter_map(|id| {
+                let record = state.records.get(id)?;
+                let (done, _) = &*record.setup_done;
+                let unfinished = done.lock().ok().is_some_and(|done| !*done);
+                unfinished.then(|| {
+                    (
+                        id.clone(),
+                        record.setup_done.clone(),
+                        record.setup_cancelled.clone(),
+                        record.setup_stop_requested.clone(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        if !setup_waiters.is_empty() {
+            drop(state);
+            for (_, _, setup_cancelled, setup_stop_requested) in &setup_waiters {
+                setup_stop_requested.store(true, Ordering::SeqCst);
+                *setup_cancelled
+                    .lock()
+                    .map_err(|_| "worker setup cancellation state is unavailable".to_owned())? =
+                    true;
+            }
+            state = self
+                .inner
+                .state
+                .lock()
+                .map_err(|_| "worker pool state is unavailable".to_owned())?;
+            for (id, _, _, _) in &setup_waiters {
+                let Some(record) = state.records.get_mut(id) else {
+                    continue;
+                };
+                if let Ok(mut current) = record.snapshot.lock()
+                    && current.status == WorkerStatus::Pending
+                {
+                    current.status = WorkerStatus::Stopped;
+                    current.pending_input = None;
+                }
+            }
+            notify(&self.inner.updates);
+            drop(state);
+            for (_, setup_done, _, _) in &setup_waiters {
+                wait_for_setup(setup_done)?;
+            }
+            state = self
+                .inner
+                .state
+                .lock()
+                .map_err(|_| "worker pool state is unavailable".to_owned())?;
+        }
         let mut failures = Vec::new();
         for id in &ids {
-            let record = state.records.get_mut(id).expect("selected worker exists");
+            let Some(record) = state.records.get_mut(id) else {
+                continue;
+            };
             if record.thread.is_some() {
                 if let Err(error) = finish_run(record, RunCommand::Stop) {
                     failures.push(format!("{}: {error}", record.launch.worker_name));
                     continue;
                 }
-            } else if record.cleanup_confirmed.load(Ordering::SeqCst)
-                && let Ok(mut current) = record.snapshot.lock()
+            } else if let Ok(mut current) = record.snapshot.lock()
+                && (current.status == WorkerStatus::Pending
+                    || record.cleanup_confirmed.load(Ordering::SeqCst))
             {
                 current.status = WorkerStatus::Stopped;
                 current.pending_input = None;
             }
             let current = snapshot(record)?;
-            if current.status != WorkerStatus::Stopped {
-                failures.push(
-                    current
-                        .error
-                        .unwrap_or_else(|| format!("worker {} did not stop", current.id)),
-                );
+            if current.status != WorkerStatus::Stopped
+                || !record.cleanup_confirmed.load(Ordering::SeqCst)
+            {
+                failures.push(current.error.unwrap_or_else(|| {
+                    format!("worker {} process cleanup was not confirmed", current.id)
+                }));
             }
         }
         if !ids.is_empty() {
@@ -381,9 +537,6 @@ impl WorkerPool {
         if failures.is_empty() {
             Ok(ids.len())
         } else {
-            for key in family_keys {
-                state.stopping_families.remove(&key);
-            }
             Err(failures.join("; "))
         }
     }
@@ -418,140 +571,127 @@ impl WorkerPool {
         name: &str,
         message: String,
         profile: Option<&str>,
+        route: impl Fn(&super::WorkerAssignment) -> Option<crate::agents::HarnessAccessMode>,
     ) -> Result<Option<super::WorkerAssignment>, String> {
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .map_err(|_| "worker pool state is unavailable".to_owned())?;
-        if state.stopping_families.contains(&(
-            parent.project.clone(),
-            parent.backend,
-            parent.session.clone(),
-        )) {
-            return Err("worker session family is stopping".into());
-        }
-        let Some(id) = state.records.iter().find_map(|(id, record)| {
-            (record.launch.project == parent.project
-                && record.launch.parent_session == parent.session
-                && record.parent_backend == Some(parent.backend)
-                && record.launch.worker_name.eq_ignore_ascii_case(name)
-                && record.thread.is_none()
-                && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Idle))
-            .then(|| id.clone())
-        }) else {
-            return Ok(None);
-        };
-        retire_idle_for_new_worker(&mut state, self.inner.process_limit)?;
-        let record = state.records.get_mut(&id).expect("selected worker exists");
-        let locator = snapshot(record)?
-            .session_locator
-            .ok_or("retired child has no resumable session locator")?;
-        let assignment = record
-            .assignment
-            .clone()
-            .ok_or("retired child has no saved worker assignment")?;
-        if profile.is_some_and(|profile| profile != assignment.profile) {
-            return Err(
-                "a child's profile is fixed at creation; use a new child name for a different profile"
-                    .into(),
+        let (reserved, assignment) = {
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .map_err(|_| "worker pool state is unavailable".to_owned())?;
+            if state.stopping_families.contains(&(
+                parent.project.clone(),
+                parent.backend,
+                parent.session.clone(),
+            )) {
+                return Err("worker session family is stopping".into());
+            }
+            let Some(id) = state.records.iter().find_map(|(id, record)| {
+                (record.launch.project == parent.project
+                    && record.launch.parent_session == parent.session
+                    && record.parent_backend == Some(parent.backend)
+                    && record.launch.worker_name.eq_ignore_ascii_case(name)
+                    && record.thread.is_none()
+                    && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Idle))
+                .then(|| id.clone())
+            }) else {
+                return Ok(None);
+            };
+            retire_idle_for_new_worker(&mut state, self.inner.process_limit)?;
+            let app_proxy = self
+                .inner
+                .app_proxy
+                .lock()
+                .map_err(|_| "worker proxy configuration is unavailable".to_owned())?
+                .clone();
+            let record = state.records.get_mut(&id).expect("selected worker exists");
+            let locator = snapshot(record)?
+                .session_locator
+                .ok_or("retired child has no resumable session locator")?;
+            let assignment = record
+                .assignment
+                .clone()
+                .ok_or("retired child has no saved worker assignment")?;
+            validate_fixed_profile(&assignment, profile)?;
+            let access_mode = route(&assignment)
+                .ok_or("saved child assignment has no protected access mode for this parent")?;
+            let slot = self.inner.concurrency.reserve()?;
+            record.launch.slot = Some(slot);
+            record.launch.parent_worker_id = Some(parent.worker_id.clone());
+            record.launch.parent_session.clone_from(&parent.session);
+            record.launch.context = WorkerContext::Resume {
+                session_locator: locator,
+            };
+            record.launch.access_mode = access_mode;
+            record.launch.app_proxy = app_proxy;
+            record.cleanup_confirmed.store(false, Ordering::SeqCst);
+            record.pending_messages.clear();
+            record.setup_stop_requested.store(false, Ordering::SeqCst);
+            if let Ok(mut cancelled) = record.setup_cancelled.lock() {
+                *cancelled = false;
+            }
+            let (setup_done, _) = &*record.setup_done;
+            if let Ok(mut setup_done) = setup_done.lock() {
+                *setup_done = false;
+            }
+            if let Ok(mut current) = record.snapshot.lock() {
+                current.status = WorkerStatus::Pending;
+                current.error = None;
+                current.pending_input = None;
+            }
+            let worker_parent = super::caller::WorkerParent::new(
+                parent.worker_id.clone(),
+                parent.project.clone(),
+                record.launch.worker_name.clone(),
+                parent.session.clone(),
             );
-        }
-        let slot = self.inner.concurrency.reserve()?;
-        record.launch.slot = Some(slot.clone());
-        record.launch.parent_worker_id = Some(parent.worker_id.clone());
-        record.launch.parent_session.clone_from(&parent.session);
-        record.launch.context = WorkerContext::Resume {
-            session_locator: locator,
-        };
-        record.launch.access_mode = parent.access_mode;
-        record.launch.app_proxy = self
-            .inner
-            .app_proxy
-            .lock()
-            .map_err(|_| "worker proxy configuration is unavailable".to_owned())?
-            .clone();
-        let mut session = match record.factory.create(record.launch.clone()) {
-            Ok(session) => session,
-            Err(error) => {
-                record.launch.slot = None;
-                slot.release();
-                return Err(error);
+            let prompt = crate::agents::PeerMessage {
+                from: parent.worker_name.clone(),
+                message,
             }
+            .prompt();
+            (
+                ReservedStartResult::Reserved(ReservedStart {
+                    id,
+                    prompt,
+                    parent: Some(worker_parent),
+                    assignment: Some(assignment.clone()),
+                }),
+                assignment,
+            )
         };
-        if let Err(error) = super::CallerRegistry::shared()
-            .set_assignment(&record.launch.worker_id, assignment.clone())
+        let ReservedStartResult::Reserved(ref setup) = reserved else {
+            return Err("retired child reservation unexpectedly reused another worker".into());
+        };
+        let worker_id = setup.id.clone();
+        let pool = self.clone();
+        if let Err(error) = thread::Builder::new()
+            .name(format!("farcaster-worker-setup-{worker_id}"))
+            .spawn(move || {
+                let _ = pool.provision_reserved(reserved);
+            })
         {
-            let (error, cleanup_confirmed) = close_setup_session(&mut *session, error);
-            record.launch.slot = None;
-            slot.release();
-            record
-                .cleanup_confirmed
-                .store(cleanup_confirmed, Ordering::SeqCst);
-            if !cleanup_confirmed && let Ok(mut current) = record.snapshot.lock() {
-                current.status = WorkerStatus::Failed;
-                current.error = Some(error.clone());
-                current.pending_input = None;
-            }
+            let error = format!("queue worker resume: {error}");
+            self.fail_reserved_setup(&worker_id, error.clone(), true);
             return Err(error);
         }
-        let prompt = crate::agents::PeerMessage {
-            from: parent.worker_name.clone(),
-            message,
-        }
-        .prompt();
-        if let Err(error) = session.send(prompt, WorkerSendMode::Prompt) {
-            let (error, cleanup_confirmed) = close_setup_session(&mut *session, error);
-            record.launch.slot = None;
-            slot.release();
-            record
-                .cleanup_confirmed
-                .store(cleanup_confirmed, Ordering::SeqCst);
-            if !cleanup_confirmed && let Ok(mut current) = record.snapshot.lock() {
-                current.status = WorkerStatus::Failed;
-                current.error = Some(error.clone());
-                current.pending_input = None;
-            }
-            return Err(error);
-        }
-        let parent = super::caller::WorkerParent::new(
-            parent.worker_id.clone(),
-            parent.project.clone(),
-            record.launch.worker_name.clone(),
-            parent.session.clone(),
-        );
-        if let Ok(mut current) = record.snapshot.lock() {
-            current.status = WorkerStatus::Running;
-            current.error = None;
-            current.pending_input = None;
-        }
-        record.cleanup_confirmed.store(false, Ordering::SeqCst);
-        let spawned = run::spawn(
-            &record.launch.worker_id,
-            session,
-            record.snapshot.clone(),
-            slot.clone(),
-            Some(parent),
-            self.inner.updates.clone(),
-            record.cleanup_confirmed.clone(),
-        );
-        let (commands, thread) = match spawned {
-            Ok(spawned) => spawned,
-            Err(error) => {
-                record.launch.slot = None;
-                slot.release();
-                if let Ok(mut current) = record.snapshot.lock() {
-                    current.status = WorkerStatus::Failed;
-                    current.error = Some(error.clone());
-                }
-                return Err(error);
-            }
-        };
-        record.commands = Some(commands);
-        record.thread = Some(thread);
         notify(&self.inner.updates);
         Ok(Some(assignment))
     }
+}
+
+fn find_pending_child<'a>(
+    state: &'a mut PoolState,
+    parent: &super::CallerContext,
+    name: &str,
+) -> Option<&'a mut WorkerRecord> {
+    state.records.values_mut().find(|record| {
+        record.launch.project == parent.project
+            && record.launch.parent_session == parent.session
+            && record.parent_backend == Some(parent.backend)
+            && record.launch.worker_name.eq_ignore_ascii_case(name)
+            && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Pending)
+    })
 }
 
 fn expand_family_sessions(
@@ -733,84 +873,4 @@ fn snapshot(record: &WorkerRecord) -> Result<WorkerSnapshot, String> {
         .lock()
         .map(|snapshot| snapshot.clone())
         .map_err(|_| "worker state is unavailable".to_owned())
-}
-
-fn close_setup_session(session: &mut dyn WorkerSession, mut error: String) -> (String, bool) {
-    match session.close() {
-        Ok(()) => (error, true),
-        Err(close_error) => {
-            error.push_str(&format!("; worker cleanup failed: {close_error}"));
-            (error, false)
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn retain_failed_setup(
-    state: &mut PoolState,
-    id: &str,
-    backend: Backend,
-    project: &Path,
-    factory: Arc<dyn WorkerSessionFactory>,
-    launch: WorkerLaunch,
-    assignment: Option<super::WorkerAssignment>,
-    parent_backend: Option<Backend>,
-    error: String,
-) {
-    state.records.insert(
-        id.to_owned(),
-        WorkerRecord {
-            snapshot: Arc::new(Mutex::new(WorkerSnapshot {
-                id: id.to_owned(),
-                backend: backend.to_owned(),
-                project: project.to_owned(),
-                session_locator: None,
-                status: WorkerStatus::Failed,
-                output: None,
-                error: Some(error),
-                pending_input: None,
-            })),
-            commands: None,
-            thread: None,
-            factory,
-            launch,
-            assignment,
-            parent_backend,
-            cleanup_confirmed: Arc::new(AtomicBool::new(false)),
-        },
-    );
-}
-
-fn validate_start(request: &StartWorker) -> Result<(), String> {
-    if !crate::agents::valid_worker_name(&request.name) {
-        return Err("worker name must be 1-48 ASCII letters, numbers, '-' or '_' and cannot start with punctuation".into());
-    }
-    if request.prompt.trim().is_empty() {
-        return Err("worker prompt must not be empty".into());
-    }
-    if request.parent_session.trim().is_empty() {
-        return Err("worker parent session must not be empty".into());
-    }
-    Ok(())
-}
-
-fn canonical_directory(path: &Path) -> Result<std::path::PathBuf, String> {
-    let path = path
-        .canonicalize()
-        .map_err(|error| format!("resolve worker project {}: {error}", path.display()))?;
-    if !path.is_dir() {
-        return Err(format!(
-            "worker project is not a directory: {}",
-            path.display()
-        ));
-    }
-    Ok(path)
-}
-
-fn worker_id(sequence: u64) -> Result<String, String> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| "system clock is unavailable".to_owned())?
-        .as_nanos();
-    Ok(format!("worker-{nanos}-{sequence}"))
 }

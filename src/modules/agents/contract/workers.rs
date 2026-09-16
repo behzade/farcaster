@@ -60,11 +60,22 @@ pub(crate) struct StartWorker {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WorkerStatus {
+    Pending,
     Running,
     Idle,
     NeedsInput,
     Failed,
     Stopped,
+}
+
+pub(crate) fn validate_child_access(
+    parent: super::HarnessAccessMode,
+    child: super::HarnessAccessMode,
+) -> Result<(), String> {
+    if parent != super::HarnessAccessMode::Full && child == super::HarnessAccessMode::Full {
+        return Err("restricted parent cannot reuse an unrestricted child".into());
+    }
+    Ok(())
 }
 
 impl WorkerStatus {

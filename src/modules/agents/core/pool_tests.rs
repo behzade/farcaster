@@ -25,6 +25,8 @@ struct FakeFactory {
     launches: Mutex<Vec<WorkerLaunch>>,
     fail_close: Arc<std::sync::atomic::AtomicBool>,
     fail_send: Arc<std::sync::atomic::AtomicBool>,
+    fail_send_on: Arc<std::sync::atomic::AtomicUsize>,
+    send_count: Arc<std::sync::atomic::AtomicUsize>,
     fail_new_session_close: Arc<std::sync::atomic::AtomicBool>,
     close_gate: Arc<(Mutex<bool>, Condvar)>,
     creates: Arc<std::sync::atomic::AtomicUsize>,
@@ -41,6 +43,8 @@ struct FakeSession {
     identity: Option<crate::agents::CallerIdentity>,
     fail_close: Arc<std::sync::atomic::AtomicBool>,
     fail_send: Arc<std::sync::atomic::AtomicBool>,
+    fail_send_on: Arc<std::sync::atomic::AtomicUsize>,
+    send_count: Arc<std::sync::atomic::AtomicUsize>,
     fail_created_session_close: bool,
     close_gate: Arc<(Mutex<bool>, Condvar)>,
 }
@@ -111,6 +115,8 @@ impl WorkerSessionFactory for FakeFactory {
             identity,
             fail_close: self.fail_close.clone(),
             fail_send: self.fail_send.clone(),
+            fail_send_on: self.fail_send_on.clone(),
+            send_count: self.send_count.clone(),
             fail_created_session_close: self
                 .fail_new_session_close
                 .load(std::sync::atomic::Ordering::SeqCst),
@@ -121,7 +127,13 @@ impl WorkerSessionFactory for FakeFactory {
 
 impl WorkerSession for FakeSession {
     fn send(&mut self, _message: String, mode: WorkerSendMode) -> Result<(), String> {
-        if self.fail_send.load(std::sync::atomic::Ordering::SeqCst) {
+        let send_number = self
+            .send_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        if self.fail_send.load(std::sync::atomic::Ordering::SeqCst)
+            || self.fail_send_on.load(std::sync::atomic::Ordering::SeqCst) == send_number
+        {
             return Err("send failed".into());
         }
         self.sent
@@ -287,6 +299,170 @@ fn projects_from_later_calling_sessions_can_be_allowed() -> Result<(), String> {
             .path()
             .canonicalize()
             .map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+#[test]
+fn running_child_deduplication_requires_caller_registry_handoff() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 2)?;
+    let parent = CallerRegistry::shared().issue(
+        project.path(),
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.bind("backend://parent");
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut first = request(project.path());
+    first.parent_worker_id = Some(context.worker_id.clone());
+    pool.start_assigned(first, Some(assignment()))?;
+
+    let mut duplicate = request(project.path());
+    duplicate.parent_worker_id = Some(context.worker_id);
+    let (_, created, pending) = pool.queue_assigned(
+        duplicate,
+        assignment(),
+        crate::agents::PeerMessage {
+            from: context.worker_name,
+            message: "handoff".into(),
+        },
+    )?;
+
+    assert!(!created);
+    assert!(
+        !pending,
+        "running children must route through CallerRegistry"
+    );
+    assert_eq!(
+        factory.sends.lock().map_err(|_| "sends")?[0]
+            .lock()
+            .map_err(|_| "send modes")?
+            .as_slice(),
+        &[WorkerSendMode::Prompt],
+        "the provisioning queue must not retain a message after the child is running"
+    );
+    Ok(())
+}
+
+#[test]
+fn restricted_parent_cannot_queue_to_a_pending_full_child() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (create_gate, create_changed) = &*factory.create_gate;
+    *create_gate.lock().map_err(|_| "create gate")? = true;
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let profile = CallerProfile {
+        backend: Backend::Pi,
+        provider: None,
+        model: None,
+        effort: None,
+    };
+    let full_parent = CallerRegistry::shared().issue_with_access(
+        project.path(),
+        profile.clone(),
+        None,
+        crate::agents::HarnessAccessMode::Full,
+    );
+    full_parent.bind("backend://parent");
+    let full_context = CallerRegistry::shared().resolve(full_parent.token())?;
+    let mut full = request(project.path());
+    full.access_mode = crate::agents::HarnessAccessMode::Full;
+    full.parent_worker_id = Some(full_context.worker_id);
+    pool.queue_assigned(
+        full,
+        assignment(),
+        crate::agents::PeerMessage {
+            from: "parent".into(),
+            message: "initial".into(),
+        },
+    )?;
+    let restricted_parent = CallerRegistry::shared().issue_with_access(
+        project.path(),
+        profile,
+        None,
+        crate::agents::HarnessAccessMode::Sandboxed,
+    );
+    restricted_parent.bind("backend://parent");
+    let context = CallerRegistry::shared().resolve(restricted_parent.token())?;
+
+    let error = pool
+        .queue_pending_child(&context, "implementation", "blocked".into(), None)
+        .expect_err("restricted parent must not queue to a Full child");
+    assert!(error.contains("restricted parent cannot reuse"), "{error}");
+
+    pool.fence_family(&context)?;
+    let error = pool
+        .queue_pending_child(&context, "implementation", "after stop".into(), None)
+        .expect_err("family fence must reject pending sends");
+    assert!(error.contains("family is stopping"), "{error}");
+
+    *create_gate.lock().map_err(|_| "create gate")? = false;
+    create_changed.notify_all();
+    Ok(())
+}
+
+#[test]
+fn setup_failure_reports_every_acknowledged_undelivered_message() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    factory
+        .fail_send_on
+        .store(2, std::sync::atomic::Ordering::SeqCst);
+    let (create_gate, create_changed) = &*factory.create_gate;
+    *create_gate.lock().map_err(|_| "create gate")? = true;
+    let (pool, _) = pool(factory.clone(), project.path(), 1)?;
+    let parent = CallerRegistry::shared().issue(
+        project.path(),
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.bind("backend://delivery-parent");
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut child = request(project.path());
+    child.parent_session = context.session.clone();
+    child.parent_worker_id = Some(context.worker_id.clone());
+    let (_, _, pending) = pool.queue_assigned(
+        child,
+        assignment(),
+        crate::agents::PeerMessage {
+            from: context.worker_name.clone(),
+            message: "initial".into(),
+        },
+    )?;
+    assert!(pending);
+    pool.queue_pending_child(&context, "implementation", "queued one".into(), None)?;
+    pool.queue_pending_child(&context, "implementation", "queued two".into(), None)?;
+
+    *create_gate.lock().map_err(|_| "create gate")? = false;
+    create_changed.notify_all();
+    let id = pool
+        .snapshots()?
+        .into_iter()
+        .next()
+        .ok_or("pending child missing")?
+        .id;
+    wait_for_worker_status(&pool, &id, WorkerStatus::Failed)?;
+    let failed = pool
+        .snapshots()?
+        .into_iter()
+        .find(|snapshot| snapshot.id == id)
+        .ok_or("failed child missing")?;
+    let error = failed.error.ok_or("failure error missing")?;
+    assert!(
+        error.contains("2 acknowledged queued message(s)"),
+        "{error}"
     );
     Ok(())
 }
@@ -760,8 +936,8 @@ fn session_family_stop_reports_close_failure_instead_of_confirming_stop() -> Res
     retry.parent_worker_id = Some(parent_context.worker_id);
     let retry_error = pool
         .start(retry)
-        .expect_err("an unconfirmed old process must keep consuming the process limit");
-    assert!(retry_error.contains("close failed"));
+        .expect_err("an unconfirmed old process must keep its family fenced");
+    assert!(retry_error.contains("family is stopping"));
     Ok(())
 }
 
@@ -898,16 +1074,21 @@ fn failed_resume_send_cleanup_keeps_its_process_capacity_owned() -> Result<(), S
     factory
         .fail_new_session_close
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        pool.resume_child(&context, "implementation", "again".into(), None, |_| {
+            Some(context.access_mode)
+        })?
+        .is_some()
+    );
+    wait_for_worker_status(&pool, &started.id, WorkerStatus::Failed)?;
     let error = pool
-        .resume_child(&context, "implementation", "again".into(), None)
-        .expect_err("the resumed send must fail");
+        .snapshots()?
+        .into_iter()
+        .find(|snapshot| snapshot.id == started.id)
+        .and_then(|snapshot| snapshot.error)
+        .ok_or("resumed setup failure missing error")?;
     assert!(error.contains("send failed"));
     assert!(error.contains("close failed"));
-    assert!(
-        pool.snapshots()?.iter().any(|snapshot| {
-            snapshot.id == started.id && snapshot.status == WorkerStatus::Failed
-        })
-    );
 
     factory
         .fail_send
@@ -1000,7 +1181,7 @@ fn family_stop_fence_blocks_new_children_until_shutdown_finishes() -> Result<(),
 }
 
 #[test]
-fn family_stop_waits_for_an_in_flight_child_creation_then_joins_it() -> Result<(), String> {
+fn family_stop_waits_for_and_cancels_an_in_flight_child_creation() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let factory = Arc::new(FakeFactory::default());
     let (pool, _) = pool(factory.clone(), project.path(), 1)?;
@@ -1021,6 +1202,8 @@ fn family_stop_waits_for_an_in_flight_child_creation_then_joins_it() -> Result<(
     child.parent_worker_id = Some(context.worker_id);
     let (gate, _) = &*factory.create_gate;
     *gate.lock().map_err(|_| "create gate")? = true;
+    let (close_gate, _) = &*factory.close_gate;
+    *close_gate.lock().map_err(|_| "close gate")? = true;
 
     let starting_pool = pool.clone();
     let start = std::thread::spawn(move || starting_pool.start(child));
@@ -1048,9 +1231,39 @@ fn family_stop_waits_for_an_in_flight_child_creation_then_joins_it() -> Result<(
     let (gate, changed) = &*factory.create_gate;
     *gate.lock().map_err(|_| "create gate")? = false;
     changed.notify_all();
-    start.join().map_err(|_| "start thread")??;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while factory.closes.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        if Instant::now() >= deadline {
+            return Err("cancelled worker close did not start".into());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let second_stopping_pool = pool.clone();
+    let second_stopping_project = project.path().to_owned();
+    let second_stop = std::thread::spawn(move || {
+        second_stopping_pool.stop_session_family(
+            &second_stopping_project,
+            &[(
+                Backend::Pi,
+                std::path::PathBuf::from("/sessions/parent.jsonl"),
+            )],
+        )
+    });
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(
+        !second_stop.is_finished(),
+        "overlapping stop must wait for setup cleanup confirmation"
+    );
+    let (close_gate, close_changed) = &*factory.close_gate;
+    *close_gate.lock().map_err(|_| "close gate")? = false;
+    close_changed.notify_all();
+    assert!(
+        start.join().map_err(|_| "start thread")?.is_err(),
+        "cancelled setup must not become a running child"
+    );
     assert_eq!(stop.join().map_err(|_| "stop thread")??, 1);
-    assert_eq!(factory.aborts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(second_stop.join().map_err(|_| "second stop thread")??, 1);
+    assert_eq!(factory.aborts.load(std::sync::atomic::Ordering::SeqCst), 0);
     assert_eq!(factory.closes.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(factory.drops.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert!(
@@ -1143,6 +1356,7 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
     );
     parent.bind("/sessions/parent.jsonl");
     let parent_context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut first_worker_id = None;
 
     for index in 0..10 {
         let mut child_request = request(project.path());
@@ -1150,6 +1364,9 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
         child_request.parent_session = parent_context.session.clone();
         child_request.parent_worker_id = Some(parent_context.worker_id.clone());
         let started = pool.start_assigned(child_request, Some(assignment()))?;
+        if index == 0 {
+            first_worker_id = Some(started.id.clone());
+        }
         wait_for_update(&updates)?;
         factory.events.lock().map_err(|_| "events")?[index]
             .send(WorkerEvent::SessionChanged {
@@ -1183,15 +1400,78 @@ fn idle_processes_are_bounded_and_a_retired_child_resumes_its_session() -> Resul
     wrong_parent.bind("/sessions/parent.jsonl");
     let wrong_context = CallerRegistry::shared().resolve(wrong_parent.token())?;
     assert!(
-        pool.resume_child(&wrong_context, "worker-0", "wrong parent".into(), None)?
-            .is_none(),
+        pool.resume_child(
+            &wrong_context,
+            "worker-0",
+            "wrong parent".into(),
+            None,
+            |_| Some(wrong_context.access_mode),
+        )?
+        .is_none(),
         "an equal native session string from another backend must not resume the child"
     );
+    let restricted_parent = CallerRegistry::shared().issue_with_access(
+        project.path(),
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+        crate::agents::HarnessAccessMode::Auto,
+    );
+    restricted_parent.bind("/sessions/parent.jsonl");
+    let restricted_context = CallerRegistry::shared().resolve(restricted_parent.token())?;
+    let error = pool
+        .resume_child(
+            &restricted_context,
+            "worker-0",
+            "unsafe resume".into(),
+            None,
+            |_| None,
+        )
+        .expect_err("resume must fail when routing cannot provide protected access");
+    assert!(error.contains("no protected access mode"), "{error}");
+    assert_eq!(
+        factory.creates.load(std::sync::atomic::Ordering::SeqCst),
+        10
+    );
+
     pool.set_app_proxy(Some("https://resume-proxy.example:8443".into()))?;
+    let (create_gate, create_changed) = &*factory.create_gate;
+    *create_gate.lock().map_err(|_| "create gate")? = true;
+    let began = Instant::now();
     let resumed = pool
-        .resume_child(&parent_context, "worker-0", "follow up".into(), None)?
+        .resume_child(
+            &parent_context,
+            "worker-0",
+            "follow up".into(),
+            None,
+            |_| Some(parent_context.access_mode),
+        )?
         .ok_or("retired child was not found")?;
+    assert!(
+        began.elapsed() < Duration::from_millis(100),
+        "resume waited for worker factory startup"
+    );
     assert_eq!(resumed.profile, "test-profile");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while factory.creates.load(std::sync::atomic::Ordering::SeqCst) < 11 {
+        if Instant::now() >= deadline {
+            return Err("resumed worker creation did not start".into());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    *create_gate.lock().map_err(|_| "create gate")? = false;
+    create_changed.notify_all();
+    wait_for_worker_status(
+        &pool,
+        first_worker_id
+            .as_deref()
+            .ok_or("first worker id missing")?,
+        WorkerStatus::Running,
+    )?;
     let launches = factory.launches.lock().map_err(|_| "launches")?;
     assert!(matches!(
         &launches.last().ok_or("missing resume launch")?.context,

@@ -680,7 +680,9 @@ fn truncated_long_sessions_do_not_infer_lifecycle_from_the_prefix() -> TestResul
     assert!(activity.limited);
     assert_eq!(
         activity.lifecycle,
-        crate::sessions::activity::AgentLifecycle::Unknown
+        crate::sessions::activity::AgentLifecycle::Completed(
+            crate::sessions::activity::AgentOutcome::Incomplete
+        )
     );
     assert!(activity.current_tool.is_none());
     Ok(())

@@ -147,9 +147,21 @@ impl FarcasterMcp {
                 .filter(|backend| backend.available)
                 .map(|backend| backend.id)
                 .collect::<Vec<_>>();
-            workers::send(&pool, params, caller_token, &profiles, |model, project| {
-                workers::model_available(model, project, &backends, &catalogs)
-            })
+            workers::send(
+                &pool,
+                params,
+                caller_token,
+                &profiles,
+                |model, project, parent_access_mode| {
+                    workers::child_access_mode(
+                        model,
+                        project,
+                        parent_access_mode,
+                        &backends,
+                        &catalogs,
+                    )
+                },
+            )
         })
         .await
         .map_err(|error| format!("worker send task failed: {error}"))??;

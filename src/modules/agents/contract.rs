@@ -9,6 +9,7 @@ mod workers;
 
 pub(crate) use workers::{
     PeerMessage, StartWorker, WorkerSnapshot, WorkerStatus, valid_worker_name,
+    validate_child_access,
 };
 
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};

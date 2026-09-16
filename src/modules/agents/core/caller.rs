@@ -472,7 +472,7 @@ impl CallerRegistry {
         &self,
         parent: &CallerContext,
         name: &str,
-    ) -> Result<Option<super::WorkerAssignment>, String> {
+    ) -> Result<Option<(super::WorkerAssignment, crate::agents::HarnessAccessMode)>, String> {
         let callers = self
             .callers
             .lock()
@@ -480,7 +480,12 @@ impl CallerRegistry {
         Ok(callers
             .values()
             .find(|child| child.belongs_to(parent) && child.worker_name.eq_ignore_ascii_case(name))
-            .and_then(|child| child.assignment.clone()))
+            .and_then(|child| {
+                child
+                    .assignment
+                    .clone()
+                    .map(|assignment| (assignment, child.access_mode))
+            }))
     }
 
     pub(crate) fn native_parent_session(

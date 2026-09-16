@@ -481,8 +481,12 @@ fn discover_in_cached(
                         | crate::sessions::activity::AgentLifecycle::Working
                 )
             {
-                value.1.lifecycle = crate::sessions::activity::AgentLifecycle::Unknown;
+                value.1.lifecycle = crate::sessions::activity::AgentLifecycle::Completed(
+                    crate::sessions::activity::AgentOutcome::Incomplete,
+                );
                 value.1.current_tool = None;
+                value.1.ended = Some(value.0.modified);
+                value.1.elapsed = value.0.modified.duration_since(value.1.started).ok();
             }
             parsed.push(value);
             continue;
@@ -680,10 +684,12 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
         detail_limited,
     );
     if detail_limited {
-        activity.lifecycle = crate::sessions::activity::AgentLifecycle::Unknown;
+        activity.lifecycle = crate::sessions::activity::AgentLifecycle::Completed(
+            crate::sessions::activity::AgentOutcome::Incomplete,
+        );
         activity.current_tool = None;
-        activity.ended = None;
-        activity.elapsed = None;
+        activity.ended = Some(modified);
+        activity.elapsed = modified.duration_since(started).ok();
     }
     Ok(Some((
         SessionSummary {

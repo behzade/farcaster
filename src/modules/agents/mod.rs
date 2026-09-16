@@ -23,7 +23,7 @@ pub(crate) use contract::{
     SessionResponse, SessionResponseErrorKind, SessionResponsePayload, SessionStart,
     SessionTransport, SessionUsage, SessionUsageTokens, StartWorker, WorkerContext, WorkerInput,
     WorkerInputResponse, WorkerSnapshot, WorkerStatus, effort_rank, model_efforts,
-    valid_worker_name,
+    valid_worker_name, validate_child_access,
 };
 pub(crate) use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,
