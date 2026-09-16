@@ -155,7 +155,10 @@ pub(crate) enum SessionHistory {
     Preserve,
     // Transcript message payloads remain open-ended until the activity/history
     // contract is migrated; the response envelope itself is validated.
-    Replace(Vec<Value>),
+    Replace {
+        messages: Vec<Value>,
+        prompt_deliveries: Option<crate::sessions::PromptDeliveryReconciliation>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]

@@ -132,6 +132,7 @@ pub(crate) fn load_history(path: &Path) -> Result<LoadedHistory, String> {
         model,
         thinking_level: Some(thinking_level),
         pending_question: pending_question_from_branch(&branch),
+        prompt_deliveries: None,
     })
 }
 

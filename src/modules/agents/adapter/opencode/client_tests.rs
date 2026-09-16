@@ -82,6 +82,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
         .prompt(
             "session/1",
             Some("msg_prompt-1"),
+            Some("opencode-submission-1"),
             "inspect this",
             vec![OpenCodeFileInput {
                 uri: "file:///tmp/image.png".into(),
@@ -109,6 +110,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
             "text": "inspect this",
             "files": [{"uri": "file:///tmp/image.png", "name": "image.png"}],
             "agents": [],
+            "metadata": {"farcasterSubmissionId": "opencode-submission-1"},
             "delivery": "queue",
             "resume": true
         })
@@ -134,6 +136,7 @@ fn steer_is_encoded_independently_from_queue() -> Result<(), String> {
         .prompt(
             "session-1",
             Some("msg_prompt-1"),
+            None,
             "more",
             Vec::new(),
             OpenCodeDelivery::Steer,
@@ -223,6 +226,7 @@ fn prompt_only_rejects_receipts_that_prove_no_admission() {
             .prompt(
                 "session-1",
                 Some("msg_prompt-1"),
+                None,
                 "work",
                 Vec::new(),
                 OpenCodeDelivery::Queue,

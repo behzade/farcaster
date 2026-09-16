@@ -70,6 +70,7 @@ pub(crate) struct DiscoveredHistory {
     pub(crate) messages: Vec<serde_json::Value>,
     pub(crate) model: Option<(String, String)>,
     pub(crate) thinking_level: Option<String>,
+    pub(crate) prompt_deliveries: Option<crate::sessions::PromptDeliveryReconciliation>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

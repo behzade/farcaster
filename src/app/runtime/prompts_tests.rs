@@ -638,7 +638,10 @@ fn resumed_prompt_survives_startup_history_without_starting_title_generation() {
             crate::agents::SessionResponsePayload::LoadHistory(if preserve {
                 crate::agents::SessionHistory::Preserve
             } else {
-                crate::agents::SessionHistory::Replace(history)
+                crate::agents::SessionHistory::Replace {
+                    messages: history,
+                    prompt_deliveries: None,
+                }
             }),
         );
         let responses = if history_first {

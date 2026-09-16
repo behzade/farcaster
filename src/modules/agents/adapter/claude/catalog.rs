@@ -248,6 +248,7 @@ fn history(rows: &[Value], sidechain: bool) -> DiscoveredHistory {
             .collect(),
         model,
         thinking_level: None,
+        prompt_deliveries: None,
     }
 }
 

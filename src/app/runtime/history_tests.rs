@@ -5,6 +5,72 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
+fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::PromptMode;
+    use crate::runtime::tests::owner_without_process;
+
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    for submission_id in ["receipt:delivered", "receipt:pending", "receipt:missing"] {
+        let outbox_id = store.enqueue_prompt(
+            "draft:reconcile",
+            Backend::Codex,
+            temp.path(),
+            None,
+            PromptMode::Steer,
+            submission_id,
+            &[],
+        )?;
+        store.complete_prompt_with_receipt(
+            outbox_id,
+            "draft:reconcile",
+            Some(&session),
+            submission_id,
+            true,
+        )?;
+    }
+
+    let (mut owner, _events) = owner_without_process(temp.path().to_owned());
+    owner.state = Some(store);
+    owner.active_session = Some(session.clone());
+    owner.apply_response(crate::agents::SessionResponse::success(
+        None,
+        crate::agents::SessionResponsePayload::LoadHistory(
+            crate::agents::SessionHistory::Replace {
+                messages: vec![json!({
+                    "role": "user",
+                    "content": [{"type":"text", "text":"receipt:delivered"}],
+                    "submissionId": "receipt:delivered",
+                    "deliveryStatus": "delivered",
+                })],
+                prompt_deliveries: Some(crate::sessions::PromptDeliveryReconciliation {
+                    delivered: vec!["receipt:delivered".into()],
+                    pending: vec!["receipt:pending".into()],
+                }),
+            },
+        ),
+    ));
+
+    let pending = owner.snapshot.conversation.pending_receipts();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, "receipt:pending");
+    drop(owner);
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(
+        store
+            .accepted_prompt_history(&session)?
+            .iter()
+            .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        ["receipt:pending"]
+    );
+    Ok(())
+}
+
+#[test]
 fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;

@@ -19,9 +19,10 @@ pub(super) fn decode(
                     entries: Vec<Value>,
                 }
                 let history: History = serde_json::from_value(data)?;
-                Payload::LoadHistory(SessionHistory::Replace(
-                    super::session_files::project_display_history(&history.entries),
-                ))
+                Payload::LoadHistory(SessionHistory::Replace {
+                    messages: super::session_files::project_display_history(&history.entries),
+                    prompt_deliveries: None,
+                })
             }
             SessionOperation::LoadUsage => Payload::LoadUsage(serde_json::from_value(data)?),
             SessionOperation::ListModels => {

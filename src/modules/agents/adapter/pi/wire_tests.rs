@@ -50,7 +50,7 @@ fn history_response_projects_pi_entries_before_leaving_adapter() {
     let PiWireMessage::Response { response, .. } = parse_frame(
             br#"{"type":"response","command":"get_entries","success":true,"data":{"entries":[{"type":"message","id":"a","parentId":null,"message":{"role":"user","content":"hello"}}]}}"#,
         ).expect("history") else { panic!("expected response"); };
-    let Ok(Payload::LoadHistory(SessionHistory::Replace(messages))) = response.result else {
+    let Ok(Payload::LoadHistory(SessionHistory::Replace { messages, .. })) = response.result else {
         panic!("expected history")
     };
     assert_eq!(messages[0]["content"], "hello");

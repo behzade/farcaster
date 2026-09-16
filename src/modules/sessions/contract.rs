@@ -245,6 +245,15 @@ pub(crate) struct LoadedHistory {
     pub model: Option<(String, String)>,
     pub thinking_level: Option<String>,
     pub pending_question: Option<RestoredQuestion>,
+    /// Authoritative backend evidence for Farcaster submission IDs. Absence
+    /// means this history source cannot prove whether a missing ID is pending.
+    pub prompt_deliveries: Option<PromptDeliveryReconciliation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PromptDeliveryReconciliation {
+    pub delivered: Vec<String>,
+    pub pending: Vec<String>,
 }
 
 #[cfg(test)]

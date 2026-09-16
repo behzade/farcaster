@@ -226,6 +226,12 @@ impl RuntimeOwner {
                 return;
             }
         };
+        if let (Some(state), Some(evidence)) =
+            (self.state.as_mut(), history.prompt_deliveries.as_ref())
+            && let Err(error) = state.reconcile_prompt_deliveries(&result.path, evidence)
+        {
+            zlog::error!("Reconcile saved prompt deliveries: {error}");
+        }
         annotate_history_presentations(self.state.as_ref(), &result.path, &mut history.messages);
         if self.parked_snapshot.is_none() {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));

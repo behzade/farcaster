@@ -282,6 +282,7 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
                     messages: vec![],
                     model: Some(("provider".into(), "other".into())),
                     thinking_level: Some("thinking".into()),
+                    prompt_deliveries: None,
                 }),
             )
         };

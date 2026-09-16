@@ -130,6 +130,7 @@ pub(super) fn load_history(path: &Path) -> Result<crate::agents::DiscoveredHisto
             messages: Vec::new(),
             model: None,
             thinking_level: None,
+            prompt_deliveries: None,
         });
     }
     let history = super::acp::load_history(&PROFILE, path, &stored_project);

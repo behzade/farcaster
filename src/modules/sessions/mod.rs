@@ -4,8 +4,9 @@ mod core;
 mod folders;
 
 pub(crate) use contract::{
-    LoadedHistory, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion, SessionDiscovery, SessionImport,
-    SessionSummary, SessionTarget, SessionTransfer, TransferMember, UsageSummary,
+    LoadedHistory, PromptDeliveryReconciliation, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion,
+    SessionDiscovery, SessionImport, SessionSummary, SessionTarget, SessionTransfer,
+    TransferMember, UsageSummary,
 };
 #[cfg(test)]
 pub(crate) use core::descendant_sessions;

@@ -447,7 +447,19 @@ impl RuntimeOwner {
                 self.publish_session_metadata();
             }
             Payload::LoadHistory(history) => {
-                if let SessionHistory::Replace(mut messages) = history {
+                if let SessionHistory::Replace {
+                    mut messages,
+                    prompt_deliveries,
+                } = history
+                {
+                    if let (Some(state), Some(session), Some(evidence)) = (
+                        self.state.as_mut(),
+                        self.active_session.as_deref(),
+                        prompt_deliveries.as_ref(),
+                    ) && let Err(error) = state.reconcile_prompt_deliveries(session, evidence)
+                    {
+                        zlog::error!("Reconcile saved prompt deliveries: {error}");
+                    }
                     if let (Some(state), Some(session)) =
                         (self.state.as_ref(), self.active_session.as_deref())
                     {

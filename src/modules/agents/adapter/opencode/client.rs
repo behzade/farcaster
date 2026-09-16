@@ -64,22 +64,24 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         &mut self,
         session_id: &str,
         id: Option<&str>,
+        submission_id: Option<&str>,
         text: &str,
         files: Vec<OpenCodeFileInput>,
         delivery: OpenCodeDelivery,
     ) -> Result<OpenCodePromptAdmission, OpenCodePromptDispatchError> {
         let path = format!("/api/session/{}/prompt", path_segment(session_id));
-        let response = self.dispatch_input(
-            path,
-            json!({
-                "id": id,
-                "text": text,
-                "files": files,
-                "agents": [],
-                "delivery": delivery,
-                "resume": true,
-            }),
-        )?;
+        let mut body = json!({
+            "id": id,
+            "text": text,
+            "files": files,
+            "agents": [],
+            "delivery": delivery,
+            "resume": true,
+        });
+        if let Some(submission_id) = submission_id {
+            body["metadata"] = json!({"farcasterSubmissionId": submission_id});
+        }
+        let response = self.dispatch_input(path, body)?;
         decode_data(response).map_err(OpenCodePromptDispatchError::Unknown)
     }
 

@@ -49,12 +49,27 @@ pub(in crate::modules::agents::adapter) fn load_history(
     let locator = external_session_locator(Backend::OpenCode, path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
     with_server(|server| {
+        // Read pending inputs first. If one moves into history between the two
+        // reads it may appear in both sets, which safely resolves as delivered.
+        // The opposite order could briefly omit it from both sets.
+        let inbox = match server.client().session_inbox(&locator) {
+            Ok(inbox) => Some(inbox),
+            Err(error) => {
+                // History remains useful without an authoritative pending-input
+                // snapshot. The shared reconciler must not resolve missing IDs.
+                zlog::error!("Load OpenCode prompt delivery evidence: {error}");
+                None
+            }
+        };
         let response = server.client().session_messages(&locator)?;
         let rows = response
             .as_array()
             .or_else(|| response.get("data").and_then(Value::as_array))
             .map(Vec::as_slice)
             .unwrap_or_default();
+        let prompt_deliveries = inbox
+            .as_deref()
+            .map(|inbox| prompt_delivery_reconciliation(rows, inbox));
         let session = server.client().get_session(&locator)?;
         let identity = latest_identity(rows, session.model.as_ref());
         let messages = rows.iter().flat_map(history_messages).collect();
@@ -65,8 +80,64 @@ pub(in crate::modules::agents::adapter) fn load_history(
             messages,
             model,
             thinking_level,
+            prompt_deliveries,
         })
     })
+}
+
+fn prompt_delivery_reconciliation(
+    messages: &[Value],
+    inbox: &[Value],
+) -> crate::sessions::PromptDeliveryReconciliation {
+    crate::sessions::PromptDeliveryReconciliation {
+        delivered: messages
+            .iter()
+            .filter(|message| {
+                message.get("role").and_then(Value::as_str) == Some("user")
+                    || message.get("type").and_then(Value::as_str) == Some("user")
+            })
+            .filter_map(message_submission_id)
+            .map(str::to_owned)
+            .collect(),
+        pending: inbox
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) == Some("user"))
+            .filter_map(inbox_submission_id)
+            .map(str::to_owned)
+            .collect(),
+    }
+}
+
+fn valid_submission_id(id: &str) -> Option<&str> {
+    (id.starts_with("opencode-") || id.starts_with("opencode2-")).then_some(id)
+}
+
+fn native_submission_id(id: &str) -> Option<&str> {
+    id.strip_prefix("msg_").and_then(valid_submission_id)
+}
+
+fn message_submission_id(message: &Value) -> Option<&str> {
+    message
+        .pointer("/metadata/farcasterSubmissionId")
+        .and_then(Value::as_str)
+        .and_then(valid_submission_id)
+        .or_else(|| {
+            message
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(native_submission_id)
+        })
+}
+
+fn inbox_submission_id(item: &Value) -> Option<&str> {
+    item.pointer("/payload/metadata/farcasterSubmissionId")
+        .and_then(Value::as_str)
+        .and_then(valid_submission_id)
+        .or_else(|| {
+            item.get("id")
+                .and_then(Value::as_str)
+                .and_then(native_submission_id)
+        })
 }
 
 fn latest_identity(
@@ -185,12 +256,7 @@ pub(super) fn history_messages(value: &Value) -> Vec<Value> {
                 "role": "user",
                 "content": opencode_user_content(value),
             });
-            if let Some(submission_id) = value
-                .get("id")
-                .and_then(Value::as_str)
-                .and_then(|id| id.strip_prefix("msg_"))
-                .filter(|id| id.starts_with("opencode-") || id.starts_with("opencode2-"))
-            {
+            if let Some(submission_id) = message_submission_id(value) {
                 message["submissionId"] = Value::String(submission_id.to_owned());
                 message["deliveryStatus"] = Value::String("delivered".into());
             }

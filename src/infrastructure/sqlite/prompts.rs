@@ -312,13 +312,14 @@ impl StateStore {
                 "SELECT e.body FROM session_events e JOIN sessions s ON s.id=e.session_id
                   WHERE s.locator=?1 AND json_extract(e.body,'$.type')='accepted_prompt'
                     AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
-                    AND NOT EXISTS (
-                        SELECT 1 FROM session_events delivery
-                         WHERE delivery.session_id=e.session_id
-                           AND json_extract(delivery.body,'$.type')='prompt_delivery_receipt'
-                           AND json_extract(delivery.body,'$.submissionId')=
+                     AND NOT EXISTS (
+                        SELECT 1 FROM session_events resolution
+                         WHERE resolution.session_id=e.session_id
+                           AND json_extract(resolution.body,'$.type') IN
+                               ('prompt_delivery_receipt','prompt_delivery_resolution')
+                           AND json_extract(resolution.body,'$.submissionId')=
                                json_extract(e.body,'$.submissionId')
-                    )
+                     )
                   ORDER BY e.seq",
             )
             .map_err(|error| format!("read accepted prompts: {error}"))?;
@@ -354,6 +355,90 @@ impl StateStore {
             Ok(history)
         })
         .collect()
+    }
+
+    pub(crate) fn reconcile_prompt_deliveries(
+        &mut self,
+        session: &Path,
+        evidence: &crate::sessions::PromptDeliveryReconciliation,
+    ) -> Result<(), String> {
+        let locator = crate::sessions::normalize_session_path(session);
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start prompt delivery reconciliation: {error}"))?;
+        let session_id = transaction
+            .query_row(
+                "SELECT id FROM sessions WHERE locator=?1",
+                [locator.to_string_lossy()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("locate session prompt deliveries: {error}"))?;
+        let Some(session_id) = session_id else {
+            return transaction
+                .commit()
+                .map_err(|error| format!("finish missing-session reconciliation: {error}"));
+        };
+        let unresolved = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT DISTINCT json_extract(e.body,'$.submissionId')
+                       FROM session_events e
+                      WHERE e.session_id=?1
+                        AND json_extract(e.body,'$.type')='accepted_prompt'
+                        AND COALESCE(json_extract(e.body,'$.deliveryStatus'),'accepted')='accepted'
+                        AND json_extract(e.body,'$.submissionId') IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM session_events resolution
+                             WHERE resolution.session_id=e.session_id
+                               AND json_extract(resolution.body,'$.type') IN
+                                   ('prompt_delivery_receipt','prompt_delivery_resolution')
+                               AND json_extract(resolution.body,'$.submissionId')=
+                                   json_extract(e.body,'$.submissionId')
+                        )",
+                )
+                .map_err(|error| format!("read unresolved prompt deliveries: {error}"))?;
+            statement
+                .query_map([session_id], |row| row.get::<_, String>(0))
+                .map_err(|error| format!("query unresolved prompt deliveries: {error}"))?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|error| format!("decode unresolved prompt delivery: {error}"))?
+        };
+        let delivered = evidence
+            .delivered
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        let pending = evidence
+            .pending
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        for submission_id in unresolved {
+            let (event_type, status) = if delivered.contains(submission_id.as_str()) {
+                ("prompt_delivery_receipt", "delivered")
+            } else if pending.contains(submission_id.as_str()) {
+                continue;
+            } else {
+                ("prompt_delivery_resolution", "not_delivered")
+            };
+            transaction
+                .execute(
+                    "INSERT INTO session_events(session_id,seq,t,schema_version,body)
+                     VALUES(?1,
+                            (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=?1),
+                            ?2,1,
+                            json_object('type',?3,'submissionId',?4,'status',?5))",
+                    params![session_id, now_ms(), event_type, submission_id, status],
+                )
+                .map_err(|error| {
+                    format!("save prompt delivery resolution {submission_id}: {error}")
+                })?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit prompt delivery reconciliation: {error}"))
     }
 
     pub(crate) fn complete_prompt(

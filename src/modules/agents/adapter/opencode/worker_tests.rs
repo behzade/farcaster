@@ -1037,6 +1037,10 @@ fn cancelled_steering_is_requeued_instead_of_lost() -> Result<(), String> {
     assert_eq!(request["delivery"], "queue");
     assert_eq!(request["text"], "do this instead");
     assert_eq!(request["files"][0]["uri"], "data:image/png;base64,AQID");
+    assert_eq!(
+        request.pointer("/metadata/farcasterSubmissionId"),
+        Some(&json!("submission-steer"))
+    );
     let retry_id = request["id"].as_str().ok_or("retry has no id")?;
     let retried = &worker.pending_deliveries[retry_id];
     assert_eq!(retried.submission_id.as_deref(), Some("submission-steer"));

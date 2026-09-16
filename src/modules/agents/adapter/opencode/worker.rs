@@ -712,6 +712,7 @@ impl OpenCodeWorkerSession {
         let admission = match self.server.client().prompt(
             &self.session_id,
             native_id.as_deref(),
+            pending.submission_id.as_deref(),
             &pending.message,
             files,
             delivery,
@@ -782,6 +783,7 @@ impl OpenCodeWorkerSession {
         let admission = match self.server.client().prompt(
             &self.session_id,
             Some(native_id),
+            delivery.submission_id.as_deref(),
             &delivery.message,
             files,
             super::contract::OpenCodeDelivery::Queue,

@@ -77,6 +77,7 @@ pub(super) fn serve_opencode(
         } else if path.starts_with("/api/agent?")
             || path.starts_with("/api/command?")
             || path.contains("/message?")
+            || path.ends_with("/inbox")
         {
             json!([])
         } else if matches!(path.as_str(), "/api/session" | "/api/session/main-thread") {

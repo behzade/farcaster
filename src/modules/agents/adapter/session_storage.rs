@@ -143,6 +143,7 @@ pub(crate) fn load_session_history(
         model: history.model,
         thinking_level: history.thinking_level,
         pending_question: None,
+        prompt_deliveries: history.prompt_deliveries,
     })
 }
 

@@ -94,7 +94,7 @@ done
     assert!(requests.contains("\"value\":\"yolo\""));
 
     // Apply the same history contract as RuntimeOwner's startup projection.
-    if let SessionHistory::Replace(messages) = &history {
+    if let SessionHistory::Replace { messages, .. } = &history {
         conversation.replace_history(messages);
     }
     assert_eq!(

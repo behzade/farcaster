@@ -2103,6 +2103,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
             model: None,
             thinking_level: None,
             pending_question: None,
+            prompt_deliveries: None,
         }),
     });
     assert_eq!(owner.snapshot.selected_session, Some(PathBuf::from("/new")));
@@ -2268,6 +2269,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
             model: None,
             thinking_level: None,
             pending_question: None,
+            prompt_deliveries: None,
         }),
     });
     assert!(!owner.snapshot.history_preview);
@@ -2285,6 +2287,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
                 title: "Continue?".into(),
                 options: Vec::new(),
             }),
+            prompt_deliveries: None,
         }),
     });
 
@@ -2572,6 +2575,7 @@ fn live_session_history_load_does_not_replace_the_parked_transcript() {
             model: None,
             thinking_level: None,
             pending_question: None,
+            prompt_deliveries: None,
         }),
     });
     assert_eq!(owner.snapshot.conversation.items[0].text, "stale history");
@@ -2612,6 +2616,7 @@ fn refreshing_visible_external_history_preserves_transcript_ui_state() {
             model: None,
             thinking_level: None,
             pending_question: None,
+            prompt_deliveries: None,
         }),
     });
 
@@ -2679,6 +2684,7 @@ fn external_write_during_selection_refreshes_the_newly_loaded_document() {
             model: None,
             thinking_level: None,
             pending_question: None,
+            prompt_deliveries: None,
         }),
     });
 
@@ -2712,6 +2718,7 @@ fn external_document_refreshes_coalesce_while_a_load_is_in_flight() {
             model: None,
             thinking_level: None,
             pending_question: None,
+            prompt_deliveries: None,
         }),
     });
     assert_eq!(owner.document_refresh_generation, Some(2));

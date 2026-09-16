@@ -90,6 +90,7 @@ pub(super) struct WorkerSessionTransport {
     effort: Option<String>,
     metadata: MainSessionMetadata,
     history: Option<Vec<Value>>,
+    history_prompt_deliveries: Option<crate::sessions::PromptDeliveryReconciliation>,
     message_count: usize,
     selected_mode: Option<String>,
     usage: WorkerUsage,
@@ -144,6 +145,9 @@ impl WorkerSessionTransport {
             .and_then(|model| model.get("contextWindow"))
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        let (history, history_prompt_deliveries) = history.map_or((None, None), |history| {
+            (Some(history.messages), history.prompt_deliveries)
+        });
         Ok(Self {
             harness,
             locator,
@@ -162,8 +166,9 @@ impl WorkerSessionTransport {
             model: selection.model,
             effort: selection.effort,
             metadata,
-            message_count: history.as_ref().map_or(0, |history| history.messages.len()),
-            history: history.map(|history| history.messages),
+            message_count: history.as_ref().map_or(0, Vec::len),
+            history,
+            history_prompt_deliveries,
             selected_mode,
             usage: WorkerUsage {
                 context_window,
@@ -787,7 +792,10 @@ impl SessionTransport for WorkerSessionTransport {
                     .history
                     .as_ref()
                     .map_or(SessionHistory::Preserve, |messages| {
-                        SessionHistory::Replace(messages.clone())
+                        SessionHistory::Replace {
+                            messages: messages.clone(),
+                            prompt_deliveries: self.history_prompt_deliveries.clone(),
+                        }
                     });
                 self.response(Some(id.clone()), Payload::LoadHistory(history));
             }

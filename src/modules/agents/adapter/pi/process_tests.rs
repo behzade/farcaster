@@ -582,9 +582,11 @@ fn resumed_pi_history_loads_one_persisted_prompt() -> TestResult {
 
     let mut resumed = PiRpcProcess::spawn(&command, project.path(), Some(&session))?;
     let response = resumed.request_and_wait(SessionCommand::LoadHistory)?;
-    let crate::agents::SessionResponsePayload::LoadHistory(crate::agents::SessionHistory::Replace(
-        history,
-    )) = response.result?
+    let crate::agents::SessionResponsePayload::LoadHistory(
+        crate::agents::SessionHistory::Replace {
+            messages: history, ..
+        },
+    ) = response.result?
     else {
         return Err("expected replacement history".into());
     };

@@ -890,7 +890,7 @@ fn require_history_response(
     session: &mut dyn SessionTransport,
     expected: &str,
 ) -> Result<(), String> {
-    let Payload::LoadHistory(SessionHistory::Replace(messages)) =
+    let Payload::LoadHistory(SessionHistory::Replace { messages, .. }) =
         request(session, SessionCommand::LoadHistory)?
     else {
         return Err("expected replacement history".into());
@@ -2216,7 +2216,7 @@ pub(crate) mod support {
                     .map(|history| history.messages)
                     .map_err(|error| format!("load native {} history: {error}", self.harness));
             }
-            let Payload::LoadHistory(SessionHistory::Replace(messages)) =
+            let Payload::LoadHistory(SessionHistory::Replace { messages, .. }) =
                 self.request(SessionCommand::LoadHistory)?
             else {
                 return Err("expected replacement history".into());

@@ -88,6 +88,38 @@ fn restores_delivery_receipts_from_before_the_backend_rename() {
 }
 
 #[test]
+fn delivery_reconciliation_distinguishes_history_from_inbox_by_exact_id() {
+    let evidence = prompt_delivery_reconciliation(
+        &[
+            json!({"id":"msg_opencode-delivered", "type":"user"}),
+            json!({
+                "id":"msg_farcaster_retry",
+                "type":"user",
+                "metadata":{"farcasterSubmissionId":"opencode-retried-delivery"}
+            }),
+            json!({"id":"msg_unrelated", "type":"user"}),
+        ],
+        &[
+            json!({"id":"msg_opencode-pending", "type":"user"}),
+            json!({
+                "id":"msg_farcaster_retry",
+                "type":"user",
+                "payload":{"metadata":{"farcasterSubmissionId":"opencode-retried-pending"}}
+            }),
+            json!({"id":"msg_other", "type":"synthetic"}),
+        ],
+    );
+    assert_eq!(
+        evidence.delivered,
+        ["opencode-delivered", "opencode-retried-delivery"]
+    );
+    assert_eq!(
+        evidence.pending,
+        ["opencode-pending", "opencode-retried-pending"]
+    );
+}
+
+#[test]
 fn preserves_base64_and_data_uri_images_in_user_history() {
     let messages = history_messages(&json!({
         "id": "msg_opencode-request-1",

@@ -1868,6 +1868,10 @@ fn resumed_transport_returns_persisted_history() {
         messages: vec![json!({"role": "user", "content": "persisted"})],
         model: Some(("openai".into(), "gpt-test".into())),
         thinking_level: Some("high".into()),
+        prompt_deliveries: Some(crate::sessions::PromptDeliveryReconciliation {
+            delivered: vec!["receipt:delivered".into()],
+            pending: vec!["receipt:pending".into()],
+        }),
     };
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
@@ -1886,10 +1890,18 @@ fn resumed_transport_returns_persisted_history() {
         panic!("expected history response");
     };
     assert_eq!(response.operation(), SessionOperation::LoadHistory);
-    let Ok(Payload::LoadHistory(SessionHistory::Replace(messages))) = response.result else {
+    let Ok(Payload::LoadHistory(SessionHistory::Replace {
+        messages,
+        prompt_deliveries,
+    })) = response.result
+    else {
         panic!("expected replacement history");
     };
     assert_eq!(messages[0]["content"], "persisted");
+    assert_eq!(
+        prompt_deliveries.expect("prompt delivery evidence").pending,
+        ["receipt:pending"]
+    );
 
     transport
         .send(SessionCommand::LoadState)

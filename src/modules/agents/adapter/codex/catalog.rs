@@ -212,6 +212,7 @@ pub(in crate::modules::agents::adapter) fn load_history(
             messages,
             model,
             thinking_level,
+            prompt_deliveries: None,
         })
     })
 }
