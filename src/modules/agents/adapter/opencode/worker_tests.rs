@@ -909,6 +909,143 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
 }
 
 #[test]
+fn cancelled_steering_is_requeued_instead_of_lost() -> Result<(), String> {
+    use std::{
+        io::{Read as _, Write as _},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+    let address = listener.local_addr().map_err(|error| error.to_string())?;
+    let request = thread::spawn(move || -> Result<Value, String> {
+        let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
+        let mut request = Vec::new();
+        let mut byte = [0_u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+            stream
+                .read_exact(&mut byte)
+                .map_err(|error| error.to_string())?;
+            request.push(byte[0]);
+        }
+        let headers = String::from_utf8_lossy(&request);
+        let length = headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':').and_then(|(name, value)| {
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+            })
+            .unwrap_or(0);
+        let mut body = vec![0; length];
+        stream
+            .read_exact(&mut body)
+            .map_err(|error| error.to_string())?;
+        let body: Value = serde_json::from_slice(&body).map_err(|error| error.to_string())?;
+        let id = body["id"].as_str().ok_or("retry has no id")?;
+        let response = json!({"data": {
+            "id": id, "sessionID": "session-1", "delivery": body["delivery"]
+        }})
+        .to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+            response.len()
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(body)
+    });
+    let child = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!("printf '{{\"url\":\"http://{address}\"}}\\n'; cat"),
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let server = OpenCodeServerProcess::attach(child, "opencode", "test-password")?;
+    let (sender, incoming) = mpsc::channel();
+    let caller_identity = crate::agents::CallerRegistry::shared().issue(
+        std::path::Path::new("/project"),
+        crate::modules::agents::core::CallerProfile {
+            backend: Backend::OpenCode,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    let mut worker = OpenCodeWorkerSession {
+        catalog_directory: None,
+        caller_identity,
+        server,
+        session_id: "session-1".into(),
+        provider: None,
+        model: None,
+        effort: None,
+        effort_catalog: HashMap::new(),
+        commands: HashSet::new(),
+        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
+        incoming,
+        reasoning_started: false,
+        text_streams: HashMap::new(),
+        reasoning_streams: HashMap::new(),
+        usage: OpenCodeUsageTracker::default(),
+        context_window: 0,
+        pending_inputs: HashMap::new(),
+        context_windows: HashMap::new(),
+        pending_deliveries: HashMap::from([(
+            "cancelled-steer".into(),
+            PendingOpenCodeDelivery {
+                submission_id: Some("submission-steer".into()),
+                mode: WorkerSendMode::Steer,
+                message: "do this instead".into(),
+                images: vec![crate::protocol::PromptImage::new(
+                    "AQID".into(),
+                    "image/png".into(),
+                )],
+                clears_abort_barrier: false,
+            },
+        )]),
+        delivered_awaiting_execution: HashSet::new(),
+        active_tools: HashMap::new(),
+        generation: 0,
+        completions: None,
+        turn_active: true,
+        steering_interrupts: 0,
+        ignore_execution_events: false,
+        abort_waiting_for_start: false,
+        wake: None,
+        pending: VecDeque::new(),
+    };
+    sender
+        .send(Ok(super::super::contract::OpenCodeEvent {
+            id: None,
+            event: Some("session.inbox.cancelled".into()),
+            data: json!({"sessionID":"session-1", "inboxID":"cancelled-steer"}),
+        }))
+        .map_err(|error| error.to_string())?;
+
+    assert!(worker.poll_native_event().is_none());
+    let request = request
+        .join()
+        .map_err(|_| "OpenCode retry fixture panicked".to_owned())??;
+    assert_eq!(request["delivery"], "queue");
+    assert_eq!(request["text"], "do this instead");
+    assert_eq!(request["files"][0]["uri"], "data:image/png;base64,AQID");
+    let retry_id = request["id"].as_str().ok_or("retry has no id")?;
+    let retried = &worker.pending_deliveries[retry_id];
+    assert_eq!(retried.submission_id.as_deref(), Some("submission-steer"));
+    assert_eq!(retried.mode, WorkerSendMode::Steer);
+    worker.close()?;
+    Ok(())
+}
+
+#[test]
 fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), String> {
     use std::{
         io::{Read as _, Write as _},
@@ -1139,6 +1276,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
             images: Vec::new(),
             clears_abort_barrier: false,
         },
+        super::super::contract::OpenCodeDelivery::Queue,
     )?;
     assert_eq!(
         worker

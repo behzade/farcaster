@@ -727,7 +727,7 @@ impl OpenCodeWorkerSession {
                 return Err(error);
             }
         };
-        self.record_prompt_admission(admission, native_id.as_deref(), pending)
+        self.record_prompt_admission(admission, native_id.as_deref(), pending, delivery)
             .map_err(super::contract::OpenCodePromptDispatchError::Unknown)?;
         Ok(true)
     }
@@ -741,11 +741,12 @@ impl OpenCodeWorkerSession {
         admission: super::contract::OpenCodePromptAdmission,
         native_id: Option<&str>,
         delivery: PendingOpenCodeDelivery,
+        native_delivery: super::contract::OpenCodeDelivery,
     ) -> Result<(), String> {
         let was_active = self.turn_active;
-        let expected_delivery = match delivery.mode {
-            WorkerSendMode::Steer => "steer",
-            WorkerSendMode::Prompt | WorkerSendMode::Queue => "queue",
+        let expected_delivery = match native_delivery {
+            super::contract::OpenCodeDelivery::Steer => "steer",
+            super::contract::OpenCodeDelivery::Queue => "queue",
         };
         if admission.session_id != self.session_id
             || admission.id.is_empty()
@@ -768,6 +769,39 @@ impl OpenCodeWorkerSession {
             self.pending.push_back(WorkerEvent::Started);
         }
         Ok(())
+    }
+
+    fn requeue_cancelled_steer(
+        &mut self,
+        native_id: &str,
+        delivery: PendingOpenCodeDelivery,
+    ) -> Result<(), super::contract::OpenCodePromptDispatchError> {
+        let files = opencode_image_inputs(&delivery.images);
+        self.pending_deliveries
+            .insert(native_id.to_owned(), delivery.clone());
+        let admission = match self.server.client().prompt(
+            &self.session_id,
+            Some(native_id),
+            &delivery.message,
+            files,
+            super::contract::OpenCodeDelivery::Queue,
+        ) {
+            Ok(admission) => admission,
+            Err(super::contract::OpenCodePromptDispatchError::Unsent(error)) => {
+                self.pending_deliveries.remove(native_id);
+                return Err(super::contract::OpenCodePromptDispatchError::Unsent(error));
+            }
+            Err(error @ super::contract::OpenCodePromptDispatchError::Unknown(_)) => {
+                return Err(error);
+            }
+        };
+        self.record_prompt_admission(
+            admission,
+            Some(native_id),
+            delivery,
+            super::contract::OpenCodeDelivery::Queue,
+        )
+        .map_err(super::contract::OpenCodePromptDispatchError::Unknown)
     }
 
     fn finish_turn(&mut self) {
@@ -988,7 +1022,24 @@ impl OpenCodeWorkerSession {
                 }
                 "session.inbox.cancelled" => {
                     if let Some(id) = event.data.get("inboxID").and_then(Value::as_str) {
-                        self.pending_deliveries.remove(id);
+                        let Some(delivery) = self.pending_deliveries.remove(id) else {
+                            continue;
+                        };
+                        if delivery.mode == WorkerSendMode::Steer {
+                            let retry_id = Self::next_internal_prompt_id();
+                            if let Err(error) = self.requeue_cancelled_steer(&retry_id, delivery) {
+                                let error = match error {
+                                    super::contract::OpenCodePromptDispatchError::Unsent(error)
+                                    | super::contract::OpenCodePromptDispatchError::Unknown(
+                                        error,
+                                    ) => error,
+                                };
+                                return Some(WorkerEvent::RequestFailed {
+                                    operation: "requeue cancelled OpenCode steering input".into(),
+                                    error,
+                                });
+                            }
+                        }
                     }
                 }
                 "session.next.prompted" => {
@@ -1421,15 +1472,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             .into_iter()
             .map(crate::protocol::PromptImage::into_inline)
             .collect::<Result<Vec<_>, _>>()?;
-        let files = images
-            .iter()
-            .enumerate()
-            .map(|(index, image)| super::contract::OpenCodeFileInput {
-                uri: format!("data:{};base64,{}", image.mime_type, image.data),
-                name: Some(format!("image-{}", index + 1)),
-                description: None,
-            })
-            .collect();
+        let files = opencode_image_inputs(&images);
         let native_id = Self::next_internal_prompt_id();
         match self.send_prompt(
             Some(native_id.clone()),
@@ -1462,15 +1505,7 @@ impl WorkerSession for OpenCodeWorkerSession {
             .into_iter()
             .map(crate::protocol::PromptImage::into_inline)
             .collect::<Result<Vec<_>, _>>()?;
-        let files = images
-            .iter()
-            .enumerate()
-            .map(|(index, image)| super::contract::OpenCodeFileInput {
-                uri: format!("data:{};base64,{}", image.mime_type, image.data),
-                name: Some(format!("image-{}", index + 1)),
-                description: None,
-            })
-            .collect();
+        let files = opencode_image_inputs(&images);
         match self.send_prompt(
             Some(id.clone()),
             Some(format!("msg_{id}")),
@@ -2047,6 +2082,20 @@ fn send_and_wake<T>(
         wake.unpark();
     }
     Ok(())
+}
+
+fn opencode_image_inputs(
+    images: &[crate::protocol::PromptImage],
+) -> Vec<super::contract::OpenCodeFileInput> {
+    images
+        .iter()
+        .enumerate()
+        .map(|(index, image)| super::contract::OpenCodeFileInput {
+            uri: format!("data:{};base64,{}", image.mime_type, image.data),
+            name: Some(format!("image-{}", index + 1)),
+            description: None,
+        })
+        .collect()
 }
 
 fn configure_opencode_server(
