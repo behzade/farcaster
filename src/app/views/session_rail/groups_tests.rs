@@ -8,7 +8,7 @@ use super::*;
 use crate::sessions::UsageSummary;
 
 #[test]
-fn drafts_and_sessions_share_one_descending_id_order() {
+fn drafts_stay_above_sessions() {
     let alpha = PathBuf::from("/alpha");
     let beta = PathBuf::from("/beta");
     let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), alpha.clone());
@@ -26,7 +26,26 @@ fn drafts_and_sessions_share_one_descending_id_order() {
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>(),
-        [3, 2, 1]
+        [2, 3, 1]
+    );
+}
+
+#[test]
+fn manual_order_cannot_move_a_session_above_a_draft() {
+    let project = PathBuf::from("/project");
+    let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), project.clone());
+    draft.app_session_id = 2;
+    let sessions = vec![session("session", 1, &project, false)];
+
+    let lists = session_rail_lists(&sessions, &[draft], None, &[1, 2]);
+
+    assert_eq!(
+        lists
+            .active
+            .iter()
+            .map(ActiveSessionItem::app_session_id)
+            .collect::<Vec<_>>(),
+        [2, 1]
     );
 }
 
