@@ -238,10 +238,10 @@ fn configuration_access_mode(
     harness: Backend,
     requested: crate::agents::HarnessAccessMode,
 ) -> Result<crate::agents::HarnessAccessMode, String> {
-    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
+    use crate::agents::HarnessAccessMode::{Auto, Sandboxed};
 
     if supports_sandbox_discovery(harness) {
-        return Ok(if requested == Auto { Full } else { requested });
+        return Ok(requested);
     }
     let descriptor = harness.descriptor();
     let supported = descriptor.capabilities.configuration.access_modes;

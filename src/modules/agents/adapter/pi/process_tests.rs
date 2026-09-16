@@ -1320,12 +1320,19 @@ fn request_and_wait_confirms_configuration_before_returning() -> TestResult {
 
 #[test]
 fn sandbox_adapter_detects_each_launch_and_blocks_failed_control() -> TestResult {
-    use HarnessAccessMode::{Full, Sandboxed};
-    for mode in [Sandboxed, Full] {
+    use HarnessAccessMode::{Auto, Full, Sandboxed};
+    for (requested, expected) in [(Auto, Sandboxed), (Sandboxed, Sandboxed), (Full, Full)] {
         let (temp, mut command) = fake("sandbox-ready")?;
-        command.access_mode = mode;
+        command.access_mode = requested;
         let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
-        assert_eq!(process.confirmed_sandbox_mode(), Some(mode));
+        assert_eq!(process.confirmed_sandbox_mode(), Some(expected));
+        process.caller_identity.bind("parent-session");
+        assert_eq!(
+            crate::agents::CallerRegistry::shared()
+                .resolve(process.caller_identity.token())?
+                .access_mode,
+            expected
+        );
         assert!(!temp.path().join("agent-prompts").exists());
         process.request_and_wait(SessionCommand::Prompt {
             mode: crate::protocol::PromptMode::Normal,
@@ -1354,10 +1361,14 @@ fn sandbox_adapter_detects_each_launch_and_blocks_failed_control() -> TestResult
 
 #[test]
 fn missing_sandbox_registers_the_caller_as_full_access() -> TestResult {
-    let (temp, command) = fake("normal")?;
-    assert_eq!(command.access_mode, HarnessAccessMode::Full);
+    let (temp, mut command) = fake("normal")?;
+    command.access_mode = HarnessAccessMode::Auto;
     let mut process = PiRpcProcess::spawn(&command, temp.path(), None)?;
     assert_eq!(process.confirmed_sandbox_mode(), None);
+    assert_eq!(
+        crate::agents::SessionTransport::sandbox_mode(&process),
+        Some(HarnessAccessMode::Full)
+    );
     process.caller_identity.bind("parent-session");
     assert_eq!(
         crate::agents::CallerRegistry::shared()
@@ -1401,6 +1412,10 @@ fn sandbox_mode_drift_revokes_confirmation_and_blocks_further_prompts() -> TestR
     )))));
     assert!(matches!(event, SessionEvent::Failure(_)));
     assert_eq!(process.confirmed_sandbox_mode(), None);
+    assert_eq!(
+        crate::agents::SessionTransport::sandbox_mode(&process),
+        None
+    );
     assert!(
         process
             .send_request(SessionCommand::Prompt {

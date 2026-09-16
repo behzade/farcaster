@@ -43,7 +43,7 @@ fn access_modes_require_both_backend_and_model_support() {
     assert!(available_access_modes(None, None, None).is_empty());
     assert_eq!(
         available_access_modes(Some(Backend::Pi), None, None),
-        [Full]
+        [Auto]
     );
     assert_eq!(
         available_access_modes(Some(Backend::Pi), None, Some("pi-nono")),
@@ -87,7 +87,7 @@ fn catalog_launch_resolves_only_to_supported_safe_modes() {
     assert_eq!(configuration_access_mode(Backend::OpenCode, Full), Ok(Full));
     assert_eq!(configuration_access_mode(Backend::Codex, Auto), Ok(Auto));
     assert_eq!(configuration_access_mode(Backend::Claude, Auto), Ok(Auto));
-    assert_eq!(configuration_access_mode(Backend::Pi, Auto), Ok(Full));
+    assert_eq!(configuration_access_mode(Backend::Pi, Auto), Ok(Auto));
     assert!(
         configuration_access_mode(Backend::OpenCode, Auto).expect("OpenCode auto mode") != Full
     );

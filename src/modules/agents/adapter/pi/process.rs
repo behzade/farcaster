@@ -424,14 +424,19 @@ impl PiRpcProcess {
         self.sandbox_mode = None;
         self.request_and_wait(SessionCommand::ListCommands)?;
         let commands = std::mem::take(&mut self.commands);
-        if let Some((adapter, control)) = super::sandbox::discover(&commands)? {
+        let effective_mode = if let Some((adapter, control)) = super::sandbox::discover(&commands)?
+        {
             self.sandbox_adapter = Some(adapter);
             let mode = adapter.launch_mode(requested)?;
             adapter.confirm(self, control, mode)?;
             self.sandbox_mode = Some(mode);
-        } else if requested != HarnessAccessMode::Full {
+            mode
+        } else if requested == HarnessAccessMode::Sandboxed {
             return Err("Pi cannot confirm the requested access mode: no supported sandbox control was detected".into());
-        }
+        } else {
+            HarnessAccessMode::Full
+        };
+        self.caller_identity.set_access_mode(effective_mode);
         Ok(())
     }
 
