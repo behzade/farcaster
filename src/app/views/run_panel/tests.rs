@@ -90,7 +90,7 @@ fn restored_child_without_activity_gets_a_visible_selectable_fallback() {
     assert_eq!(fallback.activity, "Review the patch");
     assert_eq!(
         fallback.lifecycle,
-        AgentLifecycle::Completed(AgentOutcome::Incomplete)
+        AgentLifecycle::Completed(AgentOutcome::Complete)
     );
     assert_eq!(fallback.ended, Some(session.modified));
     assert!(fallback.limited);

@@ -826,6 +826,18 @@ const PROFILE: AcpProfile = AcpProfile {
     permission_modes: None,
 };
 
+struct PendingReader;
+
+impl futures::io::AsyncRead for PendingReader {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Pending
+    }
+}
+
 #[cfg(unix)]
 fn inert_session() -> AcpWorkerSession {
     AcpWorkerSession {
@@ -834,7 +846,7 @@ fn inert_session() -> AcpWorkerSession {
             .spawn()
             .expect("test operation should succeed"),
         connection: AcpConnection::new(
-            futures::io::Cursor::new(Vec::<u8>::new()),
+            PendingReader,
             futures::io::Cursor::new(Vec::<u8>::new()),
             None,
         )
@@ -1417,6 +1429,8 @@ fn acp_terminal_response_without_evidence_is_unknown_not_rejected() {
         json!({"stopReason":"not_an_acp_stop_reason"}),
         json!({}),
     ] {
+        let reports_invalid_response =
+            result.get("stopReason").and_then(Value::as_str) != Some("cancelled");
         let mut session = inert_session();
         track_inert_submission(&mut session, "submission");
         session
@@ -1426,13 +1440,19 @@ fn acp_terminal_response_without_evidence_is_unknown_not_rejected() {
                 result,
             }]));
 
-        assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
-        assert!(session.poll_prompt_ack().is_none());
         assert!(matches!(
             session.poll(),
             Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
                 if submission_id == "submission"
         ));
+        if reports_invalid_response {
+            assert!(matches!(
+                session.poll(),
+                Some(WorkerEvent::RequestFailed { operation, .. }) if operation == "ACP prompt"
+            ));
+        }
+        assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+        assert!(session.poll_prompt_ack().is_none());
     }
 }
 
@@ -1795,13 +1815,13 @@ fn acp_user_message_chunk_malformed_content_preserves_cancel_and_error_recovery(
             session
                 .connection
                 .restore_queued(VecDeque::from([terminal]));
-            assert_eq!(
-                session.poll(),
-                Some(WorkerEvent::Settled {
-                    output: String::new()
-                })
-            );
             if rejected {
+                assert_eq!(
+                    session.poll(),
+                    Some(WorkerEvent::Settled {
+                        output: String::new()
+                    })
+                );
                 assert_eq!(
                     session.poll_prompt_ack(),
                     Some(("prompt".into(), Err("prompt rejected".into())))
@@ -1813,6 +1833,12 @@ fn acp_user_message_chunk_malformed_content_preserves_cancel_and_error_recovery(
                     Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
                         if submission_id == "prompt"
                 ));
+                assert_eq!(
+                    session.poll(),
+                    Some(WorkerEvent::Settled {
+                        output: String::new()
+                    })
+                );
             }
             assert!(session.current_prompt.is_none());
             assert!(session.poll_prompt_ack().is_none());

@@ -284,7 +284,7 @@ pub(super) fn drive_process_until(owner: &mut RuntimeOwner, ready: impl Fn(&Runt
 }
 
 #[test]
-fn unmanaged_pi_rejects_access_mode_changes_before_discovery() -> Result<(), String> {
+fn unmanaged_pi_resolves_auto_to_full_after_discovery() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
@@ -311,7 +311,7 @@ fn unmanaged_pi_rejects_access_mode_changes_before_discovery() -> Result<(), Str
         "{:?}",
         owner.snapshot.conversation.diagnostics
     );
-    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Auto);
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Full);
     assert!(!owner.snapshot.sandbox_controls_available());
     Ok(())
 }

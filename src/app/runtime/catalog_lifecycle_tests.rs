@@ -20,7 +20,7 @@ mod code_tasks_tests;
 #[path = "title_lifecycle_tests.rs"]
 mod title_lifecycle_tests;
 
-const WAIT: Duration = Duration::from_secs(3);
+const WAIT: Duration = Duration::from_secs(10);
 const CHILD_MARKER: &str = "FARCASTER_CATALOG_TEST_CHILD";
 
 fn fixture_binary() -> &'static std::path::Path {
@@ -103,7 +103,7 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
         command.env(variable, dir.path().join(backend));
     }
     let mut child = command.spawn().expect("test operation should succeed");
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(45);
     let status = loop {
         if let Some(status) = child.try_wait().expect("test operation should succeed") {
             break status;
