@@ -81,6 +81,38 @@ pub(crate) fn read_event(reader: &mut impl BufRead) -> Result<Option<OpenCodeEve
     Ok(Some(OpenCodeEvent { id, event, data }))
 }
 
+/// Maps native event names onto the stable vocabulary consumed by the adapter.
+/// OpenCode may version events with a numeric suffix or rename them between releases.
+pub(super) fn normalized_event_type(event_type: &str) -> &str {
+    let event_type = event_type
+        .rsplit_once('.')
+        .filter(|(_, suffix)| suffix.bytes().all(|byte| byte.is_ascii_digit()))
+        .map_or(event_type, |(base, _)| base);
+    // Alias only events with equivalent payloads and semantics. Unique
+    // session.next lifecycle events remain distinct in the worker dispatch.
+    match event_type {
+        "model.updated" => "catalog.updated",
+        "session.next.text.started" => "session.text.started",
+        "session.next.text.delta" => "session.text.delta",
+        "session.next.text.ended" => "session.text.ended",
+        "session.next.reasoning.started" => "session.reasoning.started",
+        "session.next.reasoning.delta" => "session.reasoning.delta",
+        "session.next.reasoning.ended" => "session.reasoning.ended",
+        "session.next.tool.input.started" => "session.tool.input.started",
+        "session.next.tool.input.delta" => "session.tool.input.delta",
+        "session.next.tool.input.ended" => "session.tool.input.ended",
+        "session.next.tool.called" => "session.tool.called",
+        "session.next.tool.progress" => "session.tool.progress",
+        "session.next.tool.success" => "session.tool.success",
+        "session.next.tool.failed" => "session.tool.failed",
+        "session.next.step.started" => "session.step.started",
+        "session.next.step.ended" => "session.step.ended",
+        "session.next.compaction.started" => "session.compaction.started",
+        "session.next.compaction.ended" => "session.compaction.ended",
+        _ => event_type,
+    }
+}
+
 #[cfg(test)]
 #[path = "event_tests.rs"]
 mod tests;

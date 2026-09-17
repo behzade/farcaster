@@ -44,3 +44,33 @@ fn preserves_unknown_events_and_multiline_data() -> Result<(), String> {
     assert_eq!(event.data, Value::String("first\nsecond".into()));
     Ok(())
 }
+
+#[test]
+fn normalizes_versioned_and_renamed_event_types() {
+    for (native, canonical) in [
+        ("model.updated", "catalog.updated"),
+        ("session.next.text.delta", "session.text.delta"),
+        ("session.next.reasoning.ended", "session.reasoning.ended"),
+        (
+            "session.next.tool.input.started",
+            "session.tool.input.started",
+        ),
+        ("session.next.tool.failed", "session.tool.failed"),
+        ("session.next.step.ended.2", "session.step.ended"),
+        ("permission.asked.1", "permission.asked"),
+        (
+            "session.next.compaction.started",
+            "session.compaction.started",
+        ),
+    ] {
+        assert_eq!(normalized_event_type(native), canonical);
+    }
+    for event_type in [
+        "session.next.prompted",
+        "session.next.prompt.admitted",
+        "session.next.compaction.delta",
+    ] {
+        assert_eq!(normalized_event_type(event_type), event_type);
+    }
+    assert_eq!(normalized_event_type("future.event"), "future.event");
+}

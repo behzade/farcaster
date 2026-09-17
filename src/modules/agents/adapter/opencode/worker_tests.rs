@@ -293,17 +293,18 @@ fn child_execution_events_publish_sidebar_metadata() {
             event: Some(kind.into()),
             data: json!({"sessionID": "child-1"}),
         };
-        let activity = opencode_child_activity(&event, "parent-1", |id| {
-            assert_eq!(id, "child-1");
-            serde_json::from_value(json!({
-                "id": id, "parentID": parent,
-                "location": {"directory": "/project"},
-                "title": "Explore code",
-                "model": {"providerID": "provider", "id": "model", "variant": "high"},
-            }))
-            .map_err(|error| error.to_string())
-        })
-        .expect("session lookup");
+        let activity =
+            opencode_child_activity(&event, normalized_event_type(kind), "parent-1", |id| {
+                assert_eq!(id, "child-1");
+                serde_json::from_value(json!({
+                    "id": id, "parentID": parent,
+                    "location": {"directory": "/project"},
+                    "title": "Explore code",
+                    "model": {"providerID": "provider", "id": "model", "variant": "high"},
+                }))
+                .map_err(|error| error.to_string())
+            })
+            .expect("session lookup");
         let actual = activity.map(|activity| {
             let WorkerActivity::ChildSessionsChanged {
                 id,
@@ -350,7 +351,7 @@ fn child_observation_skips_parent_text_and_malformed_events() {
             data,
         };
         assert!(
-            opencode_child_activity(&event, "parent-1", |_| {
+            opencode_child_activity(&event, normalized_event_type(kind), "parent-1", |_| {
                 panic!("unrelated events must not query the server")
             })
             .expect("test operation should succeed")
@@ -404,11 +405,7 @@ fn session_updates_surface_titles() {
 }
 
 #[test]
-fn current_opencode_events_and_tool_results_are_normalized() {
-    assert_eq!(
-        unversioned_opencode_event_type("session.next.step.ended.2"),
-        "session.next.step.ended"
-    );
+fn opencode_tool_results_are_normalized() {
     assert_eq!(
         opencode_tool_result(&json!({"result": {"answer": 42}}), false),
         json!([{"type":"text", "text":"{\"answer\":42}"}])
@@ -549,7 +546,7 @@ fn permission_requests_keep_child_session_identity() {
     };
 
     assert_eq!(
-        opencode_permission_request(&event),
+        opencode_permission_request(&event, normalized_event_type("permission.asked")),
         Some(("child-1", "permission-1"))
     );
 }
