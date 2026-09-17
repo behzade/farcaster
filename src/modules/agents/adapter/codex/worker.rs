@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use super::{
     connection::{CodexConnection, read_message},
     contract::{CodexClientInfo, CodexInbound, CodexRequestId, CodexUserInput, TurnResponse},
+    notification::{CodexMethod, CodexNotificationTier},
     skills::Skills,
     tool,
     wire::{encode_error_response, encode_request, encode_response},
@@ -1308,41 +1309,49 @@ impl WorkerSession for CodexWorkerSession {
                     )));
                 }
                 Ok(CodexInbound::Notification { method, params }) => {
-                    if method == "skills/changed" {
-                        match self.request("skills/list", Skills::params(&self.project, true)) {
-                            Ok(id) => {
-                                for pending in self.pending.values_mut() {
-                                    if matches!(pending, PendingRequest::LoadSkills) {
-                                        *pending = PendingRequest::ObsoleteSkills;
+                    let method_name = method.as_str();
+                    let method = CodexMethod::parse(method_name);
+                    let tier = method.tier();
+                    match tier {
+                        CodexNotificationTier::Skills => {
+                            match self.request("skills/list", Skills::params(&self.project, true)) {
+                                Ok(id) => {
+                                    for pending in self.pending.values_mut() {
+                                        if matches!(pending, PendingRequest::LoadSkills) {
+                                            *pending = PendingRequest::ObsoleteSkills;
+                                        }
                                     }
+                                    self.pending.insert(id, PendingRequest::LoadSkills);
                                 }
-                                self.pending.insert(id, PendingRequest::LoadSkills);
+                                Err(error) => {
+                                    zlog::warn!("Codex skills could not be refreshed: {error}");
+                                }
                             }
-                            Err(error) => {
-                                zlog::warn!("Codex skills could not be refreshed: {error}");
-                            }
+                            continue;
                         }
-                        continue;
+                        CodexNotificationTier::Telemetry => {
+                            if let Some(activity) = codex_telemetry(method, &params) {
+                                return Some(WorkerEvent::Activity(activity));
+                            }
+                            log_bad_codex_notification(
+                                method_name,
+                                &params,
+                                "telemetry update is missing required fields",
+                            );
+                            continue;
+                        }
+                        CodexNotificationTier::Global | CodexNotificationTier::Thread => {}
                     }
-                    if let Some(activity) = codex_telemetry(&method, &params) {
-                        return Some(WorkerEvent::Activity(activity));
-                    }
-                    if matches!(
-                        method.as_str(),
-                        "account/rateLimits/updated" | "mcpServer/startupStatus/updated"
+                    if !codex_notification_is_for_thread(
+                        method,
+                        method_name,
+                        &params,
+                        &self.thread_id,
                     ) {
-                        log_bad_codex_notification(
-                            &method,
-                            &params,
-                            "telemetry update is missing required fields",
-                        );
                         continue;
                     }
-                    if !codex_notification_is_for_thread(&method, &params, &self.thread_id) {
-                        continue;
-                    }
-                    match method.as_str() {
-                        "turn/started" => {
+                    match method {
+                        CodexMethod::TurnStarted => {
                             if let Some(turn_id) = params["turn"]["id"].as_str() {
                                 let started = self.begin_turn(turn_id);
                                 self.capture_handoff_target(turn_id);
@@ -1357,13 +1366,13 @@ impl WorkerSession for CodexWorkerSession {
                                 }
                             } else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "turn start is missing turn id",
                                 );
                             }
                         }
-                        "item/agentMessage/delta" => {
+                        CodexMethod::AgentMessageDelta => {
                             if let Some(delta) = params["delta"].as_str() {
                                 self.output.push_str(delta);
                                 return Some(WorkerEvent::Activity(WorkerActivity::TextDelta {
@@ -1372,12 +1381,12 @@ impl WorkerSession for CodexWorkerSession {
                                 }));
                             }
                             log_bad_codex_notification(
-                                &method,
+                                method_name,
                                 &params,
                                 "agent delta is missing delta",
                             );
                         }
-                        "item/plan/delta" => {
+                        CodexMethod::PlanDelta => {
                             if let Some(delta) = params["delta"].as_str() {
                                 self.reasoning_started = true;
                                 return Some(WorkerEvent::Activity(
@@ -1388,12 +1397,12 @@ impl WorkerSession for CodexWorkerSession {
                                 ));
                             }
                             log_bad_codex_notification(
-                                &method,
+                                method_name,
                                 &params,
                                 "plan delta is missing delta",
                             );
                         }
-                        "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
+                        CodexMethod::ReasoningTextDelta => {
                             if let Some(delta) = params["delta"].as_str() {
                                 self.reasoning_started = true;
                                 return Some(WorkerEvent::Activity(
@@ -1404,12 +1413,12 @@ impl WorkerSession for CodexWorkerSession {
                                 ));
                             }
                             log_bad_codex_notification(
-                                &method,
+                                method_name,
                                 &params,
                                 "reasoning delta is missing delta",
                             );
                         }
-                        "item/started" => {
+                        CodexMethod::ItemStarted => {
                             if let Some(activity) = self.input_delivery(&params["item"]) {
                                 return Some(WorkerEvent::Activity(activity));
                             }
@@ -1432,10 +1441,14 @@ impl WorkerSession for CodexWorkerSession {
                                 return Some(WorkerEvent::Activity(event));
                             }
                             if !codex_passive_item(&params["item"]) {
-                                log_bad_codex_notification(&method, &params, "unmapped item start");
+                                log_bad_codex_notification(
+                                    method_name,
+                                    &params,
+                                    "unmapped item start",
+                                );
                             }
                         }
-                        "item/commandExecution/outputDelta" => {
+                        CodexMethod::CommandExecutionOutputDelta => {
                             if let (Some(id), Some(delta)) =
                                 (params["itemId"].as_str(), params["delta"].as_str())
                             {
@@ -1445,12 +1458,12 @@ impl WorkerSession for CodexWorkerSession {
                                 }));
                             }
                             log_bad_codex_notification(
-                                &method,
+                                method_name,
                                 &params,
                                 "command output delta is missing itemId or delta",
                             );
                         }
-                        "item/completed" => {
+                        CodexMethod::ItemCompleted => {
                             let item_type = params.pointer("/item/type").and_then(Value::as_str);
                             if item_type == Some("exitedReviewMode")
                                 && let Some(review) = params["item"]["review"].as_str()
@@ -1494,16 +1507,16 @@ impl WorkerSession for CodexWorkerSession {
                             }
                             if !codex_passive_item(&params["item"]) {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "unmapped item completion",
                                 );
                             }
                         }
-                        "item/autoApprovalReview/started" => {
+                        CodexMethod::AutoApprovalReviewStarted => {
                             let Some((started, review)) = codex_tool_review_started(&params) else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "approval review start is not a tool review",
                                 );
@@ -1512,11 +1525,11 @@ impl WorkerSession for CodexWorkerSession {
                             self.events.push_back(WorkerEvent::Activity(review));
                             return Some(WorkerEvent::Activity(started));
                         }
-                        "item/autoApprovalReview/completed" => {
+                        CodexMethod::AutoApprovalReviewCompleted => {
                             let Some((review, finished)) = codex_tool_review_completed(&params)
                             else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "approval review completion is missing targetItemId",
                                 );
@@ -1527,11 +1540,11 @@ impl WorkerSession for CodexWorkerSession {
                             }
                             return Some(WorkerEvent::Activity(review));
                         }
-                        "guardianWarning" => {}
-                        "thread/tokenUsage/updated" => {
+                        CodexMethod::GuardianWarning => {}
+                        CodexMethod::TokenUsageUpdated => {
                             let Some(usage) = params.get("tokenUsage") else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "token update is missing tokenUsage",
                                 );
@@ -1539,7 +1552,7 @@ impl WorkerSession for CodexWorkerSession {
                             };
                             let Some(total) = usage.get("total") else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "token update is missing total",
                                 );
@@ -1561,10 +1574,10 @@ impl WorkerSession for CodexWorkerSession {
                                 reported_usage,
                             )));
                         }
-                        "thread/goal/updated" => {
+                        CodexMethod::GoalUpdated => {
                             let Some(goal) = params.get("goal") else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "goal update is missing goal",
                                 );
@@ -1577,21 +1590,21 @@ impl WorkerSession for CodexWorkerSession {
                                     ));
                                 }
                                 Err(reason) => {
-                                    log_bad_codex_notification(&method, &params, &reason);
+                                    log_bad_codex_notification(method_name, &params, &reason);
                                 }
                             }
                         }
-                        "thread/goal/cleared" => {
+                        CodexMethod::GoalCleared => {
                             return Some(WorkerEvent::Activity(
                                 WorkerActivity::SessionGoalChanged(None),
                             ));
                         }
-                        "turn/completed" => {
+                        CodexMethod::TurnCompleted => {
                             let Some(completed_turn) =
                                 params["turn"]["id"].as_str().map(str::to_owned)
                             else {
                                 log_bad_codex_notification(
-                                    &method,
+                                    method_name,
                                     &params,
                                     "turn completion is missing turn id",
                                 );
@@ -1680,43 +1693,60 @@ impl WorkerSession for CodexWorkerSession {
                                 output: self.output.clone(),
                             });
                         }
-                        "item/reasoning/summaryPartAdded" => {
+                        CodexMethod::ReasoningSummaryPartAdded => {
                             self.reasoning_started = true;
                         }
-                        "error" => {
+                        CodexMethod::Error => {
                             if let Some(message) = codex_error_message(&params) {
                                 self.turn_error = Some(message);
                             }
                         }
-                        "thread/settings/updated" => {
+                        CodexMethod::ThreadSettingsUpdated => {
                             self.observe_command_settings(&params["threadSettings"])
                         }
-                        "thread/name/updated" => {
+                        CodexMethod::ThreadNameUpdated => {
                             if let Some(name) = params.get("threadName").and_then(Value::as_str) {
                                 return Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(
                                     name.to_owned(),
                                 )));
                             }
                         }
-                        "thread/status/changed"
-                        | "turn/diff/updated"
-                        | "turn/plan/updated"
-                        | "serverRequest/resolved"
-                        | "item/commandExecution/terminalInteraction"
-                        | "item/fileChange/outputDelta" => {}
-                        _ => log_bad_codex_notification(
-                            &method,
+                        CodexMethod::ThreadStatusChanged
+                        | CodexMethod::TurnDiffUpdated
+                        | CodexMethod::TurnPlanUpdated
+                        | CodexMethod::ServerRequestResolved
+                        | CodexMethod::TerminalInteraction
+                        | CodexMethod::FileChangeOutputDelta => {}
+                        CodexMethod::Unknown(method) => log_bad_codex_notification(
+                            method,
+                            &params,
+                            "unmapped same-thread notification",
+                        ),
+                        CodexMethod::SkillsChanged
+                        | CodexMethod::McpServerStartupStatusUpdated
+                        | CodexMethod::AccountRateLimitsUpdated
+                        | CodexMethod::Warning
+                        | CodexMethod::ConfigWarning
+                        | CodexMethod::RemoteControlStatusChanged
+                        | CodexMethod::ThreadStarted
+                        | CodexMethod::CommandApproval
+                        | CodexMethod::FileChangeApproval
+                        | CodexMethod::PermissionsApproval => log_bad_codex_notification(
+                            method_name,
                             &params,
                             "unmapped same-thread notification",
                         ),
                     }
                 }
                 Ok(CodexInbound::ServerRequest { id, method, params }) => {
-                    if !is_codex_approval_request(&method) {
+                    let method_name = method.as_str();
+                    let method = CodexMethod::parse(method_name);
+                    if !method.is_approval_request() {
                         zlog::warn!(
-                            "Unsupported Codex server request was not mapped: id={id:?} method={method} params={params}"
+                            "Unsupported Codex server request was not mapped: id={id:?} method={} params={params}",
+                            method_name,
                         );
-                        let message = format!("unsupported Codex server request: {method}");
+                        let message = format!("unsupported Codex server request: {method_name}");
                         let rejected =
                             encode_error_response(&id, -32601, &message).and_then(|encoded| {
                                 let writer = self
@@ -1742,7 +1772,7 @@ impl WorkerSession for CodexWorkerSession {
                     self.pending_inputs.insert(input_id.clone(), id);
                     return Some(WorkerEvent::NeedsInput(WorkerInput {
                         id: input_id,
-                        prompt: approval_prompt(&method, &params),
+                        prompt: approval_prompt(method_name, &params),
                         options: vec!["Allow".into(), "Decline".into()],
                         secret: false,
                     }));
@@ -2582,9 +2612,9 @@ fn codex_usage(value: &Value) -> TokenUsage {
     }
 }
 
-fn codex_telemetry(method: &str, params: &Value) -> Option<WorkerActivity> {
+fn codex_telemetry(method: CodexMethod<'_>, params: &Value) -> Option<WorkerActivity> {
     match method {
-        "mcpServer/startupStatus/updated" => Some(WorkerActivity::ServiceStatusChanged {
+        CodexMethod::McpServerStartupStatusUpdated => Some(WorkerActivity::ServiceStatusChanged {
             name: params.get("name")?.as_str()?.to_owned(),
             status: params.get("status")?.as_str()?.to_owned(),
             error: params
@@ -2596,7 +2626,7 @@ fn codex_telemetry(method: &str, params: &Value) -> Option<WorkerActivity> {
                 .filter(|value| !value.is_null())
                 .cloned(),
         }),
-        "account/rateLimits/updated" => Some(WorkerActivity::RateLimitsChanged {
+        CodexMethod::AccountRateLimitsUpdated => Some(WorkerActivity::RateLimitsChanged {
             limits: params.get("rateLimits")?.clone(),
         }),
         _ => None,
@@ -2630,18 +2660,24 @@ fn codex_child_thread_outcome(thread: &Value) -> Option<crate::agents::ChildSess
     }
 }
 
-fn codex_notification_is_for_thread(method: &str, params: &Value, thread_id: &str) -> bool {
+fn codex_notification_is_for_thread(
+    method: CodexMethod<'_>,
+    method_name: &str,
+    params: &Value,
+    thread_id: &str,
+) -> bool {
     match params.get("threadId").and_then(Value::as_str) {
         Some(reported) if reported != thread_id => false,
-        _ if matches!(method, "warning" | "configWarning") => {
-            zlog::warn!("Codex app-server {method}: {params}");
+        _ if method.tier() == CodexNotificationTier::Global => {
+            if matches!(method, CodexMethod::Warning | CodexMethod::ConfigWarning) {
+                zlog::warn!("Codex app-server {method_name}: {params}");
+            }
             false
         }
-        _ if method == "remoteControl/status/changed" => false,
         Some(_) => true,
-        None if method == "thread/started" => false,
+        None if method == CodexMethod::ThreadStarted => false,
         None => {
-            log_bad_codex_notification(method, params, "notification is missing threadId");
+            log_bad_codex_notification(method_name, params, "notification is missing threadId");
             false
         }
     }
@@ -2663,17 +2699,6 @@ fn codex_turn_failure(turn_error: Option<String>) -> String {
         Some(message) => format!("Codex worker turn failed: {message}"),
         None => "Codex worker turn failed".into(),
     }
-}
-
-fn is_codex_approval_request(method: &str) -> bool {
-    matches!(
-        method,
-        "item/commandExecution/requestApproval"
-            | "item/fileChange/requestApproval"
-            | "item/permissions/requestApproval"
-            | "execCommandApproval"
-            | "applyPatchApproval"
-    )
 }
 
 fn codex_passive_item(item: &Value) -> bool {

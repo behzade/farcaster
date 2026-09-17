@@ -770,7 +770,7 @@ fn answer_before_reasoning_uses_a_separate_content_slot() {
 fn maps_codex_telemetry() {
     assert_eq!(
         codex_telemetry(
-            "mcpServer/startupStatus/updated",
+            CodexMethod::McpServerStartupStatusUpdated,
             &json!({"name": "farcaster", "status": "ready"}),
         ),
         Some(WorkerActivity::ServiceStatusChanged {
@@ -784,7 +784,7 @@ fn maps_codex_telemetry() {
     let limits = json!({"primary": {"usedPercent": 40}});
     assert_eq!(
         codex_telemetry(
-            "account/rateLimits/updated",
+            CodexMethod::AccountRateLimitsUpdated,
             &json!({"rateLimits": limits.clone()}),
         ),
         Some(WorkerActivity::RateLimitsChanged { limits })
