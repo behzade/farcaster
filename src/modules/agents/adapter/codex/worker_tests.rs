@@ -1468,6 +1468,27 @@ fn malformed_success_is_delivery_unknown_for_every_prompt_mode() {
             &mut responses,
             &mut failures,
         );
+        if mode == PromptMode::FollowUp {
+            assert!(!responses.iter().any(|response| {
+                response.id.as_deref() == Some(later_id.as_str()) && response.result.is_ok()
+            }));
+            incoming
+                .send(Ok(CodexInbound::Notification {
+                    method: "item/started".into(),
+                    params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                        "type":"userMessage","clientId":"farcaster-queue-2","content":[
+                            {"type":"text","text":"later prompt"}
+                        ]
+                    }}),
+                }))
+                .expect("later queued delivery");
+            project(
+                &mut transport,
+                &mut conversation,
+                &mut responses,
+                &mut failures,
+            );
+        }
         assert!(responses.iter().any(|response| {
             response.id.as_deref() == Some(later_id.as_str()) && response.result.is_ok()
         }));
