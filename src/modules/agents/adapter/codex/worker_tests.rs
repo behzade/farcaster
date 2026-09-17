@@ -1070,7 +1070,11 @@ fn codex_usage_separates_cached_tokens_from_reported_input() {
 fn native_startup_configures_required_farcaster_mcp() {
     let mut command = std::process::Command::new("codex");
     configure_codex_app_server(&mut command, crate::agents::HarnessAccessMode::Full);
-    configure_farcaster_mcp(&mut command, "caller-1");
+    configure_farcaster_mcp(
+        &mut command,
+        "caller-1",
+        crate::agents::HarnessAccessMode::Full,
+    );
     let arguments = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -1093,6 +1097,20 @@ fn native_startup_configures_required_farcaster_mcp() {
         &"mcp_servers.farcaster.http_headers={\"farcaster-caller\"=\"caller-1\"}".to_owned()
     ));
     assert!(arguments.contains(&"mcp_servers.farcaster.required=true".to_owned()));
+    assert!(
+        arguments
+            .contains(&"mcp_servers.farcaster.default_tools_approval_mode=\"approve\"".to_owned())
+    );
+    for access_mode in [
+        crate::agents::HarnessAccessMode::Sandboxed,
+        crate::agents::HarnessAccessMode::Auto,
+    ] {
+        let mut command = std::process::Command::new("codex");
+        configure_farcaster_mcp(&mut command, "caller-1", access_mode);
+        assert!(!command.get_args().any(|argument| {
+            argument == "mcp_servers.farcaster.default_tools_approval_mode=\"approve\""
+        }));
+    }
 }
 
 #[test]
