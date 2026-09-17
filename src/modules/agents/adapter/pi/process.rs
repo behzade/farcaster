@@ -24,9 +24,10 @@ use crate::modules::agents::adapter::process_command::resolve_agent_program;
 use crate::{
     agents::extensions::ExtensionUiResponse,
     agents::{
-        AgentLaunchConfig, HarnessAccessMode, PeerMessage, SessionCommand, SessionEvent,
-        SessionResponse, WorkerActivityState, WorkerSendMode,
+        AgentLaunchConfig, HarnessAccessMode, PeerMessage, SessionActivityKind, SessionCommand,
+        SessionEvent, SessionResponse, WorkerActivityState, WorkerSendMode,
     },
+    modules::agents::contract::SessionActivity,
 };
 
 pub(in crate::modules::agents::adapter) fn launch_configuration(
@@ -1169,13 +1170,14 @@ impl PiRpcProcess {
                     SessionEvent::Interaction(request)
                 }
                 Ok(PiWireMessage::Event(event)) => {
-                    match event.get("type").and_then(Value::as_str) {
-                        Some("agent_start") => {
+                    let activity: SessionActivity = event.into();
+                    match activity.kind() {
+                        SessionActivityKind::AgentStarted => {
                             self.caller_identity.ensure_execution();
                             self.apply_steering_settled = false;
                             self.set_activity(WorkerActivityState::Working);
                         }
-                        Some("agent_settled") => {
+                        SessionActivityKind::AgentSettled => {
                             if !self.apply_steering_requests.is_empty() {
                                 self.apply_steering_settled = true;
                                 return SessionEvent::Stderr(String::new());
@@ -1184,7 +1186,7 @@ impl PiRpcProcess {
                         }
                         _ => {}
                     }
-                    SessionEvent::Activity(event.into())
+                    SessionEvent::Activity(activity)
                 }
                 Err(error) => SessionEvent::Failure(error),
             },
