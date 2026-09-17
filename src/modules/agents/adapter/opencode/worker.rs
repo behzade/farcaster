@@ -935,7 +935,10 @@ impl OpenCodeWorkerSession {
                     zlog::warn!("Failed to read OpenCode child session: {error}");
                 }
             }
-            if unversioned_opencode_event_type(reported_event_type) == "catalog.updated" {
+            if matches!(
+                unversioned_opencode_event_type(reported_event_type),
+                "catalog.updated" | "model.updated"
+            ) {
                 match self.refresh_catalog() {
                     Ok(Some(event)) => return Some(event),
                     Ok(None) => continue,

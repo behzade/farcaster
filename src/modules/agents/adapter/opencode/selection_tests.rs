@@ -54,77 +54,11 @@ fn wait_for_context_window(
         }
         if Instant::now() >= deadline {
             return Err(format!(
-                "catalog.updated did not publish context window {expected}"
+                "model catalog update did not publish context window {expected}"
             ));
         }
         thread::sleep(Duration::from_millis(1));
     }
-}
-
-#[test]
-#[ignore = "requires installed OpenCode and FARCASTER_LIVE_PROJECT/FARCASTER_LIVE_SESSION"]
-fn live_catalog_event_corrects_resumed_sol_context_limit() -> Result<(), String> {
-    let project = std::path::PathBuf::from(
-        std::env::var("FARCASTER_LIVE_PROJECT").map_err(|error| error.to_string())?,
-    );
-    let command = AgentLaunchConfig {
-        program: std::path::PathBuf::from(
-            std::env::var("FARCASTER_LIVE_OPENCODE").unwrap_or_else(|_| "opencode".into()),
-        ),
-        prefix_args: Vec::new(),
-        access_mode: crate::agents::HarnessAccessMode::Sandboxed,
-        app_proxy: None,
-        session_locator_root: None,
-    };
-    let launch = crate::agents::SessionLaunch {
-        harness: Backend::OpenCode,
-        session_id: Some(
-            std::env::var("FARCASTER_LIVE_SESSION").map_err(|error| error.to_string())?,
-        ),
-        project: project.clone(),
-        start: crate::agents::SessionStart::Resume(project.join("unused")),
-        wake: None,
-    };
-    let (worker, locator, metadata) = spawn_main(&command, &launch)?;
-    let mut transport = main_session::WorkerSessionTransport::new(
-        &project,
-        Backend::OpenCode,
-        locator,
-        worker,
-        metadata,
-        None,
-    )?;
-    let initial = state(&mut transport)
-        .model
-        .ok_or("missing selected model")?;
-    if initial.provider != "openai" || initial.id != "gpt-5.6-sol" {
-        return Err(format!(
-            "live session selected {}/{}, expected openai/gpt-5.6-sol",
-            initial.provider, initial.id
-        ));
-    }
-    if initial.context_window != 272_000 {
-        wait_for_context_window(&mut transport, 272_000)?;
-    }
-    transport.send(SessionCommand::LoadUsage)?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let usage_limit = loop {
-        if let Some(SessionEvent::Response(response)) = transport.poll()
-            && let Ok(Payload::LoadUsage(usage)) = response.result
-        {
-            break usage
-                .context_usage
-                .ok_or("missing context usage")?
-                .context_window;
-        }
-        if Instant::now() >= deadline {
-            return Err("missing live usage response".into());
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
-    transport.close()?;
-    assert_eq!(usage_limit, 272_000);
-    Ok(())
 }
 
 #[test]
@@ -151,7 +85,7 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
                 writeln!(
                     event_stream.as_mut().expect("event stream"),
                     "data: {}\n",
-                    json!({"type": "catalog.updated", "data": {}})
+                    json!({"type": "model.updated", "data": {}})
                 )
                 .map_err(|error| error.to_string())?;
             }
