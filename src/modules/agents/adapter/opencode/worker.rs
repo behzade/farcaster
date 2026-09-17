@@ -547,6 +547,7 @@ enum PendingOpenCodeInput {
 #[derive(Clone)]
 struct PendingOpenCodeDelivery {
     submission_id: Option<String>,
+    order: u64,
     mode: WorkerSendMode,
     message: String,
     images: Vec<crate::protocol::PromptImage>,
@@ -701,6 +702,7 @@ impl OpenCodeWorkerSession {
         }
         let pending = PendingOpenCodeDelivery {
             submission_id,
+            order: self.generation,
             mode,
             message,
             images,
@@ -1444,6 +1446,10 @@ impl WorkerSession for OpenCodeWorkerSession {
         true
     }
 
+    fn can_cancel_prompt_before_delivery(&self, _mode: WorkerSendMode) -> bool {
+        true
+    }
+
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
         let native_id = Self::next_internal_prompt_id();
         match self.send_prompt(
@@ -1556,10 +1562,21 @@ impl WorkerSession for OpenCodeWorkerSession {
         let mut client = self.server.client();
         let interrupted = client.interrupt(&self.session_id, false)?;
         let mut delivery_may_start = !self.delivered_awaiting_execution.is_empty();
-        for native_id in self.pending_deliveries.keys().cloned().collect::<Vec<_>>() {
+        let mut pending = self
+            .pending_deliveries
+            .iter()
+            .map(|(native_id, delivery)| (delivery.order, native_id.clone()))
+            .collect::<Vec<_>>();
+        pending.sort();
+        for (_, native_id) in pending {
             match client.cancel_inbox(&self.session_id, &native_id) {
                 Ok(true) => {
-                    self.pending_deliveries.remove(&native_id);
+                    if let Some(delivery) = self.pending_deliveries.remove(&native_id)
+                        && let Some(submission_id) = delivery.submission_id
+                    {
+                        self.pending
+                            .push_back(WorkerEvent::PromptCancelled { submission_id });
+                    }
                 }
                 Ok(false) => delivery_may_start = true,
                 Err(error) => return Err(error),

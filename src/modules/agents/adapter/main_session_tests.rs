@@ -22,6 +22,7 @@ struct ControlledPromptState {
     )>,
     acks: VecDeque<(String, Result<(), String>)>,
     events: VecDeque<WorkerEvent>,
+    can_cancel_before_delivery: bool,
     aborts: usize,
     closes: usize,
 }
@@ -31,6 +32,13 @@ struct ControlledPromptWorker(Arc<std::sync::Mutex<ControlledPromptState>>);
 impl WorkerSession for ControlledPromptWorker {
     fn tracks_prompt_delivery(&self, _: WorkerSendMode) -> bool {
         true
+    }
+
+    fn can_cancel_prompt_before_delivery(&self, _: WorkerSendMode) -> bool {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .can_cancel_before_delivery
     }
 
     fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
@@ -1779,6 +1787,240 @@ fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
             json!({"type": "message_start", "message": {"role": "user", "content": "redirect", "queued": true}}),
             json!({"type": "message_end", "message": {"role": "user", "content": "redirect", "queued": true}}),
         ]
+    );
+}
+
+#[test]
+fn tracked_admission_waits_for_delivery_and_duplicate_ack_is_idempotent() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+        can_cancel_before_delivery: true,
+        ..Default::default()
+    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "tracked-admission".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "do this next".into(),
+            images: Vec::new(),
+        })
+        .expect("submit follow-up");
+
+    for _ in 0..2 {
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .acks
+            .push_back((id.clone(), Ok(())));
+        let responses = project_transport(&mut transport, &mut conversation);
+        assert!(
+            responses
+                .iter()
+                .all(|response| response.id.as_deref() != Some(&id)),
+            "admission alone must not terminally resolve a tracked prompt"
+        );
+        assert_eq!(conversation.queue.follow_up, ["do this next"]);
+    }
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: id.clone(),
+                mode: WorkerSendMode::Queue,
+                message: "do this next".into(),
+            },
+        ));
+    let responses = project_transport(&mut transport, &mut conversation);
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response.id.as_deref() == Some(&id) && response.result.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .count(),
+        1
+    );
+    assert!(conversation.queue.follow_up.is_empty());
+}
+
+#[test]
+fn delivery_tracking_without_cancellation_proof_keeps_admission_terminal() {
+    use crate::conversation::ConversationState;
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "delivery-only".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("submit steer");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+
+    let responses = project_transport(&mut transport, &mut conversation);
+
+    assert!(
+        responses
+            .iter()
+            .any(|response| { response.id.as_deref() == Some(&id) && response.result.is_ok() })
+    );
+}
+
+#[test]
+fn definitive_abort_cancellation_rejects_undelivered_prompt_once() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+        can_cancel_before_delivery: true,
+        ..Default::default()
+    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "cancelled-admission".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("submit steer");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+    assert!(project_transport(&mut transport, &mut conversation).is_empty());
+    transport.send(SessionCommand::Abort).expect("abort");
+    project_transport(&mut transport, &mut conversation);
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::PromptCancelled {
+            submission_id: id.clone(),
+        });
+    let responses = project_transport(&mut transport, &mut conversation);
+    let prompt_responses = responses
+        .iter()
+        .filter(|response| response.id.as_deref() == Some(&id))
+        .collect::<Vec<_>>();
+    assert_eq!(prompt_responses.len(), 1);
+    assert_eq!(
+        prompt_responses[0]
+            .result
+            .as_ref()
+            .expect_err("cancelled prompt must fail")
+            .kind,
+        crate::agents::SessionResponseErrorKind::Cancelled
+    );
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .count(),
+        0
+    );
+    assert!(conversation.queue.steering.is_empty());
+}
+
+#[test]
+fn cancellation_after_delivery_unknown_does_not_emit_a_second_terminal_response() {
+    use crate::conversation::ConversationState;
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+        can_cancel_before_delivery: true,
+        ..Default::default()
+    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "unknown-then-cancelled".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("submit steer");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+    project_transport(&mut transport, &mut conversation);
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::PromptDeliveryUnknown {
+            submission_id: id.clone(),
+            error: "receipt lost".into(),
+        });
+    let unknown = project_transport(&mut transport, &mut conversation);
+    assert_eq!(
+        unknown
+            .iter()
+            .filter(|response| response.id.as_deref() == Some(&id))
+            .count(),
+        1
+    );
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::PromptCancelled {
+            submission_id: id.clone(),
+        });
+    let cancelled = project_transport(&mut transport, &mut conversation);
+    assert!(
+        cancelled
+            .iter()
+            .all(|response| response.id.as_deref() != Some(&id))
     );
 }
 

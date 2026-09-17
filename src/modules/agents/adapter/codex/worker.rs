@@ -757,6 +757,10 @@ impl WorkerSession for CodexWorkerSession {
         true
     }
 
+    fn can_cancel_prompt_before_delivery(&self, mode: WorkerSendMode) -> bool {
+        mode == WorkerSendMode::Queue
+    }
+
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
         self.send_with_images(message, mode, Vec::new())
     }
@@ -1099,6 +1103,9 @@ impl WorkerSession for CodexWorkerSession {
                         let deleted = result.get("deleted").and_then(Value::as_bool);
                         if let Err(error) = self.queue_delete_response(&client_id, deleted) {
                             return Some(WorkerEvent::Failed(error));
+                        }
+                        if let Some(event) = self.events.pop_front() {
+                            return Some(event);
                         }
                     }
                     Some(PendingRequest::HandoffTurn {

@@ -1,6 +1,9 @@
 use std::{
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -10,7 +13,7 @@ use super::{
     ComposerImage, ComposerPaste, FarcasterApp, pastes as composer_pastes, prompt_fragments,
 };
 use crate::{
-    app::composer::sessions::{ComposerSnapshot, session_target},
+    app::composer::sessions::{ComposerSessions, ComposerSnapshot, session_target},
     app::composer::user_invocations,
     protocol::{PromptImage, PromptMode},
     runtime::RuntimeCommand,
@@ -93,7 +96,7 @@ impl FarcasterApp {
             self.snapshot.selected_session.as_deref(),
             &self.sessions.visible,
         );
-        let submission_id = uuid::Uuid::new_v4().to_string();
+        let submission_id = next_submission_id();
         match self.runtime.send(RuntimeCommand::Prompt {
             submission_id: submission_id.clone(),
             target: target.clone(),
@@ -254,26 +257,20 @@ impl FarcasterApp {
                 continue;
             }
 
-            let restored = if pending.append_on_failure {
-                self.capture_composer_session(cx);
-                Some(
-                    self.composer
-                        .sessions
-                        .append_to_draft(&target, &pending.text),
-                )
-            } else {
-                self.composer
-                    .sessions
-                    .restore_submitted_text(&target, pending.text.clone())
-            };
-            if !pending.images.is_empty() {
-                let images = self.composer.images.entry(target.clone()).or_default();
-                images.splice(0..0, pending.images.clone());
-            }
-            if !pending.pastes.is_empty() {
-                let pastes = self.composer.pastes.entry(target.clone()).or_default();
-                pastes.splice(0..0, pending.pastes.clone());
-            }
+            // Preserve any newer draft, then restore each rejection in the
+            // submission order established above.
+            self.capture_composer_session(cx);
+            let restored = restore_rejected_text(&mut self.composer.sessions, &target, &pending);
+            self.composer
+                .images
+                .entry(target.clone())
+                .or_default()
+                .extend(pending.images.iter().cloned());
+            self.composer
+                .pastes
+                .entry(target.clone())
+                .or_default()
+                .extend(pending.pastes.iter().cloned());
             self.save_composer_attachments(&target);
             if let Some(snapshot) = restored
                 && self.composer.sessions.current_target() == target
@@ -296,6 +293,23 @@ impl FarcasterApp {
     }
 }
 
+fn restore_rejected_text(
+    sessions: &mut ComposerSessions,
+    target: &str,
+    pending: &PendingSubmission,
+) -> Option<ComposerSnapshot> {
+    if pending.text.is_empty() {
+        return None;
+    }
+    if pending.append_on_failure {
+        return Some(sessions.append_to_draft(target, &pending.text));
+    }
+    match sessions.restore_submitted_text(target, pending.text.clone()) {
+        Some(snapshot) => Some(snapshot),
+        None => Some(sessions.append_to_draft(target, &pending.text)),
+    }
+}
+
 fn restores_composer(outcome: crate::agents::PromptOutcome) -> bool {
     outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance
 }
@@ -312,7 +326,7 @@ pub(in crate::app) fn take_resolved_pending_submissions(
         .iter()
         .filter_map(|(id, pending)| pending.result.clone().map(|result| (id.clone(), result)))
         .collect::<Vec<_>>();
-    completed
+    let mut resolved = completed
         .into_iter()
         .filter_map(|(id, (outcome, session))| {
             pending.remove(&id).map(|submission| {
@@ -320,7 +334,22 @@ pub(in crate::app) fn take_resolved_pending_submissions(
                 (target, submission, outcome, session)
             })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    resolved.sort_by(|left, right| submission_order(&left.1, &right.1));
+    resolved
+}
+
+fn submission_order(left: &PendingSubmission, right: &PendingSubmission) -> std::cmp::Ordering {
+    left.submitted_at
+        .cmp(&right.submitted_at)
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+static NEXT_SUBMISSION_ORDER: AtomicU64 = AtomicU64::new(0);
+
+fn next_submission_id() -> String {
+    let order = NEXT_SUBMISSION_ORDER.fetch_add(1, Ordering::Relaxed);
+    format!("{order:020}-{}", uuid::Uuid::new_v4())
 }
 
 pub(in crate::app) fn has_pending_submission(
@@ -330,31 +359,6 @@ pub(in crate::app) fn has_pending_submission(
     pending
         .values()
         .any(|submission| submission.submitted_target == target)
-}
-
-pub(in crate::app) fn pending_prompt_queue(
-    pending: &std::collections::HashMap<String, PendingSubmission>,
-    target: &str,
-) -> crate::conversation::QueueState {
-    let mut queue = crate::conversation::QueueState::default();
-    let mut submissions = pending
-        .values()
-        .filter(|submission| submission.submitted_target == target && submission.result.is_none())
-        .collect::<Vec<_>>();
-    submissions.sort_by(|left, right| {
-        left.submitted_at
-            .cmp(&right.submitted_at)
-            .then_with(|| left.id.cmp(&right.id))
-    });
-    for submission in submissions {
-        let messages = match submission.mode {
-            PromptMode::Steer => &mut queue.steering,
-            PromptMode::FollowUp => &mut queue.follow_up,
-            PromptMode::Normal => continue,
-        };
-        messages.push(pending_queue_preview(submission));
-    }
-    queue
 }
 
 // Presentation only: retain attachment information without changing the payload
@@ -376,18 +380,40 @@ fn pending_queue_preview(submission: &PendingSubmission) -> String {
     parts.join(" · ")
 }
 
-/// The queue shown by the production composer. Native queue state and local
-/// submissions are separate evidence, so keep every entry and its order within
-/// each source instead of matching or deduplicating by text.
+/// The queue shown by the production composer. A pending submission first
+/// appears locally, then the backend queue begins reflecting that same item
+/// after admission. Overlay matching local entries onto native entries so this
+/// handoff does not briefly render one submission twice.
 pub(in crate::app) fn visible_prompt_queue(
     native: &crate::conversation::QueueState,
     pending: &std::collections::HashMap<String, PendingSubmission>,
     target: &str,
 ) -> crate::conversation::QueueState {
     let mut visible = native.clone();
-    let local = pending_prompt_queue(pending, target);
-    visible.steering.extend(local.steering);
-    visible.follow_up.extend(local.follow_up);
+    let mut submissions = pending
+        .values()
+        .filter(|submission| submission.submitted_target == target && submission.result.is_none())
+        .collect::<Vec<_>>();
+    submissions.sort_by(|left, right| submission_order(left, right));
+    let mut matched_steering = vec![false; visible.steering.len()];
+    let mut matched_follow_up = vec![false; visible.follow_up.len()];
+    for submission in submissions {
+        let (messages, matched) = match submission.mode {
+            PromptMode::Steer => (&mut visible.steering, &mut matched_steering),
+            PromptMode::FollowUp => (&mut visible.follow_up, &mut matched_follow_up),
+            PromptMode::Normal => continue,
+        };
+        let preview = pending_queue_preview(submission);
+        if let Some(index) = messages.iter().enumerate().find_map(|(index, message)| {
+            (!matched[index] && message == &submission.text).then_some(index)
+        }) {
+            matched[index] = true;
+            messages[index] = preview;
+        } else {
+            messages.push(preview);
+            matched.push(true);
+        }
+    }
     visible
 }
 

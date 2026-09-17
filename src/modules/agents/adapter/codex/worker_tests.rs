@@ -2146,7 +2146,17 @@ fn abort_cancels_handoff_but_acknowledges_and_deletes_late_queue_add() {
         id: CodexRequestId::Number(4),
         result: json!({"deleted":true}),
     }));
-    assert!(session.poll().is_none());
+    let cancelled = session.poll();
+    assert!(
+        matches!(
+            cancelled,
+            Some(WorkerEvent::PromptCancelled {
+                ref submission_id,
+                ..
+            }) if submission_id == "queue-1"
+        ),
+        "unexpected cancellation event: {cancelled:?}"
+    );
     assert!(
         session.handoff.is_none(),
         "completed cancel must release handoff"

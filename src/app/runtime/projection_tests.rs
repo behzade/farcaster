@@ -116,6 +116,34 @@ fn cancelled_background_refreshes_preserve_transcript_and_status() {
 }
 
 #[test]
+fn cancelled_undelivered_prompt_returns_ownership_without_command_error() {
+    let (mut owner, events) = owner_without_process(std::env::temp_dir());
+    owner.pending_prompt_id = Some("pending-steer".into());
+    owner.pending_submission_id = Some("composer-steer".into());
+    owner.pending_prompt_target = Some("session:one".into());
+    owner.active_snapshot_mut().status = "Stopping".into();
+
+    owner.apply_response(SessionResponse::cancelled(
+        "pending-steer".into(),
+        SessionOperation::Prompt(PromptMode::Steer),
+        "Prompt cancelled before delivery".into(),
+    ));
+
+    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.pending_prompt_target.is_none());
+    assert_eq!(owner.active_snapshot().status, "Stopping");
+    assert!(owner.active_snapshot().conversation.items.is_empty());
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            submission_id: Some(id),
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            ..
+        } if id == "composer-steer"
+    )));
+}
+
+#[test]
 fn cancelled_startup_query_resolves_deferred_prompt_failure() {
     for operation in [SessionOperation::LoadState, SessionOperation::LoadHistory] {
         let (mut owner, _events) = owner_without_process(std::env::temp_dir());

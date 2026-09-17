@@ -17,6 +17,13 @@ impl BatchInput {
 }
 
 impl CodexWorkerSession {
+    fn cancel_delivery(&mut self, submission_id: Option<String>) {
+        if let Some(submission_id) = submission_id {
+            self.events
+                .push_back(WorkerEvent::PromptCancelled { submission_id });
+        }
+    }
+
     pub(super) fn capture_handoff_target(&mut self, turn_id: &str) {
         if let Some(handoff) = self.handoff.as_mut()
             && handoff.phase == HandoffPhase::Interrupting
@@ -123,6 +130,7 @@ impl CodexWorkerSession {
         let Some(input) = self.native_inputs.get_mut(client_id) else {
             return Ok(());
         };
+        let submission_id = input.delivery.submission_id.clone();
         let NativeInputKind::Queue {
             claim_pending,
             claimed,
@@ -155,6 +163,7 @@ impl CodexWorkerSession {
             self.native_inputs.remove(client_id);
             self.native_input_order.retain(|queued| queued != client_id);
             self.client_submissions.remove(client_id);
+            self.cancel_delivery(submission_id);
             self.finish_cancelled_handoff();
         }
         self.maybe_submit_handoff()
@@ -359,11 +368,13 @@ impl CodexWorkerSession {
         let mut retry = VecDeque::new();
         if let Some(batch) = self.batch_deliveries.remove(client_id) {
             for entry in batch {
-                if entry.needs_ack {
+                if cancelled {
+                    self.cancel_delivery(entry.delivery.submission_id);
+                } else if entry.needs_ack {
                     if let Some(id) = entry.delivery.submission_id {
                         self.record_prompt_ack(id, Err(error.into()));
                     }
-                } else if !cancelled && let Some((id, input)) = entry.claimed {
+                } else if let Some((id, input)) = entry.claimed {
                     // Admission preceded the handoff, so the caller no longer
                     // owns this input. Preserve it for explicit retry only.
                     self.native_inputs.insert(
@@ -394,6 +405,16 @@ impl CodexWorkerSession {
     }
 
     pub(super) fn discard_retry_inputs(&mut self) {
+        let cancelled = self
+            .native_input_order
+            .iter()
+            .filter_map(|client_id| self.native_inputs.get(client_id))
+            .filter(|input| matches!(input.kind, NativeInputKind::Retry))
+            .filter_map(|input| input.delivery.submission_id.clone())
+            .collect::<Vec<_>>();
+        for submission_id in cancelled {
+            self.cancel_delivery(Some(submission_id));
+        }
         self.native_inputs
             .retain(|_, input| !matches!(input.kind, NativeInputKind::Retry));
         self.native_input_order

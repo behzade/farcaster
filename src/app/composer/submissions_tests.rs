@@ -35,6 +35,14 @@ fn pending() -> PendingSubmission {
     }
 }
 
+fn image(data: &str) -> ComposerImage {
+    ComposerImage {
+        prompt: PromptImage::new(data.into(), "image/png".into()),
+        preview: Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, Vec::new())),
+        byte_len: 0,
+    }
+}
+
 #[test]
 fn archived_sessions_activate_when_their_message_is_sent() {
     let path = Path::new("/sessions/inactive.jsonl");
@@ -96,7 +104,11 @@ fn unresolved_queue_keeps_submission_order_and_equal_text() {
     let pending =
         std::collections::HashMap::from([(second.id.clone(), second), (first.id.clone(), first)]);
 
-    let queue = pending_prompt_queue(&pending, "session:compacting");
+    let queue = visible_prompt_queue(
+        &crate::conversation::QueueState::default(),
+        &pending,
+        "session:compacting",
+    );
     assert_eq!(queue.steering, ["same text"]);
     assert_eq!(queue.follow_up, ["same text"]);
 }
@@ -116,7 +128,11 @@ fn attachment_only_submissions_are_visible_in_both_queue_modes() {
             ..pending()
         };
         let pending = std::collections::HashMap::from([(submission.id.clone(), submission)]);
-        let queue = pending_prompt_queue(&pending, "session:compacting");
+        let queue = visible_prompt_queue(
+            &crate::conversation::QueueState::default(),
+            &pending,
+            "session:compacting",
+        );
         let entries = match mode {
             PromptMode::Steer => queue.steering,
             _ => queue.follow_up,
@@ -126,7 +142,7 @@ fn attachment_only_submissions_are_visible_in_both_queue_modes() {
 }
 
 #[test]
-fn visible_queue_is_the_native_queue_plus_each_local_submission() {
+fn visible_queue_overlays_a_local_submission_already_reflected_by_the_backend() {
     let mut local = pending();
     local.id = "local-steer".into();
     local.text = "same text".into();
@@ -138,8 +154,46 @@ fn visible_queue_is_the_native_queue_plus_each_local_submission() {
 
     let visible = visible_prompt_queue(&native, &pending, "session:compacting");
 
-    assert_eq!(visible.steering, ["same text", "same text"]);
+    assert_eq!(visible.steering, ["same text"]);
     assert_eq!(visible.follow_up, ["native follow-up"]);
+}
+
+#[test]
+fn visible_queue_preserves_the_count_of_repeated_submissions() {
+    let first_at = Instant::now();
+    let mut first = pending();
+    first.id = "first".into();
+    first.text = "same text".into();
+    first.submitted_at = first_at;
+    let mut second = first.clone();
+    second.id = "second".into();
+    second.submitted_at = first_at + Duration::from_millis(1);
+    let pending =
+        std::collections::HashMap::from([(first.id.clone(), first), (second.id.clone(), second)]);
+    let native = crate::conversation::QueueState {
+        steering: vec!["same text".into()],
+        follow_up: Vec::new(),
+    };
+
+    let visible = visible_prompt_queue(&native, &pending, "session:compacting");
+
+    assert_eq!(visible.steering, ["same text", "same text"]);
+}
+
+#[test]
+fn visible_queue_uses_local_attachment_preview_for_a_matching_native_item() {
+    let mut local = pending();
+    local.text.clear();
+    local.images.push(image("queued-image"));
+    let pending = std::collections::HashMap::from([(local.id.clone(), local)]);
+    let native = crate::conversation::QueueState {
+        steering: vec![String::new()],
+        follow_up: Vec::new(),
+    };
+
+    let visible = visible_prompt_queue(&native, &pending, "session:compacting");
+
+    assert_eq!(visible.steering, ["1 image"]);
 }
 
 #[test]
@@ -167,6 +221,115 @@ fn terminal_unknown_releases_the_in_memory_submission_to_durable_recovery() {
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].2, crate::agents::PromptOutcome::DeliveryUnknown);
     assert!(!restores_composer(resolved[0].2));
+}
+
+#[test]
+fn resolved_submissions_are_ordered_by_submission_time_then_id() {
+    let base = Instant::now();
+    let resolved_submission = |id: &str, submitted_at: Instant| PendingSubmission {
+        id: id.into(),
+        submitted_at,
+        result: Some((crate::agents::PromptOutcome::RejectedBeforeAcceptance, None)),
+        ..pending()
+    };
+    let mut submissions = std::collections::HashMap::from([
+        (
+            "late".to_owned(),
+            resolved_submission("late", base + Duration::from_millis(2)),
+        ),
+        (
+            "tie-b".to_owned(),
+            resolved_submission("tie-b", base + Duration::from_millis(1)),
+        ),
+        (
+            "tie-a".to_owned(),
+            resolved_submission("tie-a", base + Duration::from_millis(1)),
+        ),
+        ("early".to_owned(), resolved_submission("early", base)),
+    ]);
+
+    let resolved = take_resolved_pending_submissions(&mut submissions);
+
+    let ids = resolved
+        .iter()
+        .map(|(_, pending, _, _)| pending.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["early", "tie-a", "tie-b", "late"]);
+}
+
+#[test]
+fn rejected_submissions_restore_every_text_in_order() {
+    use crate::app::composer::sessions::ComposerSessions;
+
+    let target = "session:one";
+    let first = PendingSubmission {
+        id: "first".into(),
+        text: "first".into(),
+        ..pending()
+    };
+    let second = PendingSubmission {
+        id: "second".into(),
+        text: "second".into(),
+        ..pending()
+    };
+    let mut sessions = ComposerSessions::for_test(target.into());
+
+    let first_restored = restore_rejected_text(&mut sessions, target, &first);
+    let second_restored = restore_rejected_text(&mut sessions, target, &second);
+
+    assert!(first_restored.is_some());
+    assert!(second_restored.is_some());
+    assert_eq!(sessions.snapshot_for(target).text, "first\n\nsecond");
+}
+
+#[test]
+fn rejected_submissions_keep_an_existing_newer_draft() {
+    use crate::app::composer::sessions::ComposerSessions;
+
+    let target = "session:one";
+    let first = PendingSubmission {
+        id: "first".into(),
+        text: "first".into(),
+        ..pending()
+    };
+    let second = PendingSubmission {
+        id: "second".into(),
+        text: "second".into(),
+        ..pending()
+    };
+    let mut sessions = ComposerSessions::for_test(target.into());
+    sessions.capture_current(ComposerSnapshot::new("newer draft".into(), 11, 11..11));
+
+    let _ = restore_rejected_text(&mut sessions, target, &first);
+    let _ = restore_rejected_text(&mut sessions, target, &second);
+
+    assert_eq!(
+        sessions.snapshot_for(target).text,
+        "newer draft\n\nfirst\n\nsecond"
+    );
+}
+
+#[test]
+fn restoring_rejected_text_leaves_composer_history_alone() {
+    use crate::app::composer::sessions::ComposerSessions;
+
+    let target = "session:one";
+    let mut sessions = ComposerSessions::for_test(target.into());
+    sessions.record_submission(target, "sent prompt");
+    let rejected = PendingSubmission {
+        text: "restored text".into(),
+        ..pending()
+    };
+
+    let _ = restore_rejected_text(&mut sessions, target, &rejected);
+
+    // If restoring rewrote history, the newest entry would be "restored text".
+    assert_eq!(
+        sessions
+            .previous_history(ComposerSnapshot::default())
+            .map(|snapshot| snapshot.text),
+        Some("sent prompt".into())
+    );
 }
 
 #[test]

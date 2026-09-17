@@ -373,6 +373,24 @@ impl RuntimeOwner {
                 }
                 return;
             }
+            if is_prompt_response
+                && error.kind == crate::agents::SessionResponseErrorKind::Cancelled
+            {
+                // Abort deliberately returns ownership of an undelivered input
+                // to the composer. It is not a command failure and should not
+                // add an error row after the prompt result restores the draft.
+                let running = self
+                    .active_snapshot()
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.is_streaming);
+                conversation_mut(self.active_snapshot_mut()).running = running;
+                self.maybe_send_deferred_prompt();
+                if self.parked_snapshot.is_none() {
+                    self.publish();
+                }
+                return;
+            }
             let startup_query = matches!(
                 operation,
                 SessionOperation::LoadState | SessionOperation::LoadHistory

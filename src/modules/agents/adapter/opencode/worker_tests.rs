@@ -817,6 +817,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
                 "steer-1".into(),
                 PendingOpenCodeDelivery {
                     submission_id: Some("submission-steer".into()),
+                    order: 0,
                     mode: WorkerSendMode::Steer,
                     message: "same text".into(),
                     images: vec![crate::protocol::PromptImage::new(
@@ -830,6 +831,7 @@ fn steering_interruption_preserves_delivery_and_later_abort_settles() -> Result<
                 "queue-1".into(),
                 PendingOpenCodeDelivery {
                     submission_id: Some("submission-queue".into()),
+                    order: 1,
                     mode: WorkerSendMode::Queue,
                     message: "same text".into(),
                     images: vec![crate::protocol::PromptImage::new(
@@ -999,6 +1001,7 @@ fn cancelled_steering_is_requeued_instead_of_lost() -> Result<(), String> {
             "cancelled-steer".into(),
             PendingOpenCodeDelivery {
                 submission_id: Some("submission-steer".into()),
+                order: 0,
                 mode: WorkerSendMode::Steer,
                 message: "do this instead".into(),
                 images: vec![crate::protocol::PromptImage::new(
@@ -1060,7 +1063,7 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
     let requests = Arc::new(Mutex::new(Vec::new()));
     let recorded = Arc::clone(&requests);
     let fixture = thread::spawn(move || -> Result<(), String> {
-        for index in 0..2 {
+        for index in 0..4 {
             let (mut stream, _) = listener.accept().map_err(|error| error.to_string())?;
             let mut request = Vec::new();
             let mut byte = [0_u8; 1];
@@ -1077,6 +1080,15 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
             match index {
                 0 => {
                     let response = r#"{"interrupted":false}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{response}",
+                        response.len()
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+                1 | 2 => {
+                    let response = r#"{}"#;
                     write!(
                         stream,
                         "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{response}",
@@ -1138,16 +1150,41 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         context_window: 0,
         pending_inputs: HashMap::new(),
         context_windows: HashMap::new(),
-        pending_deliveries: HashMap::from([(
-            "msg_delivered".into(),
-            PendingOpenCodeDelivery {
-                submission_id: Some("delivered".into()),
-                mode: WorkerSendMode::Queue,
-                message: "delivered".into(),
-                images: Vec::new(),
-                clears_abort_barrier: false,
-            },
-        )]),
+        pending_deliveries: HashMap::from([
+            (
+                "msg_delivered".into(),
+                PendingOpenCodeDelivery {
+                    submission_id: Some("delivered".into()),
+                    order: 0,
+                    mode: WorkerSendMode::Queue,
+                    message: "delivered".into(),
+                    images: Vec::new(),
+                    clears_abort_barrier: false,
+                },
+            ),
+            (
+                "msg_cancelled_first".into(),
+                PendingOpenCodeDelivery {
+                    submission_id: Some("cancelled-first".into()),
+                    order: 1,
+                    mode: WorkerSendMode::Steer,
+                    message: "cancelled first".into(),
+                    images: Vec::new(),
+                    clears_abort_barrier: false,
+                },
+            ),
+            (
+                "msg_cancelled_second".into(),
+                PendingOpenCodeDelivery {
+                    submission_id: Some("cancelled-second".into()),
+                    order: 2,
+                    mode: WorkerSendMode::Queue,
+                    message: "cancelled second".into(),
+                    images: Vec::new(),
+                    clears_abort_barrier: false,
+                },
+            ),
+        ]),
         delivered_awaiting_execution: HashSet::new(),
         active_tools: HashMap::new(),
         generation: 0,
@@ -1176,6 +1213,20 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
     ));
     worker.abort()?;
     assert!(worker.abort_waiting_for_start);
+    assert!(matches!(
+        worker.pending.pop_front(),
+        Some(WorkerEvent::PromptCancelled {
+            submission_id,
+            ..
+        }) if submission_id == "cancelled-first"
+    ));
+    assert!(matches!(
+        worker.pending.pop_front(),
+        Some(WorkerEvent::PromptCancelled {
+            submission_id,
+            ..
+        }) if submission_id == "cancelled-second"
+    ));
     assert!(worker.pending.is_empty());
     assert!(worker.pending_deliveries.is_empty());
     sender
@@ -1196,7 +1247,11 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         .map_err(|_| "abort fixture panicked".to_owned())??;
     let requests = requests.lock().map_err(|error| error.to_string())?;
     assert!(requests[0].contains("interrupt?continue=false"));
-    assert!(requests[1].contains("interrupt?continue=false"));
+    assert!(requests[1].starts_with("DELETE "));
+    assert!(requests[1].contains("/inbox/msg_cancelled_first"));
+    assert!(requests[2].starts_with("DELETE "));
+    assert!(requests[2].contains("/inbox/msg_cancelled_second"));
+    assert!(requests[3].contains("interrupt?continue=false"));
     Ok(())
 }
 
@@ -1272,6 +1327,7 @@ fn queued_prompt_during_stream_does_not_restart_visible_assistant_text() -> Resu
         Some("queue-1"),
         PendingOpenCodeDelivery {
             submission_id: Some("submission-queue".into()),
+            order: 0,
             mode: WorkerSendMode::Queue,
             message: "next task".into(),
             images: Vec::new(),

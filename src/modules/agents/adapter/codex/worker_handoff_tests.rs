@@ -159,16 +159,28 @@ fn rejected_claimed_handoff_retries_exact_input_only_on_explicit_apply() {
 fn abort_discards_rejected_handoff_instead_of_retrying_it() {
     for abort_before_rejection in [false, true] {
         let (mut session, mut sent, batch) = claimed_batch(false);
+        let mut cancelled = Vec::new();
         if abort_before_rejection {
             session.abort().expect("abort session");
         }
         reject(&mut session, &batch);
         if !abort_before_rejection {
             session.abort().expect("abort session");
+            while let Some(event) = session.poll() {
+                if let WorkerEvent::PromptCancelled { submission_id, .. } = event {
+                    cancelled.push(submission_id);
+                }
+            }
             let cleanup = request(&mut sent);
             assert_eq!(cleanup["method"], "thread/backgroundTerminals/clean");
             reply(&mut session, &cleanup, json!({}));
         }
+        while let Some(event) = session.poll() {
+            if let WorkerEvent::PromptCancelled { submission_id, .. } = event {
+                cancelled.push(submission_id);
+            }
+        }
+        assert_eq!(cancelled, ["accepted-0", "accepted-1"]);
         let before = session.next_id;
         session.apply_steering().expect("apply steering");
         assert_eq!(session.next_id, before);

@@ -176,6 +176,9 @@ fn run(
                         parent.report(format!("Input delivery is unknown: {error}"));
                     }
                 }
+                // Cancellation returns ownership to the submitting composer;
+                // it is expected abort behavior, not a worker report.
+                WorkerEvent::PromptCancelled { .. } => {}
                 WorkerEvent::Failed(error) => break 'run error,
             }
         }

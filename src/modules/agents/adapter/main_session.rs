@@ -42,7 +42,14 @@ fn finished_tool_result(result: Value) -> Value {
 
 struct PendingPrompt {
     requested_mode: PromptMode,
-    unknown: bool,
+    state: PendingPromptState,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PendingPromptState {
+    AwaitingAdmission,
+    Admitted,
+    Unknown,
 }
 
 struct PromptDelivery {
@@ -51,6 +58,7 @@ struct PromptDelivery {
     message: String,
     content: Value,
     delivery_tracked: bool,
+    defer_response_until_delivery: bool,
     acknowledged: bool,
     delivered: bool,
     aborted: bool,
@@ -184,7 +192,7 @@ impl WorkerSessionTransport {
             && self
                 .pending_prompts
                 .get(&id)
-                .is_some_and(|prompt| prompt.unknown)
+                .is_some_and(|prompt| prompt.state == PendingPromptState::Unknown)
         {
             return;
         }
@@ -202,22 +210,41 @@ impl WorkerSessionTransport {
             result
         };
         if result.is_ok() {
-            self.message_count = self.message_count.saturating_add(1);
+            let mut enqueue = None;
+            let mut awaiting_delivery_proof = false;
             if let Some(delivery) = self
                 .prompt_deliveries
                 .iter_mut()
                 .find(|delivery| delivery.request_id == id)
             {
+                let newly_admitted = !delivery.acknowledged;
                 delivery.acknowledged = true;
-                if !delivery.delivered {
+                if newly_admitted && !delivery.delivered {
                     self.pending.push_back(delivery.event("accepted"));
+                    if !delivery.aborted {
+                        enqueue = Some((delivery.mode, delivery.message.clone()));
+                    }
                 }
-                if !delivery.delivered && !delivery.aborted {
-                    let mode = delivery.mode;
-                    let message = delivery.message.clone();
-                    self.enqueue_message(mode, message);
-                }
+                awaiting_delivery_proof =
+                    delivery.defer_response_until_delivery && !delivery.delivered;
             }
+            if let Some((mode, message)) = enqueue {
+                self.enqueue_message(mode, message);
+            }
+            if awaiting_delivery_proof {
+                // Admission is not delivery proof. Keep the pending prompt and
+                // defer the terminal reply until delivery proves admission, or
+                // until an abort cancellation terminally rejects it.
+                self.pending_prompts.insert(
+                    id,
+                    PendingPrompt {
+                        requested_mode,
+                        state: PendingPromptState::Admitted,
+                    },
+                );
+                return;
+            }
+            self.finish_prompt_success(&id, requested_mode);
         } else {
             if let Some(delivery) = self
                 .prompt_deliveries
@@ -228,17 +255,24 @@ impl WorkerSessionTransport {
             }
             self.prompt_deliveries
                 .retain(|delivery| delivery.request_id != id);
+            let error = result.unwrap_err();
+            let response =
+                SessionResponse::failure(Some(id), SessionOperation::Prompt(requested_mode), error);
+            self.pending.push_back(SessionEvent::Response(response));
+            return;
         }
         self.prompt_deliveries.retain(|delivery| {
             !(delivery.request_id == id && delivery.acknowledged && delivery.delivered)
         });
-        let response = match result {
-            Ok(()) => SessionResponse::success(Some(id), Payload::Prompt(requested_mode)),
-            Err(error) => {
-                SessionResponse::failure(Some(id), SessionOperation::Prompt(requested_mode), error)
-            }
-        };
-        self.pending.push_back(SessionEvent::Response(response));
+    }
+
+    fn finish_prompt_success(&mut self, id: &str, requested_mode: PromptMode) {
+        self.message_count = self.message_count.saturating_add(1);
+        self.pending
+            .push_back(SessionEvent::Response(SessionResponse::success(
+                Some(id.to_owned()),
+                Payload::Prompt(requested_mode),
+            )));
     }
 
     fn finish_prompt_unknown(&mut self, id: String, error: String) {
@@ -253,7 +287,9 @@ impl WorkerSessionTransport {
         let Some(prompt) = self.pending_prompts.get_mut(&id) else {
             return;
         };
-        if std::mem::replace(&mut prompt.unknown, true) {
+        if std::mem::replace(&mut prompt.state, PendingPromptState::Unknown)
+            == PendingPromptState::Unknown
+        {
             return;
         }
         let mode = prompt.requested_mode;
@@ -268,6 +304,49 @@ impl WorkerSessionTransport {
         self.pending.push_back(SessionEvent::Response(
             SessionResponse::prompt_delivery_unknown(id, mode, error),
         ));
+    }
+
+    fn finish_prompt_cancelled(&mut self, id: String) {
+        if self
+            .prompt_deliveries
+            .iter()
+            .any(|delivery| delivery.request_id == id && delivery.delivered)
+        {
+            self.finish_prompt_ack(id, Ok(()));
+            return;
+        }
+        if self
+            .pending_prompts
+            .get(&id)
+            .is_some_and(|prompt| prompt.state == PendingPromptState::Unknown)
+        {
+            // DeliveryUnknown is already terminal and owned by durable
+            // recovery. Do not emit a second terminal response, but release
+            // transport correlation now that cancellation is definitive.
+            self.pending_prompts.remove(&id);
+            self.prompt_deliveries
+                .retain(|delivery| delivery.request_id != id);
+            return;
+        }
+        let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(&id) else {
+            return;
+        };
+        if let Some(delivery) = self
+            .prompt_deliveries
+            .iter_mut()
+            .find(|delivery| delivery.request_id == id)
+        {
+            delivery.aborted = true;
+            self.pending.push_back(delivery.event("rejected"));
+        }
+        self.prompt_deliveries
+            .retain(|delivery| delivery.request_id != id);
+        self.pending
+            .push_back(SessionEvent::Response(SessionResponse::cancelled(
+                id,
+                SessionOperation::Prompt(requested_mode),
+                "Prompt cancelled before delivery".into(),
+            )));
     }
 
     fn drain_prompt_acks(&mut self) {
@@ -407,6 +486,9 @@ impl WorkerSessionTransport {
                 error,
             } => {
                 self.finish_prompt_unknown(submission_id, error);
+            }
+            WorkerEvent::PromptCancelled { submission_id } => {
+                self.finish_prompt_cancelled(submission_id);
             }
             WorkerEvent::Failed(error) => {
                 for id in self.pending_prompts.keys().cloned().collect::<Vec<_>>() {
@@ -684,6 +766,16 @@ impl WorkerSessionTransport {
         content: Value,
     ) {
         let submission_id = self.acknowledge_delivery(submission_id, mode, text);
+        if let Some(id) = submission_id.as_deref()
+            && self
+                .pending_prompts
+                .get(id)
+                .is_some_and(|prompt| prompt.state == PendingPromptState::Admitted)
+            && let Some(PendingPrompt { requested_mode, .. }) = self.pending_prompts.remove(id)
+        {
+            // A delivery-tracked admission was held; this is its delivery proof.
+            self.finish_prompt_success(id, requested_mode);
+        }
         self.finish_assistant_message(None);
         let message =
             json!({"role":"user", "content":content, "queued":mode != WorkerSendMode::Prompt});
@@ -844,6 +936,8 @@ impl SessionTransport for WorkerSessionTransport {
                     (message.clone(), json!(content))
                 };
                 let delivery_tracked = self.worker.tracks_prompt_delivery(worker_mode);
+                let defer_response_until_delivery =
+                    delivery_tracked && self.worker.can_cancel_prompt_before_delivery(worker_mode);
                 let accepted =
                     self.worker
                         .submit_prompt(id.clone(), message, worker_mode, images)?;
@@ -851,7 +945,7 @@ impl SessionTransport for WorkerSessionTransport {
                     id.clone(),
                     PendingPrompt {
                         requested_mode,
-                        unknown: false,
+                        state: PendingPromptState::AwaitingAdmission,
                     },
                 );
                 self.prompt_deliveries.push_back(PromptDelivery {
@@ -860,6 +954,7 @@ impl SessionTransport for WorkerSessionTransport {
                     message: tracked_message,
                     content,
                     delivery_tracked,
+                    defer_response_until_delivery,
                     acknowledged: false,
                     delivered: false,
                     aborted: false,

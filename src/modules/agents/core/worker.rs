@@ -255,11 +255,20 @@ pub(crate) enum WorkerEvent {
         submission_id: String,
         error: String,
     },
+    /// The backend definitively cancelled this submission before delivery.
+    PromptCancelled {
+        submission_id: String,
+    },
     Failed(String),
 }
 
 pub(crate) trait WorkerSession: Send {
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
+        false
+    }
+    /// Whether this backend can definitively report that an admitted prompt
+    /// was cancelled before delivery.
+    fn can_cancel_prompt_before_delivery(&self, _mode: WorkerSendMode) -> bool {
         false
     }
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String>;
