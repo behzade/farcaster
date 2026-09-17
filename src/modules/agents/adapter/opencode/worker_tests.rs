@@ -691,7 +691,7 @@ fn native_startup_merges_direct_farcaster_mcp() {
         value["mcp"]["servers"]["farcaster"]["headers"][farcaster_mcp::CALLER_HEADER],
         "caller-1"
     );
-    assert_eq!(value["mcp"]["servers"]["farcaster"]["codemode"], false);
+    assert_eq!(value["mcp"]["servers"]["farcaster"]["codemode"], true);
     assert_eq!(value["mcp"]["servers"]["farcaster"]["oauth"], false);
 }
 

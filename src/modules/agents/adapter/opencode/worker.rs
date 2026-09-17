@@ -2138,7 +2138,7 @@ fn configure_farcaster_mcp(
                         "url": farcaster_mcp::URL,
                         "headers": {(farcaster_mcp::CALLER_HEADER): caller_token},
                         "oauth": false,
-                        "codemode": false
+                        "codemode": true
                     }
                 }
             }
