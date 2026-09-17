@@ -7,10 +7,14 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
-    io::{BufRead, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::Path,
     process::{Child, ChildStdin, Stdio},
-    sync::mpsc::{self, Receiver, TryRecvError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -42,6 +46,7 @@ pub(super) struct Process {
     incoming: Receiver<Result<StdoutMessage, String>>,
     pending: VecDeque<StdoutMessage>,
     next_id: u64,
+    closing: Arc<AtomicBool>,
 }
 
 pub(super) fn configure(
@@ -131,12 +136,14 @@ impl Process {
         let (tx, incoming) = mpsc::sync_channel(256);
         let input = child.stdin.take();
         let output = child.stdout.take().ok_or("Claude stdout missing")?;
+        let closing = Arc::new(AtomicBool::new(false));
         let mut process = Self {
             child,
             input,
             incoming,
             pending: VecDeque::new(),
             next_id: 0,
+            closing: closing.clone(),
         };
         child_stderr::capture(&mut process.child, "claude")?;
         thread::Builder::new()
@@ -144,6 +151,10 @@ impl Process {
             .spawn(move || {
                 let mut reader = BufReader::new(output);
                 loop {
+                    if closing.load(Ordering::Acquire) {
+                        let _ = io::copy(&mut reader, &mut io::sink());
+                        break;
+                    }
                     let mut line = String::new();
                     let result = match reader.by_ref().take(16 * 1024 * 1024).read_line(&mut line) {
                         Ok(0) => Err("Claude CLI closed stdout".into()),
@@ -231,6 +242,7 @@ impl Process {
             })
     }
     pub(super) fn close(&mut self) -> Result<(), String> {
+        self.closing.store(true, Ordering::Release);
         self.input.take();
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
