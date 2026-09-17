@@ -265,6 +265,7 @@ fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::E
             efforts: Some(vec!["low".into(), "high".into()]),
         }),
         effort: Some("high".into()),
+        access_mode: Some(crate::agents::HarnessAccessMode::Full),
     };
 
     StateStore::open_at(&database)?.save_session_control_defaults(std::slice::from_ref(&cached))?;

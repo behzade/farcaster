@@ -78,6 +78,7 @@ pub(crate) struct CachedSessionControlDefaults {
     pub harness: Backend,
     pub model: Option<crate::protocol::Model>,
     pub effort: Option<String>,
+    pub access_mode: Option<crate::agents::HarnessAccessMode>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

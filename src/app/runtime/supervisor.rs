@@ -337,6 +337,9 @@ fn update_selected_configuration(
             configurations.set_effort(snapshot.harness, effort.clone())
         }
         RuntimeCommand::ResetThinking => configurations.reset_effort(snapshot.harness),
+        RuntimeCommand::SetAccessMode(access_mode) => {
+            configurations.set_access_mode(snapshot.harness, *access_mode)
+        }
         _ => false,
     }
 }
@@ -367,14 +370,18 @@ fn send_configured_command(
     configurations: &HarnessConfigurationStore,
     access_mode: Option<HarnessAccessMode>,
 ) {
-    let selection = match &command {
+    let defaults_harness = match &command {
         RuntimeCommand::NewSession { harness, .. }
-        | RuntimeCommand::ResumeDraft { harness, .. } => Some((
-            configurations.model(*harness),
-            configurations.effort(*harness),
-        )),
+        | RuntimeCommand::ResumeDraft { harness, .. } => *harness,
         _ => None,
     };
+    let defaults = defaults_harness.map(|harness| {
+        (
+            configurations.model(harness),
+            configurations.effort(harness),
+        )
+    });
+    let access_mode = access_mode.or_else(|| configurations.access_mode(defaults_harness));
     let catalog = command_target(&command)
         .and_then(|(_, project, harness)| configurations.catalog_command(harness, &project));
     // Fork and restart launch inside the command handler, so validate them
@@ -394,7 +401,7 @@ fn send_configured_command(
     if let Some(catalog) = catalog {
         actor.send(catalog);
     }
-    let Some((model, effort)) = selection else {
+    let Some((model, effort)) = defaults else {
         return;
     };
     if let Some(model) = model {

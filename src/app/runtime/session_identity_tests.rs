@@ -234,6 +234,7 @@ fn cached_defaults_restore_across_projects_per_harness() {
     let mut defaults = HarnessConfigurationStore::default();
     assert!(defaults.set_model(Some(Backend::Codex), selected.clone()));
     assert!(defaults.set_effort(Some(Backend::Codex), "high".into()));
+    assert!(defaults.set_access_mode(Some(Backend::Codex), crate::agents::HarnessAccessMode::Full));
 
     let mut restarted = HarnessConfigurationStore::default();
     restarted.restore(defaults.cached());
@@ -246,6 +247,10 @@ fn cached_defaults_restore_across_projects_per_harness() {
 
     assert_eq!(draft.prefill_model, Some(selected));
     assert_eq!(draft.prefill_thinking_level.as_deref(), Some("high"));
+    assert_eq!(
+        restarted.access_mode(Some(Backend::Codex)),
+        Some(crate::agents::HarnessAccessMode::Full)
+    );
 
     let mut other_harness = RuntimeSnapshot {
         harness: Some(Backend::Pi),

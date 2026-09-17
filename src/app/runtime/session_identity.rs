@@ -151,6 +151,7 @@ struct HarnessCatalog {
 struct OwnedSessionIdentity {
     model: Option<Model>,
     effort: Option<String>,
+    access_mode: Option<crate::agents::HarnessAccessMode>,
 }
 
 impl HarnessConfigurationStore {
@@ -167,6 +168,7 @@ impl HarnessConfigurationStore {
                 OwnedSessionIdentity {
                     model: entry.model,
                     effort,
+                    access_mode: entry.access_mode,
                 },
             );
         }
@@ -178,12 +180,17 @@ impl HarnessConfigurationStore {
         let mut entries = self
             .identities
             .iter()
-            .filter(|(_, identity)| identity.model.is_some() || identity.effort.is_some())
+            .filter(|(_, identity)| {
+                identity.model.is_some()
+                    || identity.effort.is_some()
+                    || identity.access_mode.is_some()
+            })
             .map(|(harness, identity)| {
                 crate::app::infrastructure::persistence::CachedSessionControlDefaults {
                     harness: *harness,
                     model: identity.model.clone(),
                     effort: identity.effort.clone(),
+                    access_mode: identity.access_mode,
                 }
             })
             .collect::<Vec<_>>();
@@ -203,6 +210,16 @@ impl HarnessConfigurationStore {
         self.identities
             .get(&harness)
             .and_then(|identity| identity.effort.as_deref())
+    }
+
+    pub fn access_mode(
+        &self,
+        harness: impl Into<Option<Backend>>,
+    ) -> Option<crate::agents::HarnessAccessMode> {
+        let harness = harness.into()?;
+        self.identities
+            .get(&harness)
+            .and_then(|identity| identity.access_mode)
     }
 
     pub fn set_model(&mut self, harness: impl Into<Option<Backend>>, model: Model) -> bool {
@@ -247,6 +264,22 @@ impl HarnessConfigurationStore {
             .effort
             .take()
             .is_some()
+    }
+
+    pub fn set_access_mode(
+        &mut self,
+        harness: impl Into<Option<Backend>>,
+        access_mode: crate::agents::HarnessAccessMode,
+    ) -> bool {
+        let Some(harness) = harness.into() else {
+            return false;
+        };
+        let identity = self.identities.entry(harness).or_default();
+        if identity.access_mode == Some(access_mode) {
+            return false;
+        }
+        identity.access_mode = Some(access_mode);
+        true
     }
 
     pub fn set_catalog(

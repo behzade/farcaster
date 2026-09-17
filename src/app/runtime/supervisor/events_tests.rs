@@ -208,6 +208,13 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
         Ok(RuntimeCommand::SetAccessMode(Sandboxed))
     ));
     assert_eq!(fixture.supervisor.latest["draft:open"].access_mode, Full);
+    assert_eq!(
+        fixture
+            .supervisor
+            .configurations
+            .access_mode(Some(Backend::OpenCode)),
+        Some(Sandboxed)
+    );
 
     fixture
         .commands
@@ -236,6 +243,40 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
         Auto,
         "an unrelated project must not inherit the selected actor policy"
     );
+}
+
+#[test]
+fn new_session_restores_the_harness_access_mode_before_staging_the_draft() {
+    use crate::agents::HarnessAccessMode::Full;
+
+    let project = PathBuf::from("/project");
+    let mut fixture =
+        SupervisorFixture::new("draft:old", project.clone(), None, Default::default());
+    assert!(
+        fixture
+            .supervisor
+            .configurations
+            .set_access_mode(Some(Backend::Codex), Full)
+    );
+    let actor_commands = fixture.add_recording_actor("draft:new");
+    fixture
+        .commands
+        .send(RuntimeCommand::NewSession {
+            id: "new".into(),
+            harness: Some(Backend::Codex),
+            project,
+        })
+        .expect("queue new session");
+
+    assert!(fixture.supervisor.process_next_command());
+    assert!(matches!(
+        actor_commands.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::RestoreAccessMode(Full))
+    ));
+    assert!(matches!(
+        actor_commands.recv_timeout(Duration::from_secs(1)),
+        Ok(RuntimeCommand::NewSession { .. })
+    ));
 }
 
 #[test]
