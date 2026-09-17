@@ -170,7 +170,7 @@ impl FarcasterMcp {
 
     #[tool(
         name = "worker_notices",
-        description = "Read or post a non-intrusive project notice board for top-level worker coordination. Use only when shared-worktree changes overlap or may conflict with your work, or when change ownership is unclear. Do not use it for unrelated changes. Posting also returns matching notices."
+        description = "Read or post project notices only when coordinating potentially overlapping work with other top-level workers."
     )]
     async fn worker_notices(
         &self,
