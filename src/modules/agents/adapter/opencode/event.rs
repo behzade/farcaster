@@ -81,35 +81,130 @@ pub(crate) fn read_event(reader: &mut impl BufRead) -> Result<Option<OpenCodeEve
     Ok(Some(OpenCodeEvent { id, event, data }))
 }
 
-/// Maps native event names onto the stable vocabulary consumed by the adapter.
-/// OpenCode may version events with a numeric suffix or rename them between releases.
-pub(super) fn normalized_event_type(event_type: &str) -> &str {
-    let event_type = event_type
-        .rsplit_once('.')
-        .filter(|(_, suffix)| suffix.bytes().all(|byte| byte.is_ascii_digit()))
-        .map_or(event_type, |(base, _)| base);
-    // Alias only events with equivalent payloads and semantics. Unique
-    // session.next lifecycle events remain distinct in the worker dispatch.
-    match event_type {
-        "model.updated" => "catalog.updated",
-        "session.next.text.started" => "session.text.started",
-        "session.next.text.delta" => "session.text.delta",
-        "session.next.text.ended" => "session.text.ended",
-        "session.next.reasoning.started" => "session.reasoning.started",
-        "session.next.reasoning.delta" => "session.reasoning.delta",
-        "session.next.reasoning.ended" => "session.reasoning.ended",
-        "session.next.tool.input.started" => "session.tool.input.started",
-        "session.next.tool.input.delta" => "session.tool.input.delta",
-        "session.next.tool.input.ended" => "session.tool.input.ended",
-        "session.next.tool.called" => "session.tool.called",
-        "session.next.tool.progress" => "session.tool.progress",
-        "session.next.tool.success" => "session.tool.success",
-        "session.next.tool.failed" => "session.tool.failed",
-        "session.next.step.started" => "session.step.started",
-        "session.next.step.ended" => "session.step.ended",
-        "session.next.compaction.started" => "session.compaction.started",
-        "session.next.compaction.ended" => "session.compaction.ended",
-        _ => event_type,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum OpenCodeEventKind<'a> {
+    CatalogUpdated,
+    PermissionAsked,
+    ExecutionStarted,
+    ExecutionSucceeded,
+    ExecutionInterrupted,
+    ExecutionFailed,
+    SessionTitleChanged,
+    InboxDelivered,
+    InboxCancelled,
+    NextPrompted,
+    TextStarted,
+    TextDelta,
+    TextEnded,
+    ReasoningStarted,
+    ReasoningDelta,
+    ReasoningEnded,
+    ToolInputStarted,
+    ToolInputDelta,
+    ToolInputEnded,
+    ToolCalled,
+    ToolProgress,
+    ToolSucceeded,
+    ToolFailed,
+    StepStarted,
+    StepEnded,
+    UsageUpdated,
+    RetryScheduled,
+    StepFailed,
+    CompactionStarted,
+    CompactionEnded,
+    CompactionFailed,
+    FormCreated,
+    KnownIgnored,
+    Unknown(&'a str),
+}
+
+impl<'a> OpenCodeEventKind<'a> {
+    pub(super) fn parse(event_type: &'a str) -> Self {
+        let event_type = event_type
+            .rsplit_once('.')
+            .filter(|(_, suffix)| suffix.bytes().all(|byte| byte.is_ascii_digit()))
+            .map_or(event_type, |(base, _)| base);
+        match event_type {
+            "catalog.updated" | "model.updated" => Self::CatalogUpdated,
+            "permission.asked" => Self::PermissionAsked,
+            "session.execution.started" => Self::ExecutionStarted,
+            "session.execution.succeeded" => Self::ExecutionSucceeded,
+            "session.execution.interrupted" => Self::ExecutionInterrupted,
+            "session.execution.failed" => Self::ExecutionFailed,
+            "session.updated" | "session.renamed" => Self::SessionTitleChanged,
+            "session.inbox.delivered" => Self::InboxDelivered,
+            "session.inbox.cancelled" => Self::InboxCancelled,
+            "session.next.prompted" => Self::NextPrompted,
+            "session.text.started" | "session.next.text.started" => Self::TextStarted,
+            "session.text.delta" | "session.next.text.delta" => Self::TextDelta,
+            "session.text.ended" | "session.next.text.ended" => Self::TextEnded,
+            "session.reasoning.started" | "session.next.reasoning.started" => {
+                Self::ReasoningStarted
+            }
+            "session.reasoning.delta" | "session.next.reasoning.delta" => Self::ReasoningDelta,
+            "session.reasoning.ended" | "session.next.reasoning.ended" => Self::ReasoningEnded,
+            "session.tool.input.started" | "session.next.tool.input.started" => {
+                Self::ToolInputStarted
+            }
+            "session.tool.input.delta" | "session.next.tool.input.delta" => Self::ToolInputDelta,
+            "session.tool.input.ended" | "session.next.tool.input.ended" => Self::ToolInputEnded,
+            "session.tool.called" | "session.next.tool.called" => Self::ToolCalled,
+            "session.tool.progress" | "session.next.tool.progress" => Self::ToolProgress,
+            "session.tool.success" | "session.next.tool.success" => Self::ToolSucceeded,
+            "session.tool.failed" | "session.next.tool.failed" => Self::ToolFailed,
+            "session.step.started" | "session.next.step.started" => Self::StepStarted,
+            "session.step.ended" | "session.next.step.ended" => Self::StepEnded,
+            "session.usage.updated" | "session.usage.recorded" => Self::UsageUpdated,
+            "session.retry.scheduled" => Self::RetryScheduled,
+            "session.step.failed" => Self::StepFailed,
+            "session.compaction.started" | "session.next.compaction.started" => {
+                Self::CompactionStarted
+            }
+            "session.compaction.ended" | "session.next.compaction.ended" => Self::CompactionEnded,
+            "session.compaction.failed" => Self::CompactionFailed,
+            "form.created" => Self::FormCreated,
+            "session.next.prompt.admitted"
+            | "session.step.streamed"
+            | "session.next.compaction.delta" => Self::KnownIgnored,
+            _ => Self::Unknown(event_type),
+        }
+    }
+
+    pub(super) fn is_execution(self) -> bool {
+        matches!(
+            self,
+            Self::ExecutionStarted
+                | Self::ExecutionSucceeded
+                | Self::ExecutionInterrupted
+                | Self::ExecutionFailed
+                | Self::TextStarted
+                | Self::TextDelta
+                | Self::TextEnded
+                | Self::ReasoningStarted
+                | Self::ReasoningDelta
+                | Self::ReasoningEnded
+                | Self::ToolInputStarted
+                | Self::ToolInputDelta
+                | Self::ToolInputEnded
+                | Self::ToolCalled
+                | Self::ToolProgress
+                | Self::ToolSucceeded
+                | Self::ToolFailed
+                | Self::StepStarted
+                | Self::StepEnded
+        ) || matches!(self, Self::Unknown(name) if name.starts_with("session.next.text.")
+            || name.starts_with("session.next.reasoning.")
+            || name.starts_with("session.next.tool.")
+            || name.starts_with("session.next.step."))
+    }
+
+    pub(super) fn is_session_scoped(self) -> bool {
+        match self {
+            Self::CatalogUpdated => false,
+            Self::Unknown(name) => name.starts_with("session.") || name == "form.created",
+            _ => true,
+        }
     }
 }
 

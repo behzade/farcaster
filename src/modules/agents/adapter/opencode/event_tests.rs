@@ -46,31 +46,39 @@ fn preserves_unknown_events_and_multiline_data() -> Result<(), String> {
 }
 
 #[test]
-fn normalizes_versioned_and_renamed_event_types() {
-    for (native, canonical) in [
-        ("model.updated", "catalog.updated"),
-        ("session.next.text.delta", "session.text.delta"),
-        ("session.next.reasoning.ended", "session.reasoning.ended"),
+fn classifies_versioned_aliases_and_unknown_events() {
+    for (native, expected) in [
+        ("catalog.updated", OpenCodeEventKind::CatalogUpdated),
+        ("model.updated", OpenCodeEventKind::CatalogUpdated),
+        ("session.next.text.delta", OpenCodeEventKind::TextDelta),
+        (
+            "session.next.reasoning.ended",
+            OpenCodeEventKind::ReasoningEnded,
+        ),
         (
             "session.next.tool.input.started",
-            "session.tool.input.started",
+            OpenCodeEventKind::ToolInputStarted,
         ),
-        ("session.next.tool.failed", "session.tool.failed"),
-        ("session.next.step.ended.2", "session.step.ended"),
-        ("permission.asked.1", "permission.asked"),
+        ("session.next.tool.failed", OpenCodeEventKind::ToolFailed),
+        ("session.next.step.ended.2", OpenCodeEventKind::StepEnded),
+        ("permission.asked.1", OpenCodeEventKind::PermissionAsked),
         (
             "session.next.compaction.started",
-            "session.compaction.started",
+            OpenCodeEventKind::CompactionStarted,
         ),
     ] {
-        assert_eq!(normalized_event_type(native), canonical);
+        assert_eq!(OpenCodeEventKind::parse(native), expected);
     }
-    for event_type in [
-        "session.next.prompted",
-        "session.next.prompt.admitted",
-        "session.next.compaction.delta",
-    ] {
-        assert_eq!(normalized_event_type(event_type), event_type);
-    }
-    assert_eq!(normalized_event_type("future.event"), "future.event");
+    assert_eq!(
+        OpenCodeEventKind::parse("future.event"),
+        OpenCodeEventKind::Unknown("future.event")
+    );
+}
+
+#[test]
+fn event_kinds_own_scope_and_execution_classification() {
+    assert!(OpenCodeEventKind::TextDelta.is_execution());
+    assert!(OpenCodeEventKind::parse("session.next.future.delta").is_session_scoped());
+    assert!(OpenCodeEventKind::parse("session.next.text.future").is_execution());
+    assert!(!OpenCodeEventKind::CatalogUpdated.is_session_scoped());
 }

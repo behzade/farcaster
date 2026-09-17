@@ -294,7 +294,7 @@ fn child_execution_events_publish_sidebar_metadata() {
             data: json!({"sessionID": "child-1"}),
         };
         let activity =
-            opencode_child_activity(&event, normalized_event_type(kind), "parent-1", |id| {
+            opencode_child_activity(&event, OpenCodeEventKind::parse(kind), "parent-1", |id| {
                 assert_eq!(id, "child-1");
                 serde_json::from_value(json!({
                     "id": id, "parentID": parent,
@@ -351,7 +351,7 @@ fn child_observation_skips_parent_text_and_malformed_events() {
             data,
         };
         assert!(
-            opencode_child_activity(&event, normalized_event_type(kind), "parent-1", |_| {
+            opencode_child_activity(&event, OpenCodeEventKind::parse(kind), "parent-1", |_| {
                 panic!("unrelated events must not query the server")
             })
             .expect("test operation should succeed")
@@ -546,7 +546,7 @@ fn permission_requests_keep_child_session_identity() {
     };
 
     assert_eq!(
-        opencode_permission_request(&event, normalized_event_type("permission.asked")),
+        opencode_permission_request(&event, OpenCodeEventKind::PermissionAsked),
         Some(("child-1", "permission-1"))
     );
 }
