@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 53] = [
+const ICON_PATHS: [&str; 54] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -19,6 +19,7 @@ const ICON_PATHS: [&str; 53] = [
     "icons/phosphor/caret-right.svg",
     "icons/phosphor/chat-circle.svg",
     "icons/phosphor/chat-circle-dots.svg",
+    "icons/phosphor/chalkboard.svg",
     "icons/phosphor/check.svg",
     "icons/phosphor/check-circle.svg",
     "icons/phosphor/code.svg",
@@ -154,6 +155,9 @@ impl AssetSource for AppAssets {
             )),
             "icons/phosphor/chat-circle-dots.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/chat-circle-dots.svg"
+            )),
+            "icons/phosphor/chalkboard.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/chalkboard.svg"
             )),
             "icons/phosphor/check.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/check.svg"))
@@ -307,6 +311,7 @@ pub(crate) enum AppIcon {
     CaretRight,
     ChatCircle,
     ChatCircleDots,
+    Chalkboard,
     Check,
     CheckCircle,
     Claude,
@@ -367,6 +372,7 @@ impl IconNamed for AppIcon {
             Self::CaretRight => "caret-right",
             Self::ChatCircle => "chat-circle",
             Self::ChatCircleDots => "chat-circle-dots",
+            Self::Chalkboard => "chalkboard",
             Self::Check => "check",
             Self::CheckCircle => "check-circle",
             Self::Claude => return "icons/workbench/claude.svg".into(),

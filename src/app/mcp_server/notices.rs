@@ -1,35 +1,16 @@
-use std::{
-    collections::HashMap,
-    path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::path::{Component, Path, PathBuf};
 
 use path_clean::PathClean as _;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::CallerContext;
+pub(super) use crate::app::worker_notices::NoticeBoard;
+use crate::app::worker_notices::NoticeView;
 
-const NOTICE_TTL: Duration = Duration::from_secs(15 * 60);
-const MAX_PROJECT_NOTICES: usize = 256;
 const MAX_MESSAGE_BYTES: usize = 2_000;
 const MAX_PATHS: usize = 64;
 const MAX_PATH_BYTES: usize = 1_024;
-
-#[derive(Clone, Default)]
-pub(super) struct NoticeBoard {
-    entries: Arc<Mutex<HashMap<PathBuf, Vec<Notice>>>>,
-}
-
-#[derive(Clone)]
-struct Notice {
-    from_id: String,
-    from_name: String,
-    message: String,
-    paths: Vec<PathBuf>,
-    created_at: Instant,
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -50,16 +31,27 @@ pub(super) struct Params {
 #[serde(rename_all = "camelCase")]
 pub(super) struct Response {
     posted: bool,
-    notices: Vec<NoticeView>,
+    notices: Vec<NoticeResponse>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-struct NoticeView {
+struct NoticeResponse {
     from: String,
     message: String,
     paths: Vec<String>,
     age_seconds: u64,
+}
+
+impl From<NoticeView> for NoticeResponse {
+    fn from(notice: NoticeView) -> Self {
+        Self {
+            from: notice.from,
+            message: notice.message,
+            paths: notice.paths,
+            age_seconds: notice.age_seconds,
+        }
+    }
 }
 
 impl NoticeBoard {
@@ -89,43 +81,22 @@ impl NoticeBoard {
             (Action::Post, _) => return Err("worker notice posts require `message`".into()),
         };
 
-        let now = Instant::now();
-        let mut boards = self
-            .entries
-            .lock()
-            .map_err(|_| "worker notice board is unavailable".to_owned())?;
-        let board = boards.entry(caller.project.clone()).or_default();
-        prune(board, now);
+        let posted = message.is_some();
         if let Some(message) = message {
-            board.push(Notice {
-                from_id: caller.worker_id.clone(),
-                from_name: caller.worker_name.clone(),
+            self.post(
+                &caller.project,
+                caller.worker_id.clone(),
+                caller.worker_name.clone(),
                 message,
-                paths: paths.clone(),
-                created_at: now,
-            });
-            let excess = board.len().saturating_sub(MAX_PROJECT_NOTICES);
-            board.drain(..excess);
+                paths.clone(),
+            )?;
         }
-        let notices = board
-            .iter()
-            .filter(|notice| notice.from_id != caller.worker_id)
-            .filter(|notice| relevant(&notice.paths, &paths))
-            .map(|notice| NoticeView {
-                from: notice.from_name.clone(),
-                message: notice.message.clone(),
-                paths: notice
-                    .paths
-                    .iter()
-                    .map(|path| path.to_string_lossy().into_owned())
-                    .collect(),
-                age_seconds: now.duration_since(notice.created_at).as_secs(),
-            })
+        let notices = self
+            .matching(&caller.project, &caller.worker_id, &paths)?
+            .into_iter()
+            .map(NoticeResponse::from)
             .collect();
-        Ok(Response {
-            posted: matches!(action, Action::Post),
-            notices,
-        })
+        Ok(Response { posted, notices })
     }
 }
 
@@ -154,20 +125,6 @@ fn normalize_paths(paths: Vec<String>) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(normalized)
-}
-
-fn relevant(notice: &[PathBuf], filter: &[PathBuf]) -> bool {
-    filter.is_empty()
-        || notice.is_empty()
-        || notice.iter().any(|left| {
-            filter
-                .iter()
-                .any(|right| left.starts_with(right) || right.starts_with(left))
-        })
-}
-
-fn prune(board: &mut Vec<Notice>, now: Instant) {
-    board.retain(|notice| now.duration_since(notice.created_at) < NOTICE_TTL);
 }
 
 #[cfg(test)]

@@ -15,6 +15,7 @@ use crate::{
 enum AppSheet {
     Sessions,
     Run,
+    WorkerNotices,
     Keybindings,
     Settings,
     ProjectTrust,
@@ -24,6 +25,7 @@ enum AppSheet {
 struct SheetFlags {
     sessions: bool,
     run: bool,
+    worker_notices: bool,
     keybindings: bool,
     settings: bool,
     project_trust: bool,
@@ -33,6 +35,7 @@ const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
     SheetFlags {
         sessions: matches!(active, Some(AppSheet::Sessions)),
         run: matches!(active, Some(AppSheet::Run)),
+        worker_notices: matches!(active, Some(AppSheet::WorkerNotices)),
         keybindings: matches!(active, Some(AppSheet::Keybindings)),
         settings: matches!(active, Some(AppSheet::Settings)),
         project_trust: matches!(active, Some(AppSheet::ProjectTrust)),
@@ -41,7 +44,12 @@ const fn sheet_flags(active: Option<AppSheet>) -> SheetFlags {
 
 impl SheetFlags {
     const fn any(self) -> bool {
-        self.sessions || self.run || self.keybindings || self.settings || self.project_trust
+        self.sessions
+            || self.run
+            || self.worker_notices
+            || self.keybindings
+            || self.settings
+            || self.project_trust
     }
 }
 
@@ -549,6 +557,14 @@ impl FarcasterApp {
         self.open_sheet(AppSheet::Run, window, cx);
     }
 
+    pub(in crate::app) fn open_worker_notices(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_sheet(AppSheet::WorkerNotices, window, cx);
+    }
+
     pub(in crate::app) fn toggle_workgraph_surface(
         &mut self,
         window: &mut Window,
@@ -821,6 +837,7 @@ impl FarcasterApp {
         SheetFlags {
             sessions: self.overlays.view.sessions,
             run: self.overlays.view.run,
+            worker_notices: self.overlays.view.worker_notices,
             keybindings: self.overlays.view.keybindings,
             settings: self.overlays.view.settings,
             project_trust: self.overlays.view.project_trust,
@@ -830,6 +847,7 @@ impl FarcasterApp {
     fn apply_sheet_flags(&mut self, flags: SheetFlags) {
         self.overlays.view.sessions = flags.sessions;
         self.overlays.view.run = flags.run;
+        self.overlays.view.worker_notices = flags.worker_notices;
         self.overlays.view.keybindings = flags.keybindings;
         self.overlays.view.settings = flags.settings;
         self.overlays.view.project_trust = flags.project_trust;

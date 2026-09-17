@@ -27,6 +27,7 @@ pub(crate) struct ProjectTrustView {
     notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
+    notice_board: crate::app::worker_notices::NoticeBoard,
     focus: FocusHandle,
     error: Option<String>,
 }
@@ -38,6 +39,7 @@ impl ProjectTrustView {
         notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
         workgraph_updates: async_channel::Receiver<()>,
         worker_updates: async_channel::Receiver<()>,
+        notice_board: crate::app::worker_notices::NoticeBoard,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -48,6 +50,7 @@ impl ProjectTrustView {
             notification_app,
             workgraph_updates,
             worker_updates,
+            notice_board,
             focus,
             error: None,
         };
@@ -82,12 +85,14 @@ impl ProjectTrustView {
         });
         let workgraph_updates = self.workgraph_updates.clone();
         let worker_updates = self.worker_updates.clone();
+        let notice_board = self.notice_board.clone();
         let app = cx.new(|cx| {
             FarcasterApp::new(
                 project,
                 repository_execution_allowed,
                 workgraph_updates,
                 worker_updates,
+                notice_board,
                 window,
                 cx,
             )

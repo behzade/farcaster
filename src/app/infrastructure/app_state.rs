@@ -10,4 +10,5 @@ pub(in crate::app) struct AppLifecycle {
     pub(in crate::app) _event_task: Task<()>,
     pub(in crate::app) _workgraph_update_task: Task<()>,
     pub(in crate::app) _worker_update_task: Task<()>,
+    pub(in crate::app) _worker_notice_task: Task<()>,
 }

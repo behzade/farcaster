@@ -798,6 +798,7 @@ fn with_live_app(
             true,
             workgraph_rx,
             worker_rx,
+            crate::app::worker_notices::NoticeBoard::default(),
             window,
             cx,
         )

@@ -12,6 +12,7 @@ impl FarcasterApp {
         repository_execution_allowed: bool,
         workgraph_updates: async_channel::Receiver<()>,
         worker_updates: async_channel::Receiver<()>,
+        notice_board: worker_notices::NoticeBoard,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -40,6 +41,7 @@ impl FarcasterApp {
             repository_execution_allowed,
             workgraph_updates,
             worker_updates,
+            notice_board,
             persisted,
             runtime,
             window,
@@ -84,6 +86,7 @@ impl FarcasterApp {
             false,
             workgraph_updates,
             worker_updates,
+            worker_notices::NoticeBoard::default(),
             persisted,
             runtime,
             window,
@@ -97,6 +100,7 @@ impl FarcasterApp {
         repository_execution_allowed: bool,
         workgraph_updates: async_channel::Receiver<()>,
         worker_updates: async_channel::Receiver<()>,
+        notice_board: worker_notices::NoticeBoard,
         persisted: persisted::PersistedState,
         runtime: RuntimeHandle,
         window: &mut Window,
@@ -109,7 +113,13 @@ impl FarcasterApp {
             cx,
         );
         let subscriptions = subscriptions::create(&inputs, window, cx);
-        let tasks = tasks::spawn(&runtime, workgraph_updates, worker_updates, cx);
+        let tasks = tasks::spawn(
+            &runtime,
+            workgraph_updates,
+            worker_updates,
+            notice_board.updates(),
+            cx,
+        );
         let performance = tasks::start_performance_monitor(window, cx);
         let regions = regions::create(&project, window, cx);
 
@@ -281,7 +291,9 @@ impl FarcasterApp {
                 _event_task: tasks.runtime_events,
                 _workgraph_update_task: tasks.workgraph_updates,
                 _worker_update_task: tasks.worker_updates,
+                _worker_notice_task: tasks.worker_notices,
             },
+            worker_notices: notice_board,
         };
         this.initialize_chat_navigation(window, cx);
         this.request_repository_refresh(cx);

@@ -11,6 +11,7 @@ fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
     for sheet in [
         AppSheet::Sessions,
         AppSheet::Run,
+        AppSheet::WorkerNotices,
         AppSheet::Keybindings,
         AppSheet::Settings,
         AppSheet::ProjectTrust,
@@ -20,6 +21,7 @@ fn activating_a_sheet_never_stacks_it_with_an_existing_sheet() {
             [
                 flags.sessions,
                 flags.run,
+                flags.worker_notices,
                 flags.keybindings,
                 flags.settings,
                 flags.project_trust,

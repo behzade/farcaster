@@ -19,6 +19,7 @@ mod session;
 mod session_folders;
 pub(crate) mod ui;
 pub(crate) mod views;
+pub(crate) mod worker_notices;
 mod workspace;
 use change_detection::*;
 pub(crate) use composer::ComposerImage;
@@ -191,6 +192,7 @@ pub(crate) struct FarcasterApp {
     views: views::AppViews,
     overlays: views::AppOverlays,
     lifecycle: infrastructure::AppLifecycle,
+    worker_notices: worker_notices::NoticeBoard,
 }
 
 #[cfg(test)]

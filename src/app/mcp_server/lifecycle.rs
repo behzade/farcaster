@@ -7,7 +7,9 @@ use rmcp::transport::streamable_http_server::{
 };
 use tokio::sync::oneshot;
 
-use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, notices, server_config};
+#[cfg(test)]
+use super::notices;
+use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, server_config};
 
 static SERVER: Mutex<Option<ServerState>> = Mutex::new(None);
 
@@ -33,6 +35,7 @@ pub(crate) fn start(
     database: PathBuf,
     workers: crate::agents::WorkerPool,
     updates: async_channel::Sender<()>,
+    notices: crate::app::worker_notices::NoticeBoard,
 ) -> Result<McpServer, String> {
     let mut current = SERVER
         .lock()
@@ -41,12 +44,7 @@ pub(crate) fn start(
         return Err("MCP server is already initialized".into());
     }
     let server = ServerState::new(
-        FarcasterMcp::new(
-            database.clone(),
-            workers,
-            updates,
-            notices::NoticeBoard::default(),
-        ),
+        FarcasterMcp::new(database.clone(), workers, updates, notices),
         crate::builtin_mcp::enabled(),
         BIND_ADDRESS,
     )?;

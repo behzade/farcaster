@@ -66,6 +66,7 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::CaretRight,
         AppIcon::ChatCircle,
         AppIcon::ChatCircleDots,
+        AppIcon::Chalkboard,
         AppIcon::CheckCircle,
         AppIcon::Claude,
         AppIcon::Code,

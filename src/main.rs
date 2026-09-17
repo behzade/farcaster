@@ -75,15 +75,26 @@ fn main() -> std::process::ExitCode {
     };
     let worker_updates = worker_pool.updates();
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
-    let _mcp_server = match app::persistence::state_path()
-        .and_then(|database| app::mcp_server::start(database, worker_pool, workgraph_updates))
-    {
+    let notice_board = app::worker_notices::NoticeBoard::default();
+    let _mcp_server = match app::persistence::state_path().and_then(|database| {
+        app::mcp_server::start(
+            database,
+            worker_pool,
+            workgraph_updates,
+            notice_board.clone(),
+        )
+    }) {
         Ok(server) => server,
         Err(error) => return fail(format!("start MCP server: {error}")),
     };
 
     drop(prepare_timing);
-    match app::launch::run(project, workgraph_update_receiver, worker_updates) {
+    match app::launch::run(
+        project,
+        workgraph_update_receiver,
+        worker_updates,
+        notice_board,
+    ) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => fail(error),
     }

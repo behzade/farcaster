@@ -132,6 +132,9 @@ impl FarcasterApp {
                     },
                 ))
             })
+            .when(self.overlays.view.worker_notices, |root| {
+                root.child(dialogs::worker_notices::render(self, entity.clone()))
+            })
             .when_some(sessions_sheet, |root, sheet| root.child(sheet))
             .when_some(run_sheet, |root, sheet| root.child(sheet))
             .when(self.sessions.pending_archive.is_some(), |root| {
