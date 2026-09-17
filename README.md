@@ -41,7 +41,7 @@ Farcaster comes with an optional MCP server (can be turned off in settings) that
 - **Workgraph:** A set of tools (`workgraph_*`) for creating tasks and dependencies that persist beyond any one agent session.
 - **Worker Tools:** Tools for creating and communicating with agent sessions across harnesses, providers, and models.
 
-  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/user-attachments/assets/5d216a2b-2fef-459c-911d-20450e87d749)
+  ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/behzade/farcaster/releases/download/v0.3.5/farcaster-workers.png)
 
 - <a name="review"></a>**Review:** A tool (`submit_review`) that lets agents present files, line ranges, and notes for you to navigate and review using Neovim's quickfix list.
 
