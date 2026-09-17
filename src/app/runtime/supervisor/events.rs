@@ -92,7 +92,8 @@ impl Supervisor {
                     .event_tx
                     .send(RuntimeEvent::AgentActivityUpdated(activity));
             }
-            event @ RuntimeEvent::SystemNotification { .. } => {
+            event @ (RuntimeEvent::SystemNotification { .. }
+            | RuntimeEvent::TurnCompletedNotification { .. }) => {
                 let _ = self.event_tx.send(event);
             }
             RuntimeEvent::Snapshot { snapshot, .. } => {

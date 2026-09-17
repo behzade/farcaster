@@ -139,6 +139,9 @@ impl RuntimeTrace {
             RuntimeEvent::SystemNotification { title, body, .. } => {
                 self.record(format!("notification {title}: {body}"))?;
             }
+            RuntimeEvent::TurnCompletedNotification { body, .. } => {
+                self.record(format!("notification Farcaster: Turn completed: {body}"))?;
+            }
             RuntimeEvent::Stopped => return Err("production runtime stopped unexpectedly".into()),
             RuntimeEvent::SessionReset { .. }
             | RuntimeEvent::HistoryReset { .. }

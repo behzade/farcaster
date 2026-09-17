@@ -385,13 +385,11 @@ impl RuntimeOwner {
                 if settled {
                     self.normal_prompt_in_flight = false;
                     if notify_completion {
-                        let failed = self.active_snapshot().conversation.ended_in_error();
-                        let title = if failed {
-                            "Turn failed"
+                        if self.active_snapshot().conversation.ended_in_error() {
+                            self.notify_attention("Turn failed", None);
                         } else {
-                            "Turn completed"
-                        };
-                        self.notify_attention(title, None);
+                            self.notify_turn_completed();
+                        }
                     }
                     self.send(SessionCommand::LoadState);
                     self.send(SessionCommand::LoadUsage);

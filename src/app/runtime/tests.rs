@@ -772,7 +772,7 @@ fn completion_notification_waits_for_settlement_and_is_not_repeated() {
     assert!(
         !events
             .try_iter()
-            .any(|event| matches!(event, RuntimeEvent::SystemNotification { .. }))
+            .any(|event| matches!(event, RuntimeEvent::TurnCompletedNotification { .. }))
     );
 
     owner.apply_process_item(SessionEvent::Activity(
@@ -781,11 +781,7 @@ fn completion_notification_waits_for_settlement_and_is_not_repeated() {
     let completed = events
         .try_iter()
         .filter_map(|event| match event {
-            RuntimeEvent::SystemNotification { title, target, .. }
-                if title == "Farcaster: Turn completed" =>
-            {
-                Some(target)
-            }
+            RuntimeEvent::TurnCompletedNotification { target, .. } => Some(target),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -800,7 +796,11 @@ fn completion_notification_waits_for_settlement_and_is_not_repeated() {
     owner.apply_process_item(SessionEvent::Activity(
         json!({"type":"agent_settled"}).into(),
     ));
-    assert!(!events.try_iter().any(|event| matches!(event, RuntimeEvent::SystemNotification { title, .. } if title == "Farcaster: Turn completed")));
+    assert!(
+        !events
+            .try_iter()
+            .any(|event| matches!(event, RuntimeEvent::TurnCompletedNotification { .. }))
+    );
 }
 
 #[test]
@@ -813,7 +813,11 @@ fn idle_and_compaction_settlement_do_not_send_completion_notification() {
         owner.apply_process_item(SessionEvent::Activity(
             json!({"type":"agent_settled"}).into(),
         ));
-        assert!(!events.try_iter().any(|event| matches!(event, RuntimeEvent::SystemNotification { title, .. } if title == "Farcaster: Turn completed")));
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, RuntimeEvent::TurnCompletedNotification { .. }))
+        );
     }
 }
 

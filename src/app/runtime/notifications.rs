@@ -30,10 +30,25 @@ impl RuntimeOwner {
     }
 
     pub(super) fn notify_attention(&self, title: &str, detail: Option<&str>) {
-        let snapshot = self.active_snapshot();
+        let (body, target) = self.notification_content(detail);
         let _ = self.event_tx.send(RuntimeEvent::SystemNotification {
             title: format!("Farcaster: {title}"),
-            body: detail
+            body,
+            target,
+        });
+    }
+
+    pub(super) fn notify_turn_completed(&self) {
+        let (body, target) = self.notification_content(None);
+        let _ = self
+            .event_tx
+            .send(RuntimeEvent::TurnCompletedNotification { body, target });
+    }
+
+    fn notification_content(&self, detail: Option<&str>) -> (String, Option<(PathBuf, PathBuf)>) {
+        let snapshot = self.active_snapshot();
+        (
+            detail
                 .map(str::to_owned)
                 .or_else(|| completion_text(&snapshot.conversation))
                 .or_else(|| {
@@ -43,8 +58,8 @@ impl RuntimeOwner {
                         .and_then(|session| session.session_name.clone())
                 })
                 .unwrap_or_else(|| snapshot.project.display().to_string()),
-            target: self.attention_target(),
-        });
+            self.attention_target(),
+        )
     }
 
     pub(super) fn attention_target(&self) -> Option<(PathBuf, PathBuf)> {

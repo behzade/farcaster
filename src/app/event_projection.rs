@@ -85,6 +85,19 @@ fn agent_focus_keys(
         .collect()
 }
 
+const TURN_COMPLETED_NOTIFICATION_TITLE: &str = "Farcaster: Turn completed";
+
+fn completion_notification_is_redundant(
+    window_active: bool,
+    target: Option<&(PathBuf, PathBuf)>,
+    displayed: &RuntimeSnapshot,
+) -> bool {
+    window_active
+        && target.is_some_and(|(session, project)| {
+            displayed.selected_session.as_ref() == Some(session) && &displayed.project == project
+        })
+}
+
 #[cfg(test)]
 #[path = "event_projection_tests.rs"]
 mod tests;
@@ -122,6 +135,7 @@ impl DirtyRegions {
             | RuntimeEvent::SessionMetadata(_)
             | RuntimeEvent::SessionTarget(_)
             | RuntimeEvent::SystemNotification { .. }
+            | RuntimeEvent::TurnCompletedNotification { .. }
             | RuntimeEvent::SessionsFailed { .. }
             | RuntimeEvent::ImportPreview { .. }
             | RuntimeEvent::ImportPreviewFailed { .. }
@@ -801,6 +815,20 @@ impl FarcasterApp {
                 target,
             } => {
                 self.show_attention_notification(&title, &body, target, cx);
+            }
+            RuntimeEvent::TurnCompletedNotification { body, target } => {
+                if !completion_notification_is_redundant(
+                    cx.active_window().is_some(),
+                    target.as_ref(),
+                    &self.snapshot,
+                ) {
+                    self.show_attention_notification(
+                        TURN_COMPLETED_NOTIFICATION_TITLE,
+                        &body,
+                        target,
+                        cx,
+                    );
+                }
             }
             RuntimeEvent::PromptResult {
                 submission_id,

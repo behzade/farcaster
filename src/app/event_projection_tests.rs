@@ -931,3 +931,32 @@ fn one_live_update_keeps_archived_rows_and_does_not_duplicate_the_session() {
         1
     );
 }
+
+#[test]
+fn completion_notification_is_only_redundant_for_the_visible_active_session() {
+    let snapshot = RuntimeSnapshot {
+        project: PathBuf::from("/project"),
+        selected_session: Some(PathBuf::from("/sessions/current")),
+        ..RuntimeSnapshot::default()
+    };
+    let current = Some((
+        PathBuf::from("/sessions/current"),
+        PathBuf::from("/project"),
+    ));
+    let background = Some((
+        PathBuf::from("/sessions/background"),
+        PathBuf::from("/project"),
+    ));
+
+    for (active, target, redundant) in [
+        (true, current.as_ref(), true),
+        (true, background.as_ref(), false),
+        (false, current.as_ref(), false),
+    ] {
+        assert_eq!(
+            completion_notification_is_redundant(active, target, &snapshot),
+            redundant,
+            "active={active}, target={target:?}",
+        );
+    }
+}

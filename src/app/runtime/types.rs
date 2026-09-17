@@ -140,6 +140,10 @@ pub(crate) enum RuntimeEvent {
         body: String,
         target: Option<(PathBuf, PathBuf)>,
     },
+    TurnCompletedNotification {
+        body: String,
+        target: Option<(PathBuf, PathBuf)>,
+    },
     Snapshot {
         generation: u64,
         snapshot: Arc<RuntimeSnapshot>,
