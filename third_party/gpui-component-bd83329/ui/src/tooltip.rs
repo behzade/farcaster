@@ -1,22 +1,16 @@
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::{cell::Cell, rc::Rc};
 
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext, Bounds, Context, ElementId, IntoElement,
-    MouseButton, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px,
+    Action, AnyElement, AnyView, App, AppContext, Bounds, Context, IntoElement, MouseButton,
+    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, StyleRefinement,
+    Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_base::{
     Tooltip as BaseTooltip, TooltipOverlay as BaseTooltipOverlay,
     TooltipRequest as BaseTooltipRequest, TooltipTransition as BaseTooltipTransition,
 };
 
-use crate::{
-    ActiveTheme, Placement, StyledExt,
-    animation::{EffectTransition, ease_in_out_cubic, ease_out_cubic},
-    kbd::Kbd,
-    root::Root,
-    text::Text,
-};
+use crate::{ActiveTheme, Placement, StyledExt, kbd::Kbd, root::Root, text::Text};
 
 pub(crate) fn init(_cx: &mut App) {
     // No app-level init needed — TooltipOverlay is per-window via Root.
@@ -183,46 +177,13 @@ impl Render for Tooltip {
 
 // ── Managed tooltip system ──────────────────────────────────────────────────
 
-/// Duration of the slide-down enter animation.
-const ENTER_DURATION: Duration = Duration::from_millis(150);
-/// Duration of the position-slide animation when switching tooltips.
-const SLIDE_DURATION: Duration = Duration::from_millis(200);
 pub(crate) fn render_tooltip(
     content_view: AnyView,
-    transition: BaseTooltipTransition,
+    _: BaseTooltipTransition,
     _: &mut Window,
     _: &mut App,
 ) -> AnyElement {
-    div().child(content_view).map(|element| match transition {
-        BaseTooltipTransition::Switch {
-            epoch,
-            previous,
-            current,
-        } => {
-            let same_row = (current.origin.y - previous.origin.y).abs() < px(10.);
-            if !same_row {
-                return element.into_any_element();
-            }
-            let dx = current.center().x - previous.center().x;
-            EffectTransition::new(SLIDE_DURATION)
-                .ease(ease_in_out_cubic)
-                .slide_x(-dx, px(0.))
-                .apply(
-                    element,
-                    ElementId::NamedInteger("tooltip-slide".into(), epoch as u64),
-                )
-                .into_any_element()
-        }
-        BaseTooltipTransition::Enter { epoch } => EffectTransition::new(ENTER_DURATION)
-            .ease(ease_out_cubic)
-            .slide_y(px(4.), px(0.))
-            .fade(0.0, 1.0)
-            .apply(
-                element,
-                ElementId::NamedInteger("tooltip-enter".into(), epoch as u64),
-            )
-            .into_any_element(),
-    })
+    div().child(content_view).into_any_element()
 }
 
 // ── Extension trait for managed tooltips ─────────────────────────────────────
