@@ -14,10 +14,10 @@ use gpui_component::{
     input::{Escape, Input, InputState},
     kbd::Kbd,
     menu::{DropdownMenu as _, PopupMenuItem},
-    tooltip::Tooltip,
 };
 
 use super::{
+    colors::{ColorTarget, color_menu},
     drag::DraggedSession,
     groups::{SessionRailItem, SessionRailKind},
     hover::{session_hover_details, session_hover_panel},
@@ -25,7 +25,8 @@ use super::{
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _, app_icon,
+        AppIconSize, AppTooltip as _, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _,
+        app_icon,
     },
     app::ui::theme::theme,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
@@ -33,6 +34,7 @@ use crate::{
 
 pub(super) struct SessionRowInput {
     pub(super) selected: bool,
+    pub(super) color: Option<Rgba>,
     pub(super) status: Option<String>,
     pub(super) shortcut: Option<u8>,
     pub(super) drop_position: Option<ReorderPosition>,
@@ -46,6 +48,7 @@ impl SessionRowInput {
     pub(super) fn standard(selected: bool, status: Option<String>) -> Self {
         Self {
             selected,
+            color: None,
             status,
             shortcut: None,
             drop_position: None,
@@ -85,6 +88,7 @@ impl RenderOnce for SessionRow {
             input:
                 SessionRowInput {
                     selected,
+                    color,
                     status,
                     shortcut,
                     drop_position,
@@ -158,29 +162,23 @@ impl RenderOnce for SessionRow {
             .items_stretch()
             .px(theme().space.sm)
             .py(theme().space.xs)
-            .rounded(theme().size(2.0))
+            .rounded(theme().radius)
             .group(action_group)
             .bg(if selected {
                 theme().colors.highlight
             } else {
                 theme().colors.panel
             })
-            .hover(move |row| {
-                row.bg(if selected {
-                    theme().colors.highlight
-                } else {
-                    theme().colors.surface
-                })
-            })
-            .when(selected, |row| {
+            .hover(|row| row.bg(theme().colors.highlight))
+            .when(selected || color.is_some(), |row| {
                 row.child(
                     div()
                         .absolute()
                         .left_0()
-                        .top(theme().space.xs)
-                        .bottom(theme().space.xs)
+                        .top_0()
+                        .bottom_0()
                         .w(theme().size(2.0))
-                        .bg(theme().colors.indicator),
+                        .bg(color.unwrap_or(theme().colors.indicator)),
                 )
             })
             .focus(|row| row.border(theme().border).border_color(theme().colors.indicator))
@@ -289,9 +287,7 @@ impl RenderOnce for SessionRow {
                                                                 icon.border(theme().border)
                                                                     .border_color(theme().colors.indicator)
                                                             })
-                                                            .tooltip(move |window, cx| {
-                                                                Tooltip::new("Move to project…").build(window, cx)
-                                                            })
+                                                            .app_tooltip("Move to project…")
                                                             .on_click(move |_, window, cx| {
                                                                 cx.stop_propagation();
                                                                 let _ = move_entity.update(cx, |this, cx| {
@@ -337,7 +333,6 @@ impl RenderOnce for SessionRow {
             div()
                 .h(row_height)
                 .w_full()
-                .px(theme().size(2.0))
                 .child(context_menu)
                 .into_any_element(),
         )
@@ -409,13 +404,13 @@ fn session_archive_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .absolute()
-        .top(theme().size(4.0))
+        .top(theme().size(10.0))
         .right(if is_archived {
-            theme().size(28.0)
+            theme().controls.icon_button + theme().size(7.0)
         } else {
             theme().size(5.0)
         })
-        .size(theme().size(21.0))
+        .size(theme().controls.icon_button)
         .flex()
         .items_center()
         .justify_center()
@@ -434,7 +429,7 @@ fn session_archive_action(
             theme().colors.muted
         })
         .hover(|button| button.bg(theme().colors.highlight))
-        .tooltip(move |window, cx| Tooltip::new(format!("{label} session")).build(window, cx))
+        .app_tooltip(format!("{label} session"))
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
@@ -461,9 +456,9 @@ fn session_delete_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .absolute()
-        .top(theme().size(4.0))
+        .top(theme().size(10.0))
         .right(theme().size(5.0))
-        .size(theme().size(21.0))
+        .size(theme().controls.icon_button)
         .flex()
         .items_center()
         .justify_center()
@@ -478,7 +473,7 @@ fn session_delete_action(
         })
         .text_color(theme().colors.danger)
         .hover(|button| button.bg(theme().colors.highlight))
-        .tooltip(move |window, cx| Tooltip::new("Delete session permanently").build(window, cx))
+        .app_tooltip("Delete session permanently")
         .child(app_icon(AppIcon::Trash, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
@@ -542,46 +537,55 @@ fn session_context_menu(
 
             let move_entity = entity.clone();
             let move_path = path.clone();
-            menu =
-                menu.separator()
-                    .submenu("Move to folder", window, cx, move |mut menu, _, cx| {
-                        use crate::app::session_folders::FolderDestination;
-                        let Some(app) = move_entity.upgrade() else {
-                            return menu;
-                        };
-                        let folders = &app.read(cx).sessions.folders;
-                        let current =
-                            folders.destination(app_session_id, kind == SessionRailKind::Archived);
-                        for (destination, label) in folders.destinations() {
-                            let target_entity = move_entity.clone();
-                            let target_path = move_path.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(label)
-                                    .checked(destination == current)
-                                    .disabled(
-                                        destination == current
-                                            || (app_session_id <= 0
-                                                && matches!(
-                                                    destination,
-                                                    FolderDestination::Folder(_)
-                                                )),
-                                    )
-                                    .on_click(move |_, window, cx| {
-                                        let _ = target_entity.update(cx, |this, cx| {
-                                            this.move_session_to_folder(
-                                                app_session_id,
-                                                target_path.clone(),
-                                                destination,
-                                                kind == SessionRailKind::Archived,
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }),
-                            );
-                        }
-                        menu
+            let colour_entity = entity.clone();
+            menu = menu
+                .separator()
+                .submenu("Colour", window, cx, move |menu, _, cx| {
+                    let current = colour_entity.upgrade().and_then(|app| {
+                        app.read(cx).sessions.folders.session_color(app_session_id)
                     });
+                    color_menu(
+                        menu,
+                        current,
+                        colour_entity.clone(),
+                        ColorTarget::Session(app_session_id),
+                    )
+                });
+            menu = menu.submenu("Move to folder", window, cx, move |mut menu, _, cx| {
+                use crate::app::session_folders::FolderDestination;
+                let Some(app) = move_entity.upgrade() else {
+                    return menu;
+                };
+                let folders = &app.read(cx).sessions.folders;
+                let current =
+                    folders.destination(app_session_id, kind == SessionRailKind::Archived);
+                for (destination, label) in folders.destinations() {
+                    let target_entity = move_entity.clone();
+                    let target_path = move_path.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .checked(destination == current)
+                            .disabled(
+                                destination == current
+                                    || (app_session_id <= 0
+                                        && matches!(destination, FolderDestination::Folder(_))),
+                            )
+                            .on_click(move |_, window, cx| {
+                                let _ = target_entity.update(cx, |this, cx| {
+                                    this.move_session_to_folder(
+                                        app_session_id,
+                                        target_path.clone(),
+                                        destination,
+                                        kind == SessionRailKind::Archived,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }),
+                    );
+                }
+                menu
+            });
 
             if kind == SessionRailKind::Archived {
                 let delete_path = path.clone();
@@ -656,7 +660,7 @@ fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
             .id(format!("session-status-{app_session_id}"))
             .flex_none()
             .text_color(color)
-            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+            .app_tooltip(tooltip.clone())
             .child(icon)
             .into_any_element(),
     )
@@ -687,7 +691,7 @@ pub(super) fn project_badge(project: &Path) -> AnyElement {
         .gap(theme().size(3.0))
         .text_size(theme().type_scale.caption)
         .text_color(theme().colors.subtle)
-        .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
+        .app_tooltip(path.clone())
         .child(
             div()
                 .min_w_0()

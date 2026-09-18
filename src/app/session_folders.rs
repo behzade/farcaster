@@ -67,6 +67,46 @@ impl FarcasterApp {
         }
     }
 
+    pub(in crate::app) fn sync_project_folders(&mut self, cx: &mut Context<Self>) {
+        let mut projects = self.project.registered.clone();
+        projects.extend(
+            self.sessions
+                .all
+                .iter()
+                .filter(|session| !session.archived)
+                .map(|session| session.project.clone()),
+        );
+        projects.extend(
+            self.sessions
+                .drafts
+                .iter()
+                .map(|draft| draft.project.clone()),
+        );
+        projects.sort();
+        projects.dedup();
+        let mut next = self.sessions.folders.clone();
+        let mut changed = false;
+        for project in &projects {
+            changed |= next.ensure_project_folder(project);
+        }
+        if changed {
+            self.save_session_folders(next, cx);
+        }
+    }
+
+    pub(in crate::app) fn set_folder_collapsed(
+        &mut self,
+        id: u64,
+        collapsed: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut next = self.sessions.folders.clone();
+        if !next.set_collapsed(id, collapsed) {
+            return false;
+        }
+        self.save_session_folders(next, cx)
+    }
+
     pub(in crate::app) fn begin_folder_edit(
         &mut self,
         id: Option<u64>,

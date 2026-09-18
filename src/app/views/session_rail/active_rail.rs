@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use gpui::{
-    Anchor, InteractiveElement as _, IntoElement, ListState, ParentElement as _,
+    Anchor, AnyElement, InteractiveElement as _, IntoElement, ListState, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
     prelude::FluentBuilder as _,
 };
@@ -12,6 +12,7 @@ use gpui_component::{
 
 use super::{
     FarcasterApp, active_item_identity,
+    colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_drop_target, folder_header, folder_rows},
     groups::{ActiveSessionItem, session_rail_lists},
@@ -21,17 +22,47 @@ use super::{
     visible_session_shortcuts,
 };
 use crate::{
+    app::PickerScope,
     app::session::status::{resolved_session_status, roots_waiting_for_active_descendants},
     app::ui::assets::AppIcon,
     app::ui::primitives::{
         AppIconSize, ButtonTone, FeedbackTone, app_icon, dropdown_button, feedback, icon_button,
     },
     app::ui::theme::theme,
-    app::{PickerScope, ProjectPickerIntent},
     sessions::root_session_for_path,
 };
 
 impl FarcasterApp {
+    fn render_rail_notices(&self, entity: WeakEntity<Self>) -> Option<AnyElement> {
+        let task_notice = self.render_code_task_notice(entity);
+        let notifications = &self.extensions.active.notifications;
+        if notifications.is_empty() && task_notice.is_none() {
+            return None;
+        }
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .gap(theme().space.xs)
+                .px(theme().size(10.0))
+                .pb(theme().space.sm)
+                .children(task_notice)
+                .children(notifications.iter().enumerate().map(|(index, notice)| {
+                    feedback(
+                        ("rail-notification", index),
+                        notice.message.clone(),
+                        match notice.tone {
+                            crate::protocol::NotifyTone::Error => FeedbackTone::Error,
+                            crate::protocol::NotifyTone::Warning => FeedbackTone::Warning,
+                            crate::protocol::NotifyTone::Info => FeedbackTone::Info,
+                        },
+                    )
+                }))
+                .into_any_element(),
+        )
+    }
+
     pub(in crate::app::views) fn render_sessions(
         &self,
         entity: WeakEntity<Self>,
@@ -60,6 +91,7 @@ impl FarcasterApp {
             &self.sessions.order,
         );
         let counts = subagent_counts(&self.sessions.all);
+        let session_colors = self.sessions.folders.session_colors.clone();
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
@@ -82,7 +114,7 @@ impl FarcasterApp {
                 .iter()
                 .map(|row| match row {
                     FolderRow::Session(item) => active_item_identity(item),
-                    FolderRow::Header(id, _) => format!("folder:{id}"),
+                    FolderRow::Header(folder) => format!("folder:{}", folder.id),
                     FolderRow::New => "new-folder".to_owned(),
                 })
                 .collect(),
@@ -150,6 +182,10 @@ impl FarcasterApp {
                             item,
                             SessionRowInput {
                                 selected,
+                                color: session_colors
+                                    .get(&item.session.app_session_id)
+                                    .copied()
+                                    .map(palette_color),
                                 status: badge,
                                 shortcut,
                                 drop_position,
@@ -166,16 +202,14 @@ impl FarcasterApp {
                         .into_any_element()
                     }
                 },
-                Some(FolderRow::Header(id, name)) => folder_header(
-                    Some(*id),
-                    name.clone(),
-                    editing_folder == Some(Some(*id)),
+                Some(FolderRow::Header(folder)) => folder_header(
+                    Some(folder.clone()),
+                    editing_folder == Some(Some(folder.id)),
                     active_title_input.clone(),
                     active_row_entity.clone(),
                 ),
                 Some(FolderRow::New) => folder_header(
                     None,
-                    "+ New folder".into(),
                     editing_folder == Some(None),
                     active_title_input.clone(),
                     active_row_entity.clone(),
@@ -239,19 +273,13 @@ impl FarcasterApp {
                                         },
                                     ))
                                     .child(icon_button(
-                                        "new-session",
-                                        AppIcon::Plus,
-                                        "New session",
+                                        "open-folder",
+                                        AppIcon::FolderPlus,
+                                        "Open folder",
                                         ButtonTone::Quiet,
                                         move |window, cx| {
                                             let _ = new_entity.update(cx, |this, cx| {
-                                                this.open_picker(
-                                                    PickerScope::Projects(
-                                                        ProjectPickerIntent::NewSession,
-                                                    ),
-                                                    window,
-                                                    cx,
-                                                );
+                                                this.choose_project_folder(None, window, cx);
                                             });
                                         },
                                     )),
@@ -265,7 +293,7 @@ impl FarcasterApp {
                             .items_center()
                             .gap(theme().space.xs)
                             .pl(theme().size(10.0))
-                            .rounded(theme().size(5.0))
+                            .rounded(theme().radius)
                             .border(theme().border)
                             .border_color(theme().colors.highlight)
                             .bg(theme().colors.surface)
@@ -286,6 +314,8 @@ impl FarcasterApp {
                                     true,
                                 )
                                 .flex_none()
+                                .h(theme().controls.icon_button)
+                                .px(theme().space.sm)
                                 .dropdown_menu_with_anchor(
                                     Anchor::TopRight,
                                     move |menu, _, _| {
@@ -325,6 +355,9 @@ impl FarcasterApp {
             )
             .when_some(self.sessions.error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
+            })
+            .when_some(self.render_rail_notices(entity.clone()), |rail, notices| {
+                rail.child(notices)
             })
             .child(
                 div()

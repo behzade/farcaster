@@ -7,10 +7,12 @@ fn folders() -> SessionFolders {
             SessionFolder {
                 id: 1,
                 name: "Work".into(),
+                ..Default::default()
             },
             SessionFolder {
                 id: 2,
                 name: "Personal".into(),
+                ..Default::default()
             },
         ],
         ..Default::default()
@@ -78,6 +80,37 @@ fn creating_folder_from_drop_moves_only_the_dragged_session() {
     assert_eq!(folders.folder_for(11), Some(1));
     folders.create("Empty".into(), None);
     assert_eq!(folders.membership.len(), 2);
+}
+
+#[test]
+fn opened_projects_become_coloured_folders_that_hold_their_sessions() {
+    let mut folders = SessionFolders::default();
+    let alpha = std::path::Path::new("/work/alpha");
+    let beta = std::path::Path::new("/work/beta");
+    assert!(folders.ensure_project_folder(alpha));
+    assert!(!folders.ensure_project_folder(alpha));
+    assert!(folders.ensure_project_folder(beta));
+    assert_eq!(
+        folders
+            .folders
+            .iter()
+            .map(|folder| folder.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["alpha", "beta"]
+    );
+    assert_eq!(
+        folders
+            .folders
+            .iter()
+            .map(|folder| folder.color)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    let alpha_id = folders.folder_for_project(alpha).expect("alpha folder");
+    let beta_id = folders.folder_for_project(beta).expect("beta folder");
+    assert_eq!(folders.folder_for_session(7, beta), Some(beta_id));
+    folders.assign(7, Some(alpha_id));
+    assert_eq!(folders.folder_for_session(7, beta), Some(alpha_id));
 }
 
 #[test]

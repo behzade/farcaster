@@ -1,4 +1,5 @@
 mod active_rail;
+mod colors;
 mod draft_row;
 mod drag;
 mod folders;

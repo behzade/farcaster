@@ -30,4 +30,4 @@ pub use draft::{
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use folders::SessionFolder;
-pub use folders::{FolderDestination, SessionFolders};
+pub use folders::{FOLDER_COLOR_COUNT, FolderDestination, SessionFolders};

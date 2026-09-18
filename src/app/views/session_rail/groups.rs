@@ -31,6 +31,13 @@ impl ActiveSessionItem {
             Self::Session(item) => item.session.app_session_id,
         }
     }
+
+    pub(super) fn project(&self) -> &Path {
+        match self {
+            Self::Draft(draft) => draft.project.as_path(),
+            Self::Session(item) => item.session.project.as_path(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

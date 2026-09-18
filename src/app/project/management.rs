@@ -72,6 +72,7 @@ impl FarcasterApp {
         if projects::add_unique(&mut self.project.registered, project.clone()) || restored {
             self.save_project_registry();
         }
+        self.sync_project_folders(cx);
         self.notify_session_rail(cx);
         cx.notify();
         Some(project)

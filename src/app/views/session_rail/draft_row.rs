@@ -91,7 +91,6 @@ impl RenderOnce for DraftRow {
             div()
                 .h(theme().layout.session_row_height)
                 .w_full()
-                .px(theme().size(2.0))
                 .child(
                     div()
                         .id(format!("session-{id}"))
@@ -110,27 +109,21 @@ impl RenderOnce for DraftRow {
                         .items_stretch()
                         .px(theme().space.sm)
                         .py(theme().space.xs)
-                        .rounded(theme().size(2.0))
+                        .rounded(theme().radius)
                         .group(action_group.clone())
                         .bg(if selected {
                             theme().colors.highlight
                         } else {
                             theme().colors.panel
                         })
-                        .hover(move |row| {
-                            row.bg(if selected {
-                                theme().colors.highlight
-                            } else {
-                                theme().colors.surface
-                            })
-                        })
+                        .hover(|row| row.bg(theme().colors.highlight))
                         .when(selected, |row| {
                             row.child(
                                 div()
                                     .absolute()
                                     .left_0()
-                                    .top(theme().space.xs)
-                                    .bottom(theme().space.xs)
+                                    .top_0()
+                                    .bottom_0()
                                     .w(theme().size(2.0))
                                     .bg(theme().colors.indicator),
                             )
@@ -240,9 +233,9 @@ impl RenderOnce for DraftRow {
                             row.child(
                                 icon_control(format!("discard-{discard_id}"), "Discard draft")
                                     .absolute()
-                                    .top(theme().size(4.0))
+                                    .top(theme().size(10.0))
                                     .right(theme().size(5.0))
-                                    .size(theme().size(21.0))
+                                    .size(theme().controls.icon_button)
                                     .opacity(0.0)
                                     .group_hover(action_group, |button| button.opacity(1.0))
                                     .focus(|button| button.opacity(1.0))
@@ -270,7 +263,7 @@ fn draft_badge() -> AnyElement {
     div()
         .flex_none()
         .px(theme().space.xs)
-        .rounded(theme().size(3.0))
+        .rounded(theme().radius)
         .border(theme().border)
         .border_color(theme().colors.border)
         .text_size(theme().type_scale.caption)

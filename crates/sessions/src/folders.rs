@@ -1,17 +1,30 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
+
+pub const FOLDER_COLOR_COUNT: usize = 8;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SessionFolders {
     pub folders: Vec<SessionFolder>,
     pub membership: BTreeMap<i64, u64>,
+    #[serde(default)]
+    pub session_colors: BTreeMap<i64, u8>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SessionFolder {
     pub id: u64,
     pub name: String,
+    #[serde(default)]
+    pub color: u8,
+    #[serde(default)]
+    pub collapsed: bool,
+    #[serde(default)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,9 +67,70 @@ impl SessionFolders {
             .max()
             .unwrap_or(0)
             + 1;
-        self.folders.push(SessionFolder { id, name });
+        let color = u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0);
+        self.folders.push(SessionFolder {
+            id,
+            name,
+            color,
+            collapsed: false,
+            project: None,
+        });
         if let Some(session) = session {
             self.assign(session, Some(id));
+        }
+    }
+
+    pub fn color(&self, id: u64) -> Option<u8> {
+        self.folders
+            .iter()
+            .find(|folder| folder.id == id)
+            .map(|folder| folder.color)
+    }
+
+    pub fn set_color(&mut self, id: u64, color: u8) -> bool {
+        let Some(folder) = self.folders.iter_mut().find(|folder| folder.id == id) else {
+            return false;
+        };
+        let color = color % u8::try_from(FOLDER_COLOR_COUNT).unwrap_or(1);
+        if folder.color == color {
+            return false;
+        }
+        folder.color = color;
+        true
+    }
+
+    pub fn collapsed(&self, id: u64) -> bool {
+        self.folders
+            .iter()
+            .find(|folder| folder.id == id)
+            .is_some_and(|folder| folder.collapsed)
+    }
+
+    pub fn set_collapsed(&mut self, id: u64, collapsed: bool) -> bool {
+        let Some(folder) = self.folders.iter_mut().find(|folder| folder.id == id) else {
+            return false;
+        };
+        if folder.collapsed == collapsed {
+            return false;
+        }
+        folder.collapsed = collapsed;
+        true
+    }
+
+    pub fn session_color(&self, session: i64) -> Option<u8> {
+        self.session_colors.get(&session).copied()
+    }
+
+    pub fn set_session_color(&mut self, session: i64, color: Option<u8>) -> bool {
+        if session <= 0 {
+            return false;
+        }
+        match color {
+            Some(color) => {
+                let color = color % u8::try_from(FOLDER_COLOR_COUNT).unwrap_or(1);
+                self.session_colors.insert(session, color) != Some(color)
+            }
+            None => self.session_colors.remove(&session).is_some(),
         }
     }
 
@@ -65,6 +139,45 @@ impl SessionFolders {
             .get(&session)
             .copied()
             .filter(|id| self.folders.iter().any(|folder| folder.id == *id))
+    }
+
+    pub fn folder_for_project(&self, project: &Path) -> Option<u64> {
+        self.folders
+            .iter()
+            .find(|folder| folder.project.as_deref() == Some(project))
+            .map(|folder| folder.id)
+    }
+
+    pub fn folder_for_session(&self, session: i64, project: &Path) -> Option<u64> {
+        self.folder_for(session)
+            .or_else(|| self.folder_for_project(project))
+    }
+
+    pub fn ensure_project_folder(&mut self, project: &Path) -> bool {
+        if self.folder_for_project(project).is_some() {
+            return false;
+        }
+        let name = project
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .map_or_else(|| project.display().to_string(), str::to_owned);
+        let id = self
+            .folders
+            .iter()
+            .map(|folder| folder.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let color = u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0);
+        self.folders.push(SessionFolder {
+            id,
+            name,
+            color,
+            collapsed: false,
+            project: Some(project.to_path_buf()),
+        });
+        true
     }
 
     pub fn assign(&mut self, session: i64, folder: Option<u64>) {

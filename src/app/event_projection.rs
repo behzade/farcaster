@@ -357,6 +357,7 @@ impl FarcasterApp {
         self.sessions.error = None;
         self.sessions.visible = sessions;
         self.sessions.all = all_sessions;
+        self.sync_project_folders(cx);
         if let Some((activities, _exhaustive)) = activities {
             dirty.rail = true;
             for activity in activities.into_values() {

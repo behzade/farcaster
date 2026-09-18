@@ -17,10 +17,12 @@ fn folder_headers_follow_unfiled_sessions_and_keep_empty_folders() {
             SessionFolder {
                 id: 1,
                 name: "Work".into(),
+                ..Default::default()
             },
             SessionFolder {
                 id: 2,
                 name: "Empty".into(),
+                ..Default::default()
             },
         ],
         ..Default::default()
@@ -29,10 +31,35 @@ fn folder_headers_follow_unfiled_sessions_and_keep_empty_folders() {
     let rows = folder_rows(vec![draft(3), draft(2), draft(1)], &folders);
     assert!(matches!(&rows[0], FolderRow::Session(item) if item.app_session_id() == 2));
     assert!(matches!(&rows[1], FolderRow::Session(item) if item.app_session_id() == 1));
-    assert!(matches!(&rows[2], FolderRow::Header(1, _)));
+    assert!(matches!(&rows[2], FolderRow::Header(header) if header.id == 1));
     assert!(matches!(&rows[3], FolderRow::Session(item) if item.app_session_id() == 3));
-    assert!(matches!(&rows[4], FolderRow::Header(2, _)));
+    assert!(matches!(&rows[4], FolderRow::Header(header) if header.id == 2));
     assert!(matches!(&rows[5], FolderRow::New));
+}
+
+#[test]
+fn collapsed_folders_hide_their_sessions_but_keep_the_header() {
+    let mut folders = SessionFolders {
+        folders: vec![SessionFolder {
+            id: 1,
+            name: "Work".into(),
+            collapsed: true,
+            color: 3,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    folders.assign(3, Some(1));
+    let rows = folder_rows(vec![draft(3), draft(1)], &folders);
+    assert!(matches!(&rows[0], FolderRow::Session(item) if item.app_session_id() == 1));
+    let FolderRow::Header(header) = &rows[1] else {
+        panic!("expected the collapsed folder header")
+    };
+    assert!(header.collapsed);
+    assert_eq!(header.color, 3);
+    assert_eq!(header.sessions, 1);
+    assert!(matches!(&rows[2], FolderRow::New));
+    assert_eq!(rows.len(), 3);
 }
 
 #[test]
@@ -43,6 +70,7 @@ fn folder_membership_survives_draft_submission_filtering_and_archive_restore() {
     folders.folders.push(SessionFolder {
         id: 1,
         name: "Work".into(),
+        ..Default::default()
     });
     folders.assign(7, Some(1));
     let session = SessionSummary::from_cached(
@@ -67,7 +95,7 @@ fn folder_membership_survives_draft_submission_filtering_and_archive_restore() {
     draft.submitted = true;
     let promoted = session_rail_lists(std::slice::from_ref(&session), &[draft], None, &[]);
     let rows = folder_rows(promoted.active, &folders);
-    assert!(matches!(&rows[0], FolderRow::Header(1, _)));
+    assert!(matches!(&rows[0], FolderRow::Header(header) if header.id == 1));
     assert!(matches!(&rows[1], FolderRow::Session(item) if item.app_session_id() == 7));
     assert_eq!(rows.len(), 3);
 
