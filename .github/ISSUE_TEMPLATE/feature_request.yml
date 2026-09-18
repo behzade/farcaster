@@ -1,0 +1,17 @@
+name: Feature request
+description: Suggest an improvement to Farcaster
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need?
+      description: Describe the problem and your preferred result.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Share any other approach you considered.
