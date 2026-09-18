@@ -96,7 +96,6 @@ impl FarcasterApp {
             terminal
         };
 
-        self.retain_workspace_draft(cx);
         self.hide_terminal(cx);
         self.workspace.terminal.view = Some(terminal);
         self.workspace.terminal.project = Some(project);
@@ -109,6 +108,34 @@ impl FarcasterApp {
             self.workspace.terminal.project_terminals.remove(&project);
         }
         self.workspace.terminal.view = None;
+    }
+
+    /// Repaints every live terminal with the active theme without restarting it.
+    pub(in crate::app) fn apply_terminal_theme(&mut self, cx: &mut Context<Self>) {
+        let theme = crate::app::ui::theme::terminal_theme();
+        for terminal in self.workspace.terminal.project_terminals.values() {
+            terminal.update(cx, |terminal, _| {
+                if terminal.is_alive() {
+                    let _ = terminal.update_theme(theme);
+                }
+            });
+        }
+        if self.workspace.native_surface_covered && self.workspace.surface == AppSurface::Terminal {
+            self.set_terminal_hidden_rendering(true, cx);
+        }
+        self.refresh_covered_workspace_snapshot(cx);
+    }
+
+    /// Lets a covered terminal keep rendering while an overlay presents it, so a
+    /// theme change is visible in the overlay instead of only after it closes.
+    pub(in crate::app) fn set_terminal_hidden_rendering(
+        &self,
+        rendered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(terminal) = self.workspace.terminal.view.as_ref() {
+            terminal.update(cx, |terminal, _| terminal.set_hidden_rendering(rendered));
+        }
     }
 
     pub(in crate::app) fn hide_terminal(&self, cx: &mut Context<Self>) {

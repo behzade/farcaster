@@ -67,6 +67,7 @@ impl FarcasterApp {
             definition.tokens,
         );
         install_component_theme(cx);
+        self.apply_terminal_theme(cx);
         self.notify_appearance(cx);
         cx.refresh_windows();
     }

@@ -322,6 +322,7 @@ impl FarcasterApp {
         let overlay_active = self.native_surface_obscured(window, cx);
         if !overlay_active {
             self.workspace.native_surface_covered = false;
+            self.set_terminal_hidden_rendering(false, cx);
             if let Some(snapshot) = self.workspace.native_surface_snapshot.take() {
                 let _ = window.drop_image(snapshot);
             }
