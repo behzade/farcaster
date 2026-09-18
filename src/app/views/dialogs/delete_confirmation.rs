@@ -12,15 +12,20 @@ pub(in crate::app::views) fn render(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let dismiss = entity.clone();
+    let pending = app
+        .sessions
+        .pending_delete
+        .as_ref()
+        .expect("visible confirmation");
+    let title = pending.title();
+    let message = pending.message();
     modal(
         "delete-session",
-        "Delete session permanently?",
-        &app.sessions.pending_delete.as_ref().expect("visible confirmation").focus,
+        title,
+        &pending.focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
-            let _ = dismiss.update(cx, |this, cx| {
-                this.close_delete_confirmation(window, cx)
-            });
+            let _ = dismiss.update(cx, |this, cx| this.close_delete_confirmation(window, cx));
         },
         |surface| {
             let cancel = entity.clone();
@@ -35,7 +40,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .text_size(theme().type_scale.body)
                             .text_color(theme().colors.text)
-                            .child("This stops active work, discards pending messages, and permanently deletes the session and its subagent sessions. This cannot be undone."),
+                            .child(message),
                     )
                     .child(
                         div()

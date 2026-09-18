@@ -225,18 +225,34 @@ impl Supervisor {
             return true;
         }
         if let RuntimeCommand::DeleteSessionFamily { path } = &command {
+            // Deleting a chat is never refused: whatever is still live for the
+            // family is stopped first, and then removed.
+            if let Some(family) = session_family_for_path(&self.catalog_sessions, path) {
+                let live = family.iter().any(|session| session.is_running)
+                    || family.iter().any(|session| {
+                        self.actor_paths.get(&session.path).is_some_and(|key| {
+                            self.latest.get(key).is_some_and(|snapshot| {
+                                session_actor_has_active_work(
+                                    snapshot,
+                                    self.needs_input.contains(key),
+                                )
+                            })
+                        })
+                    });
+                if live {
+                    let root = family[0].path.clone();
+                    self.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
+                        path: root,
+                    });
+                }
+            }
             let result = (|| {
-                let family = archived_root_family_for_path(&self.catalog_sessions, path)
-                    .ok_or_else(|| "Only an archived root session can be deleted".to_owned())?;
+                let family = session_family_for_path(&self.catalog_sessions, path)
+                    .ok_or_else(|| "The session is no longer available to delete".to_owned())?;
                 let targets = family
                     .iter()
                     .map(|session| session.target())
                     .collect::<Vec<_>>();
-                if family.iter().any(|session| session.is_running) {
-                    return Err(
-                        "Wait for the session family to finish before deleting it".to_owned()
-                    );
-                }
                 let family_paths = family
                     .iter()
                     .map(|session| session.path.clone())
@@ -247,22 +263,7 @@ impl Supervisor {
                     .filter(|(path, key)| family_paths.contains(*path) && *key != &self.catalog_key)
                     .map(|(_, key)| key.clone())
                     .collect::<HashSet<_>>();
-                if family_actor_keys.iter().any(|key| {
-                    self.latest.get(key).is_some_and(|snapshot| {
-                        session_actor_has_active_work(snapshot, self.needs_input.contains(key))
-                    })
-                }) {
-                    return Err(
-                        "Wait for the session family to become idle before deleting it".to_owned(),
-                    );
-                }
-                let state = self.host.state_store()?;
-                let paths = family_paths.iter().cloned().collect::<Vec<_>>();
-                if state.with(|store| agents::has_queued_prompts_for(store, &paths))? {
-                    return Err(
-                        "Send or remove pending messages before deleting this session".to_owned(),
-                    );
-                }
+
                 for key in &family_actor_keys {
                     if let Some(actor) = self.actors.remove(key) {
                         actor.send(RuntimeCommand::Shutdown);
@@ -284,6 +285,8 @@ impl Supervisor {
                     self.selected = self.catalog_key.clone();
                     self.generation = self.generation.saturating_add(1);
                 }
+                let state = self.host.state_store()?;
+                let paths = family_paths.iter().cloned().collect::<Vec<_>>();
                 let leftovers =
                     agents::delete_session_family_with_config(&self.process_command, &targets)?;
                 let state_warning = state

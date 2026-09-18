@@ -59,9 +59,7 @@ use crate::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
         SessionState, SlashCommand,
     },
-    sessions::{
-        self, LoadedHistory, SessionSummary, archived_root_family_for_path, session_family_for_path,
-    },
+    sessions::{self, LoadedHistory, SessionSummary, session_family_for_path},
 };
 use farcaster_storage::{SharedStateStore, StateStore};
 use session_controls::PendingSessionControls;
