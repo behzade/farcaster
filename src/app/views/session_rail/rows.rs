@@ -180,10 +180,10 @@ impl RenderOnce for SessionRow {
                         .top(theme().space.xs)
                         .bottom(theme().space.xs)
                         .w(theme().size(2.0))
-                        .bg(theme().colors.accent),
+                        .bg(theme().colors.text),
                 )
             })
-            .focus(|row| row.border(theme().border).border_color(theme().colors.accent))
+            .focus(|row| row.border(theme().border).border_color(theme().colors.text))
             .cursor(CursorStyle::PointingHand)
             .when(draggable, move |row| {
                 row.on_drag(drag, move |drag, _, _, cx| {
