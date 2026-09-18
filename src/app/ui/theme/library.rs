@@ -1,7 +1,10 @@
 use gpui::{Pixels, Rgba, px};
 use gpui_component::theme::ThemeMode;
 
-use super::{ColorKey, Colors, LengthKey, MetricKey, STRUCTURE, SyntaxKey, ThemeToken, builtin};
+use super::{
+    ColorKey, Colors, LengthKey, MetricKey, STRUCTURE, SyntaxKey, ThemeToken, builtin,
+    default_optional_color,
+};
 use crate::app::ui::file_icons;
 
 pub(crate) const MAX_THEME_NAME_LEN: usize = 48;
@@ -48,7 +51,11 @@ impl ThemeDefinition {
     }
 
     pub(crate) fn is_custom(&self, token: ThemeToken) -> bool {
-        self.overridden(token).is_some()
+        match token {
+            ThemeToken::Palette(_) => false,
+            ThemeToken::Syntax(key) => self.color(token) != key.default_color(self.colors),
+            ThemeToken::Icon(index) => self.color(token) != file_icons::native_color(index),
+        }
     }
 
     pub(crate) fn set_color(&mut self, token: ThemeToken, color: Rgba) {
@@ -82,7 +89,7 @@ impl ThemeDefinition {
     }
 
     pub(crate) fn is_custom_length(&self, key: LengthKey) -> bool {
-        self.lengths.iter().any(|(existing, _)| *existing == key)
+        self.length(key) != default_length(key)
     }
 
     pub(crate) fn set_length(&mut self, key: LengthKey, value: Pixels) {
@@ -496,7 +503,8 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
     let mut colors: Option<Colors> = None;
     let mut tokens: Vec<(ThemeToken, Rgba)> = Vec::new();
     let mut lengths: Vec<(LengthKey, Pixels)> = Vec::new();
-    let mut missing = ColorKey::ALL.to_vec();
+    let mut provided: Vec<ColorKey> = Vec::new();
+    let mut missing = ColorKey::REQUIRED.to_vec();
     for declaration in body.split(';') {
         let Some((key, value)) = declaration.split_once(':') else {
             if declaration.trim().is_empty() {
@@ -519,6 +527,7 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
             };
             colors.get_or_insert(Colors::EMPTY).set(color_key, color);
             missing.retain(|candidate| *candidate != color_key);
+            provided.push(color_key);
             continue;
         }
         if let Some(key) = LengthKey::from_name(key) {
@@ -547,9 +556,15 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
             None => tokens.push((token, color)),
         }
     }
-    let Some(colors) = colors else {
+    let Some(mut colors) = colors else {
         return Err(format!("{name} does not set any colors."));
     };
+    for key in ColorKey::OPTIONAL {
+        if !provided.contains(key) {
+            let fallback = default_optional_color(colors, *key);
+            colors.set(*key, fallback);
+        }
+    }
     if !missing.is_empty() {
         let missing = missing
             .iter()

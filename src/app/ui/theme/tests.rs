@@ -188,6 +188,37 @@ fn every_editable_length_has_a_name_and_a_label() {
 }
 
 #[test]
+fn bundled_themes_publish_every_token() {
+    for definition in BUILT_IN_THEMES.iter() {
+        let css = definition.to_css().expect("encode bundled theme");
+        for token in super::editable_tokens() {
+            let name = super::library::token_name(token);
+            assert!(
+                css.contains(&format!("--{name}: ")),
+                "{} does not set --{name}",
+                definition.name
+            );
+        }
+        for key in super::editable_lengths() {
+            assert!(
+                css.contains(&format!("--{}: ", key.name())),
+                "{} does not set --{}",
+                definition.name,
+                key.name()
+            );
+        }
+    }
+}
+
+#[test]
+fn the_indicator_token_defaults_to_the_muted_palette_color() {
+    let mut css = BUILT_IN_THEMES[0].to_css().expect("encode bundled theme");
+    css = css.replace("  --indicator: #9c9280;\n", "");
+    let definition = ThemeDefinition::from_css(&css).expect("decode theme");
+    assert_eq!(definition.colors.indicator, definition.colors.muted);
+}
+
+#[test]
 fn theme_definitions_round_trip_through_css() {
     let definition =
         ThemeDefinition::from_css(&BUILT_IN_THEMES[0].to_css().expect("encode bundled theme"))

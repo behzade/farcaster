@@ -136,7 +136,10 @@ fn recolor(svg: &str, color: Rgba) -> String {
 }
 
 fn brand_color(svg: &str) -> Option<Rgba> {
-    let start = svg.find("fill=\"")? + 6;
+    let start = match svg.find("fill=\"") {
+        Some(index) => index + 6,
+        None => svg.find("stop-color=\"")? + 12,
+    };
     let end = svg[start..].find('"')?;
     parse_hex(&svg[start..start + end])
 }

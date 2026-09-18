@@ -77,29 +77,36 @@ pub(crate) struct Colors {
     pub danger: Rgba,
     pub success: Rgba,
     pub backdrop: Rgba,
+    pub indicator: Rgba,
 }
 
 macro_rules! color_keys {
-    ($($field:ident),* $(,)?) => {
+    ($($required:ident),* $(,)? ; $($optional:ident),* $(,)?) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
         #[allow(non_camel_case_types)]
         pub(crate) enum ColorKey {
-            $($field),*
+            $($required,)*
+            $($optional,)*
         }
 
         impl ColorKey {
-            pub(crate) const ALL: &'static [ColorKey] = &[$(ColorKey::$field),*];
+            pub(crate) const REQUIRED: &'static [ColorKey] = &[$(ColorKey::$required),*];
+            pub(crate) const OPTIONAL: &'static [ColorKey] = &[$(ColorKey::$optional),*];
+            pub(crate) const ALL: &'static [ColorKey] =
+                &[$(ColorKey::$required,)* $(ColorKey::$optional,)*];
 
             pub(crate) fn from_name(name: &str) -> Option<ColorKey> {
                 match name {
-                    $(stringify!($field) => Some(ColorKey::$field),)*
+                    $(stringify!($required) => Some(ColorKey::$required),)*
+                    $(stringify!($optional) => Some(ColorKey::$optional),)*
                     _ => None,
                 }
             }
 
             pub(crate) fn name(self) -> &'static str {
                 match self {
-                    $(ColorKey::$field => stringify!($field)),*
+                    $(ColorKey::$required => stringify!($required),)*
+                    $(ColorKey::$optional => stringify!($optional),)*
                 }
             }
 
@@ -110,23 +117,31 @@ macro_rules! color_keys {
 
         impl Colors {
             pub(crate) const EMPTY: Colors = Colors {
-                $($field: Rgba {
+                $($required: Rgba {
                     r: 0.0,
                     g: 0.0,
                     b: 0.0,
                     a: 0.0,
-                }),*
+                },)*
+                $($optional: Rgba {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
+                },)*
             };
 
             pub(crate) fn get(self, key: ColorKey) -> Rgba {
                 match key {
-                    $(ColorKey::$field => self.$field),*
+                    $(ColorKey::$required => self.$required,)*
+                    $(ColorKey::$optional => self.$optional,)*
                 }
             }
 
             pub(crate) fn set(&mut self, key: ColorKey, color: Rgba) {
                 match key {
-                    $(ColorKey::$field => self.$field = color),*
+                    $(ColorKey::$required => self.$required = color,)*
+                    $(ColorKey::$optional => self.$optional = color,)*
                 }
             }
         }
@@ -173,8 +188,16 @@ color_keys!(
     error,
     danger,
     success,
-    backdrop,
+    backdrop;
+    indicator
 );
+
+pub(crate) fn default_optional_color(colors: Colors, key: ColorKey) -> Rgba {
+    match key {
+        ColorKey::indicator => colors.muted,
+        _ => colors.text,
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Space {
