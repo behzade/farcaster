@@ -1,7 +1,7 @@
 use super::*;
 use crate::agents::Backend;
-use crate::{app::session_folders::SessionFolder, sessions::DraftSession};
-use gpui::{AppContext as _, StatefulInteractiveElement as _};
+use crate::{app::session_folders::SessionFolder, projects::DraftSession};
+use gpui::AppContext as _;
 
 fn draft(id: i64) -> ActiveSessionItem {
     let mut draft =
@@ -34,7 +34,7 @@ fn folder_headers_follow_unfiled_sessions_and_keep_empty_folders() {
     assert!(matches!(&rows[2], FolderRow::Header(header) if header.id == 1));
     assert!(matches!(&rows[3], FolderRow::Session(item) if item.app_session_id() == 3));
     assert!(matches!(&rows[4], FolderRow::Header(header) if header.id == 2));
-    assert!(matches!(&rows[5], FolderRow::New));
+    assert_eq!(rows.len(), 5);
 }
 
 #[test]
@@ -57,9 +57,8 @@ fn collapsed_folders_hide_their_sessions_but_keep_the_header() {
     };
     assert!(header.collapsed);
     assert_eq!(header.color, 3);
-    assert_eq!(header.sessions, 1);
-    assert!(matches!(&rows[2], FolderRow::New));
-    assert_eq!(rows.len(), 3);
+
+    assert_eq!(rows.len(), 2);
 }
 
 #[test]
@@ -97,7 +96,7 @@ fn folder_membership_survives_draft_submission_filtering_and_archive_restore() {
     let rows = folder_rows(promoted.active, &folders);
     assert!(matches!(&rows[0], FolderRow::Header(header) if header.id == 1));
     assert!(matches!(&rows[1], FolderRow::Session(item) if item.app_session_id() == 7));
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 2);
 
     let filtered = session_rail_lists(
         std::slice::from_ref(&session),
@@ -112,7 +111,7 @@ fn folder_membership_survives_draft_submission_filtering_and_archive_restore() {
     archived.archived = true;
     let lists = session_rail_lists(&[archived], &[], None, &[]);
     assert_eq!(lists.archived.len(), 1);
-    assert_eq!(folder_rows(lists.active, &folders).len(), 2);
+    assert_eq!(folder_rows(lists.active, &folders).len(), 1);
     let restored = session_rail_lists(&[session], &[], None, &[]);
     assert!(
         matches!(&folder_rows(restored.active, &folders)[1], FolderRow::Session(item) if item.app_session_id() == 7)
@@ -120,7 +119,6 @@ fn folder_membership_survives_draft_submission_filtering_and_archive_restore() {
 }
 
 struct FolderDropHarness {
-    creation_button: bool,
     received: std::rc::Rc<std::cell::Cell<Option<i64>>>,
 }
 
@@ -131,7 +129,6 @@ impl gpui::Render for FolderDropHarness {
         _: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
         let received = self.received.clone();
-        let creation_button = self.creation_button;
         let drag = super::DraggedSession {
             app_session_id: 7,
             path: Some("/session".into()),
@@ -162,13 +159,8 @@ impl gpui::Render for FolderDropHarness {
                                     .into_any_element()
                             } else {
                                 let received = received.clone();
-                                let content = if creation_button {
-                                    new_folder_button(|_, _| {}).into_any_element()
-                                } else {
-                                    div().child("Work").into_any_element()
-                                };
                                 super::folder_drop_target(
-                                    div().id("folder").h(gpui::px(40.)).child(content),
+                                    div().id("folder").h(gpui::px(40.)).child("Work"),
                                     move |drag, _, _| received.set(Some(drag.app_session_id)),
                                 )
                                 .into_any_element()
@@ -183,21 +175,11 @@ impl gpui::Render for FolderDropHarness {
 
 #[gpui::test]
 fn folder_drop_accepts_session_across_header_width(cx: &mut gpui::TestAppContext) {
-    check_folder_drop(cx, false);
-}
-
-#[gpui::test]
-fn folder_creation_button_accepts_session_drop(cx: &mut gpui::TestAppContext) {
-    check_folder_drop(cx, true);
-}
-
-fn check_folder_drop(cx: &mut gpui::TestAppContext, creation_button: bool) {
     use gpui::{MouseButton, point, px};
     cx.update(gpui_component::init);
     let received = std::rc::Rc::new(std::cell::Cell::new(None));
     let (_, cx) = cx.add_window_view(|_, _| FolderDropHarness {
         received: received.clone(),
-        creation_button,
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
     for x in [15., 150., 285.] {

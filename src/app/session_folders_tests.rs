@@ -87,9 +87,9 @@ fn opened_projects_become_coloured_folders_that_hold_their_sessions() {
     let mut folders = SessionFolders::default();
     let alpha = std::path::Path::new("/work/alpha");
     let beta = std::path::Path::new("/work/beta");
-    assert!(folders.ensure_project_folder(alpha));
-    assert!(!folders.ensure_project_folder(alpha));
-    assert!(folders.ensure_project_folder(beta));
+    assert!(folders.ensure_project_folder(alpha, true));
+    assert!(!folders.ensure_project_folder(alpha, true));
+    assert!(folders.ensure_project_folder(beta, false));
     assert_eq!(
         folders
             .folders
@@ -111,6 +111,125 @@ fn opened_projects_become_coloured_folders_that_hold_their_sessions() {
     assert_eq!(folders.folder_for_session(7, beta), Some(beta_id));
     folders.assign(7, Some(alpha_id));
     assert_eq!(folders.folder_for_session(7, beta), Some(alpha_id));
+}
+
+#[test]
+fn project_folders_without_chats_are_pruned_unless_opened_by_hand() {
+    let mut folders = SessionFolders::default();
+    let held = std::path::Path::new("/work/held");
+    let opened = std::path::Path::new("/work/opened");
+    let chatty = std::path::Path::new("/work/chatty");
+    let assigned = std::path::Path::new("/work/assigned");
+    assert!(folders.ensure_project_folder(held, false));
+    assert!(folders.ensure_project_folder(opened, true));
+    assert!(folders.ensure_project_folder(chatty, false));
+    assert!(!folders.ensure_project_folder(chatty, false));
+    assert!(folders.ensure_project_folder(chatty, true));
+    assert!(!folders.ensure_project_folder(chatty, true));
+    assert!(folders.ensure_project_folder(assigned, false));
+    folders.assign(4, folders.folder_for_project(assigned));
+    let live = [chatty.to_path_buf()];
+    assert!(folders.prune_project_folders(&[4], &live));
+    assert_eq!(folders.folder_for_project(held), None);
+    assert!(folders.folder_for_project(opened).is_some());
+    assert!(folders.folder_for_project(chatty).is_some());
+    assert!(folders.folder_for_project(assigned).is_some());
+    assert!(!folders.prune_project_folders(&[4], &live));
+}
+
+#[test]
+fn folder_colors_stay_distinct_after_a_folder_is_removed() {
+    let mut folders = SessionFolders::default();
+    let first = std::path::Path::new("/work/first");
+    let second = std::path::Path::new("/work/second");
+    let third = std::path::Path::new("/work/third");
+    folders.ensure_project_folder(first, false);
+    folders.ensure_project_folder(second, false);
+    folders.remove(folders.folder_for_project(first).expect("first folder"));
+    folders.ensure_project_folder(third, false);
+    assert_eq!(
+        folders
+            .folders
+            .iter()
+            .map(|folder| folder.color)
+            .collect::<Vec<_>>(),
+        vec![1, 0]
+    );
+}
+
+fn summary(
+    id: &str,
+    app_session_id: i64,
+    project: &str,
+    parent: Option<&str>,
+    archived: bool,
+) -> SessionSummary {
+    SessionSummary::from_cached(
+        id.into(),
+        PathBuf::from(format!("/{id}.jsonl")),
+        PathBuf::from(project),
+        id.into(),
+        String::new(),
+        String::new(),
+        parent.map(str::to_owned),
+        std::time::SystemTime::UNIX_EPOCH,
+        0,
+        Default::default(),
+        archived,
+        false,
+        String::new(),
+    )
+    .with_app_session_id(app_session_id)
+}
+
+fn draft(id: &str, app_session_id: i64, project: &str) -> DraftSession {
+    let mut draft = DraftSession::with_id(
+        Some(crate::agents::Backend::Pi),
+        id.into(),
+        PathBuf::from(project),
+    );
+    draft.app_session_id = app_session_id;
+    draft
+}
+
+#[test]
+fn folder_deletion_takes_its_chats_drafts_and_subagent_families() {
+    let work = std::path::Path::new("/work");
+    let mut folders = SessionFolders::default();
+    folders.ensure_project_folder(work, false);
+    folders.ensure_project_folder(std::path::Path::new("/other"), false);
+    let work_folder = folders.folder_for_project(work).expect("work folder");
+    folders.assign(14, Some(work_folder));
+
+    let sessions = vec![
+        summary("root", 10, "/work", None, false),
+        summary("sub", 11, "/work", Some("root"), false),
+        summary("archived", 12, "/work", None, true),
+        summary("other", 13, "/other", None, false),
+        summary("filed", 14, "/elsewhere", None, false),
+    ];
+    let drafts = vec![
+        draft("work-draft", 20, "/work"),
+        draft("other-draft", 21, "/other"),
+    ];
+
+    let deletion = folder_deletion(&sessions, &drafts, &folders, work_folder);
+
+    assert_eq!(
+        deletion.roots,
+        vec![PathBuf::from("/root.jsonl"), PathBuf::from("/filed.jsonl")]
+    );
+    assert_eq!(deletion.drafts, vec!["work-draft".to_owned()]);
+    let mut family_paths = deletion.family_paths.into_iter().collect::<Vec<_>>();
+    family_paths.sort();
+    assert_eq!(
+        family_paths,
+        vec![
+            PathBuf::from("/filed.jsonl"),
+            PathBuf::from("/root.jsonl"),
+            PathBuf::from("/sub.jsonl"),
+        ]
+    );
 }
 
 #[test]

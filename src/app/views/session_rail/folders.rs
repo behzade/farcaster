@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::{
     FarcasterApp,
     colors::{ColorTarget, color_menu, palette_color},
@@ -6,17 +8,16 @@ use super::{
     rendering::session_section_header,
 };
 use crate::app::{
-    PickerScope, ProjectPickerIntent,
     session_folders::SessionFolders,
     ui::{
         assets::AppIcon,
-        primitives::{AppIconSize, ButtonTone, ContextMenuTrigger, app_icon, button},
+        primitives::{AppIconSize, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon, button},
         theme::theme,
     },
 };
 use gpui::{
-    Anchor, AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, WeakEntity, div, px,
+    Anchor, AnyElement, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -30,23 +31,13 @@ pub(super) struct FolderHeader {
     pub(super) name: String,
     pub(super) color: u8,
     pub(super) collapsed: bool,
-    pub(super) sessions: usize,
+    pub(super) project: Option<PathBuf>,
 }
 
 #[derive(Clone)]
 pub(super) enum FolderRow {
     Session(Box<ActiveSessionItem>),
     Header(Box<FolderHeader>),
-    New,
-}
-
-impl FolderRow {
-    pub(super) fn session(&self) -> Option<&ActiveSessionItem> {
-        match self {
-            Self::Session(item) => Some(item),
-            _ => None,
-        }
-    }
 }
 
 pub(super) fn folder_rows(
@@ -73,7 +64,7 @@ pub(super) fn folder_rows(
             name: folder.name.clone(),
             color: folder.color,
             collapsed: folder.collapsed,
-            sessions: members.len(),
+            project: folder.project.clone(),
         })));
         if !folder.collapsed {
             rows.extend(
@@ -83,40 +74,49 @@ pub(super) fn folder_rows(
             );
         }
     }
-    rows.push(FolderRow::New);
     rows
 }
 
 pub(super) fn folder_header(
-    folder: Option<Box<FolderHeader>>,
+    folder: Box<FolderHeader>,
     editing: bool,
     input: Entity<InputState>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let Some(folder) = folder else {
-        return new_folder_row(editing, input, entity);
-    };
     let FolderHeader {
         id,
         name,
         color,
         collapsed,
-        sessions,
+        project,
     } = *folder;
     let drop_entity = entity.clone();
     let edit_entity = entity.clone();
-    let menu_entity = entity.clone();
     let new_entity = entity.clone();
-    let color_entity = entity.clone();
     let context_entity = entity.clone();
     let toggle_entity = entity.clone();
+    let scope_entity = entity.clone();
+    let delete_entity = entity.clone();
+    let scope_project = project.clone();
     let cancel_entity = entity;
     let section = div().w_full().flex().flex_col();
     let mut row = session_section_header()
         .id(format!("session-folder-{id}"))
         .group("session-folder-header")
         .w_full()
-        .gap(theme().space.xs);
+        .gap(theme().space.xs)
+        .cursor_pointer()
+        .hover(|row| row.bg(theme().colors.highlight))
+        .on_click(move |_, _, cx| {
+            let Some(project) = scope_project.clone() else {
+                return;
+            };
+            let _ = scope_entity.update(cx, |this, cx| {
+                if this.project.path != project {
+                    this.select_project(project.clone(), cx);
+                }
+            });
+        });
     if editing {
         let commit = edit_entity.clone();
         return section
@@ -139,7 +139,6 @@ pub(super) fn folder_header(
             .into_any_element();
     }
 
-
     row = folder_drop_target(row, move |drag, _, cx| {
         let _ = drop_entity.update(cx, |this, cx| {
             this.assign_session_folder(drag.app_session_id, Some(id), cx);
@@ -148,7 +147,7 @@ pub(super) fn folder_header(
     });
     row = row
         .child(
-            folder_action(Button::new(format!("folder-toggle-{id}")).ghost())
+            folder_control(Button::new(format!("folder-toggle-{id}")).ghost())
                 .accessibility_label(if collapsed {
                     "Open folder"
                 } else {
@@ -166,7 +165,7 @@ pub(super) fn folder_header(
                     } else {
                         AppIcon::CaretDown
                     },
-                    AppIconSize::Inline,
+                    AppIconSize::Control,
                 ))
                 .on_click(move |_, _, cx| {
                     let _ = toggle_entity.update(cx, |this, cx| {
@@ -178,7 +177,7 @@ pub(super) fn folder_header(
             div()
                 .flex_none()
                 .text_color(palette_color(color))
-                .child(app_icon(AppIcon::Folder, AppIconSize::Inline)),
+                .child(app_icon(AppIcon::Folder, AppIconSize::Control)),
         )
         .child(
             div()
@@ -187,55 +186,16 @@ pub(super) fn folder_header(
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .child(name),
-        )
-        .child(
-            div()
-                .flex_none()
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.subtle)
-                .child(if collapsed {
-                    sessions.to_string()
-                } else {
-                    String::new()
-                }),
         );
 
     row = row.child(
-        folder_action(
-            crate::app::ui::primitives::dropdown_button(
-                format!("folder-menu-{id}"),
-                "⋯",
-                ButtonTone::Quiet,
-                true,
-            )
-            .dropdown_caret(false)
-            .px(px(0.0)),
-        )
-        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, window, cx| {
-            let rename = menu_entity.clone();
-            let delete = menu_entity.clone();
-            let color_entity = color_entity.clone();
-            menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
-                let _ = rename.update(cx, |this, cx| this.begin_folder_edit(Some(id), window, cx));
-            }))
-            .submenu("Colour", window, cx, move |menu, _, _| {
-                color_menu(
-                    menu,
-                    Some(color),
-                    color_entity.clone(),
-                    ColorTarget::Folder(id),
-                )
-            })
-            .item(
-                PopupMenuItem::new("Delete folder").on_click(move |_, _, cx| {
-                    let _ = delete.update(cx, |this, cx| {
-                        let mut next = this.sessions.folders.clone();
-                        next.remove(id);
-                        this.save_session_folders(next, cx);
-                    });
-                }),
-            )
-        }),
+        DeleteButton::new(format!("delete-folder-{id}"), "Delete folder and its chats")
+            .reveal_on("session-folder-header")
+            .on_delete(move |window, cx| {
+                let _ = delete_entity.update(cx, |this, cx| {
+                    this.request_folder_delete(id, window, cx);
+                });
+            }),
     );
     row = row.child(
         folder_action(Button::new(format!("new-session-in-folder-{id}")).ghost())
@@ -246,11 +206,8 @@ pub(super) fn folder_header(
             .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
             .on_click(move |_, window, cx| {
                 let _ = new_entity.update(cx, |this, cx| {
-                    this.open_picker(
-                        PickerScope::Projects(ProjectPickerIntent::NewSessionInFolder(id)),
-                        window,
-                        cx,
-                    );
+                    let project = project.clone().unwrap_or_else(|| this.project.path.clone());
+                    this.new_session_with_folder(project, Some(id), window, cx);
                 });
             }),
     );
@@ -258,101 +215,37 @@ pub(super) fn folder_header(
         .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, window, cx| {
             let rename = context_entity.clone();
             let colour = context_entity.clone();
+            let delete = context_entity.clone();
             menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
                 let _ = rename.update(cx, |this, cx| this.begin_folder_edit(Some(id), window, cx));
             }))
             .submenu("Colour", window, cx, move |menu, _, _| {
                 color_menu(menu, Some(color), colour.clone(), ColorTarget::Folder(id))
             })
-        });
+            .separator()
+            .item(
+                PopupMenuItem::new("Delete folder").on_click(move |_, _, cx| {
+                    let _ = delete.update(cx, |this, cx| {
+                        let mut next = this.sessions.folders.clone();
+                        next.remove(id);
+                        this.save_session_folders(next, cx);
+                    });
+                }),
+            )
+        })
+        .mouse_button(MouseButton::Right);
     section.child(header).into_any_element()
 }
 
-fn new_folder_row(
-    editing: bool,
-    input: Entity<InputState>,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    let drop_entity = entity.clone();
-    let edit_entity = entity.clone();
-    let cancel_entity = entity.clone();
-    let section = div().w_full().flex().flex_col().pt(theme().space.sm);
-    let mut row = session_section_header()
-        .id("session-folder-none")
-        .group("session-folder-header")
-        .w_full()
-        .gap(theme().space.xs)
-        .h(theme().size(40.0));
-    if editing {
-        let commit = edit_entity.clone();
-        return section
-            .child(
-                row.on_action(move |_: &gpui_component::input::Escape, _, cx| {
-                    cx.stop_propagation();
-                    let _ = cancel_entity.update(cx, |this, cx| this.cancel_session_title_edit(cx));
-                })
-                .child(Input::new(&input).flex_1().min_w_0().appearance(true))
-                .child(button(
-                    "save-folder",
-                    "Create",
-                    ButtonTone::Neutral,
-                    true,
-                    move |_, cx| {
-                        let _ = commit.update(cx, |this, cx| this.commit_folder_edit(cx));
-                    },
-                )),
-            )
-            .into_any_element();
-    }
-    row = folder_drop_target(row, move |drag, window, cx| {
-        let _ = drop_entity.update(cx, |this, cx| {
-            this.begin_folder_edit(None, window, cx);
-            if let Some(edit) = &mut this.sessions.editing_folder {
-                edit.session = Some(drag.app_session_id);
-            }
-            this.clear_session_drop_target(cx);
-        });
-    });
-    section
-        .child(
-            row.hover(|row| row.bg(theme().colors.highlight))
-                .child(new_folder_button(move |window, cx| {
-                    let _ =
-                        edit_entity.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
-                })),
-        )
-        .into_any_element()
+fn folder_control(button: Button) -> Button {
+    button.size(theme().controls.icon_button).cursor_pointer()
 }
 
 fn folder_action(button: Button) -> Button {
-    button
-        .size(theme().controls.icon_button)
-        .cursor_pointer()
+    folder_control(button)
         .opacity(0.0)
         .group_hover("session-folder-header", |style| style.opacity(1.0))
         .focus(|style| style.opacity(1.0))
-}
-
-fn new_folder_button(on_press: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static) -> Button {
-    Button::new("new-session-folder")
-        .text()
-        .accessibility_label("New folder")
-        .w_full()
-        .h_full()
-        .px(px(0.0))
-        .cursor_pointer()
-        .text_color(theme().colors.muted)
-        .group_hover("session-folder-header", |button| {
-            button.text_color(theme().colors.text)
-        })
-        .child(
-            div()
-                .w_full()
-                .text_size(theme().type_scale.body_small)
-                .font_weight(FontWeight::NORMAL)
-                .child("+ New folder"),
-        )
-        .on_click(move |_, window, cx| on_press(window, cx))
 }
 
 pub(super) fn folder_drop_target(

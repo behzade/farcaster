@@ -24,6 +24,8 @@ pub struct SessionFolder {
     #[serde(default)]
     pub collapsed: bool,
     #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
     pub project: Option<PathBuf>,
 }
 
@@ -67,24 +69,18 @@ impl SessionFolders {
             .max()
             .unwrap_or(0)
             + 1;
-        let color = u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0);
+        let color = self.next_color();
         self.folders.push(SessionFolder {
             id,
             name,
             color,
             collapsed: false,
+            pinned: false,
             project: None,
         });
         if let Some(session) = session {
             self.assign(session, Some(id));
         }
-    }
-
-    pub fn color(&self, id: u64) -> Option<u8> {
-        self.folders
-            .iter()
-            .find(|folder| folder.id == id)
-            .map(|folder| folder.color)
     }
 
     pub fn set_color(&mut self, id: u64, color: u8) -> bool {
@@ -97,13 +93,6 @@ impl SessionFolders {
         }
         folder.color = color;
         true
-    }
-
-    pub fn collapsed(&self, id: u64) -> bool {
-        self.folders
-            .iter()
-            .find(|folder| folder.id == id)
-            .is_some_and(|folder| folder.collapsed)
     }
 
     pub fn set_collapsed(&mut self, id: u64, collapsed: bool) -> bool {
@@ -153,8 +142,16 @@ impl SessionFolders {
             .or_else(|| self.folder_for_project(project))
     }
 
-    pub fn ensure_project_folder(&mut self, project: &Path) -> bool {
-        if self.folder_for_project(project).is_some() {
+    pub fn ensure_project_folder(&mut self, project: &Path, pinned: bool) -> bool {
+        if let Some(folder) = self
+            .folders
+            .iter_mut()
+            .find(|folder| folder.project.as_deref() == Some(project))
+        {
+            if pinned && !folder.pinned {
+                folder.pinned = true;
+                return true;
+            }
             return false;
         }
         let name = project
@@ -169,14 +166,59 @@ impl SessionFolders {
             .max()
             .unwrap_or(0)
             + 1;
-        let color = u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0);
+        let color = self.next_color();
         self.folders.push(SessionFolder {
             id,
             name,
             color,
             collapsed: false,
+            pinned,
             project: Some(project.to_path_buf()),
         });
+        true
+    }
+
+    fn next_color(&self) -> u8 {
+        (0..FOLDER_COLOR_COUNT)
+            .find(|index| {
+                !self
+                    .folders
+                    .iter()
+                    .any(|folder| usize::from(folder.color) == *index)
+            })
+            .map_or_else(
+                || u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0),
+                |index| u8::try_from(index).unwrap_or(0),
+            )
+    }
+
+    pub fn prune_project_folders(
+        &mut self,
+        chats: &[i64],
+        live_projects: &[PathBuf],
+    ) -> bool {
+        let held = chats
+            .iter()
+            .filter_map(|chat| self.membership.get(chat).copied())
+            .collect::<std::collections::HashSet<_>>();
+        let before = self.folders.len();
+        self.folders.retain(|folder| {
+            let Some(project) = folder.project.as_deref() else {
+                return true;
+            };
+            folder.pinned
+                || held.contains(&folder.id)
+                || live_projects.iter().any(|live| live == project)
+        });
+        if self.folders.len() == before {
+            return false;
+        }
+        let live = self
+            .folders
+            .iter()
+            .map(|folder| folder.id)
+            .collect::<std::collections::HashSet<_>>();
+        self.membership.retain(|_, folder| live.contains(folder));
         true
     }
 
