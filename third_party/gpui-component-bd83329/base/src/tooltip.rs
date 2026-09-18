@@ -117,6 +117,10 @@ impl TooltipOverlay {
         }
     }
 
+    pub fn is_visible(&self) -> bool {
+        self.content.is_some()
+    }
+
     pub fn render_with(
         mut self,
         renderer: impl Fn(AnyView, TooltipTransition, &mut Window, &mut App) -> AnyElement + 'static,

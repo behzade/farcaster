@@ -2,8 +2,9 @@ use gpui::{
     CursorStyle, Div, ElementId, InteractiveElement as _, MouseButton, Pixels, Role, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, div,
 };
-use gpui_component::{Icon, IconNamed, Sizable as _, tooltip::Tooltip};
+use gpui_component::{Icon, IconNamed, Sizable as _};
 
+use super::AppTooltip as _;
 use crate::app::ui::theme::theme;
 
 #[derive(Clone, Copy)]
@@ -51,5 +52,5 @@ pub(crate) fn icon_control(
         })
         .cursor(CursorStyle::PointingHand)
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
-        .tooltip(move |window, cx| Tooltip::new(tooltip_label.clone()).build(window, cx))
+        .app_tooltip(tooltip_label)
 }

@@ -8,8 +8,8 @@ use crate::{
         ui::{
             assets::AppIcon,
             primitives::{
-                ButtonTone, activates_button, dropdown_button, icon_button, icon_control,
-                section_heading,
+                AppTooltip as _, ButtonTone, activates_button, dropdown_button, icon_button,
+                icon_control, section_heading,
             },
             theme::{MONO_FONT_FAMILY, theme},
         },
@@ -29,7 +29,6 @@ use gpui_component::{
     Disableable as _, Sizable as _, Size,
     button::{Button, ButtonVariants as _},
     menu::{DropdownMenu as _, PopupMenuItem},
-    tooltip::Tooltip,
 };
 
 pub(super) fn file_action(
@@ -180,9 +179,7 @@ pub(super) fn repository_header(
                             .text_ellipsis()
                             .font_family(MONO_FONT_FAMILY)
                             .text_color(theme().colors.subtle)
-                            .tooltip(move |window, cx| {
-                                Tooltip::new(detail.clone()).build(window, cx)
-                            })
+                            .app_tooltip(detail.clone())
                             .child(compact_identity_label(snapshot)),
                     ),
             )
@@ -217,6 +214,8 @@ fn repository_actions(
     let active = selected_backend(kind, app.project.repository.preference, git, jj);
     dropdown_button("repository-actions", "⋯", ButtonTone::Quiet, true)
         .dropdown_caret(false)
+        .size(theme().controls.icon_button)
+        .px(gpui::px(0.0))
         .accessibility_label("Repository actions")
         .tooltip("Repository actions")
         .dropdown_menu(move |mut menu, _, _| {

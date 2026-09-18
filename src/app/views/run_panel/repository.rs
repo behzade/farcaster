@@ -1,9 +1,3 @@
-use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
-};
-use gpui_component::tooltip::Tooltip;
-
 #[cfg(test)]
 use super::repository_controls::selected_backend;
 use super::{
@@ -21,9 +15,13 @@ use crate::{
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
-        primitives::{AppIconSize, ButtonTone, activates_button, app_icon, button},
+        primitives::{AppIconSize, AppTooltip as _, ButtonTone, activates_button, app_icon, button},
     },
     repository::{RepositoryEdit, RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
+};
+use gpui::{
+    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
 };
 
 use super::{
@@ -311,7 +309,7 @@ impl FarcasterApp {
                 .track_focus(&focus)
                 .role(Role::Button)
                 .aria_label(accessible)
-                .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+                .app_tooltip(full_path.clone())
                 .tab_index(0)
                 .on_mouse_down(
                     gpui::MouseButton::Left,
@@ -382,7 +380,7 @@ impl FarcasterApp {
                             .border(theme().border)
                             .border_color(theme().colors.muted)
                             .when(!editable, |checkbox| checkbox.opacity(0.4))
-                            .rounded(theme().size(2.0))
+                            .rounded(theme().radius)
                             .flex()
                             .items_center()
                             .justify_center()
@@ -479,7 +477,7 @@ fn repository_error_notice(message: &str, detail: &str, color: gpui::Rgba) -> An
     let detail = bounded_message(detail);
     repository_notice(message, color)
         .min_w_0()
-        .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
+        .app_tooltip(detail.clone())
         .into_any_element()
 }
 

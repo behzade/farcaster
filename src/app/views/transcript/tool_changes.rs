@@ -5,11 +5,10 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use gpui_base::GlobalState;
-use gpui_component::tooltip::Tooltip;
 
 use crate::{
     app::ui::{
-        primitives::activates_button,
+        primitives::{AppTooltip as _, activates_button},
         theme::{MONO_FONT_FAMILY, theme},
     },
     conversation::ToolPresentation,
@@ -56,7 +55,7 @@ pub(super) fn activation_row(
         .rounded(theme().radius)
         .role(Role::Button)
         .aria_label(label)
-        .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        .app_tooltip(tooltip.clone())
         .tab_index(0)
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))

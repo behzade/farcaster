@@ -142,7 +142,14 @@ impl FarcasterApp {
                 gpui::MouseButton::Left,
                 crate::app::ui::primitives::preserve_pointer_focus,
             )
-            .ml(px(depth as f32 * 8.0))
+            .ml(px(depth.saturating_sub(1) as f32 * 8.0))
+            .px(theme().size(2.0))
+            .py(theme().size(3.0))
+            .flex()
+            .items_stretch()
+            .hover(|card| card.bg(theme().colors.highlight))
+            .focus(|card| card.bg(theme().colors.highlight))
+            .cursor_pointer()
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
                     this.select_session_and_focus(path.clone(), project.clone(), window, cx);

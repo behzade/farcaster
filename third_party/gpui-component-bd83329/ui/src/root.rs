@@ -103,7 +103,7 @@ impl Root {
             .read(cx)
     }
 
-    pub(crate) fn tooltip_overlay(
+    pub fn tooltip_overlay(
         window: &Window,
         cx: &App,
     ) -> Option<Entity<gpui_base::TooltipOverlay>> {
