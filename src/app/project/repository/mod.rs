@@ -79,6 +79,44 @@ impl RefreshGate {
     }
 }
 
+/// The last working copy observed for one project.
+struct RepositoryObservation {
+    preference: BackendPreference,
+    backend: Option<RepositoryBackend>,
+    snapshot: Option<WorkingCopySnapshot>,
+    additions: Option<u64>,
+    deletions: Option<u64>,
+}
+
+impl RepositoryObservation {
+    fn reusable_for(&self, preference: BackendPreference) -> bool {
+        self.preference == preference
+    }
+}
+
+/// Remembered working copies, keyed by project, so moving between projects can
+/// show the previous result immediately instead of an empty panel waiting on a
+/// fresh scan.
+#[derive(Default)]
+struct ObservationCache {
+    projects: BTreeMap<PathBuf, RepositoryObservation>,
+}
+
+impl ObservationCache {
+    fn remember(&mut self, project: PathBuf, observation: RepositoryObservation) {
+        self.projects.insert(project, observation);
+    }
+
+    fn reuse(
+        &mut self,
+        project: &std::path::Path,
+        preference: BackendPreference,
+    ) -> Option<RepositoryObservation> {
+        let observation = self.projects.remove(project)?;
+        observation.reusable_for(preference).then_some(observation)
+    }
+}
+
 pub(in crate::app) struct RepositoryState {
     pub(in crate::app) project: PathBuf,
     pub(in crate::app) execution_allowed: bool,
@@ -104,6 +142,7 @@ pub(in crate::app) struct RepositoryState {
     watcher: Option<RepositoryWatcher>,
     watcher_binding: Option<watching::WatchBinding>,
     watcher_generation: u64,
+    observations: ObservationCache,
 }
 
 impl RepositoryState {
@@ -140,6 +179,7 @@ impl RepositoryState {
             watcher: None,
             watcher_binding: None,
             watcher_generation: 0,
+            observations: ObservationCache::default(),
         }
     }
 
@@ -148,15 +188,67 @@ impl RepositoryState {
             return false;
         }
         let project_changed = self.project != project;
-        self.project = project;
-        self.execution_allowed = execution_allowed;
         if project_changed {
+            if let Some(observation) = self.observe() {
+                self.observations
+                    .remember(self.project.clone(), observation);
+            }
+            self.project = project;
             self.preference = preference_for(&self.preferences, &self.project);
             self.pending_jj_init = None;
             self.jj_init_in_flight = false;
         }
+        self.execution_allowed = execution_allowed;
         self.clear_observation();
+        if project_changed {
+            let project = self.project.clone();
+            if let Some(observation) = self.observations.reuse(&project, self.preference) {
+                self.apply_observation(observation);
+            }
+        }
         true
+    }
+
+    /// Move the current working copy out so it can be remembered for its own
+    /// project. A project with nothing observed yet has nothing to keep.
+    fn observe(&mut self) -> Option<RepositoryObservation> {
+        let snapshot = self.snapshot.take()?;
+        Some(RepositoryObservation {
+            preference: self.preference,
+            backend: self.backend.take(),
+            snapshot: Some(snapshot),
+            additions: self.additions.take(),
+            deletions: self.deletions.take(),
+        })
+    }
+
+    fn apply_observation(&mut self, observation: RepositoryObservation) {
+        self.backend = observation.backend;
+        self.snapshot = observation.snapshot;
+        self.additions = observation.additions;
+        self.deletions = observation.deletions;
+        self.initialized = self.snapshot.is_some();
+    }
+
+    /// Rows key off a focus handle per changed file, so a restored working copy
+    /// needs its handles recreated before it can be rendered.
+    fn ensure_row_focus(&mut self, cx: &mut Context<FarcasterApp>) {
+        let keys = self
+            .snapshot
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .changes
+                    .iter()
+                    .map(|change| change.target.key.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for key in keys {
+            self.row_focus
+                .entry(key)
+                .or_insert_with(|| cx.focus_handle());
+        }
     }
 
     fn select_preference(&mut self, preference: BackendPreference) -> bool {
@@ -210,6 +302,8 @@ impl FarcasterApp {
             .repository
             .select_project(project, execution_allowed)
         {
+            self.project.repository.ensure_row_focus(cx);
+            self.notify_run_panel(cx);
             self.request_repository_refresh(cx);
         }
     }

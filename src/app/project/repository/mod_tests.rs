@@ -90,6 +90,59 @@ fn project_change_rejects_old_scan_and_starts_pending_scan() {
     );
 }
 
+fn cached_observation(preference: BackendPreference) -> RepositoryObservation {
+    RepositoryObservation {
+        preference,
+        backend: None,
+        snapshot: Some(WorkingCopySnapshot {
+            location: RepositoryLocation {
+                kind: crate::repository::RepositoryKind::Git,
+                workspace_root: PathBuf::from("/workspace"),
+                project_root: PathBuf::from("/workspace/project"),
+            },
+            identity: crate::repository::SnapshotIdentity::Git(Default::default()),
+            changes: Vec::new(),
+            captured_at: std::time::SystemTime::UNIX_EPOCH,
+        }),
+        additions: Some(2),
+        deletions: Some(1),
+    }
+}
+
+#[test]
+fn switching_projects_reuses_the_working_copy_that_was_observed_for_them() {
+    let mut cache = ObservationCache::default();
+    let first = PathBuf::from("/first");
+    let second = PathBuf::from("/second");
+    cache.remember(first.clone(), cached_observation(BackendPreference::Auto));
+
+    let reused = cache
+        .reuse(&first, BackendPreference::Auto)
+        .expect("the first project keeps its working copy");
+    assert!(reused.snapshot.is_some());
+    assert_eq!(reused.additions, Some(2));
+    assert_eq!(reused.deletions, Some(1));
+
+    assert!(cache.reuse(&first, BackendPreference::Auto).is_none());
+    assert!(cache.reuse(&second, BackendPreference::Auto).is_none());
+}
+
+#[test]
+fn a_cached_working_copy_is_only_reused_by_the_backend_that_produced_it() {
+    let mut cache = ObservationCache::default();
+    let project = PathBuf::from("/project");
+    cache.remember(project.clone(), cached_observation(BackendPreference::Git));
+
+    assert!(
+        cache.reuse(&project, BackendPreference::Jujutsu).is_none(),
+        "a working copy from another backend is not reusable"
+    );
+    assert!(
+        cache.reuse(&project, BackendPreference::Git).is_none(),
+        "the mismatched working copy is dropped instead of kept stale"
+    );
+}
+
 #[test]
 fn repository_preferences_are_project_specific() {
     let first = PathBuf::from("/first");
