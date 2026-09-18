@@ -190,17 +190,19 @@ impl FarcasterApp {
         self.hide_terminal(cx);
     }
 
+    pub(in crate::app) fn native_workspace_surface_ready(&self) -> bool {
+        match self.workspace.surface {
+            AppSurface::Editor => {
+                self.workspace.editor.ready && self.workspace.editor.view.is_some()
+            }
+            AppSurface::Terminal => self.workspace.terminal.view.is_some(),
+            AppSurface::Chat | AppSurface::Work => false,
+        }
+    }
+
     pub(in crate::app) fn cover_native_workspace_surface(&mut self, cx: &mut Context<Self>) {
         if !self.workspace.native_surface_covered {
-            self.workspace.native_surface_covered = match self.workspace.surface {
-                AppSurface::Editor => {
-                    self.workspace.editor.ready
-                        && (self.workspace.editor.view.is_some()
-                            || self.workspace.editor.terminal_editor_view.is_some())
-                }
-                AppSurface::Terminal => self.workspace.terminal.view.is_some(),
-                AppSurface::Chat | AppSurface::Work => false,
-            };
+            self.workspace.native_surface_covered = self.native_workspace_surface_ready();
             if self.workspace.native_surface_covered {
                 self.workspace.native_surface_snapshot = match self.workspace.surface {
                     AppSurface::Editor => self
@@ -235,7 +237,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let overlay_active = self.native_workspace_covered_by_overlay();
+        let overlay_active = self.native_surface_obscured(window, cx);
         if !overlay_active {
             self.workspace.native_surface_covered = false;
             if let Some(snapshot) = self.workspace.native_surface_snapshot.take() {
@@ -429,6 +431,27 @@ impl FarcasterApp {
                     !matches!(dialog, ExtensionUiRequest::WorkerModel { .. })
                         || self.workspace.runtime_picker.open
                 })
+    }
+
+    pub(in crate::app) fn native_surface_obscured(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.native_workspace_covered_by_overlay()
+            || gpui_base::GlobalState::is_in_deferred_context(cx)
+            || gpui_component::Root::tooltip_overlay(window, cx)
+                .is_some_and(|overlay| overlay.read(cx).is_visible())
+    }
+
+    pub(in crate::app) fn watch_tooltip_overlay(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.tooltip_watch.is_some() {
+            return;
+        }
+        let Some(overlay) = gpui_component::Root::tooltip_overlay(window, cx) else {
+            return;
+        };
+        self.workspace.tooltip_watch = Some(cx.observe(&overlay, |_, _, cx| cx.notify()));
     }
 
     pub(in crate::app) fn center_surface_switch_blocked(&self) -> bool {

@@ -18,6 +18,25 @@ fn dialog_lifecycle_action(pending: bool, has_dialog: bool) -> DialogLifecycleAc
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeSurfaceAction {
+    None,
+    Cover,
+    Restore,
+}
+
+fn native_surface_action(
+    covered: bool,
+    obscured: bool,
+    native_surface: bool,
+) -> NativeSurfaceAction {
+    match (covered, obscured, native_surface) {
+        (false, true, true) => NativeSurfaceAction::Cover,
+        (true, false, _) => NativeSurfaceAction::Restore,
+        _ => NativeSurfaceAction::None,
+    }
+}
+
 impl FarcasterApp {
     pub(super) fn prepare_root_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resolve_pending_submission(window, cx);
@@ -116,8 +135,17 @@ impl FarcasterApp {
                 }
             });
         }
-        if self.workspace.native_surface_covered && !self.native_workspace_covered_by_overlay() {
-            self.restore_active_native_workspace_surface(window, cx);
+        self.watch_tooltip_overlay(window, cx);
+        match native_surface_action(
+            self.workspace.native_surface_covered,
+            self.native_surface_obscured(window, cx),
+            self.native_workspace_surface_ready(),
+        ) {
+            NativeSurfaceAction::Cover => self.cover_native_workspace_surface(cx),
+            NativeSurfaceAction::Restore => {
+                self.restore_active_native_workspace_surface(window, cx);
+            }
+            NativeSurfaceAction::None => {}
         }
         if let Some((generation, title)) = self.extensions.pending_title.take() {
             cx.defer_in(window, move |this, window, _| {

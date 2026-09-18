@@ -39,11 +39,13 @@ impl Render for FarcasterApp {
             NATIVE_INPUT_CONTEXT
         };
         let work_active = self.workspace.surface == AppSurface::Work;
+        let obscured = self.native_surface_obscured(window, cx);
         let main = self.render_workspace_main(
             entity.clone(),
             mode,
             window.viewport_size().height,
             self.composer_region_focused(window, cx),
+            obscured,
         );
         let session_rail_width = self.views.session_rail.read(cx).width();
         let run_panel_width = self.views.run_panel.read(cx).width();

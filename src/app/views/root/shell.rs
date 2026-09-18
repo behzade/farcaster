@@ -63,21 +63,20 @@ impl FarcasterApp {
             })
             .into_any_element()
     }
-
     pub(super) fn render_workspace_main(
         &self,
         entity: WeakEntity<Self>,
         mode: LayoutMode,
         viewport_height: gpui::Pixels,
         request_focused: bool,
+        obscured: bool,
     ) -> AnyElement {
         let native_surface = matches!(
             self.workspace.surface,
             AppSurface::Editor | AppSurface::Terminal
         );
-        let native_surface_covered = native_surface
-            && self.workspace.native_surface_covered
-            && self.native_workspace_covered_by_overlay();
+        let native_surface_covered =
+            native_surface && self.workspace.native_surface_covered && obscured;
         let main = if native_surface_covered {
             div()
                 .size_full()
