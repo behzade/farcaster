@@ -17,8 +17,8 @@ mod tests;
 
 pub(crate) use highlight::SyntaxKey;
 pub(crate) use library::{
-    Appearance, ThemeDefinition, ThemeLibrary, color_hex, parse_hex, suggested_file_name,
-    token_label,
+    Appearance, ThemeDefinition, ThemeLibrary, color_hex, length_label, parse_hex,
+    suggested_file_name, token_label,
 };
 
 pub(crate) const TRANSCRIPT_FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 10.0..=32.0;
@@ -45,6 +45,7 @@ pub(crate) struct Theme {
     pub radius: Pixels,
     pub border: Pixels,
     pub layout: Layout,
+    sizes: [Pixels; SIZE_VALUES.len()],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -209,6 +210,8 @@ pub(crate) struct ControlScale {
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Layout {
+    pub wide_min_width: Pixels,
+    pub compact_min_width: Pixels,
     pub window_width: Pixels,
     pub window_height: Pixels,
     pub session_rail: Pixels,
@@ -228,14 +231,38 @@ pub(crate) struct Layout {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct MetricScale {
+    pub radius: Pixels,
+    pub border_width: Pixels,
+}
+
+const SIZE_VALUES: [u16; 94] = [
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 28,
+    30, 32, 34, 36, 38, 40, 44, 47, 48, 49, 50, 56, 60, 65, 72, 80, 90, 100, 110, 116, 120, 130,
+    132, 140, 150, 160, 180, 184, 190, 200, 211, 220, 240, 252, 260, 264, 280, 286, 300, 320, 332,
+    360, 400, 420, 421, 430, 480, 500, 520, 560, 600, 620, 640, 680, 700, 800, 820, 860, 900, 959,
+    960, 1040, 1080, 1200, 1240, 1440, 1920, 2000,
+];
+
+#[derive(Clone, Copy)]
 struct Structure {
     space: Space,
     type_scale: TypeScale,
     icons: IconScale,
     controls: ControlScale,
-    radius: Pixels,
-    border: Pixels,
+    metrics: MetricScale,
     layout: Layout,
+    sizes: [Pixels; SIZE_VALUES.len()],
+}
+
+const fn default_sizes() -> [Pixels; SIZE_VALUES.len()] {
+    let mut sizes = [px(0.0); SIZE_VALUES.len()];
+    let mut index = 0;
+    while index < SIZE_VALUES.len() {
+        sizes[index] = px(SIZE_VALUES[index] as f32);
+        index += 1;
+    }
+    sizes
 }
 
 const STRUCTURE: Structure = Structure {
@@ -264,9 +291,13 @@ const STRUCTURE: Structure = Structure {
         utility_row: px(44.0),
         archived_preview_row: px(49.0),
     },
-    radius: px(4.0),
-    border: px(1.0),
+    metrics: MetricScale {
+        radius: px(4.0),
+        border_width: px(1.0),
+    },
     layout: Layout {
+        wide_min_width: px(1180.0),
+        compact_min_width: px(960.0),
         window_width: px(1240.0),
         window_height: px(820.0),
         session_rail: px(286.0),
@@ -284,19 +315,188 @@ const STRUCTURE: Structure = Structure {
         session_row_height: px(49.0),
         status_row_height: px(24.0),
     },
+    sizes: default_sizes(),
 };
 
+macro_rules! metric_keys {
+    ($($group:ident . $field:ident => $name:literal),* $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        #[allow(non_camel_case_types)]
+        pub(crate) enum MetricKey {
+            $($field),*
+        }
+
+        impl MetricKey {
+            pub(crate) const ALL: &'static [MetricKey] = &[$(MetricKey::$field),*];
+
+            pub(crate) fn from_name(name: &str) -> Option<MetricKey> {
+                match name {
+                    $($name => Some(MetricKey::$field),)*
+                    _ => None,
+                }
+            }
+
+            pub(crate) fn name(self) -> &'static str {
+                match self {
+                    $(MetricKey::$field => $name),*
+                }
+            }
+
+            pub(crate) fn label(self) -> String {
+                label(self.name())
+            }
+        }
+
+        impl Structure {
+            fn get(self, key: MetricKey) -> Pixels {
+                match key {
+                    $(MetricKey::$field => self.$group.$field),*
+                }
+            }
+
+            fn set(&mut self, key: MetricKey, value: Pixels) {
+                match key {
+                    $(MetricKey::$field => self.$group.$field = value),*
+                }
+            }
+        }
+    };
+}
+
+metric_keys!(
+    space.xs => "space-xs",
+    space.sm => "space-sm",
+    space.md => "space-md",
+    type_scale.caption => "font-caption",
+    type_scale.body_small => "font-body-small",
+    type_scale.body => "font-body",
+    type_scale.reading => "font-reading",
+    type_scale.display => "font-display",
+    type_scale.line_body => "line-body",
+    type_scale.line_reading => "line-reading",
+    type_scale.line_composer => "line-composer",
+    icons.inline => "icon-inline",
+    icons.control => "icon-control",
+    icons.prominent => "icon-prominent",
+    controls.icon_button => "control-icon-button",
+    controls.utility_row => "control-utility-row",
+    controls.archived_preview_row => "control-archived-preview-row",
+    metrics.radius => "radius",
+    metrics.border_width => "border-width",
+    layout.wide_min_width => "layout-wide-min-width",
+    layout.compact_min_width => "layout-compact-min-width",
+    layout.window_width => "layout-window-width",
+    layout.window_height => "layout-window-height",
+    layout.session_rail => "layout-session-rail",
+    layout.session_rail_min => "layout-session-rail-min",
+    layout.session_rail_max => "layout-session-rail-max",
+    layout.run_panel => "layout-run-panel",
+    layout.run_panel_min => "layout-run-panel-min",
+    layout.run_panel_max => "layout-run-panel-max",
+    layout.transcript_overdraw => "layout-transcript-overdraw",
+    layout.composer_min => "layout-composer-min",
+    layout.conversation_width => "layout-conversation-width",
+    layout.dialog_width => "layout-dialog-width",
+    layout.dialog_max_height => "layout-dialog-max-height",
+    layout.tool_max_height => "layout-tool-max-height",
+    layout.session_row_height => "layout-session-row-height",
+    layout.status_row_height => "layout-status-row-height",
+);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum LengthKey {
+    Metric(MetricKey),
+    Size(usize),
+}
+
+impl LengthKey {
+    pub(crate) fn from_name(name: &str) -> Option<LengthKey> {
+        if let Some(key) = MetricKey::from_name(name) {
+            return Some(LengthKey::Metric(key));
+        }
+        let value = name.strip_prefix("size-")?.parse::<u16>().ok()?;
+        SIZE_VALUES.binary_search(&value).ok().map(LengthKey::Size)
+    }
+
+    pub(crate) fn name(self) -> String {
+        match self {
+            LengthKey::Metric(key) => key.name().to_owned(),
+            LengthKey::Size(index) => format!("size-{}", SIZE_VALUES[index]),
+        }
+    }
+
+    pub(crate) fn label(self) -> String {
+        match self {
+            LengthKey::Metric(key) => key.label(),
+            LengthKey::Size(index) => format!("{}px", SIZE_VALUES[index]),
+        }
+    }
+}
+
+impl Structure {
+    fn set_length(&mut self, key: LengthKey, value: Pixels) {
+        match key {
+            LengthKey::Metric(key) => self.set(key, value),
+            LengthKey::Size(index) => self.sizes[index] = value,
+        }
+    }
+}
+
 impl Theme {
+    pub(crate) fn from_definition(definition: &ThemeDefinition) -> Self {
+        let mut structure = STRUCTURE;
+        for (key, value) in &definition.lengths {
+            structure.set_length(*key, *value);
+        }
+        Self::from_structure(definition.colors, structure)
+    }
+
     pub(crate) fn from_colors(colors: Colors) -> Self {
+        Self::from_structure(colors, STRUCTURE)
+    }
+
+    fn from_structure(colors: Colors, structure: Structure) -> Self {
         Self {
             colors,
-            space: STRUCTURE.space,
-            type_scale: STRUCTURE.type_scale,
-            icons: STRUCTURE.icons,
-            controls: STRUCTURE.controls,
-            radius: STRUCTURE.radius,
-            border: STRUCTURE.border,
-            layout: STRUCTURE.layout,
+            space: structure.space,
+            type_scale: structure.type_scale,
+            icons: structure.icons,
+            controls: structure.controls,
+            radius: structure.metrics.radius,
+            border: structure.metrics.border_width,
+            layout: structure.layout,
+            sizes: structure.sizes,
+        }
+    }
+
+    pub(crate) fn size(self, value: f32) -> Pixels {
+        let rounded = value.round();
+        let clamped = rounded.clamp(0.0, f32::from(u16::MAX)) as u16;
+        match SIZE_VALUES.binary_search(&clamped) {
+            Ok(index) => self.sizes[index],
+            Err(_) => px(rounded),
+        }
+    }
+
+    pub(crate) fn length(self, key: LengthKey) -> Pixels {
+        match key {
+            LengthKey::Metric(key) => self.structure().get(key),
+            LengthKey::Size(index) => self.sizes[index],
+        }
+    }
+
+    fn structure(self) -> Structure {
+        Structure {
+            space: self.space,
+            type_scale: self.type_scale,
+            icons: self.icons,
+            controls: self.controls,
+            metrics: MetricScale {
+                radius: self.radius,
+                border_width: self.border,
+            },
+            layout: self.layout,
+            sizes: self.sizes,
         }
     }
 }
@@ -310,7 +510,7 @@ struct ActiveTheme {
 static ACTIVE: LazyLock<RwLock<ActiveTheme>> = LazyLock::new(|| {
     let definition = builtin::default_definition();
     RwLock::new(ActiveTheme {
-        theme: Theme::from_colors(definition.colors),
+        theme: Theme::from_definition(definition),
         appearance: definition.appearance,
     })
 });
@@ -318,7 +518,7 @@ static ACTIVE: LazyLock<RwLock<ActiveTheme>> = LazyLock::new(|| {
 static HIGHLIGHT: LazyLock<RwLock<Arc<HighlightTheme>>> = LazyLock::new(|| {
     let definition = builtin::default_definition();
     RwLock::new(highlight::for_theme(
-        Theme::from_colors(definition.colors),
+        Theme::from_definition(definition),
         definition.appearance,
         &syntax_overrides(&definition.tokens),
     ))
@@ -333,6 +533,14 @@ pub(crate) enum ThemeToken {
 
 static TOKENS: LazyLock<RwLock<Vec<(ThemeToken, Rgba)>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
+
+pub(crate) fn editable_lengths() -> Vec<LengthKey> {
+    MetricKey::ALL
+        .iter()
+        .map(|key| LengthKey::Metric(*key))
+        .chain((0..SIZE_VALUES.len()).map(LengthKey::Size))
+        .collect()
+}
 
 pub(crate) fn editable_tokens() -> Vec<ThemeToken> {
     ColorKey::ALL

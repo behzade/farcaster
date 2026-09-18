@@ -1,7 +1,7 @@
-use gpui::Rgba;
+use gpui::{Pixels, Rgba, px};
 use gpui_component::theme::ThemeMode;
 
-use super::{ColorKey, Colors, SyntaxKey, ThemeToken, builtin};
+use super::{ColorKey, Colors, LengthKey, MetricKey, STRUCTURE, SyntaxKey, ThemeToken, builtin};
 use crate::app::ui::file_icons;
 
 pub(crate) const MAX_THEME_NAME_LEN: usize = 48;
@@ -35,6 +35,7 @@ pub(crate) struct ThemeDefinition {
     pub(crate) appearance: Appearance,
     pub(crate) colors: Colors,
     pub(crate) tokens: Vec<(ThemeToken, Rgba)>,
+    pub(crate) lengths: Vec<(LengthKey, Pixels)>,
 }
 
 impl ThemeDefinition {
@@ -70,6 +71,29 @@ impl ThemeDefinition {
             .iter()
             .find(|(existing, _)| *existing == token)
             .map(|(_, color)| *color)
+    }
+
+    pub(crate) fn length(&self, key: LengthKey) -> Pixels {
+        self.lengths
+            .iter()
+            .find(|(existing, _)| *existing == key)
+            .map(|(_, value)| *value)
+            .unwrap_or_else(|| default_length(key))
+    }
+
+    pub(crate) fn is_custom_length(&self, key: LengthKey) -> bool {
+        self.lengths.iter().any(|(existing, _)| *existing == key)
+    }
+
+    pub(crate) fn set_length(&mut self, key: LengthKey, value: Pixels) {
+        match self
+            .lengths
+            .iter_mut()
+            .find(|(existing, _)| *existing == key)
+        {
+            Some(existing) => existing.1 = value,
+            None => self.lengths.push((key, value)),
+        }
     }
 
     pub(crate) fn from_css(css: &str) -> Result<Self, String> {
@@ -109,6 +133,17 @@ pub(crate) fn token_label(token: ThemeToken) -> String {
             .unwrap_or_default()
             .to_owned(),
     }
+}
+
+fn default_length(key: LengthKey) -> Pixels {
+    match key {
+        LengthKey::Metric(key) => STRUCTURE.get(key),
+        LengthKey::Size(index) => STRUCTURE.sizes[index],
+    }
+}
+
+pub(crate) fn length_label(key: LengthKey) -> String {
+    key.label()
 }
 
 fn default_color(colors: Colors, token: ThemeToken) -> Rgba {
@@ -393,8 +428,20 @@ fn theme_block(definition: &ThemeDefinition) -> String {
             color_hex(color)
         ));
     }
+    for (key, value) in ordered_lengths(definition) {
+        css.push_str(&format!("  --{}: {}px;\n", key.name(), f32::from(value)));
+    }
     css.push_str("}\n");
     css
+}
+
+fn ordered_lengths(definition: &ThemeDefinition) -> Vec<(LengthKey, Pixels)> {
+    let mut lengths: Vec<_> = definition.lengths.clone();
+    lengths.sort_by_key(|(key, _)| match key {
+        LengthKey::Metric(key) => (0usize, ordinal_in(MetricKey::ALL, key)),
+        LengthKey::Size(index) => (1, *index),
+    });
+    lengths
 }
 
 fn ordered_tokens(definition: &ThemeDefinition) -> Vec<(ThemeToken, Rgba)> {
@@ -448,6 +495,7 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
     };
     let mut colors: Option<Colors> = None;
     let mut tokens: Vec<(ThemeToken, Rgba)> = Vec::new();
+    let mut lengths: Vec<(LengthKey, Pixels)> = Vec::new();
     let mut missing = ColorKey::ALL.to_vec();
     for declaration in body.split(';') {
         let Some((key, value)) = declaration.split_once(':') else {
@@ -471,6 +519,19 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
             };
             colors.get_or_insert(Colors::EMPTY).set(color_key, color);
             missing.retain(|candidate| *candidate != color_key);
+            continue;
+        }
+        if let Some(key) = LengthKey::from_name(key) {
+            let Some(value) = parse_length(value) else {
+                return Err(format!(
+                    "{name} sets --{} to {value}, which is not a length. Use pixels, like 12px.",
+                    key.name()
+                ));
+            };
+            match lengths.iter_mut().find(|(existing, _)| *existing == key) {
+                Some(existing) => existing.1 = value,
+                None => lengths.push((key, value)),
+            }
             continue;
         }
         let Some(token) = token_from_name(key) else {
@@ -502,7 +563,18 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
         appearance,
         colors,
         tokens,
+        lengths,
     })
+}
+
+fn parse_length(value: &str) -> Option<Pixels> {
+    let number = value
+        .trim()
+        .strip_suffix("px")?
+        .trim()
+        .parse::<f32>()
+        .ok()?;
+    (number.is_finite() && number >= 0.0).then(|| px(number))
 }
 
 fn attribute(selector: &str, name: &str) -> Option<String> {

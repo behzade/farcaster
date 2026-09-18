@@ -1,6 +1,7 @@
 use super::{
-    Appearance, ColorKey, FARSI_FONT_FAMILY, SyntaxKey, Theme, ThemeDefinition, ThemeLibrary,
-    UI_FONT_FAMILY, builtin::BUILT_IN_THEMES, color_hex, highlight, parse_hex, ui_font,
+    Appearance, ColorKey, FARSI_FONT_FAMILY, LengthKey, SyntaxKey, Theme, ThemeDefinition,
+    ThemeLibrary, UI_FONT_FAMILY, builtin::BUILT_IN_THEMES, color_hex, highlight, parse_hex, px,
+    ui_font,
 };
 use crate::app::ui::file_icons;
 use gpui::Hsla;
@@ -141,6 +142,48 @@ fn every_editable_token_has_a_name_and_a_label() {
     for token in tokens {
         assert!(!super::library::token_name(token).is_empty());
         assert!(!super::token_label(token).is_empty());
+    }
+}
+
+#[test]
+fn length_tokens_default_to_the_designed_structure() {
+    let definition = BUILT_IN_THEMES[0].clone();
+    let theme = Theme::from_definition(&definition);
+    assert_eq!(f32::from(theme.space.xs), 4.0);
+    assert_eq!(f32::from(theme.radius), 4.0);
+    assert_eq!(f32::from(theme.size(24.0)), 24.0);
+    assert_eq!(
+        definition.length(LengthKey::from_name("space-xs").expect("token")),
+        theme.space.xs
+    );
+    assert_eq!(
+        definition.length(LengthKey::from_name("size-24").expect("token")),
+        theme.size(24.0)
+    );
+    assert!(!definition.is_custom_length(LengthKey::from_name("radius").expect("token")));
+}
+
+#[test]
+fn length_tokens_override_the_structure() {
+    let mut definition = BUILT_IN_THEMES[0].clone();
+    let space_xs = LengthKey::from_name("space-xs").expect("token");
+    let size_24 = LengthKey::from_name("size-24").expect("token");
+    definition.set_length(space_xs, px(6.0));
+    definition.set_length(size_24, px(30.0));
+    let theme = Theme::from_definition(&definition);
+    assert_eq!(f32::from(theme.space.xs), 6.0);
+    assert_eq!(f32::from(theme.size(24.0)), 30.0);
+    assert_eq!(f32::from(theme.size(28.0)), 28.0);
+    assert_eq!(f32::from(theme.type_scale.body), 13.0);
+    assert!(definition.is_custom_length(space_xs));
+}
+
+#[test]
+fn every_editable_length_has_a_name_and_a_label() {
+    for key in super::editable_lengths() {
+        assert!(!key.name().is_empty());
+        assert!(!key.label().is_empty());
+        assert_eq!(LengthKey::from_name(&key.name()), Some(key));
     }
 }
 

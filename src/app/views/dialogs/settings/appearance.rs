@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::{
-    ui::theme::{Appearance, ThemeToken, token_label},
+    ui::theme::{Appearance, LengthKey, ThemeToken, length_label, token_label},
     workspace::theme_settings::ThemeSettings,
 };
 use gpui::SharedString;
@@ -249,12 +249,36 @@ fn theme_editor(
             Some(draft.color(*token)),
             draft.is_custom(*token),
             div()
-                .w(gpui::px(132.0))
+                .w(theme().size(132.0))
+                .flex_none()
+                .child(Input::new(input)),
+        ));
+    }
+    let mut group = None;
+    for (key, input) in &themes.lengths {
+        let next = length_group(*key);
+        if group != Some(next) {
+            editor = editor.child(group_header(next));
+            group = Some(next);
+        }
+        editor = editor.child(editor_row(
+            length_label(*key),
+            None,
+            draft.is_custom_length(*key),
+            div()
+                .w(theme().size(132.0))
                 .flex_none()
                 .child(Input::new(input)),
         ));
     }
     Some(editor.into_any_element())
+}
+
+fn length_group(key: LengthKey) -> &'static str {
+    match key {
+        LengthKey::Metric(_) => "Metrics",
+        LengthKey::Size(_) => "Sizes",
+    }
 }
 
 fn token_group(token: ThemeToken) -> &'static str {
@@ -283,7 +307,7 @@ fn editor_row(
 ) -> AnyElement {
     let mut row = div().flex().items_center().gap(theme().space.sm).child(
         div()
-            .w(gpui::px(116.0))
+            .w(theme().size(116.0))
             .flex_none()
             .text_size(theme().type_scale.body_small)
             .text_color(theme().colors.muted)
@@ -292,8 +316,8 @@ fn editor_row(
     if let Some(color) = swatch {
         row = row.child(
             div()
-                .w(gpui::px(18.0))
-                .h(gpui::px(18.0))
+                .w(theme().size(18.0))
+                .h(theme().size(18.0))
                 .flex_none()
                 .rounded(theme().radius)
                 .border(theme().border)

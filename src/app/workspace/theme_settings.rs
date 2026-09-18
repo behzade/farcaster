@@ -1,13 +1,15 @@
 use super::*;
 use crate::app::ui::theme::{
-    Appearance, Theme, ThemeDefinition, ThemeLibrary, ThemeToken, color_hex, editable_tokens,
-    install_component_theme, parse_hex, set_active, suggested_file_name,
+    Appearance, LengthKey, Theme, ThemeDefinition, ThemeLibrary, ThemeToken, color_hex,
+    editable_lengths, editable_tokens, install_component_theme, parse_hex, set_active,
+    suggested_file_name,
 };
 
 pub(in crate::app) struct ThemeSettings {
     pub(in crate::app) library: ThemeLibrary,
     pub(in crate::app) draft: Option<ThemeDefinition>,
     pub(in crate::app) tokens: Vec<(ThemeToken, Entity<InputState>)>,
+    pub(in crate::app) lengths: Vec<(LengthKey, Entity<InputState>)>,
     pub(in crate::app) name: Option<Entity<InputState>>,
     pub(in crate::app) error: Option<String>,
     pub(in crate::app) status: Option<String>,
@@ -22,6 +24,7 @@ impl Default for ThemeSettings {
             library: ThemeLibrary::default(),
             draft: None,
             tokens: Vec::new(),
+            lengths: Vec::new(),
             name: None,
             error: None,
             status: None,
@@ -59,7 +62,7 @@ impl FarcasterApp {
     pub(in crate::app) fn activate_theme(&mut self, cx: &mut Context<Self>) {
         let definition = self.settings.themes.library.selected();
         set_active(
-            Theme::from_colors(definition.colors),
+            Theme::from_definition(&definition),
             definition.appearance,
             definition.tokens,
         );
@@ -74,6 +77,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.settings.themes.tokens.clear();
+        self.settings.themes.lengths.clear();
         self.settings.themes.name = None;
         self.settings.themes.subscriptions.clear();
         let Some(draft) = self.settings.themes.draft.clone() else {
@@ -99,6 +103,18 @@ impl FarcasterApp {
             });
             self.settings.themes.subscriptions.push(subscription);
             self.settings.themes.tokens.push((token, input));
+        }
+        for key in editable_lengths() {
+            let value = format!("{}px", f32::from(draft.length(key)));
+            let input = cx.new(|cx| InputState::new(window, cx).default_value(value));
+            let subscription = cx.subscribe_in(&input, window, move |this, state, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let value = state.read(cx).value().to_owned();
+                    this.set_theme_length(key, &value, cx);
+                }
+            });
+            self.settings.themes.subscriptions.push(subscription);
+            self.settings.themes.lengths.push((key, input));
         }
     }
 
@@ -198,6 +214,26 @@ impl FarcasterApp {
             return;
         }
         draft.set_color(token, color);
+        self.store_theme_draft(draft, cx);
+    }
+
+    pub(in crate::app) fn set_theme_length(
+        &mut self,
+        key: LengthKey,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(value) = parse_length(value) else {
+            return;
+        };
+        let Some(mut draft) = self.settings.themes.draft.clone() else {
+            return;
+        };
+        let value = gpui::px(value);
+        if draft.length(key) == value {
+            return;
+        }
+        draft.set_length(key, value);
         self.store_theme_draft(draft, cx);
     }
 
@@ -365,6 +401,13 @@ impl FarcasterApp {
             });
         }));
     }
+}
+
+fn parse_length(value: &str) -> Option<f32> {
+    let value = value.trim();
+    let digits = value.strip_suffix("px").unwrap_or(value).trim();
+    let number = digits.parse::<f32>().ok()?;
+    (number.is_finite() && number >= 0.0).then_some(number)
 }
 
 #[cfg(test)]

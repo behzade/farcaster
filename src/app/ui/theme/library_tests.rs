@@ -1,8 +1,12 @@
 use super::*;
 use crate::app::ui::{
     file_icons,
-    theme::{SyntaxKey, ThemeToken, builtin::BUILT_IN_THEMES, parse_hex},
+    theme::{LengthKey, Pixels, SyntaxKey, ThemeToken, builtin::BUILT_IN_THEMES, parse_hex},
 };
+
+fn pxf(value: f32) -> Pixels {
+    gpui::px(value)
+}
 
 fn icon_index(name: &str) -> usize {
     file_icons::ICON_NAMES
@@ -25,6 +29,7 @@ fn definition(name: &str) -> ThemeDefinition {
         appearance: Appearance::Dark,
         colors: default_colors(),
         tokens: Vec::new(),
+        lengths: Vec::new(),
     }
 }
 
@@ -147,6 +152,13 @@ fn imported_theme_files_reject_broken_content() {
 
     let missing = css("Ocean").replace("  --canvas: #1b1f20;\n", "");
     assert!(library.import(&missing).is_err());
+
+    let unitless =
+        css("Ocean").replace("--canvas: #1b1f20;", "--canvas: #1b1f20;\n  --space-xs: 4;");
+    assert!(library.import(&unitless).is_err());
+
+    let no_color = css("Ocean").replace("--canvas: #1b1f20;", "--canvas: 4px;");
+    assert!(library.import(&no_color).is_err());
 }
 
 #[test]
@@ -160,9 +172,13 @@ fn icon_and_syntax_tokens_round_trip_through_css() {
         ThemeToken::Syntax(SyntaxKey::keyword),
         parse_hex("#00ff00").expect("hex"),
     );
+    definition.set_length(LengthKey::from_name("space-xs").expect("token"), pxf(6.0));
+    definition.set_length(LengthKey::from_name("size-24").expect("token"), pxf(30.0));
     let css = definition.to_css().expect("encode theme");
     assert!(css.contains("--icon-rust: #ff0000;"));
     assert!(css.contains("--keyword: #00ff00;"));
+    assert!(css.contains("--space-xs: 6px;"));
+    assert!(css.contains("--size-24: 30px;"));
     assert_eq!(
         ThemeDefinition::from_css(&css).expect("decode theme"),
         definition
