@@ -184,15 +184,21 @@ fn surface_control(
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
     icon_control(id, label)
+        .relative()
         .w(theme().size(34.0))
         .h_full()
         .rounded_none()
         .hover(|control| control.bg(theme().colors.highlight))
         .when(active, |control| {
-            control
-                .border_b(theme().size(2.0))
-                .border_color(theme().colors.indicator)
-                .text_color(theme().colors.indicator)
+            control.text_color(theme().colors.indicator).child(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(theme().size(2.0))
+                    .bg(theme().colors.indicator),
+            )
         })
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
