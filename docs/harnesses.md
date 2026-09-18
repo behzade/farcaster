@@ -10,7 +10,7 @@ All six adapters support session resume, images, stopping runs, queued follow-up
 | Codex | Yes | Yes | Yes | Yes | Yes | Yes |
 | Cursor | Yes | No | No | No | Yes | No |
 | OpenCode | Yes | Yes | Yes | Yes | Yes | Yes |
-| Antigravity | No | No | No | No | Yes | No |
+| Antigravity | Yes | No | No | No | Yes | No |
 | Claude | Yes | No | Yes | No | Yes | Yes |
 
 Other differences:
