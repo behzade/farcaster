@@ -417,6 +417,31 @@ fn network_proxy_round_trips_and_clears() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
+fn theme_settings_round_trip_and_start_empty() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(store.load_theme_css()?, None);
+    assert_eq!(store.load_active_theme()?, None);
+
+    let mut library = crate::app::ui::theme::ThemeLibrary::default();
+    let mut definition = crate::app::ui::theme::builtin::BUILT_IN_THEMES[1].clone();
+    definition.name = "Paper".to_owned();
+    library.upsert(definition)?;
+    library.select("Paper")?;
+    store.save_theme_css(&library.to_css())?;
+    store.save_active_theme(library.selected_name())?;
+
+    let reopened = StateStore::open_at(&database)?;
+    let css = reopened.load_theme_css()?.expect("themes should persist");
+    let selected = reopened.load_active_theme()?;
+    let restored = crate::app::ui::theme::ThemeLibrary::from_css(&css, selected.as_deref())?;
+    assert_eq!(restored.selected_name(), "Paper");
+    assert_eq!(restored.user_themes().len(), 1);
+    Ok(())
+}
+
+#[test]
 fn application_settings_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui.sqlite3");

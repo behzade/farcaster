@@ -22,7 +22,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::keybindings::application_key,
     app::ui::primitives::{ButtonTone, PickerDelegate, PickerRow, button, modal},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     runtime::RuntimeCommand,
     sessions::SessionSummary,
 };
@@ -391,17 +391,19 @@ impl FarcasterApp {
                             div()
                                 .flex()
                                 .flex_col()
-                                .child(div().px(THEME.space.md).py(THEME.space.sm).child(button(
-                                    "picker-back",
-                                    back_label,
-                                    ButtonTone::Quiet,
-                                    true,
-                                    move |window, cx| {
-                                        let _ = back.update(cx, |this, cx| {
-                                            this.picker_navigate_back(window, cx)
-                                        });
-                                    },
-                                )))
+                                .child(div().px(theme().space.md).py(theme().space.sm).child(
+                                    button(
+                                        "picker-back",
+                                        back_label,
+                                        ButtonTone::Quiet,
+                                        true,
+                                        move |window, cx| {
+                                            let _ = back.update(cx, |this, cx| {
+                                                this.picker_navigate_back(window, cx)
+                                            });
+                                        },
+                                    ),
+                                ))
                                 .child(
                                     List::new(&list)
                                         .search_placeholder(picker.scope.placeholder())
@@ -411,13 +413,13 @@ impl FarcasterApp {
                                     div()
                                         .flex()
                                         .flex_wrap()
-                                        .gap(THEME.space.md)
-                                        .border_t(THEME.border)
-                                        .border_color(THEME.colors.border)
-                                        .px(THEME.space.md)
-                                        .py(THEME.space.sm)
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
+                                        .gap(theme().space.md)
+                                        .border_t(theme().border)
+                                        .border_color(theme().colors.border)
+                                        .px(theme().space.md)
+                                        .py(theme().space.sm)
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.subtle)
                                         .child("↑ ↓ / Tab ⇧Tab Move")
                                         .child("Enter Choose")
                                         .child("Alt+← Back")
@@ -425,10 +427,10 @@ impl FarcasterApp {
                                 )
                                 .children((picker.scope == PickerScope::Actions).then(|| {
                                     div()
-                                        .px(THEME.space.md)
-                                        .pb(THEME.space.sm)
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
+                                        .px(theme().space.md)
+                                        .pb(theme().space.sm)
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.subtle)
                                         .child(format!(
                                             "Open actions: Ctrl+G then Space, or {}",
                                             if cfg!(target_os = "macos") {
@@ -687,6 +689,16 @@ impl FarcasterApp {
                     None,
                     None,
                     "configuration preferences keybindings modifier",
+                ),
+                picker_row(
+                    &mut commands,
+                    "action:themes",
+                    PickerCommand::OpenSettings,
+                    AppIcon::PaintRoller,
+                    "Themes",
+                    None,
+                    None,
+                    "appearance colors palette light dark editor",
                 ),
             ],
             PickerScope::Harnesses
