@@ -180,10 +180,10 @@ impl RenderOnce for SessionRow {
                         .top(theme().space.xs)
                         .bottom(theme().space.xs)
                         .w(theme().size(2.0))
-                        .bg(theme().colors.text),
+                        .bg(theme().colors.indicator),
                 )
             })
-            .focus(|row| row.border(theme().border).border_color(theme().colors.text))
+            .focus(|row| row.border(theme().border).border_color(theme().colors.indicator))
             .cursor(CursorStyle::PointingHand)
             .when(draggable, move |row| {
                 row.on_drag(drag, move |drag, _, _, cx| {
@@ -197,7 +197,7 @@ impl RenderOnce for SessionRow {
                 })
                 .reorder_target::<DraggedSession>(
                     drop_position,
-                    theme().colors.accent,
+                    theme().colors.indicator,
                     theme().colors.hover,
                     move |position, _, cx| {
                         let _ = drag_move_entity.update(cx, |this, cx| {
@@ -284,10 +284,10 @@ impl RenderOnce for SessionRow {
                                                             .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
                                                             .rounded(theme().radius)
                                                             .cursor(CursorStyle::PointingHand)
-                                                            .hover(|icon| icon.text_color(theme().colors.accent))
+                                                            .hover(|icon| icon.text_color(theme().colors.indicator))
                                                             .focus(|icon| {
                                                                 icon.border(theme().border)
-                                                                    .border_color(theme().colors.accent)
+                                                                    .border_color(theme().colors.indicator)
                                                             })
                                                             .tooltip(move |window, cx| {
                                                                 Tooltip::new("Move to project…").build(window, cx)
@@ -426,7 +426,7 @@ fn session_archive_action(
             button
                 .opacity(1.0)
                 .border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.indicator)
         })
         .text_color(if is_archived {
             theme().colors.success
@@ -474,7 +474,7 @@ fn session_delete_action(
             button
                 .opacity(1.0)
                 .border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.indicator)
         })
         .text_color(theme().colors.danger)
         .hover(|button| button.bg(theme().colors.hover))
@@ -666,11 +666,13 @@ pub(in crate::app) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
     match status {
         "" => None,
         "Done" | "Complete" => Some((AppIcon::CheckCircle, theme().colors.success)),
-        "Needs input" | "Incomplete" => Some((AppIcon::WarningCircle, theme().colors.warning)),
-        "Waiting" => Some((AppIcon::Hourglass, theme().colors.accent)),
+        "Needs input" | "Delivery unknown" | "Incomplete" => {
+            Some((AppIcon::WarningCircle, theme().colors.warning))
+        }
+        "Waiting" => Some((AppIcon::Hourglass, theme().colors.indicator)),
         "Failed" => Some((AppIcon::XCircle, theme().colors.error)),
-        "Working" => Some((AppIcon::SpinnerGap, theme().colors.accent)),
-        "Compacting" => Some((AppIcon::ArrowsClockwise, theme().colors.accent)),
+        "Working" => Some((AppIcon::SpinnerGap, theme().colors.indicator)),
+        "Compacting" => Some((AppIcon::ArrowsClockwise, theme().colors.indicator)),
         _ => Some((AppIcon::Question, theme().colors.subtle)),
     }
 }

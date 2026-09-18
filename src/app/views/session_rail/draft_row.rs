@@ -132,10 +132,13 @@ impl RenderOnce for DraftRow {
                                     .top(theme().space.xs)
                                     .bottom(theme().space.xs)
                                     .w(theme().size(2.0))
-                                    .bg(theme().colors.text),
+                                    .bg(theme().colors.indicator),
                             )
                         })
-                        .focus(|row| row.border(theme().border).border_color(theme().colors.text))
+                        .focus(|row| {
+                            row.border(theme().border)
+                                .border_color(theme().colors.indicator)
+                        })
                         .cursor(CursorStyle::PointingHand)
                         .on_drag(drag, move |drag, _, _, cx| {
                             let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
@@ -148,7 +151,7 @@ impl RenderOnce for DraftRow {
                         })
                         .reorder_target::<DraggedSession>(
                             drop_position,
-                            theme().colors.accent,
+                            theme().colors.indicator,
                             theme().colors.hover,
                             move |position, _, cx| {
                                 let _ = drag_move_entity.update(cx, |this, cx| {

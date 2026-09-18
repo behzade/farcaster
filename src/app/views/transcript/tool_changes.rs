@@ -62,7 +62,7 @@ pub(super) fn activation_row(
         .hover(|row| row.bg(theme().colors.hover))
         .focus_visible(|row| {
             row.border(theme().border)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.indicator)
         })
         .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
             window.prevent_default();

@@ -249,7 +249,7 @@ pub(super) fn folder_drop_target(
         .drag_over::<DraggedSession>(|style, _, _, _| {
             style
                 .bg(theme().colors.hover)
-                .border_color(theme().colors.accent)
+                .border_color(theme().colors.indicator)
         })
         .on_drop(move |drag: &DraggedSession, window, cx| {
             cx.stop_propagation();

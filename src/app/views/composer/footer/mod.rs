@@ -71,7 +71,7 @@ impl FarcasterApp {
                         .pr(theme().space.sm)
                         .font_family(MONO_FONT_FAMILY)
                         .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.accent)
+                        .text_color(theme().colors.indicator)
                         .whitespace_nowrap()
                         .child(mode.to_owned()),
                 )

@@ -84,7 +84,7 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(theme().colors.accent)
+                    .bg(theme().colors.indicator)
                     .text_color(theme().colors.canvas)
                     .text_size(theme().size(9.0))
                     .child(if count > 99 {

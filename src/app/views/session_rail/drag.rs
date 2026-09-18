@@ -40,7 +40,7 @@ impl Render for DraggedSession {
             .rounded(theme().radius)
             .bg(theme().colors.surface)
             .border(theme().border)
-            .border_color(theme().colors.accent)
+            .border_color(theme().colors.indicator)
             .shadow_md()
             .child(
                 div()

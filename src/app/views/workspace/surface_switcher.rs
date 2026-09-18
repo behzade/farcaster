@@ -83,7 +83,7 @@ impl FarcasterApp {
                             .cursor_pointer()
                             .text_color(theme().colors.muted)
                             .hover(|link| link.text_color(theme().colors.text))
-                            .focus_visible(|link| link.text_color(theme().colors.accent))
+                            .focus_visible(|link| link.text_color(theme().colors.indicator))
                             .tooltip(move |window, cx| {
                                 Tooltip::new(project_hint.clone()).build(window, cx)
                             })
@@ -194,8 +194,8 @@ fn surface_control(
         .when(active, |control| {
             control
                 .border_b(theme().size(2.0))
-                .border_color(theme().colors.text)
-                .text_color(theme().colors.text)
+                .border_color(theme().colors.indicator)
+                .text_color(theme().colors.indicator)
         })
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {

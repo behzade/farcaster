@@ -74,7 +74,7 @@ pub(super) fn render_agent_message(
                     .max_h(theme().layout.tool_max_height)
                     .overflow_y_scroll()
                     .border_l(theme().border)
-                    .border_color(theme().colors.accent)
+                    .border_color(theme().colors.indicator)
                     .pl(theme().space.sm)
                     .py(theme().space.xs)
                     .child(

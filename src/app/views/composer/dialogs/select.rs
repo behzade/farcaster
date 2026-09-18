@@ -121,7 +121,7 @@ fn dialog_choice(
         .rounded(theme().radius)
         .border(theme().border)
         .border_color(if primary {
-            theme().colors.accent
+            theme().colors.indicator
         } else {
             theme().colors.border
         })
@@ -131,7 +131,7 @@ fn dialog_choice(
             theme().colors.surface
         })
         .hover(|choice| choice.bg(theme().colors.hover))
-        .focus(|choice| choice.border_color(theme().colors.accent))
+        .focus(|choice| choice.border_color(theme().colors.indicator))
         .cursor(CursorStyle::PointingHand)
         .on_click(move |_, window, cx| on_press(window, cx))
         .child(

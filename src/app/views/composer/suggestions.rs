@@ -63,7 +63,7 @@ impl RenderOnce for FileMentionMenu {
                     .hover(|row| row.bg(theme().colors.hover))
                     .focus(|row| {
                         row.border(theme().border)
-                            .border_color(theme().colors.accent)
+                            .border_color(theme().colors.indicator)
                     })
                     .cursor_pointer()
                     .child(path.clone())
@@ -125,14 +125,14 @@ impl RenderOnce for CommandMenu {
                     .hover(|row| row.bg(theme().colors.hover))
                     .focus(|row| {
                         row.border(theme().border)
-                            .border_color(theme().colors.accent)
+                            .border_color(theme().colors.indicator)
                     })
                     .cursor_pointer()
                     .child(
                         div()
                             .flex_none()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme().colors.accent)
+                            .text_color(theme().colors.indicator)
                             .child(format!("{sigil}{name}")),
                     )
                     .when_some(command.description, |row, description| {
@@ -174,7 +174,7 @@ fn suggestion_menu(id: &'static str, label: &'static str) -> gpui::Stateful<gpui
 
 fn selected_row(row: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
     row.bg(theme().colors.hover)
-        .text_color(theme().colors.accent)
+        .text_color(theme().colors.indicator)
 }
 
 fn fill_file_mention(
