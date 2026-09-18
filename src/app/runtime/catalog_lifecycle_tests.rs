@@ -311,10 +311,6 @@ impl Peer {
         }
         self.reply(&request, json!({"protocolVersion":1, "agentCapabilities":{},
             "authMethods":[{"id":"oauth-personal", "name":"Sign in"}, {"id":"cursor_login", "name":"Sign in"}]}));
-        if self.backend != Backend::Cursor {
-            let request = self.request("authenticate");
-            self.reply(&request, json!({}));
-        }
         let request = self.request("session/new");
         self.reply(&request, json!({"sessionId":"fixture-session", "models":{
             "currentModelId":"fixture-model", "availableModels":[{"modelId":"fixture-model", "name":"Fixture model"}]

@@ -15,8 +15,9 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
     } else {
         &[]
     },
-    // The official server selects its saved Google account through ACP authenticate.
-    auth_method: Some("oauth-personal"),
+    // The official server is already signed in. Sending authenticate for
+    // oauth-personal is unnecessary and can stall session startup.
+    auth_method: None,
     force_argument: None,
     resume_method: "session/resume",
     permission_modes: Some(("default", "yolo")),

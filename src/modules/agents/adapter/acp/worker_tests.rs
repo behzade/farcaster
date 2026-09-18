@@ -88,6 +88,10 @@ done
 
     let requests = std::fs::read_to_string(executable.with_extension("requests"))
         .map_err(|error| error.to_string())?;
+    assert!(
+        !requests.contains("authenticate"),
+        "Antigravity ACP must not send authenticate"
+    );
     assert_eq!(requests.matches("\"method\":\"session/new\"").count(), 1);
     assert_eq!(requests.matches("\"method\":\"session/resume\"").count(), 1);
     assert!(requests.contains("\"value\":\"default\""));
@@ -316,9 +320,9 @@ done
             let requests = std::fs::read_to_string(executable.with_extension("requests"))
                 .expect("test operation should succeed");
             assert!(requests.contains(profile.resume_method));
-            assert_eq!(
-                requests.contains("authenticate"),
-                profile.auth_method.is_some()
+            assert!(
+                !requests.contains("authenticate"),
+                "Antigravity ACP must not send authenticate"
             );
             assert!(
                 requests.contains(
