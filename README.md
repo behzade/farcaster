@@ -73,6 +73,8 @@ You'll also need the agent harness you want to use installed and signed in. To u
 
 ## Development
 
+Found a bug, needed a platform-specific fix, or want to extend Farcaster? Bug reports and focused pull requests are welcome. For larger features, open an issue first. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 The repository includes a Nix development shell. To build and run from a local checkout:
 
 ```sh
