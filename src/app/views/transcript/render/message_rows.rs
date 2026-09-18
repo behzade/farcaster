@@ -1,15 +1,14 @@
 use gpui::{
     AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
+    Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
-use gpui_component::{
-    text::{TextViewState, TextViewStyle},
-    tooltip::Tooltip,
-};
+use gpui_component::text::{TextViewState, TextViewStyle};
 
 use crate::{
     app::{
-        FarcasterApp, composer::prompt_fragments::invocation_token, ui::theme::theme,
+        FarcasterApp,
+        composer::prompt_fragments::invocation_token,
+        ui::{primitives::AppTooltip as _, theme::theme},
         views::transcript::attachments::render_attachments,
     },
     conversation::{TranscriptItem, TranscriptKind},
@@ -48,9 +47,7 @@ pub(super) fn render_invocation(
                 theme().colors.accent
             }),
         )
-        .when_some(tooltip, |row, tooltip| {
-            row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-        })
+        .when_some(tooltip, |row, tooltip| row.app_tooltip(tooltip.clone()))
         .into_any_element()
 }
 
@@ -205,9 +202,7 @@ pub(super) fn render_message(
         .when(follows_tool, |row| {
             row.mt(theme().space.md).pt(theme().space.sm)
         })
-        .when_some(tooltip, |row, tooltip| {
-            row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
-        })
+        .when_some(tooltip, |row, tooltip| row.app_tooltip(tooltip.clone()))
         .when(
             item.kind == TranscriptKind::PeerMessage || (user && !item.label.is_empty()),
             |row| row.child(peer_label(font_scale, &item.label)),

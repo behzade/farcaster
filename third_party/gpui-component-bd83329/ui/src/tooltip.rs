@@ -22,6 +22,37 @@ pub(crate) fn init(_cx: &mut App) {
     // No app-level init needed — TooltipOverlay is per-window via Root.
 }
 
+// ── App-provided tooltip metrics ────────────────────────────────────────────
+
+/// Spacing and type metrics the host application wants every tooltip to use.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TooltipMetrics {
+    pub padding_x: Pixels,
+    pub padding_y: Pixels,
+    pub gap: Pixels,
+    pub font_size: Pixels,
+    pub max_width: Pixels,
+}
+
+static METRICS: std::sync::RwLock<Option<TooltipMetrics>> = std::sync::RwLock::new(None);
+
+/// Set the metrics every tooltip is rendered with, so the host application can
+/// keep its tooltips on the same spacing and type scale as its own surfaces.
+///
+/// Later calls replace the previous metrics, so an app whose spacing is
+/// theme-driven can call this whenever the theme changes.
+pub fn set_metrics(metrics: TooltipMetrics) {
+    *METRICS
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = Some(metrics);
+}
+
+fn metrics() -> Option<TooltipMetrics> {
+    *METRICS
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 // ── Tooltip view (unchanged API) ────────────────────────────────────────────
 
 enum TooltipContext {
@@ -105,25 +136,30 @@ impl Render for Tooltip {
             }
         };
 
+        let metrics = metrics();
         div().child(
             // Wrap in a child, to ensure the left margin is applied to the tooltip
             BaseTooltip::new("tooltip-popup")
                 .h_flex()
                 .font_family(cx.theme().font_family.clone())
-                .m_3()
+                .m_2()
                 .bg(cx.theme().tokens.popover)
                 .text_color(cx.theme().popover_foreground)
                 .bg(cx.theme().tokens.popover)
                 .border_1()
                 .border_color(cx.theme().border)
                 .shadow_md()
-                .rounded(px(6.))
+                .rounded(cx.theme().radius)
                 .justify_between()
-                .py_0p5()
-                .px_2()
-                .text_sm()
-                .gap_3()
-                .max_w(px(360.))
+                .map(|this| match metrics {
+                    Some(metrics) => this
+                        .py(metrics.padding_y)
+                        .px(metrics.padding_x)
+                        .text_size(metrics.font_size)
+                        .gap(metrics.gap)
+                        .max_w(metrics.max_width),
+                    None => this.py_0p5().px_2().text_sm().gap_3().max_w(px(360.)),
+                })
                 .whitespace_normal()
                 .refine_style(&self.style)
                 .map(|this| {
@@ -193,9 +229,7 @@ pub(crate) fn render_tooltip(
 
 // ── Internal managed tooltip trait ──────────────────────────────────────────
 
-pub(crate) trait ManagedTooltipExt:
-    StatefulInteractiveElement + crate::ElementExt + Sized
-{
+pub trait ManagedTooltipExt: StatefulInteractiveElement + crate::ElementExt + Sized {
     fn managed_tooltip(
         self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,

@@ -5,6 +5,7 @@ pub(in crate::app) struct WorkspaceState {
     pub(in crate::app) terminal: TerminalState,
     pub(in crate::app) native_surface_snapshot: Option<Arc<RenderImage>>,
     pub(in crate::app) native_surface_covered: bool,
+    pub(in crate::app) tooltip_watch: Option<Subscription>,
     pub(in crate::app) surface: AppSurface,
     pub(in crate::app) session_surfaces: HashMap<String, AppSurface>,
     pub(in crate::app) worker_profile_editor: workspace::worker_tasks::WorkerProfileEditor,

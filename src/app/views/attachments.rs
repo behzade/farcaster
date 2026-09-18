@@ -30,7 +30,7 @@ fn content(name: String, detail: String, image: Option<Arc<Image>>) -> AnyElemen
     let preview = match image {
         Some(image) => img(image)
             .size(theme().size(32.0))
-            .rounded(theme().size(3.0))
+            .rounded(theme().radius)
             .object_fit(ObjectFit::Cover)
             .into_any_element(),
         None => div()

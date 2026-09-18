@@ -284,7 +284,7 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
         .flex()
         .items_start()
         .gap(theme().size(7.0))
-        .hover(|row| row.bg(theme().colors.surface))
+        .hover(|row| row.bg(theme().colors.highlight))
         .on_click(move |_, window, cx| {
             let _ = app.update(cx, |app, cx| {
                 app.open_workgraph_node(number, window, cx);
