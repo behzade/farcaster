@@ -15,7 +15,9 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
     command: "agent",
     path_environment: "FARCASTER_CURSOR_PATH",
     arguments: &["acp"],
-    auth_method: Some("cursor_login"),
+    // Cursor ACP uses the already-signed-in CLI. Sending authenticate for
+    // cursor_login breaks session startup.
+    auth_method: None,
     force_argument: Some("--force"),
     resume_method: "session/load",
     permission_modes: None,

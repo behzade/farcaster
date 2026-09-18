@@ -1098,6 +1098,10 @@ done
     }
     let requests = std::fs::read_to_string(executable.with_extension("requests"))
         .map_err(|error| error.to_string())?;
+    assert!(
+        !requests.contains("authenticate"),
+        "Cursor ACP must not send authenticate"
+    );
     assert_eq!(
         requests
             .matches("\"method\":\"cursor/list_available_models\"")

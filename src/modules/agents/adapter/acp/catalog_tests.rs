@@ -235,7 +235,7 @@ fn resume_history_uses_the_session_load_replay() {
         command: "agent",
         path_environment: "FARCASTER_CURSOR_PATH",
         arguments: &["acp"],
-        auth_method: Some("cursor_login"),
+        auth_method: None,
         force_argument: Some("--force"),
         resume_method: "session/load",
         permission_modes: None,
