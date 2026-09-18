@@ -57,21 +57,12 @@ fn theme_list(
     editable: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let mut list = div()
-        .flex()
-        .flex_col()
-        .gap(theme().space.xs)
-        .rounded(theme().radius)
-        .border(theme().border)
-        .border_color(theme().colors.surface)
-        .p(theme().space.sm);
+    let mut list = div().flex().flex_col().gap(theme().space.xs);
     for (index, definition) in themes.library.display_order().into_iter().enumerate() {
         let active = definition.name == selected;
         let custom = themes.library.is_user_theme(&definition.name);
         let select = entity.clone();
         let select_name = definition.name.clone();
-        let duplicate = entity.clone();
-        let duplicate_name = definition.name.clone();
         list = list.child(
             div()
                 .flex()
@@ -104,17 +95,6 @@ fn theme_list(
                         .items_center()
                         .gap(theme().space.xs)
                         .child(button(
-                            ("theme-duplicate", index),
-                            "Duplicate",
-                            ButtonTone::Quiet,
-                            editable,
-                            move |window, cx| {
-                                let _ = duplicate.update(cx, |this, cx| {
-                                    this.create_theme_from(&duplicate_name, window, cx)
-                                });
-                            },
-                        ))
-                        .child(button(
                             ("theme-select", index),
                             if active { "Active" } else { "Use" },
                             if active {
@@ -142,6 +122,8 @@ fn theme_actions(
 ) -> AnyElement {
     let export = entity.clone();
     let import = entity.clone();
+    let duplicate = entity.clone();
+    let duplicate_name = themes.library.selected_name().to_owned();
     let delete = entity;
     div()
         .flex()
@@ -163,6 +145,17 @@ fn theme_actions(
             editable,
             move |window, cx| {
                 let _ = import.update(cx, |this, cx| this.import_theme(window, cx));
+            },
+        ))
+        .child(button(
+            "theme-duplicate",
+            "Duplicate",
+            ButtonTone::Neutral,
+            editable,
+            move |window, cx| {
+                let _ = duplicate.update(cx, |this, cx| {
+                    this.create_theme_from(&duplicate_name, window, cx)
+                });
             },
         ))
         .child(button(
