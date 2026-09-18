@@ -1,29 +1,48 @@
-# Harness Feature Table
+# Harness Support
 
-This table shows the support declared by Farcaster's adapters. Actual support can depend on the installed harness version and selected model.
+These tables reflect the capabilities declared by Farcaster's adapters. An installed harness version or selected model may narrow them.
 
-All six adapters support session resume, images, stopping runs, queued follow-ups, model selection, reasoning effort selection, MCP servers, approvals, and tool activity.
+All six adapters support new and resumed sessions, closing sessions, text and image prompts, stopping runs, queued follow-ups, model selection, reasoning effort, harness commands, MCP servers, approvals, streamed text, reasoning, and tool activity.
 
-| Harness | History | Fork | Steer | Compact | Modes | Usage |
-| --- | --- | --- | --- | --- | --- | --- |
-| Pi | Yes | Yes | Yes | Yes | No | Yes |
-| Codex | Yes | Yes | Yes | Yes | Yes | Yes |
-| Cursor | Yes | No | No | No | Yes | No |
-| OpenCode | Yes | Yes | Yes | Yes | Yes | Yes |
-| Antigravity | No | No | No | No | Yes | No |
-| Claude | Yes | No | Yes | No | Yes | Yes |
+## Sessions
 
-Other differences:
+History means that Farcaster can discover and open saved sessions from the harness.
 
-- Moving sessions between projects: Pi, Codex, and OpenCode.
-- Harness commands: all six.
-- Native subagent activity: all except Pi and Antigravity.
-- File-change events from the harness: all except Pi.
+| Harness | History | Fork | Rename | Move project | Delete |
+| --- | --- | --- | --- | --- | --- |
+| Pi | Yes | Yes | Yes | Yes | Yes |
+| Codex | Yes | Yes | Yes | Yes | Yes |
+| Cursor | Yes | No | Yes | No | Yes |
+| OpenCode | Yes | Yes | Yes | Yes | Yes |
+| Claude | Yes | No | No | No | No |
+| Antigravity | No | No | No | No | No |
 
-Usage notes:
+## Runs and configuration
 
-- Pi's sandbox controls require an adapter for the Pi extension. Currently only one exists for `pi-nono`.
-- Claude uses `claude -p`. Anthropic's guidance has been mixed on whether this usage counts toward subscription limits or separate limits.
-- Antigravity's terms of service are unclear about using its harness in third-party apps. Use it at your own risk.
+| Harness | Steer | Compact | Access modes | Reset effort | Usage |
+| --- | --- | --- | --- | --- | --- |
+| Pi | Yes | Yes | Auto; Sandboxed/Full with `pi-nono` | No | Yes |
+| Codex | Yes | Yes | Sandboxed/Auto/Full | No | Yes |
+| Cursor | No | No | Sandboxed/Full | No | No |
+| OpenCode | Yes | Yes | Sandboxed/Full | Yes | Yes |
+| Claude | Yes | No | Sandboxed/Full; Auto when the model allows it | No | Yes |
+| Antigravity | No | No | Sandboxed/Full | No | No |
 
-Sources: [Pi](../src/modules/agents/adapter/pi/mod.rs), [Codex](../src/modules/agents/adapter/codex/mod.rs), [Cursor](../src/modules/agents/adapter/cursor/mod.rs), [OpenCode](../src/modules/agents/adapter/opencode/mod.rs), [Antigravity](../src/modules/agents/adapter/antigravity/mod.rs) ([shared ACP capabilities](../src/modules/agents/adapter/acp/backend.rs)), [Claude](../src/modules/agents/adapter/claude/mod.rs).
+## Harness events
+
+| Harness | Questions | Notifications | Child agents | File changes |
+| --- | --- | --- | --- | --- |
+| Pi | Yes | Yes | No | No |
+| Codex | Yes | Yes | Yes | Yes |
+| Cursor | Yes | Yes | Yes | Yes |
+| OpenCode | Yes | Yes | Yes | Yes |
+| Claude | No | No | Yes | Yes |
+| Antigravity | No | Yes | No | Yes |
+
+## Notes
+
+- Pi uses its normal configuration in Auto mode. Sandboxed and Full controls require the `pi-nono` extension.
+- Claude runs through `claude -p`.
+- Antigravity can resume a known session, but Farcaster cannot discover its saved sessions.
+
+Sources: [Pi](../src/modules/agents/adapter/pi/mod.rs) ([access modes](../src/modules/agents/adapter/pi/sandbox.rs)), [Codex](../src/modules/agents/adapter/codex/mod.rs), [Cursor](../src/modules/agents/adapter/cursor/mod.rs), [OpenCode](../src/modules/agents/adapter/opencode/mod.rs), [Claude](../src/modules/agents/adapter/claude/mod.rs), and [Antigravity](../src/modules/agents/adapter/antigravity/mod.rs) ([shared ACP capabilities](../src/modules/agents/adapter/acp/backend.rs)).
