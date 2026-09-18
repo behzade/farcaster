@@ -10,7 +10,6 @@ use gpui::{
     Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px, rems,
 };
 use gpui_component::{
-    highlighter::HighlightTheme,
     menu::{DropdownMenu as _, PopupMenuItem},
     text::{TextView, TextViewState, TextViewStyle},
 };
@@ -19,7 +18,7 @@ use crate::{
     app::ui::primitives::{
         ButtonTone, ContextMenuTrigger, button, disclosure_detail, disclosure_title_row,
     },
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{Appearance, MONO_FONT_FAMILY, appearance, highlight_theme, theme},
     app::{
         FarcasterApp,
         views::transcript::{
@@ -254,7 +253,10 @@ pub(crate) fn render(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     if rows.is_empty() {
-        return div().size_full().bg(THEME.colors.canvas).into_any_element();
+        return div()
+            .size_full()
+            .bg(theme().colors.canvas)
+            .into_any_element();
     }
 
     let font_scale = viewport.font_scale;
@@ -284,10 +286,10 @@ pub(crate) fn render(
             let reserves_tail = index + 1 == rows.len()
                 && latest_allows_tail_reserve(row, &conversation.items, expanded);
             let content = div()
-                .text_size(THEME.type_scale.body * font_scale)
-                .line_height(THEME.type_scale.line_body * font_scale)
+                .text_size(theme().type_scale.body * font_scale)
+                .line_height(theme().type_scale.line_body * font_scale)
                 .w_full()
-                .max_w(THEME.layout.conversation_width)
+                .max_w(theme().layout.conversation_width)
                 .mx_auto()
                 .when(reserves_tail, |row| row.pb(viewport.tail_reserve))
                 .child(
@@ -298,7 +300,7 @@ pub(crate) fn render(
                                 &row_selection_groups,
                                 index,
                             )),
-                            |row| row.bg(THEME.colors.selection),
+                            |row| row.bg(theme().colors.selection),
                         )
                         .child(div().w_full().child(render_row(
                             font_scale,
@@ -338,7 +340,7 @@ pub(crate) fn render(
                 .min_h_0()
                 .overflow_y_hidden()
                 .flex()
-                .bg(THEME.colors.canvas)
+                .bg(theme().colors.canvas)
                 .child(view),
         )
         .when(!viewport.following, |root| {
@@ -347,8 +349,8 @@ pub(crate) fn render(
                     .flex_none()
                     .flex()
                     .justify_center()
-                    .bg(THEME.colors.canvas)
-                    .py(THEME.space.xs)
+                    .bg(theme().colors.canvas)
+                    .py(theme().space.xs)
                     .child(button(
                         "jump-to-latest",
                         if viewport.unseen == 0 {
@@ -705,8 +707,8 @@ fn styled_selectable_text(font_scale: f32, text: TextView) -> TextView {
         .focusable(false)
         .w_full()
         .min_w_0()
-        .text_size(THEME.type_scale.reading * font_scale)
-        .line_height(THEME.type_scale.line_reading * font_scale)
+        .text_size(theme().type_scale.reading * font_scale)
+        .line_height(theme().type_scale.line_reading * font_scale)
 }
 
 fn technical_text(
@@ -716,20 +718,20 @@ fn technical_text(
 ) -> TextView {
     selectable_text(font_scale, id, text)
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small * font_scale)
-        .line_height(THEME.type_scale.line_body * font_scale)
+        .text_size(theme().type_scale.body_small * font_scale)
+        .line_height(theme().type_scale.line_body * font_scale)
 }
 
 fn scaled_markdown_style(mut style: TextViewStyle, font_scale: f32) -> TextViewStyle {
-    style.heading_base_font_size = THEME.type_scale.reading * font_scale;
-    style.code_block.text.font_size = Some((THEME.type_scale.body_small * font_scale).into());
+    style.heading_base_font_size = theme().type_scale.reading * font_scale;
+    style.code_block.text.font_size = Some((theme().type_scale.body_small * font_scale).into());
     style
 }
 
 pub(super) fn transcript_markdown_style() -> TextViewStyle {
     transcript_markdown_style_with_inline_code(HighlightStyle {
-        color: Some(THEME.colors.code.into()),
-        background_color: Some(THEME.colors.panel.into()),
+        color: Some(theme().colors.code.into()),
+        background_color: Some(theme().colors.panel.into()),
         ..HighlightStyle::default()
     })
 }
@@ -739,16 +741,16 @@ pub(super) fn invocation_transcript_markdown_style(resolved: &str) -> TextViewSt
     transcript_markdown_style_with_inline_code(HighlightStyle {
         color: Some(
             if skill {
-                THEME.colors.skill
+                theme().colors.skill
             } else {
-                THEME.colors.accent
+                theme().colors.accent
             }
             .into(),
         ),
         background_color: if skill {
             None
         } else {
-            Some(THEME.colors.panel.into())
+            Some(theme().colors.panel.into())
         },
         font_weight: Some(FontWeight::SEMIBOLD),
         ..HighlightStyle::default()
@@ -757,16 +759,16 @@ pub(super) fn invocation_transcript_markdown_style(resolved: &str) -> TextViewSt
 
 fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> TextViewStyle {
     let mut code_block = StyleRefinement::default();
-    code_block.padding.top = Some((THEME.controls.icon_button + px(16.0)).into());
+    code_block.padding.top = Some((theme().controls.icon_button + px(16.0)).into());
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {
         paragraph_gap: rems(0.5),
-        heading_base_font_size: THEME.type_scale.reading,
-        highlight_theme: HighlightTheme::default_dark(),
+        heading_base_font_size: theme().type_scale.reading,
+        highlight_theme: highlight_theme(),
         code_block,
         inline_code,
-        is_dark: true,
+        is_dark: appearance() == Appearance::Dark,
         ..TextViewStyle::default()
     }
 }
@@ -780,13 +782,13 @@ fn fenced_text(text: &str) -> String {
 
 fn item_color(item: &TranscriptItem) -> gpui::Rgba {
     match item.kind {
-        TranscriptKind::Error => THEME.colors.error,
+        TranscriptKind::Error => theme().colors.error,
         TranscriptKind::Notice | TranscriptKind::Custom | TranscriptKind::AgentResult => {
-            THEME.colors.muted
+            theme().colors.muted
         }
         TranscriptKind::User | TranscriptKind::Assistant | TranscriptKind::PeerMessage => {
-            THEME.colors.text
+            theme().colors.text
         }
-        TranscriptKind::Thinking | TranscriptKind::Tool => THEME.colors.subtle,
+        TranscriptKind::Thinking | TranscriptKind::Tool => theme().colors.subtle,
     }
 }

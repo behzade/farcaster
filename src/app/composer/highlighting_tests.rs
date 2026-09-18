@@ -19,9 +19,9 @@ fn recognizes_complete_tokens_with_unicode_offsets_and_distinct_colors() {
             .collect::<Vec<_>>(),
         ["$review", "@src/main.rs", "$commit"]
     );
-    assert_eq!(spans[0].style.color, Some(THEME.colors.skill.into()));
-    assert_eq!(spans[1].style.color, Some(THEME.colors.file.into()));
-    assert_eq!(spans[2].style.color, Some(THEME.colors.accent.into()));
+    assert_eq!(spans[0].style.color, Some(theme().colors.skill.into()));
+    assert_eq!(spans[1].style.color, Some(theme().colors.file.into()));
+    assert_eq!(spans[2].style.color, Some(theme().colors.accent.into()));
 }
 
 #[test]

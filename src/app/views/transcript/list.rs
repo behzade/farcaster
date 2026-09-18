@@ -419,7 +419,7 @@ impl Element for TranscriptList {
         };
 
         let available = gpui::size(bounds.size.width.into(), AvailableSpace::MinContent);
-        let overdraw = crate::app::ui::theme::THEME.layout.transcript_overdraw;
+        let overdraw = crate::app::ui::theme::theme().layout.transcript_overdraw;
         let mut frame_rows = BTreeMap::new();
 
         let (scroll_y, following_tail, visible_range) = loop {

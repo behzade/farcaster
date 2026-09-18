@@ -28,7 +28,7 @@ use self::{
 use super::super::FarcasterApp;
 use crate::{
     app::ui::primitives::ReorderPosition,
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     sessions::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
 };
@@ -45,8 +45,8 @@ use self::{
 
 pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {
     px(width.clamp(
-        f32::from(THEME.layout.session_rail_min),
-        f32::from(THEME.layout.session_rail_max),
+        f32::from(theme().layout.session_rail_min),
+        f32::from(theme().layout.session_rail_max),
     ))
 }
 

@@ -7,7 +7,7 @@ use gpui::{
 };
 
 use super::{AppIconSize, activates_button, app_icon, icon_control};
-use crate::app::ui::{assets::AppIcon, theme::THEME};
+use crate::app::ui::{assets::AppIcon, theme::theme};
 
 pub(crate) fn disclosure_button(
     id: impl Into<ElementId>,
@@ -18,8 +18,8 @@ pub(crate) fn disclosure_button(
     let label = label.into();
     icon_control(id, disclosure_action_label(expanded, &label))
         .aria_expanded(expanded)
-        .text_color(THEME.colors.muted)
-        .hover(|control| control.bg(THEME.colors.hover))
+        .text_color(theme().colors.muted)
+        .hover(|control| control.bg(theme().colors.hover))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             on_press(window, cx);
@@ -37,8 +37,8 @@ pub(crate) fn disclosure_button(
 
 pub(crate) fn disclosure_detail() -> Div {
     div()
-        .ml(THEME.icons.control + THEME.space.xs)
-        .mt(THEME.space.xs)
+        .ml(theme().icons.control + theme().space.xs)
+        .mt(theme().space.xs)
 }
 
 type DisclosureHandler = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -55,8 +55,8 @@ pub(crate) fn disclosure_title_row(
         .w_full()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
-        .rounded(THEME.radius);
+        .gap(theme().space.xs)
+        .rounded(theme().radius);
     if !expandable {
         return row;
     }
@@ -68,16 +68,19 @@ pub(crate) fn disclosure_title_row(
         .child(
             div()
                 .flex_none()
-                .text_size(THEME.type_scale.body_small)
-                .text_color(THEME.colors.muted)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
                 .child(if expanded { "Hide details" } else { "Details" }),
         )
         .aria_label(disclosure_action_label(expanded, &label))
         .aria_expanded(expanded)
         .tab_index(0)
         .cursor(CursorStyle::PointingHand)
-        .hover(|row| row.bg(THEME.colors.hover))
-        .focus_visible(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .hover(|row| row.bg(theme().colors.hover))
+        .focus_visible(|row| {
+            row.border(theme().border)
+                .border_color(theme().colors.accent)
+        })
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
         .on_click(move |_, window, cx| click(window, cx))
         .on_key_down(move |event, window, cx| {
@@ -106,13 +109,13 @@ pub(crate) fn tree_folder_row(
         .min_w_0()
         .h(gpui::px(24.0))
         .pl(gpui::px(depth as f32 * 12.0 + 4.0))
-        .pr(THEME.space.xs)
+        .pr(theme().space.xs)
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
-        .rounded(THEME.radius)
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.muted)
+        .gap(theme().space.xs)
+        .rounded(theme().radius)
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.muted)
         .child(div().w(gpui::px(14.0)).flex_none().child(app_icon(
             if expanded {
                 AppIcon::CaretDown
@@ -129,8 +132,8 @@ pub(crate) fn tree_folder_row(
     let click = Rc::clone(&on_press);
     row.tab_index(0)
         .cursor_pointer()
-        .hover(|row| row.bg(THEME.colors.hover))
-        .focus_visible(|row| row.bg(THEME.colors.selection))
+        .hover(|row| row.bg(theme().colors.hover))
+        .focus_visible(|row| row.bg(theme().colors.selection))
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
         .on_click(move |_, window, cx| click(window, cx))
         .on_key_down(move |event, window, cx| {

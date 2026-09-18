@@ -5,7 +5,7 @@ use gpui::{
 
 use crate::app::{
     FarcasterApp,
-    ui::theme::THEME,
+    ui::theme::theme,
     views::attachments::{image_card, open_card},
 };
 use crate::conversation::TranscriptItem;
@@ -20,11 +20,11 @@ pub(crate) fn render_attachments(
     div()
         .id(("message-attachments", key))
         .w_full()
-        .mb(THEME.space.sm)
+        .mb(theme().space.sm)
         .flex()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .overflow_x_scroll()
-        .pb(THEME.space.xs)
+        .pb(theme().space.xs)
         .children(item.images.iter().enumerate().map(|(index, image)| {
             let image = crate::app::ui::images::image(image);
             image_card(

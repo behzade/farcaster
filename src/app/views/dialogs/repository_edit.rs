@@ -9,7 +9,7 @@ use crate::{
         FarcasterApp, OVERLAY_KEY_CONTEXT,
         ui::{
             primitives::{ButtonTone, button, modal, submit_textarea},
-            theme::{MONO_FONT_FAMILY, THEME},
+            theme::{MONO_FONT_FAMILY, theme},
         },
     },
     repository::RepositoryEdit,
@@ -69,16 +69,16 @@ pub(in crate::app::views) fn render(
         |surface| {
             surface.w(px(480.0)).child(
                 div()
-                    .p(THEME.space.md)
+                    .p(theme().space.md)
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.sm)
-                    .child(div().text_size(THEME.type_scale.body).child(title))
+                    .gap(theme().space.sm)
+                    .child(div().text_size(theme().type_scale.body).child(title))
                     .when(!commit && !deletes, |body| {
                         body.child(
                             div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
+                                .text_size(theme().type_scale.caption)
+                                .text_color(theme().colors.muted)
                                 .child("Includes staged and unstaged changes."),
                         )
                     })
@@ -88,8 +88,8 @@ pub(in crate::app::views) fn render(
                             .max_h(px(120.0))
                             .overflow_y_scroll()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.muted)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.muted)
                             .children(
                                 pending
                                     .paths
@@ -106,8 +106,8 @@ pub(in crate::app::views) fn render(
                     .when_some(pending.error.as_ref(), |body, error| {
                         body.child(
                             div()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.error)
+                                .text_size(theme().type_scale.caption)
+                                .text_color(theme().colors.error)
                                 .child(error.clone()),
                         )
                     })
@@ -115,7 +115,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .flex()
                             .justify_end()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "cancel-repository-edit",
                                 "Cancel",

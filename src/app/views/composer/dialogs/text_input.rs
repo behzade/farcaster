@@ -9,7 +9,7 @@ use crate::app::{
     FarcasterApp,
     ui::{
         primitives::{ButtonTone, button},
-        theme::{MONO_FONT_FAMILY, THEME},
+        theme::{MONO_FONT_FAMILY, theme},
     },
 };
 
@@ -55,12 +55,12 @@ impl RenderOnce for TextRequestView {
         div()
             .flex()
             .flex_col()
-            .gap(THEME.space.md)
+            .gap(theme().space.md)
             .when_some(self.hint, |body, hint| {
                 body.child(
                     selectable_dialog_text("dialog-input-hint", hint)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle),
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle),
                 )
             })
             .child(

@@ -10,7 +10,7 @@ use super::{
 use crate::app::ui::{
     assets::AppIcon,
     primitives::{ButtonTone, FeedbackTone, feedback, icon_button, modal},
-    theme::THEME,
+    theme::theme,
 };
 
 impl FarcasterApp {
@@ -92,7 +92,7 @@ impl FarcasterApp {
                                 div()
                                     .absolute()
                                     .top(gpui::px(12.0))
-                                    .right(THEME.space.md)
+                                    .right(theme().space.md)
                                     .child(icon_button(
                                         "close-project-work",
                                         AppIcon::X,
@@ -173,13 +173,13 @@ impl FarcasterApp {
                 root.child(
                     div()
                         .absolute()
-                        .top(THEME.space.md)
-                        .right(THEME.space.md)
-                        .w(THEME.layout.run_panel)
+                        .top(theme().space.md)
+                        .right(theme().space.md)
+                        .w(theme().layout.run_panel)
                         .max_w_full()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.xs)
+                        .gap(theme().space.xs)
                         .children(task_notice)
                         .children(self.extensions.active.notifications.iter().enumerate().map(
                             |(index, notice)| {

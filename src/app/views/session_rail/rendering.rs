@@ -13,7 +13,7 @@ use super::{
 use crate::{
     app::{
         session::status::resolved_session_status,
-        ui::{primitives::ReorderPosition, theme::THEME},
+        ui::{primitives::ReorderPosition, theme::theme},
     },
     sessions::SessionSummary,
 };
@@ -24,15 +24,15 @@ pub(super) const ARCHIVED_LEADING_GAP: f32 = 34.0;
 pub(super) fn session_section_header() -> Div {
     div()
         .w_full()
-        .h(THEME.controls.utility_row)
+        .h(theme().controls.utility_row)
         .flex_none()
         .flex()
         .items_center()
         .justify_between()
-        .px(THEME.space.md)
-        .text_size(THEME.type_scale.caption)
+        .px(theme().space.md)
+        .text_size(theme().type_scale.caption)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(THEME.colors.muted)
+        .text_color(theme().colors.muted)
 }
 
 fn session_list_end_target(
@@ -137,8 +137,8 @@ pub(super) fn inactive_session_badge(
 }
 
 pub(super) fn collapsed_inactive_rail_height(count: usize, leading_gap: bool) -> gpui::Pixels {
-    let rows = THEME.controls.utility_row
-        + THEME.controls.archived_preview_row * count.min(INACTIVE_PREVIEW_LIMIT);
+    let rows = theme().controls.utility_row
+        + theme().controls.archived_preview_row * count.min(INACTIVE_PREVIEW_LIMIT);
     if leading_gap {
         rows + px(ARCHIVED_LEADING_GAP)
     } else {

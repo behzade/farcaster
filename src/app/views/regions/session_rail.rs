@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use gpui::{Context, IntoElement as _, ListAlignment, ListState, Pixels, Render, WeakEntity};
 
 use super::super::{FarcasterApp, SessionRailKind};
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 
 pub(crate) struct SessionRailView {
     app: WeakEntity<FarcasterApp>,
@@ -23,7 +23,7 @@ pub(crate) struct InactiveSessionRailView {
 }
 
 fn session_list() -> ListState {
-    ListState::new(0, ListAlignment::Top, THEME.layout.transcript_overdraw)
+    ListState::new(0, ListAlignment::Top, theme().layout.transcript_overdraw)
 }
 
 impl SessionRailView {
@@ -33,7 +33,7 @@ impl SessionRailView {
             list: session_list(),
             rows: RefCell::new(Vec::new()),
             reveal: None,
-            width: THEME.layout.session_rail,
+            width: theme().layout.session_rail,
             resize_start: None,
         }
     }
@@ -70,7 +70,7 @@ impl InactiveSessionRailView {
         Self {
             app,
             kind,
-            list: session_list().with_uniform_item_height(THEME.layout.session_row_height),
+            list: session_list().with_uniform_item_height(theme().layout.session_row_height),
             rows: RefCell::new(Vec::new()),
             reveal: None,
         }

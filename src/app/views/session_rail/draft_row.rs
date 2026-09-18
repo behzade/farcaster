@@ -18,7 +18,7 @@ use crate::{
     app::ui::primitives::{
         AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
     },
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     sessions::DraftSession,
 };
 
@@ -89,7 +89,7 @@ impl RenderOnce for DraftRow {
             hover_id,
             hover_details,
             div()
-                .h(THEME.layout.session_row_height)
+                .h(theme().layout.session_row_height)
                 .w_full()
                 .px(px(2.0))
                 .child(
@@ -104,24 +104,24 @@ impl RenderOnce for DraftRow {
                             crate::app::ui::primitives::preserve_pointer_focus,
                         )
                         .size_full()
-                        .h(THEME.layout.session_row_height)
+                        .h(theme().layout.session_row_height)
                         .relative()
                         .flex()
                         .items_stretch()
-                        .px(THEME.space.sm)
-                        .py(THEME.space.xs)
+                        .px(theme().space.sm)
+                        .py(theme().space.xs)
                         .rounded(px(2.0))
                         .group(action_group.clone())
                         .bg(if selected {
-                            THEME.colors.session_selection
+                            theme().colors.session_selection
                         } else {
-                            THEME.colors.panel
+                            theme().colors.panel
                         })
                         .hover(move |row| {
                             row.bg(if selected {
-                                THEME.colors.session_selection
+                                theme().colors.session_selection
                             } else {
-                                THEME.colors.surface
+                                theme().colors.surface
                             })
                         })
                         .when(selected, |row| {
@@ -129,13 +129,13 @@ impl RenderOnce for DraftRow {
                                 div()
                                     .absolute()
                                     .left_0()
-                                    .top(THEME.space.xs)
-                                    .bottom(THEME.space.xs)
+                                    .top(theme().space.xs)
+                                    .bottom(theme().space.xs)
                                     .w(px(2.0))
-                                    .bg(THEME.colors.accent),
+                                    .bg(theme().colors.accent),
                             )
                         })
-                        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                        .focus(|row| row.border(theme().border).border_color(theme().colors.accent))
                         .cursor(CursorStyle::PointingHand)
                         .on_drag(drag, move |drag, _, _, cx| {
                             let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
@@ -148,8 +148,8 @@ impl RenderOnce for DraftRow {
                         })
                         .reorder_target::<DraggedSession>(
                             drop_position,
-                            THEME.colors.accent,
-                            THEME.colors.hover,
+                            theme().colors.accent,
+                            theme().colors.hover,
                             move |position, _, cx| {
                                 let _ = drag_move_entity.update(cx, |this, cx| {
                                     this.update_session_drop_target(
@@ -195,19 +195,19 @@ impl RenderOnce for DraftRow {
                                         .pr(px(24.0))
                                         .flex()
                                         .items_center()
-                                        .gap(THEME.space.xs)
+                                        .gap(theme().space.xs)
                                         .child(
                                             div()
                                                 .min_w_0()
                                                 .whitespace_nowrap()
                                                 .text_ellipsis()
-                                                .text_size(THEME.type_scale.body_small)
+                                                .text_size(theme().type_scale.body_small)
                                                 .font_weight(if selected {
                                                     FontWeight::SEMIBOLD
                                                 } else {
                                                     FontWeight::NORMAL
                                                 })
-                                                .text_color(THEME.colors.text)
+                                                .text_color(theme().colors.text)
                                                 .child(title),
                                         )
                                         .when(is_draft, |title| title.child(draft_badge())),
@@ -217,7 +217,7 @@ impl RenderOnce for DraftRow {
                                         .min_w_0()
                                         .flex()
                                         .items_center()
-                                        .gap(THEME.space.xs)
+                                        .gap(theme().space.xs)
                                         .child(
                                             div()
                                                 .min_w_0()
@@ -243,7 +243,7 @@ impl RenderOnce for DraftRow {
                                     .opacity(0.0)
                                     .group_hover(action_group, |button| button.opacity(1.0))
                                     .focus(|button| button.opacity(1.0))
-                                    .hover(|button| button.bg(THEME.colors.hover))
+                                    .hover(|button| button.bg(theme().colors.hover))
                                     .child(app_icon(AppIcon::Trash, AppIconSize::Control))
                                     .on_click(move |_, window, cx| {
                                         cx.stop_propagation();
@@ -266,12 +266,12 @@ fn draft_can_be_discarded(submitted: bool, status: &str) -> bool {
 fn draft_badge() -> AnyElement {
     div()
         .flex_none()
-        .px(THEME.space.xs)
+        .px(theme().space.xs)
         .rounded(px(3.0))
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.muted)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.muted)
         .child("Draft")
         .into_any_element()
 }

@@ -10,7 +10,7 @@ use crate::app::{
     ui::{
         assets::AppIcon,
         primitives::{AppIconSize, ButtonTone, app_icon, button},
-        theme::THEME,
+        theme::theme,
     },
 };
 use gpui::{
@@ -82,22 +82,22 @@ pub(super) fn folder_header(
     let menu_entity = entity.clone();
     let new_entity = entity.clone();
     let cancel_entity = entity;
-    let mut section = div().w_full().flex().flex_col().pt(THEME.space.sm);
+    let mut section = div().w_full().flex().flex_col().pt(theme().space.sm);
     if id.is_some() {
         section = section.child(
             div()
-                .mx(THEME.space.md)
-                .mb(THEME.space.sm)
-                .h(THEME.border)
+                .mx(theme().space.md)
+                .mb(theme().space.sm)
+                .h(theme().border)
                 .flex_none()
-                .bg(THEME.colors.border),
+                .bg(theme().colors.border),
         );
     }
     let mut row = session_section_header()
         .id(format!("session-folder-{id:?}"))
         .group("session-folder-header")
         .w_full()
-        .gap(THEME.space.xs);
+        .gap(theme().space.xs);
     if id.is_none() || editing {
         row = row.h(px(40.0));
     }
@@ -134,7 +134,7 @@ pub(super) fn folder_header(
         });
         return section
             .child(
-                row.hover(|row| row.bg(THEME.colors.hover))
+                row.hover(|row| row.bg(theme().colors.hover))
                     .child(new_folder_button(move |window, cx| {
                         let _ = edit_entity
                             .update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
@@ -190,7 +190,7 @@ pub(super) fn folder_header(
             .px(px(0.0))
             .accessibility_label("New session in folder")
             .tooltip("New session in folder")
-            .text_color(THEME.colors.muted)
+            .text_color(theme().colors.muted)
             .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
             .on_click(move |_, window, cx| {
                 let _ = new_entity.update(cx, |this, cx| {
@@ -222,14 +222,14 @@ fn new_folder_button(on_press: impl Fn(&mut gpui::Window, &mut gpui::App) + 'sta
         .h_full()
         .px(px(0.0))
         .cursor_pointer()
-        .text_color(THEME.colors.muted)
+        .text_color(theme().colors.muted)
         .group_hover("session-folder-header", |button| {
-            button.text_color(THEME.colors.text)
+            button.text_color(theme().colors.text)
         })
         .child(
             div()
                 .w_full()
-                .text_size(THEME.type_scale.body_small)
+                .text_size(theme().type_scale.body_small)
                 .font_weight(FontWeight::NORMAL)
                 .child("+ New folder"),
         )
@@ -248,8 +248,8 @@ pub(super) fn folder_drop_target(
         })
         .drag_over::<DraggedSession>(|style, _, _, _| {
             style
-                .bg(THEME.colors.hover)
-                .border_color(THEME.colors.accent)
+                .bg(theme().colors.hover)
+                .border_color(theme().colors.accent)
         })
         .on_drop(move |drag: &DraggedSession, window, cx| {
             cx.stop_propagation();

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::{
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     conversation::{self, TranscriptItem, TranscriptKind},
     utility::persistent_vec::PersistentVec,
 };
@@ -203,17 +203,17 @@ fn mixed_user_messages_highlight_only_recognized_invocation_tokens() {
 
 #[test]
 fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
-    assert_ne!(THEME.colors.skill, THEME.colors.accent);
-    assert_ne!(THEME.colors.skill, THEME.colors.success);
+    assert_ne!(theme().colors.skill, theme().colors.accent);
+    assert_ne!(theme().colors.skill, theme().colors.success);
     let skill = invocation_transcript_markdown_style("<skill name=\"review\">body</skill>");
-    assert_eq!(skill.inline_code.color, Some(THEME.colors.skill.into()));
+    assert_eq!(skill.inline_code.color, Some(theme().colors.skill.into()));
     assert_eq!(skill.inline_code.background_color, None);
 
     let prompt = invocation_transcript_markdown_style("expanded prompt");
-    assert_eq!(prompt.inline_code.color, Some(THEME.colors.accent.into()));
+    assert_eq!(prompt.inline_code.color, Some(theme().colors.accent.into()));
     assert_eq!(
         prompt.inline_code.background_color,
-        Some(THEME.colors.panel.into())
+        Some(theme().colors.panel.into())
     );
 }
 
@@ -221,10 +221,10 @@ fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
 fn markdown_inline_code_uses_the_reading_palette() {
     let style = transcript_markdown_style();
 
-    assert_eq!(style.inline_code.color, Some(THEME.colors.code.into()));
+    assert_eq!(style.inline_code.color, Some(theme().colors.code.into()));
     assert_eq!(
         style.inline_code.background_color,
-        Some(THEME.colors.panel.into())
+        Some(theme().colors.panel.into())
     );
 }
 

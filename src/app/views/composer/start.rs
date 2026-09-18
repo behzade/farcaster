@@ -7,7 +7,7 @@ use crate::app::{
     FarcasterApp,
     ui::{
         primitives::{ButtonTone, dropdown_button},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -42,7 +42,7 @@ pub(super) fn harness_selector(
             }
         });
     dropdown_button("draft-harness", label, ButtonTone::Quiet, true)
-        .text_color(THEME.colors.text)
+        .text_color(theme().colors.text)
         .dropdown_menu_with_anchor(gpui::Anchor::BottomLeft, move |mut menu, _, _| {
             for backend in &backends {
                 let target = backend.id;

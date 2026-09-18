@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     app::ui::assets::AppIcon,
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
 
@@ -80,8 +80,8 @@ fn collapsed_archived_rail_includes_a_leading_gap() {
     let archived = collapsed_inactive_rail_height(2, true);
     assert_eq!(
         f32::from(without_gap),
-        f32::from(THEME.controls.utility_row)
-            + f32::from(THEME.controls.archived_preview_row) * 2.0
+        f32::from(theme().controls.utility_row)
+            + f32::from(theme().controls.archived_preview_row) * 2.0
     );
     assert_eq!(
         f32::from(archived) - f32::from(without_gap),
@@ -94,8 +94,8 @@ fn collapsed_archived_rail_previews_at_most_five_sessions() {
     let height = collapsed_inactive_rail_height(10, false);
     assert_eq!(
         f32::from(height),
-        f32::from(THEME.controls.utility_row)
-            + f32::from(THEME.controls.archived_preview_row) * 5.0
+        f32::from(theme().controls.utility_row)
+            + f32::from(theme().controls.archived_preview_row) * 5.0
     );
 }
 
@@ -103,12 +103,12 @@ fn collapsed_archived_rail_previews_at_most_five_sessions() {
 fn session_rail_resize_stays_within_design_bounds() {
     assert_eq!(
         clamped_session_rail_width(100.0),
-        THEME.layout.session_rail_min
+        theme().layout.session_rail_min
     );
     assert_eq!(clamped_session_rail_width(286.0), gpui::px(286.0));
     assert_eq!(
         clamped_session_rail_width(500.0),
-        THEME.layout.session_rail_max
+        theme().layout.session_rail_max
     );
 }
 

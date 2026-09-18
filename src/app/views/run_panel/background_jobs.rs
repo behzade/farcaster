@@ -3,7 +3,7 @@ use gpui::{AnyElement, IntoElement, ParentElement as _, Styled as _, div, px};
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, app_icon},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     protocol::{BackgroundJob, BackgroundJobState},
 };
 
@@ -16,7 +16,7 @@ pub(super) fn background_job_row(job: &BackgroundJob) -> AnyElement {
         .gap(px(7.0))
         .child(
             div()
-                .size(THEME.icons.inline)
+                .size(theme().icons.inline)
                 .flex_none()
                 .text_color(background_job_color(job.state))
                 .child(app_icon(
@@ -37,8 +37,8 @@ pub(super) fn background_job_row(job: &BackgroundJob) -> AnyElement {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.text)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.text)
                         .child(job.name.clone()),
                 )
                 .child(
@@ -48,15 +48,15 @@ pub(super) fn background_job_row(job: &BackgroundJob) -> AnyElement {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child(job.command.clone()),
                 ),
         )
         .child(
             div()
                 .flex_none()
-                .text_size(THEME.type_scale.caption)
+                .text_size(theme().type_scale.caption)
                 .text_color(background_job_color(job.state))
                 .child(background_job_label(job)),
         )
@@ -85,8 +85,8 @@ fn background_job_icon(state: BackgroundJobState) -> AppIcon {
 
 fn background_job_color(state: BackgroundJobState) -> gpui::Rgba {
     match state {
-        BackgroundJobState::Starting | BackgroundJobState::Running => THEME.colors.accent,
-        BackgroundJobState::Completed => THEME.colors.success,
-        BackgroundJobState::Exited | BackgroundJobState::Failed => THEME.colors.error,
+        BackgroundJobState::Starting | BackgroundJobState::Running => theme().colors.accent,
+        BackgroundJobState::Completed => theme().colors.success,
+        BackgroundJobState::Exited | BackgroundJobState::Failed => theme().colors.error,
     }
 }

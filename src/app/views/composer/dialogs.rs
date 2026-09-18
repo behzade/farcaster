@@ -14,7 +14,7 @@ use self::{confirm::ConfirmRequestView, select::SelectRequestView, text_input::T
 use super::super::{FarcasterApp, OVERLAY_KEY_CONTEXT};
 use crate::{
     app::ui::primitives::{ButtonTone, button, dropdown_content_button},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     protocol::ExtensionUiRequest,
 };
 
@@ -70,10 +70,10 @@ impl FarcasterApp {
                 let body = div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.sm)
+                    .gap(theme().space.sm)
                     .child(
                         div()
-                            .text_color(THEME.colors.muted)
+                            .text_color(theme().colors.muted)
                             .child("Choose a model to start this worker."),
                     )
                     .child(picker);
@@ -179,31 +179,31 @@ impl FarcasterApp {
                 }
             })
             .flex_none()
-            .min_h(THEME.layout.composer_min)
-            .max_h(THEME.layout.dialog_max_height)
+            .min_h(theme().layout.composer_min)
+            .max_h(theme().layout.dialog_max_height)
             .overflow_y_scroll()
-            .border_t(THEME.border)
+            .border_t(theme().border)
             .border_color(super::composer_border_color(focused))
-            .bg(THEME.colors.panel)
+            .bg(theme().colors.panel)
             .child(
                 div()
-                    .px(THEME.space.md)
-                    .pt(THEME.space.sm)
-                    .pb(THEME.space.xs)
+                    .px(theme().space.md)
+                    .pt(theme().space.sm)
+                    .pb(theme().space.xs)
                     .child(
                         selectable_dialog_text("extension-composer-request-title", title)
-                            .text_size(THEME.type_scale.body)
+                            .text_size(theme().type_scale.body)
                             .font_weight(FontWeight::SEMIBOLD),
                     ),
             )
-            .child(div().px(THEME.space.md).pb(THEME.space.sm).child(body))
+            .child(div().px(theme().space.md).pb(theme().space.sm).child(body))
             .when(show_cancel_button(dialog), |body| {
                 body.child(
                     div()
                         .flex()
                         .justify_end()
-                        .px(THEME.space.md)
-                        .pb(THEME.space.sm)
+                        .px(theme().space.md)
+                        .pb(theme().space.sm)
                         .child(button(
                             "dialog-cancel",
                             if matches!(dialog, ExtensionUiRequest::WorkerModel { .. }) {
@@ -252,7 +252,7 @@ fn selectable_dialog_text(id: impl Into<ElementId>, text: impl AsRef<str>) -> Te
         .selectable(true)
         .w_full()
         .min_w_0()
-        .line_height(THEME.type_scale.line_body)
+        .line_height(theme().type_scale.line_body)
 }
 
 pub(super) fn plain_text_html(text: &str) -> SharedString {

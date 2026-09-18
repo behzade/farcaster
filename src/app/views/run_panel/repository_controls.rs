@@ -11,7 +11,7 @@ use crate::{
                 ButtonTone, activates_button, dropdown_button, icon_button, icon_control,
                 section_heading,
             },
-            theme::{MONO_FONT_FAMILY, THEME},
+            theme::{MONO_FONT_FAMILY, theme},
         },
     },
     repository::{
@@ -80,20 +80,20 @@ pub(super) fn repository_header(
         .flex_none()
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
+                .gap(theme().space.xs)
                 .child(section_heading("Changes"))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .text_ellipsis()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.muted)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
                         .when(snapshot.is_some(), |label| {
                             label.child(if selected_count > 0 {
                                 format!("· {selected_count} selected")
@@ -166,8 +166,8 @@ pub(super) fn repository_header(
                 div()
                     .flex()
                     .items_center()
-                    .gap(THEME.space.sm)
-                    .text_size(THEME.type_scale.caption)
+                    .gap(theme().space.sm)
+                    .text_size(theme().type_scale.caption)
                     .child(working_copy_totals(
                         app.project.repository.additions,
                         app.project.repository.deletions,
@@ -179,7 +179,7 @@ pub(super) fn repository_header(
                             .min_w_0()
                             .text_ellipsis()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_color(THEME.colors.subtle)
+                            .text_color(theme().colors.subtle)
                             .tooltip(move |window, cx| {
                                 Tooltip::new(detail.clone()).build(window, cx)
                             })
@@ -190,8 +190,8 @@ pub(super) fn repository_header(
         .when_some(syncing, |section, action| {
             section.child(
                 div()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.accent)
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.accent)
                     .child(match action {
                         RepositorySyncAction::PullOrFetch => "Syncing repository…",
                         RepositorySyncAction::Push => "Pushing repository…",
@@ -304,15 +304,15 @@ fn working_copy_totals(additions: Option<u64>, deletions: Option<u64>) -> AnyEle
         .flex_none()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(
             div()
-                .text_color(THEME.colors.success)
+                .text_color(theme().colors.success)
                 .child(additions.map_or_else(|| "+—".to_owned(), |count| format!("+{count}"))),
         )
         .child(
             div()
-                .text_color(THEME.colors.error)
+                .text_color(theme().colors.error)
                 .child(deletions.map_or_else(|| "-—".to_owned(), |count| format!("-{count}"))),
         )
         .into_any_element()

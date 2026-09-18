@@ -13,7 +13,7 @@ use crate::{
     agents::SandboxState,
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, dropdown_content_button},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     runtime::{ConfigurationStatus, HarnessAccessMode},
 };
 
@@ -50,10 +50,10 @@ pub(in crate::app::views) fn render(
         .flex()
         .items_center()
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body)
-        .child(div().text_color(THEME.colors.muted).child(provider_label))
+        .text_size(theme().type_scale.body)
+        .child(div().text_color(theme().colors.muted).child(provider_label))
         .child(runtime_slash())
-        .child(div().text_color(THEME.colors.text).child(model_label))
+        .child(div().text_color(theme().colors.text).child(model_label))
         .when(shows_effort, |content| {
             content.child(runtime_slash()).child(
                 div()
@@ -106,20 +106,20 @@ pub(in crate::app::views) fn render(
 fn runtime_slash() -> AnyElement {
     div()
         .px(px(6.0))
-        .text_color(THEME.colors.subtle)
+        .text_color(theme().colors.subtle)
         .child("/")
         .into_any_element()
 }
 
 fn effort_color(level: &str) -> gpui::Rgba {
     match level.to_ascii_lowercase().as_str() {
-        "off" | "none" | "default" => THEME.colors.subtle,
-        "minimal" => THEME.colors.muted,
-        "low" => THEME.colors.link,
-        "medium" => THEME.colors.accent,
-        "high" => THEME.colors.warning,
-        "xhigh" | "max" => THEME.colors.error,
-        _ => THEME.colors.accent,
+        "off" | "none" | "default" => theme().colors.subtle,
+        "minimal" => theme().colors.muted,
+        "low" => theme().colors.link,
+        "medium" => theme().colors.accent,
+        "high" => theme().colors.warning,
+        "xhigh" | "max" => theme().colors.error,
+        _ => theme().colors.accent,
     }
 }
 
@@ -143,7 +143,7 @@ fn access_selector(
         .gap(px(5.0))
         .text_color(match state {
             SandboxState::Active(mode) => access_mode_color(mode),
-            _ => THEME.colors.muted,
+            _ => theme().colors.muted,
         })
         .child(app_icon(AppIcon::Shield, AppIconSize::Inline))
         .child(sandbox_state_label(state, selected))
@@ -215,9 +215,9 @@ const fn access_mode_label(mode: HarnessAccessMode) -> &'static str {
 
 fn access_mode_color(mode: HarnessAccessMode) -> gpui::Rgba {
     match mode {
-        HarnessAccessMode::Sandboxed => THEME.colors.muted,
-        HarnessAccessMode::Auto => THEME.colors.muted,
-        HarnessAccessMode::Full => THEME.colors.warning,
+        HarnessAccessMode::Sandboxed => theme().colors.muted,
+        HarnessAccessMode::Auto => theme().colors.muted,
+        HarnessAccessMode::Full => theme().colors.warning,
     }
 }
 

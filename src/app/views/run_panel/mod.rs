@@ -26,7 +26,7 @@ use super::super::{FarcasterApp, RunPanelView};
 use crate::{
     agent_activity::AgentActivity,
     app::ui::primitives::{ButtonTone, activates_button, button, panel, section_heading},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     sessions::{descendant_sessions_for_root, root_session_for_path},
 };
 
@@ -141,7 +141,7 @@ impl FarcasterApp {
             .size_full()
             .rounded_none()
             .border_0()
-            .bg(THEME.colors.inspector)
+            .bg(theme().colors.inspector)
             .child(
                 div()
                     .size_full()
@@ -152,12 +152,12 @@ impl FarcasterApp {
                         div()
                             .flex_none()
                             .px(px(15.0))
-                            .py(THEME.space.sm)
-                            .border_b(THEME.border)
-                            .border_color(THEME.colors.border)
+                            .py(theme().space.sm)
+                            .border_b(theme().border)
+                            .border_color(theme().colors.border)
                             .flex()
                             .items_center()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "close-older-workers",
                                 "Back",
@@ -180,7 +180,7 @@ impl FarcasterApp {
                             .overflow_y_scroll()
                             .track_scroll(scroll)
                             .px(px(15.0))
-                            .py(THEME.space.sm)
+                            .py(theme().space.sm)
                             .children(workers.iter().skip(RECENT_WORKERS).filter_map(
                                 |(activity, depth, session, _)| {
                                     self.agent_card(
@@ -309,7 +309,7 @@ impl FarcasterApp {
             .track_scroll(scroll)
             .flex()
             .flex_col()
-            .gap(THEME.space.sm)
+            .gap(theme().space.sm)
             .child(conversation)
             .child(self.views.workgraph_sidebar.clone())
             .when_some(
@@ -338,7 +338,7 @@ impl FarcasterApp {
             .pr(px(15.0))
             .pb(px(14.0))
             .pl(px(18.0))
-            .gap(THEME.space.md)
+            .gap(theme().space.md)
             .child(activity)
             .when(self.project.repository.backend.is_some(), |run| {
                 run.child(self.render_repository(entity.clone(), run_panel.clone(), browser))
@@ -347,7 +347,7 @@ impl FarcasterApp {
             .size_full()
             .rounded_none()
             .border_0()
-            .bg(THEME.colors.inspector)
+            .bg(theme().colors.inspector)
             .child(body)
     }
 }

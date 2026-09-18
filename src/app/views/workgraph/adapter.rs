@@ -16,7 +16,7 @@ use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,
@@ -341,7 +341,7 @@ impl WorkGraphBoardView {
             PlanLoadState::Failed(error) => render_load_error(error, entity),
         };
         div()
-            .p(THEME.space.md)
+            .p(theme().space.md)
             .pr(px(56.0))
             .child(notice)
             .into_any_element()
@@ -433,7 +433,7 @@ fn render_load_error(error: &str, entity: Entity<WorkGraphBoardView>) -> gpui::A
     div()
         .flex()
         .flex_col()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(feedback(
             "workgraph-error",
             error.to_owned(),
@@ -462,14 +462,14 @@ fn render_board_header(
     div()
         .h(px(56.0))
         .flex_none()
-        .pl(THEME.space.md)
+        .pl(theme().space.md)
         .pr(px(56.0))
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .flex()
         .items_center()
         .justify_between()
-        .border_b(THEME.border)
-        .border_color(THEME.colors.surface)
+        .border_b(theme().border)
+        .border_color(theme().colors.surface)
         .when(has_plan, |header| {
             header.child(
                 button(
@@ -491,7 +491,7 @@ fn render_board_header(
                 .min_w_0()
                 .flex_1()
                 .truncate()
-                .text_size(THEME.type_scale.reading)
+                .text_size(theme().type_scale.reading)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(plan_title.to_owned())
                 .into_any_element()
@@ -509,7 +509,7 @@ fn render_board_header(
             div()
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
+                .gap(theme().space.xs)
                 .when(show_list, |actions| {
                     actions.child(Input::new(search).w(px(140.0)))
                 })
@@ -542,10 +542,10 @@ fn render_empty_plan(entity: Entity<WorkGraphBoardView>) -> impl IntoElement {
         .flex_col()
         .items_center()
         .justify_center()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(
             div()
-                .text_size(THEME.type_scale.body)
+                .text_size(theme().type_scale.body)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("No plan yet"),
         )
@@ -568,7 +568,7 @@ impl Render for WorkGraphBoardView {
             .track_focus(&self.focus)
             .key_context(WORKGRAPH_KEY_CONTEXT)
             .min_h_0()
-            .bg(THEME.colors.panel)
+            .bg(theme().colors.panel)
             .child(self.render_state(layout, cx))
     }
 }

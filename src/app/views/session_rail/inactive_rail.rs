@@ -18,7 +18,7 @@ use super::{
 };
 use crate::{
     app::session::status::roots_waiting_for_descendants, app::ui::primitives::disclosure_button,
-    app::ui::theme::THEME, sessions::root_session_for_path,
+    app::ui::theme::theme, sessions::root_session_for_path,
 };
 
 impl FarcasterApp {
@@ -79,7 +79,7 @@ impl FarcasterApp {
                     SessionRowInput {
                         title_editor: editing.then(|| self.sessions.title_input.clone()),
                         subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
-                        row_height: THEME.controls.archived_preview_row,
+                        row_height: theme().controls.archived_preview_row,
                         ..SessionRowInput::standard(selected, badge)
                     },
                     entity.clone(),

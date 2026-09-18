@@ -26,7 +26,7 @@ use crate::{
     app::ui::primitives::{
         AppIconSize, ButtonTone, FeedbackTone, app_icon, dropdown_button, feedback, icon_button,
     },
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     app::{PickerScope, ProjectPickerIntent},
     sessions::root_session_for_path,
 };
@@ -159,7 +159,7 @@ impl FarcasterApp {
                                     .get(item.session.id.as_str())
                                     .copied()
                                     .unwrap_or(0),
-                                row_height: THEME.layout.session_row_height,
+                                row_height: theme().layout.session_row_height,
                             },
                             active_row_entity.clone(),
                         )
@@ -207,13 +207,13 @@ impl FarcasterApp {
             .size_full()
             .flex()
             .flex_col()
-            .bg(THEME.colors.panel)
+            .bg(theme().colors.panel)
             .child(
                 div()
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .px(px(10.0))
                     .pb(px(10.0))
                     .child(
@@ -221,7 +221,7 @@ impl FarcasterApp {
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(THEME.space.xs)
+                                .gap(theme().space.xs)
                                 .child(icon_button(
                                     "session-actions",
                                     AppIcon::List,
@@ -258,13 +258,13 @@ impl FarcasterApp {
                             .h(px(36.0))
                             .flex()
                             .items_center()
-                            .gap(THEME.space.xs)
+                            .gap(theme().space.xs)
                             .pl(px(10.0))
                             .rounded(px(5.0))
-                            .border(THEME.border)
-                            .border_color(THEME.colors.hover)
-                            .bg(THEME.colors.surface)
-                            .text_color(THEME.colors.muted)
+                            .border(theme().border)
+                            .border_color(theme().colors.hover)
+                            .bg(theme().colors.surface)
+                            .text_color(theme().colors.muted)
                             .on_click(move |_, window, cx| search_focus.focus(window, cx))
                             .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
                             .child(
@@ -349,8 +349,8 @@ impl FarcasterApp {
                                     .h(px(28.0))
                                     .flex()
                                     .items_center()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.muted)
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.muted)
                                     .child("Move to Active"),
                                 move |drag, _, cx| {
                                     let _ = entity.update(cx, |this, cx| {
@@ -385,10 +385,10 @@ impl FarcasterApp {
                 |rail| {
                     rail.child(
                         div()
-                            .px(THEME.space.md)
-                            .py(THEME.space.sm)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .px(theme().space.md)
+                            .py(theme().space.sm)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child("No matching sessions"),
                     )
                 },

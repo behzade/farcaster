@@ -17,7 +17,7 @@ use super::{
 #[cfg(test)]
 use crate::repository::BackendPreference;
 use crate::{
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
@@ -56,7 +56,7 @@ impl FarcasterApp {
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .child(header)
             .when(
                 self.project.repository.loading && !self.project.repository.initialized,
@@ -65,8 +65,8 @@ impl FarcasterApp {
                         div()
                             .id("repository-loading")
                             .role(Role::Status)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.accent)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.accent)
                             .child("Reading working copy…"),
                     )
                 },
@@ -76,7 +76,7 @@ impl FarcasterApp {
                 |section, error| {
                     section.child(repository_notice(
                         &format!("Backend choice was not saved: {}", bounded_message(error)),
-                        THEME.colors.warning,
+                        theme().colors.warning,
                     ))
                 },
             )
@@ -86,7 +86,7 @@ impl FarcasterApp {
                     section.child(repository_error_notice(
                         "Auto-refresh unavailable. Use Refresh to try again.",
                         error,
-                        THEME.colors.warning,
+                        theme().colors.warning,
                     ))
                 },
             )
@@ -95,7 +95,7 @@ impl FarcasterApp {
                 |section, error| {
                     section.child(repository_notice(
                         &format!("Repository sync failed: {}", bounded_message(error)),
-                        THEME.colors.error,
+                        theme().colors.error,
                     ))
                 },
             )
@@ -107,7 +107,7 @@ impl FarcasterApp {
                     } else {
                         "Could not read this repository. Check the project folder and refresh."
                     };
-                    section.child(repository_error_notice(message, error, THEME.colors.error))
+                    section.child(repository_error_notice(message, error, theme().colors.error))
                 },
             )
             .when_some(snapshot, |section, snapshot| {
@@ -132,8 +132,8 @@ impl FarcasterApp {
                         div()
                             .id("repository-disabled")
                             .role(Role::Status)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.warning)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.warning)
                             .child("Repository integration is disabled for this untrusted project"),
                     )
                     .child(button(
@@ -158,8 +158,8 @@ impl FarcasterApp {
                         div()
                             .id("repository-not-found")
                             .role(Role::Status)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child("No repository found for this project"),
                     )
                 },
@@ -255,7 +255,7 @@ impl FarcasterApp {
                             RepositoryKind::Jujutsu => "Current change is empty",
                         }
                     },
-                    THEME.colors.subtle,
+                    theme().colors.subtle,
                 ))
             })
             .into_any_element()
@@ -315,14 +315,14 @@ impl FarcasterApp {
             .min_w_0()
             .w_full()
             .h(px(24.0))
-            .px(THEME.space.xs)
-            .rounded(THEME.radius)
+            .px(theme().space.xs)
+            .rounded(theme().radius)
             .flex()
             .items_center()
-            .gap(THEME.space.xs)
-            .hover(|row| row.bg(THEME.colors.hover))
-            .when(selected, |row| row.bg(THEME.colors.selection))
-            .focus(|row| row.bg(THEME.colors.selection))
+            .gap(theme().space.xs)
+            .hover(|row| row.bg(theme().colors.hover))
+            .when(selected, |row| row.bg(theme().colors.selection))
+            .focus(|row| row.bg(theme().colors.selection))
             .cursor_pointer()
             .on_click(move |event, window, cx| {
                 let _ = click_entity.update(cx, |this, cx| {
@@ -374,17 +374,17 @@ impl FarcasterApp {
                 .child(
                     div()
                         .size(px(14.0))
-                        .border(THEME.border)
-                        .border_color(THEME.colors.muted)
+                        .border(theme().border)
+                        .border_color(theme().colors.muted)
                         .when(!editable, |checkbox| checkbox.opacity(0.4))
                         .rounded(px(2.0))
                         .flex()
                         .items_center()
                         .justify_center()
                         .when(selected, |checkbox| {
-                            checkbox.bg(THEME.colors.accent).child(
+                            checkbox.bg(theme().colors.accent).child(
                                 app_icon(AppIcon::Check, AppIconSize::Inline)
-                                    .text_color(THEME.colors.surface),
+                                    .text_color(theme().colors.surface),
                             )
                         }),
                 ),
@@ -395,14 +395,14 @@ impl FarcasterApp {
                     .flex_1()
                     .flex()
                     .items_center()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .child(file_icon(&change.relative_path))
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.text)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.text)
                             .text_ellipsis()
                             .child(filename),
                     )
@@ -411,8 +411,8 @@ impl FarcasterApp {
                         |label| {
                             label.child(
                                 div()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.subtle)
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.subtle)
                                     .child("Staged"),
                             )
                         },
@@ -422,9 +422,9 @@ impl FarcasterApp {
                 div()
                     .w(px(14.0))
                     .flex_none()
-                    .text_size(THEME.type_scale.caption)
+                    .text_size(theme().type_scale.caption)
                     .text_color(if change.kind == crate::repository::ChangeKind::Modified {
-                        THEME.colors.subtle
+                        theme().colors.subtle
                     } else {
                         change_color(&change.kind)
                     })
@@ -484,7 +484,7 @@ fn repository_notice(message: &str, color: gpui::Rgba) -> gpui::Stateful<gpui::D
     div()
         .id(message.to_owned())
         .role(Role::Status)
-        .text_size(THEME.type_scale.caption)
+        .text_size(theme().type_scale.caption)
         .text_color(color)
         .child(message.to_owned())
 }

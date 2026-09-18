@@ -11,7 +11,7 @@ use gpui::{InteractiveElement as _, IntoElement, ParentElement as _, Render, Sty
 use super::FarcasterApp;
 use crate::app::ui::{
     layout::layout_mode,
-    theme::{THEME, ui_font},
+    theme::{theme, ui_font},
 };
 use crate::app::{APP_INPUT_CONTEXT, AppSurface, NATIVE_INPUT_CONTEXT};
 
@@ -58,7 +58,7 @@ impl Render for FarcasterApp {
         let root = div()
             .relative()
             .size_full()
-            .bg(THEME.colors.canvas)
+            .bg(theme().colors.canvas)
             .font(ui_font())
             .key_context(key_context)
             .track_focus(&self.navigation.chat.focus)
@@ -82,8 +82,8 @@ impl Render for FarcasterApp {
                     );
                 }
             }))
-            .text_color(THEME.colors.text)
-            .text_size(THEME.type_scale.body);
+            .text_color(theme().colors.text)
+            .text_size(theme().type_scale.body);
         let root = actions::bind(root, cx).child(shell);
 
         self.render_root_overlays(root, entity, picker, work_active, cx)

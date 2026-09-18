@@ -5,7 +5,7 @@ use gpui::{
 };
 
 use super::groups::SessionRailKind;
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 
 #[derive(Clone)]
 pub(super) struct DraggedSession {
@@ -35,26 +35,26 @@ impl Render for DraggedSession {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .w(px(260.0))
-            .px(THEME.space.md)
-            .py(THEME.space.sm)
-            .rounded(THEME.radius)
-            .bg(THEME.colors.surface)
-            .border(THEME.border)
-            .border_color(THEME.colors.accent)
+            .px(theme().space.md)
+            .py(theme().space.sm)
+            .rounded(theme().radius)
+            .bg(theme().colors.surface)
+            .border(theme().border)
+            .border_color(theme().colors.accent)
             .shadow_md()
             .child(
                 div()
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(THEME.colors.text)
+                    .text_color(theme().colors.text)
                     .child(self.title.clone()),
             )
             .child(
                 div()
                     .mt(px(2.0))
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.subtle)
                     .child(self.project.clone()),
             )
     }

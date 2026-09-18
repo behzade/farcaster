@@ -4,7 +4,7 @@ use gpui::{
 };
 use gpui_component::{Icon, IconNamed, Sizable as _, tooltip::Tooltip};
 
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 
 #[derive(Clone, Copy)]
 pub(crate) enum AppIconSize {
@@ -16,9 +16,9 @@ pub(crate) enum AppIconSize {
 impl AppIconSize {
     fn pixels(self) -> Pixels {
         match self {
-            Self::Inline => THEME.icons.inline,
-            Self::Control => THEME.icons.control,
-            Self::Prominent => THEME.icons.prominent,
+            Self::Inline => theme().icons.inline,
+            Self::Control => theme().icons.control,
+            Self::Prominent => theme().icons.prominent,
         }
     }
 }
@@ -38,16 +38,16 @@ pub(crate) fn icon_control(
         .role(Role::Button)
         .aria_label(accessible_label)
         .tab_index(0)
-        .size(THEME.controls.icon_button)
+        .size(theme().controls.icon_button)
         .flex_none()
         .flex()
         .items_center()
         .justify_center()
-        .rounded(THEME.radius)
+        .rounded(theme().radius)
         .focus_visible(|control| {
             control
-                .border(THEME.border)
-                .border_color(THEME.colors.accent)
+                .border(theme().border)
+                .border_color(theme().colors.accent)
         })
         .cursor(CursorStyle::PointingHand)
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)

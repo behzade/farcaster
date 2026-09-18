@@ -8,7 +8,7 @@ use super::{WorkGraphBoardView, caption, status_label};
 use crate::app::{
     ui::{
         primitives::{ButtonTone, button},
-        theme::THEME,
+        theme::theme,
     },
     views::workgraph::{
         contract::PlanData,
@@ -51,12 +51,12 @@ impl WorkGraphBoardView {
             .h_full()
             .overflow_y_scroll()
             .when(layout == BoardLayoutMode::Narrow, |detail| detail.w_full())
-            .border_l(THEME.border)
-            .border_color(THEME.colors.border)
-            .p(THEME.space.md)
+            .border_l(theme().border)
+            .border_color(theme().colors.border)
+            .p(theme().space.md)
             .flex()
             .flex_col()
-            .gap(THEME.space.sm)
+            .gap(theme().space.sm)
             .child(button(
                 "catalog-detail-back",
                 "Close details",
@@ -72,7 +72,7 @@ impl WorkGraphBoardView {
             ))
             .child(
                 div()
-                    .text_size(THEME.type_scale.reading)
+                    .text_size(theme().type_scale.reading)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(plan.title.clone()),
             )
@@ -111,15 +111,15 @@ impl WorkGraphBoardView {
                                     .aria_label(format!("Inspect task {}", node.title))
                                     .flex_none()
                                     .cursor_pointer()
-                                    .border_b(THEME.border)
-                                    .border_color(THEME.colors.border)
-                                    .py(THEME.space.sm)
+                                    .border_b(theme().border)
+                                    .border_color(theme().colors.border)
+                                    .py(theme().space.sm)
                                     .bg(if is_selected {
-                                        THEME.colors.selection
+                                        theme().colors.selection
                                     } else {
-                                        THEME.colors.panel
+                                        theme().colors.panel
                                     })
-                                    .hover(|style| style.bg(THEME.colors.hover))
+                                    .hover(|style| style.bg(theme().colors.hover))
                                     .on_click(move |_, _, cx| {
                                         entity.update(cx, |this, cx| {
                                             this.catalog.task = Some(task);
@@ -128,7 +128,7 @@ impl WorkGraphBoardView {
                                     })
                                     .child(
                                         div()
-                                            .text_size(THEME.type_scale.body_small)
+                                            .text_size(theme().type_scale.body_small)
                                             .child(format!("#{task} {}", node.title)),
                                     )
                                     .child(status_label(graph.work_status(task)))
@@ -144,7 +144,7 @@ impl WorkGraphBoardView {
                             .child(task.title.clone()),
                     )
                     .child(caption("Acceptance"))
-                    .child(div().text_size(THEME.type_scale.body_small).child(
+                    .child(div().text_size(theme().type_scale.body_small).child(
                         if task.acceptance.is_empty() {
                             "No acceptance condition recorded.".into()
                         } else {
@@ -158,7 +158,7 @@ impl WorkGraphBoardView {
                                 .child(caption("Outcome"))
                                 .child(
                                     div()
-                                        .text_size(THEME.type_scale.body_small)
+                                        .text_size(theme().type_scale.body_small)
                                         .child(completion.outcome.note.clone()),
                                 )
                                 .child(caption(completion.outcome.evidence.reference.clone()))
@@ -222,7 +222,7 @@ fn render_relations(
     div()
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .when(nodes.is_empty(), |list| list.child(caption("None")))
         .children(nodes.into_iter().map(|node| {
             let entity = entity.clone();

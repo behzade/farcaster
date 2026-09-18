@@ -3,7 +3,7 @@ use gpui_base::input::TextDecoration;
 
 use super::{prompt_fragments, user_invocations};
 use crate::{
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     protocol::{SlashCommand, SlashCommandSource},
 };
 
@@ -15,9 +15,9 @@ pub(crate) fn decorations(
     let invocations =
         user_invocations::recognized_invocations(text, commands).map(|(range, source)| {
             let color = if source == SlashCommandSource::Skill {
-                THEME.colors.skill
+                theme().colors.skill
             } else {
-                THEME.colors.accent
+                theme().colors.accent
             };
             (range, color)
         });
@@ -26,7 +26,7 @@ pub(crate) fn decorations(
         files
             .iter()
             .any(|file| file == path)
-            .then_some((start..end, THEME.colors.file))
+            .then_some((start..end, theme().colors.file))
     });
     let mut result = invocations
         .chain(mentions)

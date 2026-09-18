@@ -9,7 +9,7 @@ use gpui_component::{
 
 use crate::{
     app::{
-        FarcasterApp, composer::prompt_fragments::invocation_token, ui::theme::THEME,
+        FarcasterApp, composer::prompt_fragments::invocation_token, ui::theme::theme,
         views::transcript::attachments::render_attachments,
     },
     conversation::{TranscriptItem, TranscriptKind},
@@ -32,7 +32,7 @@ pub(super) fn render_invocation(
         .id(("invocation-row", key))
         .w_full()
         .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(THEME.space.sm)
+        .py(theme().space.sm)
         .flex()
         .flex_col()
         .when(item.has_attachments(), |row| {
@@ -46,9 +46,9 @@ pub(super) fn render_invocation(
             .min_w_0()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(if skill {
-                THEME.colors.skill
+                theme().colors.skill
             } else {
-                THEME.colors.accent
+                theme().colors.accent
             }),
         )
         .when_some(tooltip, |row, tooltip| {
@@ -199,14 +199,14 @@ pub(super) fn render_message(
         .id(("transcript-row", key))
         .w_full()
         .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(THEME.space.sm)
+        .py(theme().space.sm)
         .when(user, |row| {
-            row.mt(THEME.space.sm)
-                .py(THEME.space.md)
-                .bg(THEME.colors.selection)
+            row.mt(theme().space.sm)
+                .py(theme().space.md)
+                .bg(theme().colors.selection)
         })
         .when(follows_tool, |row| {
-            row.mt(THEME.space.md).pt(THEME.space.sm)
+            row.mt(theme().space.md).pt(theme().space.sm)
         })
         .when_some(tooltip, |row, tooltip| {
             row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
@@ -251,16 +251,16 @@ pub(super) fn render_message_chunk(
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
         .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .when(user, |row| row.bg(THEME.colors.selection))
-        .when(first, |row| row.pt(THEME.space.sm))
+        .when(user, |row| row.bg(theme().colors.selection))
+        .when(first, |row| row.pt(theme().space.sm))
         .when(first && user, |row| {
-            row.mt(THEME.space.sm).pt(THEME.space.md)
+            row.mt(theme().space.sm).pt(theme().space.md)
         })
         .when(first && follows_tool, |row| {
-            row.mt(THEME.space.md).pt(THEME.space.sm)
+            row.mt(theme().space.md).pt(theme().space.sm)
         })
-        .when(!first, |row| row.pt(THEME.space.xs))
-        .when(last, |row| row.pb(THEME.space.md))
+        .when(!first, |row| row.pt(theme().space.xs))
+        .when(last, |row| row.pb(theme().space.md))
         .when(
             first && (item.kind == TranscriptKind::PeerMessage || (user && !item.label.is_empty())),
             |row| row.child(peer_label(font_scale, &item.label)),
@@ -279,8 +279,8 @@ pub(super) fn render_message_chunk(
 fn peer_label(font_scale: f32, label: &str) -> impl gpui::IntoElement {
     div()
         .mb(px(7.0))
-        .text_size(THEME.type_scale.caption * font_scale)
+        .text_size(theme().type_scale.caption * font_scale)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(THEME.colors.muted)
+        .text_color(theme().colors.muted)
         .child(label.to_owned())
 }

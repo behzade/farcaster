@@ -9,7 +9,7 @@ use crate::app::{
         assets::AppIcon,
         layout::{LayoutMode, shows_run_sheet_button, shows_session_sheet_button},
         primitives::{AppIconSize, ButtonTone, app_icon, icon_button, icon_control},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -26,7 +26,7 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .items_center()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .when(shows_session_sheet_button(mode), |controls| {
                 controls.child(icon_button(
                     "open-sessions",
@@ -84,8 +84,8 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(THEME.colors.accent)
-                    .text_color(THEME.colors.canvas)
+                    .bg(theme().colors.accent)
+                    .text_color(theme().colors.canvas)
                     .text_size(gpui::px(9.0))
                     .child(if count > 99 {
                         "99+".to_owned()

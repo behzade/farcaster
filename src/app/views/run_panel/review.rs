@@ -12,7 +12,7 @@ use crate::app::{
         change_tree::{self, ChangeTreeState, TreeRow},
         file_icons::file_icon,
         primitives::{ButtonTone, activates_button, icon_button, preserve_pointer_focus},
-        theme::THEME,
+        theme::theme,
     },
     views::regions::RunPanelView,
     workspace::review::ActiveReview,
@@ -47,18 +47,18 @@ pub(in crate::app::views) fn render(
         .size_full()
         .flex()
         .flex_col()
-        .p(THEME.space.md)
-        .gap(THEME.space.sm)
+        .p(theme().space.md)
+        .gap(theme().space.sm)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
+                .gap(theme().space.xs)
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_color(THEME.colors.code)
+                        .text_color(theme().colors.code)
                         .child(active.review.title.clone()),
                 )
                 .child(icon_button(
@@ -72,7 +72,7 @@ pub(in crate::app::views) fn render(
                 )),
         )
         .when_some(active.error.as_ref(), |panel, error| {
-            panel.child(div().text_color(THEME.colors.error).child(error.clone()))
+            panel.child(div().text_color(theme().colors.error).child(error.clone()))
         })
         .child(
             div()
@@ -138,14 +138,14 @@ pub(in crate::app::views) fn render(
                                 .w_full()
                                 .min_w_0()
                                 .h(px(24.0))
-                                .px(THEME.space.xs)
+                                .px(theme().space.xs)
                                 .flex()
                                 .items_center()
-                                .gap(THEME.space.xs)
-                                .rounded(THEME.radius)
-                                .text_size(THEME.type_scale.caption)
+                                .gap(theme().space.xs)
+                                .rounded(theme().radius)
+                                .text_size(theme().type_scale.caption)
                                 .when(selected_path == Some(&location.path), |row| {
-                                    row.bg(THEME.colors.selection)
+                                    row.bg(theme().colors.selection)
                                 })
                                 .child(file_icon(path))
                                 .child(
@@ -169,9 +169,9 @@ pub(in crate::app::views) fn render(
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
-                    .text_size(THEME.type_scale.body_small)
-                    .child(div().text_color(THEME.colors.muted).child(path.clone()))
+                    .gap(theme().space.xs)
+                    .text_size(theme().type_scale.body_small)
+                    .child(div().text_color(theme().colors.muted).child(path.clone()))
                     .children(
                         active
                             .review
@@ -196,12 +196,12 @@ pub(in crate::app::views) fn render(
                                     format!("{range}: {}", item.note),
                                     entity.clone(),
                                 )
-                                .p(THEME.space.xs)
-                                .rounded(THEME.radius)
+                                .p(theme().space.xs)
+                                .rounded(theme().radius)
                                 .when(inspecting == Some(index), |row| {
-                                    row.bg(THEME.colors.selection)
+                                    row.bg(theme().colors.selection)
                                 })
-                                .child(div().text_color(THEME.colors.muted).child(
+                                .child(div().text_color(theme().colors.muted).child(
                                     if selected == Some(index) {
                                         format!("{range} · Last opened here")
                                     } else {
@@ -216,9 +216,9 @@ pub(in crate::app::views) fn render(
                                             div()
                                                 .text_color(
                                                     if status.is_some_and(|status| status.valid) {
-                                                        THEME.colors.muted
+                                                        theme().colors.muted
                                                     } else {
-                                                        THEME.colors.warning
+                                                        theme().colors.warning
                                                     },
                                                 )
                                                 .child(warning.clone()),
@@ -248,9 +248,10 @@ fn location_button(
         .aria_label(label)
         .tab_index(0)
         .when(available, |row| {
-            row.cursor_pointer().hover(|row| row.bg(THEME.colors.hover))
+            row.cursor_pointer()
+                .hover(|row| row.bg(theme().colors.hover))
         })
-        .focus_visible(|row| row.bg(THEME.colors.selection))
+        .focus_visible(|row| row.bg(theme().colors.selection))
         .on_mouse_down(gpui::MouseButton::Left, preserve_pointer_focus)
         .on_click(move |_, window, cx| {
             if available {

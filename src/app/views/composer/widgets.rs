@@ -3,7 +3,7 @@ use gpui::{
     Styled as _, div,
 };
 
-use crate::app::ui::theme::{MONO_FONT_FAMILY, THEME};
+use crate::app::ui::theme::{MONO_FONT_FAMILY, theme};
 
 pub(super) fn render(
     placement: &str,
@@ -15,19 +15,19 @@ pub(super) fn render(
     Some(
         div()
             .id(format!("widgets-{placement}"))
-            .max_h(THEME.layout.tool_max_height)
+            .max_h(theme().layout.tool_max_height)
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .children(widgets.iter().map(|(key, lines)| {
                 div()
                     .id(format!("widget-{placement}-{key}"))
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .bg(THEME.colors.surface)
+                    .px(theme().space.sm)
+                    .py(theme().space.xs)
+                    .bg(theme().colors.surface)
                     .font_family(MONO_FONT_FAMILY)
-                    .text_size(THEME.type_scale.caption)
+                    .text_size(theme().type_scale.caption)
                     .children(lines.iter().cloned().map(|line| div().child(line)))
             }))
             .into_any_element(),

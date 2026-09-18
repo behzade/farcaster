@@ -4,7 +4,7 @@ use crate::app::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::primitives::{ButtonTone, button, confirmation_modal},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 
 pub(in crate::app::views) fn render(
@@ -32,19 +32,19 @@ pub(in crate::app::views) fn render(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.md)
-                    .p(THEME.space.md)
+                    .gap(theme().space.md)
+                    .p(theme().space.md)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body)
-                            .text_color(THEME.colors.text)
+                            .text_size(theme().type_scale.body)
+                            .text_color(theme().colors.text)
                             .child("This session still has active work. Do you want to stop all of it and archive the session?"),
                     )
                     .child(
                         div()
                             .flex()
                             .justify_end()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "cancel-active-session-archive",
                                 "Cancel",

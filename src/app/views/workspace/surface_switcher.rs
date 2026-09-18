@@ -8,7 +8,7 @@ use gpui_component::tooltip::Tooltip;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, app_icon, icon_control},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     app::workspace::editor::effective_editor_choice,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
 };
@@ -55,24 +55,24 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .items_center()
-            .gap(THEME.space.sm)
+            .gap(theme().space.sm)
             .px(gpui::px(12.0))
-            .border_b(THEME.border)
-            .border_color(THEME.colors.surface)
-            .bg(THEME.colors.canvas)
+            .border_b(theme().border)
+            .border_color(theme().colors.surface)
+            .bg(theme().colors.canvas)
             .child(
                 div()
                     .min_w_0()
                     .flex_1()
                     .flex()
                     .items_center()
-                    .gap(THEME.space.sm)
+                    .gap(theme().space.sm)
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_size(THEME.type_scale.caption)
+                    .text_size(theme().type_scale.caption)
                     .child(
                         app_icon(AppIcon::Folder, AppIconSize::Inline)
-                            .text_color(THEME.colors.subtle),
+                            .text_color(theme().colors.subtle),
                     )
                     .child(
                         div()
@@ -81,9 +81,9 @@ impl FarcasterApp {
                             .aria_label(project_hint.clone())
                             .tab_index(0)
                             .cursor_pointer()
-                            .text_color(THEME.colors.muted)
-                            .hover(|link| link.text_color(THEME.colors.text))
-                            .focus_visible(|link| link.text_color(THEME.colors.accent))
+                            .text_color(theme().colors.muted)
+                            .hover(|link| link.text_color(theme().colors.text))
+                            .focus_visible(|link| link.text_color(theme().colors.accent))
                             .tooltip(move |window, cx| {
                                 Tooltip::new(project_hint.clone()).build(window, cx)
                             })
@@ -96,14 +96,14 @@ impl FarcasterApp {
                     )
                     .when_some(title, |workspace, title| {
                         workspace
-                            .child(div().text_color(THEME.colors.subtle).child("/"))
+                            .child(div().text_color(theme().colors.subtle).child("/"))
                             .child(
                                 div()
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(THEME.colors.text)
+                                    .text_color(theme().colors.text)
                                     .child(title),
                             )
                     }),
@@ -112,8 +112,8 @@ impl FarcasterApp {
             .child(
                 div()
                     .w(gpui::px(1.0))
-                    .h(THEME.space.md)
-                    .bg(THEME.colors.surface),
+                    .h(theme().space.md)
+                    .bg(theme().colors.surface),
             )
             .child(self.render_surface_switcher(entity, harness_icon))
     }
@@ -190,12 +190,12 @@ fn surface_control(
         .w(gpui::px(34.0))
         .h_full()
         .rounded_none()
-        .hover(|control| control.bg(THEME.colors.surface))
+        .hover(|control| control.bg(theme().colors.surface))
         .when(active, |control| {
             control
                 .border_b(gpui::px(2.0))
-                .border_color(THEME.colors.accent)
-                .text_color(THEME.colors.accent)
+                .border_color(theme().colors.accent)
+                .text_color(theme().colors.accent)
         })
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {

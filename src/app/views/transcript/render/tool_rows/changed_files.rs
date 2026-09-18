@@ -184,8 +184,8 @@ pub(super) fn render(
                     .aria_expanded(open)
                     .h(px(22.0))
                     .pl(px(depth as f32 * 12.0))
-                    .text_size(THEME.type_scale.body_small)
-                    .text_color(THEME.colors.muted)
+                    .text_size(theme().type_scale.body_small)
+                    .text_color(theme().colors.muted)
                     .child(app_icon(
                         if open {
                             AppIcon::CaretDown
@@ -231,7 +231,7 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
         },
     )
     .h(px(22.0))
-    .text_size(THEME.type_scale.body_small)
+    .text_size(theme().type_scale.body_small)
     .child(file_icon(Path::new(&file.path)))
     .child(
         div()
@@ -239,7 +239,7 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
             .overflow_hidden()
             .whitespace_nowrap()
             .text_ellipsis()
-            .text_color(THEME.colors.text)
+            .text_color(theme().colors.text)
             .child(label),
     )
     .children(tool_changes::change_counts(file.counts.unwrap_or_default()))

@@ -9,7 +9,7 @@ use crate::app::{
     ui::{
         assets::AppIcon,
         primitives::{ButtonTone, icon_button, modal},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -39,15 +39,15 @@ pub(in crate::app::views) fn render(
                         .flex()
                         .items_center()
                         .justify_between()
-                        .px(THEME.space.md)
-                        .py(THEME.space.sm)
-                        .border_b(THEME.border)
-                        .border_color(THEME.colors.border)
+                        .px(theme().space.md)
+                        .py(theme().space.sm)
+                        .border_b(theme().border)
+                        .border_color(theme().colors.border)
                         .child(
                             div()
                                 .flex()
                                 .items_baseline()
-                                .gap(THEME.space.sm)
+                                .gap(theme().space.sm)
                                 .child(
                                     div()
                                         .font_weight(FontWeight::SEMIBOLD)
@@ -55,8 +55,8 @@ pub(in crate::app::views) fn render(
                                 )
                                 .child(
                                     div()
-                                        .text_size(THEME.type_scale.caption)
-                                        .text_color(THEME.colors.subtle)
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.subtle)
                                         .child(format!("{count} active")),
                                 ),
                         )
@@ -78,8 +78,8 @@ pub(in crate::app::views) fn render(
                         .when(notices.is_empty(), |body| {
                             body.child(
                                 div()
-                                    .p(THEME.space.md)
-                                    .text_color(THEME.colors.subtle)
+                                    .p(theme().space.md)
+                                    .text_color(theme().colors.subtle)
                                     .child("No active coordination notices."),
                             )
                         })
@@ -92,12 +92,12 @@ pub(in crate::app::views) fn render(
                 )
                 .child(
                     div()
-                        .px(THEME.space.md)
-                        .py(THEME.space.sm)
-                        .border_t(THEME.border)
-                        .border_color(THEME.colors.border)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .px(theme().space.md)
+                        .py(theme().space.sm)
+                        .border_t(theme().border)
+                        .border_color(theme().colors.border)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child("Notices expire after 15 minutes"),
                 )
         },
@@ -107,36 +107,36 @@ pub(in crate::app::views) fn render(
 fn render_notice(index: usize, notice: NoticeView) -> impl IntoElement {
     div()
         .id(("worker-notice", index))
-        .px(THEME.space.md)
-        .py(THEME.space.sm)
-        .border_b(THEME.border)
-        .border_color(THEME.colors.surface)
+        .px(theme().space.md)
+        .py(theme().space.sm)
+        .border_b(theme().border)
+        .border_color(theme().colors.surface)
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(
             div()
                 .flex()
                 .items_center()
                 .justify_between()
-                .gap(THEME.space.sm)
+                .gap(theme().space.sm)
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_size(THEME.type_scale.body_small)
+                        .text_size(theme().type_scale.body_small)
                         .child(notice.from),
                 )
                 .child(
                     div()
                         .flex_none()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child(format_age(notice.age_seconds)),
                 ),
         )
         .child(
             div()
-                .text_size(THEME.type_scale.body_small)
+                .text_size(theme().type_scale.body_small)
                 .child(notice.message),
         )
         .when(!notice.paths.is_empty(), |row| {
@@ -149,10 +149,10 @@ fn render_notice(index: usize, notice: NoticeView) -> impl IntoElement {
                         div()
                             .px(px(6.0))
                             .py(px(2.0))
-                            .rounded(THEME.radius)
-                            .bg(THEME.colors.surface)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.muted)
+                            .rounded(theme().radius)
+                            .bg(theme().colors.surface)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.muted)
                             .child(path)
                     })),
             )

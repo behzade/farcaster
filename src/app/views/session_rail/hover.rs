@@ -10,7 +10,7 @@ use gpui_component::{ElementExt as _, Placement};
 
 use super::super::usage::{format_cost, format_tokens};
 use crate::{
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme()},
     sessions::DraftSession,
     sessions::{SessionSummary, UsageSummary},
 };
@@ -190,7 +190,7 @@ impl RenderOnce for SessionHoverPanel {
                         Positioner::side(bounds)
                             .placement(Placement::Right)
                             .align(Align::Start)
-                            .offset(THEME.space.sm)
+                            .offset(theme().space.sm)
                             .child(render_panel(&self.details, width)),
                     )
                     .with_priority(100),
@@ -206,62 +206,62 @@ fn render_panel(details: &SessionHoverDetails, width: Pixels) -> impl IntoElemen
         .max_w(width)
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
-        .px(THEME.space.md)
-        .py(THEME.space.sm)
-        .rounded(THEME.radius)
-        .bg(THEME.colors.surface)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
+        .gap(theme().space.xs)
+        .px(theme().space.md)
+        .py(theme().space.sm)
+        .rounded(theme().radius)
+        .bg(theme().colors.surface)
+        .border(theme().border)
+        .border_color(theme().colors.border)
         .shadow_md()
         .occlude()
         .child(
             div()
-                .text_size(THEME.type_scale.body_small)
+                .text_size(theme().type_scale.body_small)
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(THEME.colors.text)
+                .text_color(theme().colors.text)
                 .child(details.title.clone()),
         )
         .children(details.rows.iter().map(|(label, value)| {
             div()
                 .flex()
                 .items_start()
-                .gap(THEME.space.sm)
+                .gap(theme().space.sm)
                 .child(
                     div()
                         .w(px(72.0))
                         .flex_none()
-                        .text_size(THEME.type_scale.caption)
+                        .text_size(theme().type_scale.caption)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.subtle)
+                        .text_color(theme().colors.subtle)
                         .child(label.clone()),
                 )
                 .child(
                     div()
                         .min_w_0()
                         .flex_1()
-                        .text_size(THEME.type_scale.caption)
+                        .text_size(theme().type_scale.caption)
                         .font_family(MONO_FONT_FAMILY)
-                        .text_color(THEME.colors.text)
+                        .text_color(theme().colors.text)
                         .child(value.clone()),
                 )
         }))
         .when_some(details.preview.clone(), |panel, preview| {
             panel.child(
                 div()
-                    .mt(THEME.space.xs)
-                    .pt(THEME.space.xs)
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
+                    .mt(theme().space.xs)
+                    .pt(theme().space.xs)
+                    .border_t(theme().border)
+                    .border_color(theme().colors.border)
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.muted)
                     .child(preview),
             )
         })
 }
 
 fn panel_width(viewport_width: Pixels) -> Pixels {
-    let to_middle = f32::from(viewport_width) / 2.0 - f32::from(THEME.layout.session_rail);
+    let to_middle = f32::from(viewport_width) / 2.0 - f32::from(theme().layout.session_rail);
     px(to_middle.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH))
 }
 

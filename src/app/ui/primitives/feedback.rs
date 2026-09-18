@@ -1,4 +1,4 @@
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 use gpui::{
     AnyElement, ElementId, InteractiveElement as _, IntoElement as _, ParentElement as _, Role,
     SharedString, StatefulInteractiveElement as _, Styled as _, accesskit, div,
@@ -19,13 +19,17 @@ pub(crate) fn feedback(
     let message = message.into();
     let accessible = message.clone();
     let (role, live, color) = match tone {
-        FeedbackTone::Error => (Role::Alert, accesskit::Live::Assertive, THEME.colors.error),
+        FeedbackTone::Error => (
+            Role::Alert,
+            accesskit::Live::Assertive,
+            theme().colors.error,
+        ),
         FeedbackTone::Warning => (
             Role::Status,
             accesskit::Live::Assertive,
-            THEME.colors.warning,
+            theme().colors.warning,
         ),
-        FeedbackTone::Info => (Role::Status, accesskit::Live::Polite, THEME.colors.accent),
+        FeedbackTone::Info => (Role::Status, accesskit::Live::Polite, theme().colors.accent),
     };
     div()
         .id(id)
@@ -34,13 +38,13 @@ pub(crate) fn feedback(
             builder.parent_node().set_live(live);
             builder.parent_node().set_value(accessible.as_ref());
         })
-        .rounded(THEME.radius)
-        .bg(THEME.colors.panel)
-        .border(THEME.border)
+        .rounded(theme().radius)
+        .bg(theme().colors.panel)
+        .border(theme().border)
         .border_color(color)
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
-        .text_size(THEME.type_scale.caption)
+        .px(theme().space.sm)
+        .py(theme().space.xs)
+        .text_size(theme().type_scale.caption)
         .text_color(color)
         .child(message)
         .into_any_element()

@@ -4,7 +4,7 @@ use crate::app::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::primitives::{ButtonTone, button, modal},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
 };
 
 pub(in crate::app::views) fn render(
@@ -36,26 +36,26 @@ pub(in crate::app::views) fn render(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.md)
-                    .p(THEME.space.md)
+                    .gap(theme().space.md)
+                    .p(theme().space.md)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body)
-                            .text_color(THEME.colors.text)
+                            .text_size(theme().type_scale.body)
+                            .text_color(theme().colors.text)
                             .child("This Git repository has not been initialized for Jujutsu. Run jj git init to use JJ here?"),
                     )
                     .child(
                         div()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.body_small)
+                            .text_color(theme().colors.subtle)
                             .child(repository),
                     )
                     .child(
                         div()
                             .flex()
                             .justify_end()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "cancel-jj-init",
                                 "Cancel",

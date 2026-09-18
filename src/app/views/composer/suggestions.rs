@@ -11,7 +11,7 @@ use crate::{
         sessions::ComposerSnapshot,
         user_invocations::{self, ComposerSuggestion},
     },
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
 };
 
 #[derive(IntoElement)]
@@ -54,14 +54,17 @@ impl RenderOnce for FileMentionMenu {
                         gpui::MouseButton::Left,
                         crate::app::ui::primitives::preserve_pointer_focus,
                     )
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .rounded(THEME.radius)
+                    .px(theme().space.sm)
+                    .py(theme().space.xs)
+                    .rounded(theme().radius)
                     .font_family(MONO_FONT_FAMILY)
-                    .text_size(THEME.type_scale.caption)
+                    .text_size(theme().type_scale.caption)
                     .when(index == self.selected, selected_row)
-                    .hover(|row| row.bg(THEME.colors.hover))
-                    .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                    .hover(|row| row.bg(theme().colors.hover))
+                    .focus(|row| {
+                        row.border(theme().border)
+                            .border_color(theme().colors.accent)
+                    })
                     .cursor_pointer()
                     .child(path.clone())
                     .on_click(move |_, window, cx| {
@@ -114,19 +117,22 @@ impl RenderOnce for CommandMenu {
                     )
                     .flex()
                     .items_center()
-                    .gap(THEME.space.sm)
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .rounded(THEME.radius)
+                    .gap(theme().space.sm)
+                    .px(theme().space.sm)
+                    .py(theme().space.xs)
+                    .rounded(theme().radius)
                     .when(index == self.selected, selected_row)
-                    .hover(|row| row.bg(THEME.colors.hover))
-                    .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+                    .hover(|row| row.bg(theme().colors.hover))
+                    .focus(|row| {
+                        row.border(theme().border)
+                            .border_color(theme().colors.accent)
+                    })
                     .cursor_pointer()
                     .child(
                         div()
                             .flex_none()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.accent)
+                            .text_color(theme().colors.accent)
                             .child(format!("{sigil}{name}")),
                     )
                     .when_some(command.description, |row, description| {
@@ -137,8 +143,8 @@ impl RenderOnce for CommandMenu {
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .text_size(THEME.type_scale.caption)
-                                .text_color(THEME.colors.muted)
+                                .text_size(theme().type_scale.caption)
+                                .text_color(theme().colors.muted)
                                 .child(description),
                         )
                     })
@@ -158,16 +164,17 @@ fn suggestion_menu(id: &'static str, label: &'static str) -> gpui::Stateful<gpui
         .aria_label(label)
         .max_h(px(220.0))
         .overflow_y_scroll()
-        .mb(THEME.space.sm)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .rounded(THEME.radius)
-        .bg(THEME.colors.surface)
-        .p(THEME.space.xs)
+        .mb(theme().space.sm)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .rounded(theme().radius)
+        .bg(theme().colors.surface)
+        .p(theme().space.xs)
 }
 
 fn selected_row(row: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
-    row.bg(THEME.colors.hover).text_color(THEME.colors.accent)
+    row.bg(theme().colors.hover)
+        .text_color(theme().colors.accent)
 }
 
 fn fill_file_mention(
