@@ -347,6 +347,11 @@ impl RuntimeOwner {
                         event.kind(),
                         event.value(),
                     );
+                    let account_usage_changed = update_account_usage_from_event(
+                        &mut snapshot.account_usage,
+                        event.kind(),
+                        event.value(),
+                    );
                     let status = run_status(&snapshot.conversation);
                     let status_changed = snapshot.status != status;
                     snapshot.status = status.to_owned();
@@ -359,6 +364,7 @@ impl RuntimeOwner {
                             || conversation_state_changed
                             || context_changed
                             || goal_changed
+                            || account_usage_changed
                             || status_changed,
                         live_status_changed,
                     )

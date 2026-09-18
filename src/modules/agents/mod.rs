@@ -16,14 +16,14 @@ pub(crate) use adapter::{
 };
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
-    AgentLaunchConfig, Backend, ConfigurationCatalog, DiscoveredHistory, DiscoveredSession,
-    DiscoveredUsage, HarnessAccessMode, PeerMessage, PromptOutcome, PromptPresentation,
-    QueuedPrompt, SandboxState, SessionActivityKind, SessionCommand, SessionContextUsage,
-    SessionEvent, SessionGoal, SessionHistory, SessionLaunch, SessionMetadata, SessionOperation,
-    SessionResponse, SessionResponseErrorKind, SessionResponsePayload, SessionStart,
-    SessionTransport, SessionUsage, SessionUsageTokens, StartWorker, WorkerContext, WorkerInput,
-    WorkerInputResponse, WorkerSnapshot, WorkerStatus, effort_rank, model_efforts,
-    valid_worker_name, validate_child_access,
+    AccountUsage, AccountUsageWindow, AgentLaunchConfig, Backend, ConfigurationCatalog,
+    DiscoveredHistory, DiscoveredSession, DiscoveredUsage, HarnessAccessMode, PeerMessage,
+    PromptOutcome, PromptPresentation, QueuedPrompt, SandboxState, SessionActivityKind,
+    SessionCommand, SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionLaunch,
+    SessionMetadata, SessionOperation, SessionResponse, SessionResponseErrorKind,
+    SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
+    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerSnapshot, WorkerStatus,
+    effort_rank, model_efforts, valid_worker_name, validate_child_access,
 };
 pub(crate) use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,

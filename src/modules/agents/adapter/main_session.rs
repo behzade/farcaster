@@ -736,9 +736,9 @@ impl WorkerSessionTransport {
                 "error": error,
                 "failureReason": failure_reason,
             }),
-            WorkerActivity::RateLimitsChanged { limits } => json!({
-                "type": "rate_limits_changed",
-                "limits": limits,
+            WorkerActivity::AccountUsageChanged(usage) => json!({
+                "type": "account_usage_changed",
+                "usage": usage,
             }),
             WorkerActivity::SessionGoalChanged(goal) => json!({
                 "type": "session_goal_changed",

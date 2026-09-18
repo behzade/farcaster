@@ -2642,11 +2642,26 @@ fn codex_telemetry(method: CodexMethod<'_>, params: &Value) -> Option<WorkerActi
                 .filter(|value| !value.is_null())
                 .cloned(),
         }),
-        CodexMethod::AccountRateLimitsUpdated => Some(WorkerActivity::RateLimitsChanged {
-            limits: params.get("rateLimits")?.clone(),
-        }),
+        CodexMethod::AccountRateLimitsUpdated => Some(WorkerActivity::AccountUsageChanged(
+            codex_account_usage(params.get("rateLimits")?),
+        )),
         _ => None,
     }
+}
+
+fn codex_account_usage(limits: &Value) -> crate::agents::AccountUsage {
+    const WEEK_MINUTES: u64 = 7 * 24 * 60;
+    let weekly = ["primary", "secondary"]
+        .into_iter()
+        .filter_map(|key| limits.get(key))
+        .find(|window| window["windowDurationMins"].as_u64() == Some(WEEK_MINUTES))
+        .and_then(|window| {
+            crate::agents::AccountUsageWindow::from_used_percent(
+                window["usedPercent"].as_f64()?,
+                window["resetsAt"].as_i64(),
+            )
+        });
+    crate::agents::AccountUsage { weekly }
 }
 
 fn codex_child_event_outcome(item: &Value) -> Option<crate::agents::ChildSessionOutcome> {

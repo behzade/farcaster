@@ -8,6 +8,7 @@ pub(super) struct ComposerUsage {
     pub context_percent: Option<f64>,
     pub aggregate: UsageSummary,
     pub cache_hit_rate: Option<f64>,
+    pub weekly: Option<crate::agents::AccountUsageWindow>,
 }
 
 pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
@@ -49,6 +50,11 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
             .average_cache_hit_rate
             .filter(|rate| rate.is_finite())
             .map(|rate| rate.clamp(0.0, 100.0)),
+        weekly: app
+            .snapshot
+            .account_usage
+            .weekly
+            .filter(|window| window.remaining_percent.is_finite()),
     }
 }
 
@@ -58,6 +64,7 @@ pub(super) fn has_meaningful_usage(usage: &ComposerUsage) -> bool {
         || usage.aggregate.output > 0
         || usage.aggregate.cost_micros > 0
         || usage.cache_hit_rate.is_some()
+        || usage.weekly.is_some()
 }
 
 pub(super) fn format_tokens(value: u64) -> String {

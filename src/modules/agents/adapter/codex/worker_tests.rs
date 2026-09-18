@@ -781,13 +781,24 @@ fn maps_codex_telemetry() {
         })
     );
 
-    let limits = json!({"primary": {"usedPercent": 40}});
+    let limits = json!({
+        "primary": {
+            "usedPercent": 40,
+            "windowDurationMins": 10_080,
+            "resetsAt": 1_788_766_092
+        }
+    });
     assert_eq!(
         codex_telemetry(
             CodexMethod::AccountRateLimitsUpdated,
             &json!({"rateLimits": limits.clone()}),
         ),
-        Some(WorkerActivity::RateLimitsChanged { limits })
+        Some(WorkerActivity::AccountUsageChanged(AccountUsage {
+            weekly: Some(AccountUsageWindow {
+                remaining_percent: 60.0,
+                resets_at: Some(1_788_766_092),
+            }),
+        }))
     );
 }
 

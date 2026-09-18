@@ -6,6 +6,27 @@ use crate::agents::{
 use crate::app::runtime::tests::owner_without_process;
 
 #[test]
+fn account_usage_event_updates_the_runtime_snapshot() {
+    let mut usage = crate::agents::AccountUsage::default();
+    let event = json!({
+        "type": "account_usage_changed",
+        "usage": {
+            "weekly": {
+                "remainingPercent": 68.0,
+                "resetsAt": 1_788_766_092_i64
+            }
+        }
+    });
+
+    assert!(update_account_usage_from_event(
+        &mut usage,
+        &SessionActivityKind::AccountUsageChanged,
+        &event,
+    ));
+    assert_eq!(usage.weekly.unwrap().remaining_percent, 68.0);
+}
+
+#[test]
 fn failed_catalog_responses_preserve_last_valid_values_and_report_error() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     let models = vec![Model {

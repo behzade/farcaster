@@ -5,6 +5,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, canvas, div, point,
     prelude::FluentBuilder as _, px,
 };
+use gpui_component::tooltip::Tooltip;
 
 use super::super::usage::{
     ComposerUsage, composer_usage, format_cost, format_tokens, has_meaningful_usage,
@@ -149,6 +150,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             "Cache hit rate",
             format!("{rate:.0}%"),
             THEME.colors.success,
+            None,
         ));
     }
     if usage.aggregate.input > 0 {
@@ -175,7 +177,41 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             THEME.colors.text,
         ));
     }
+    if let Some(weekly) = usage.weekly {
+        let remaining = weekly.remaining_percent.clamp(0.0, 100.0);
+        let value = format!("{remaining:.0}%");
+        let tooltip = weekly.resets_at.and_then(format_reset_time).map_or_else(
+            || format!("Weekly usage remaining: {value}"),
+            |reset| format!("Weekly usage remaining: {value} · resets {reset}"),
+        );
+        row = row.child(separator()).child(labeled_metric(
+            "W",
+            "Weekly usage remaining",
+            value,
+            weekly_color(remaining),
+            Some(tooltip),
+        ));
+    }
     row.into_any_element()
+}
+
+fn format_reset_time(timestamp: i64) -> Option<String> {
+    let value = time::OffsetDateTime::from_unix_timestamp(timestamp).ok()?;
+    let format = time::format_description::parse_borrowed::<3>(
+        "[month repr:short] [day padding:none] at [hour]:[minute] UTC",
+    )
+    .ok()?;
+    value.format(&format).ok()
+}
+
+fn weekly_color(remaining: f64) -> gpui::Rgba {
+    if remaining <= 10.0 {
+        THEME.colors.error
+    } else if remaining <= 25.0 {
+        THEME.colors.warning
+    } else {
+        THEME.colors.text
+    }
 }
 
 fn context_metric(usage: &ComposerUsage) -> AnyElement {
@@ -251,6 +287,7 @@ fn labeled_metric(
     accessible_label: &'static str,
     value: String,
     value_color: gpui::Rgba,
+    tooltip: Option<String>,
 ) -> AnyElement {
     let aria_label = format!("{accessible_label}: {value}");
     div()
@@ -268,6 +305,9 @@ fn labeled_metric(
                 .child(label),
         )
         .child(div().text_color(value_color).child(value))
+        .when_some(tooltip, |metric, tooltip| {
+            metric.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+        })
         .into_any_element()
 }
 

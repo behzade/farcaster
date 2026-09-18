@@ -26,7 +26,8 @@ use process::{can_send_prompt, conversation_mut, reset_snapshot_for_process};
 #[cfg(test)]
 use projection::stable_session_stats;
 use projection::{
-    historical_context_stats, update_context_from_event, update_session_goal_from_event,
+    historical_context_stats, update_account_usage_from_event, update_context_from_event,
+    update_session_goal_from_event,
 };
 use prompts::DeferredPrompt;
 use session_loop::run;

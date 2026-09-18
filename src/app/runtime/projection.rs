@@ -575,6 +575,27 @@ pub(super) fn update_session_goal_from_event(
     true
 }
 
+pub(super) fn update_account_usage_from_event(
+    usage: &mut crate::agents::AccountUsage,
+    kind: &SessionActivityKind,
+    event: &Value,
+) -> bool {
+    if kind != &SessionActivityKind::AccountUsageChanged {
+        return false;
+    }
+    let Some(value) = event.get("usage") else {
+        return false;
+    };
+    let Ok(updated) = serde_json::from_value::<crate::agents::AccountUsage>(value.clone()) else {
+        return false;
+    };
+    if *usage == updated {
+        return false;
+    }
+    *usage = updated;
+    true
+}
+
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;

@@ -273,7 +273,28 @@ impl Events {
             "tool_progress" => self.activity(WorkerActivity::ToolUpdated {
                 id:string(frame,"tool_use_id").into(),
                 content:json!([{"type":"text","text":format!("Running for {}s", frame["elapsed_time_seconds"])}]) }),
-            "rate_limit_event" => self.activity(WorkerActivity::RateLimitsChanged { limits:frame["rate_limit_info"].clone() }),
+            "rate_limit_event" => {
+                let info = &frame["rate_limit_info"];
+                if info["rateLimitType"].as_str() == Some("seven_day")
+                    && let Some(utilization) = info["utilization"].as_f64()
+                {
+                    let used_percent = if utilization <= 1.0 {
+                        utilization * 100.0
+                    } else {
+                        utilization
+                    };
+                    if let Some(weekly) = crate::agents::AccountUsageWindow::from_used_percent(
+                        used_percent,
+                        info["resetsAt"].as_i64(),
+                    ) {
+                        self.activity(WorkerActivity::AccountUsageChanged(
+                            crate::agents::AccountUsage {
+                                weekly: Some(weekly),
+                            },
+                        ));
+                    }
+                }
+            },
             "system" => match string(frame,"subtype") {
                 "task_started" | "task_progress" | "task_notification" => {
                     self.child_task(frame);
