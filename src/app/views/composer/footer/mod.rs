@@ -57,11 +57,11 @@ impl FarcasterApp {
             .id("composer-status")
             .w_full()
             .min_w_0()
-            .h(px(28.0))
+            .h(theme().size(28.0))
             .flex_none()
             .flex()
             .items_center()
-            .px(px(12.0))
+            .px(theme().size(12.0))
             .overflow_x_scroll()
             .track_scroll(scroll)
             .when_some(mode, |row, mode| {
@@ -92,8 +92,8 @@ impl FarcasterApp {
         let abort_entity = entity;
         div()
             .absolute()
-            .right(px(12.0))
-            .bottom(px(10.0))
+            .right(theme().size(12.0))
+            .bottom(theme().size(10.0))
             .occlude()
             .flex()
             .items_center()
@@ -246,7 +246,7 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
 
 fn context_meter(percent: f64, color: gpui::Rgba) -> AnyElement {
     div()
-        .size(px(14.0))
+        .size(theme().size(14.0))
         .flex_none()
         .rounded_full()
         .overflow_hidden()
@@ -343,7 +343,7 @@ fn simple_metric(
 pub(in crate::app::views) fn separator() -> AnyElement {
     div()
         .flex_none()
-        .px(px(6.0))
+        .px(theme().size(6.0))
         .text_align(gpui::TextAlign::Center)
         .font_family(MONO_FONT_FAMILY)
         .text_color(theme().colors.subtle)

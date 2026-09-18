@@ -1,7 +1,7 @@
 use gpui::{
     App, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use super::super::FarcasterApp;
@@ -162,7 +162,7 @@ fn suggestion_menu(id: &'static str, label: &'static str) -> gpui::Stateful<gpui
         .id(id)
         .role(Role::Group)
         .aria_label(label)
-        .max_h(px(220.0))
+        .max_h(theme().size(220.0))
         .overflow_y_scroll()
         .mb(theme().space.sm)
         .border(theme().border)

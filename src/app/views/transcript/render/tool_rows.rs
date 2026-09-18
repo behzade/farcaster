@@ -19,10 +19,7 @@ use crate::{
     utility::persistent_vec::PersistentVec,
 };
 
-use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
-    toggle_transcript_item,
-};
+use super::{disclosure_detail, fenced_text, selectable_text, toggle_transcript_item};
 
 #[path = "tool_rows/changed_files.rs"]
 mod changed_files;
@@ -54,8 +51,8 @@ pub(super) fn render_activity_group(
     div()
         .id(("activity-group", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(
@@ -136,8 +133,8 @@ pub(super) fn render_tool(
     div()
         .id(("tool-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(

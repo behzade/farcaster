@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use gpui::{
     Anchor, InteractiveElement as _, IntoElement, ListState, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::{
     input::Input,
@@ -214,53 +214,58 @@ impl FarcasterApp {
                     .flex()
                     .flex_col()
                     .gap(theme().space.xs)
-                    .px(px(10.0))
-                    .pb(px(10.0))
+                    .px(theme().size(10.0))
+                    .pb(theme().size(10.0))
                     .child(
-                        div().h(px(47.0)).flex().items_center().justify_end().child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(theme().space.xs)
-                                .child(icon_button(
-                                    "session-actions",
-                                    AppIcon::List,
-                                    "Actions",
-                                    ButtonTone::Quiet,
-                                    move |window, cx| {
-                                        let _ = actions_entity.update(cx, |this, cx| {
-                                            this.open_picker(PickerScope::Actions, window, cx);
-                                        });
-                                    },
-                                ))
-                                .child(icon_button(
-                                    "new-session",
-                                    AppIcon::Plus,
-                                    "New session",
-                                    ButtonTone::Quiet,
-                                    move |window, cx| {
-                                        let _ = new_entity.update(cx, |this, cx| {
-                                            this.open_picker(
-                                                PickerScope::Projects(
-                                                    ProjectPickerIntent::NewSession,
-                                                ),
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    },
-                                )),
-                        ),
+                        div()
+                            .h(theme().size(47.0))
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(theme().space.xs)
+                                    .child(icon_button(
+                                        "session-actions",
+                                        AppIcon::List,
+                                        "Actions",
+                                        ButtonTone::Quiet,
+                                        move |window, cx| {
+                                            let _ = actions_entity.update(cx, |this, cx| {
+                                                this.open_picker(PickerScope::Actions, window, cx);
+                                            });
+                                        },
+                                    ))
+                                    .child(icon_button(
+                                        "new-session",
+                                        AppIcon::Plus,
+                                        "New session",
+                                        ButtonTone::Quiet,
+                                        move |window, cx| {
+                                            let _ = new_entity.update(cx, |this, cx| {
+                                                this.open_picker(
+                                                    PickerScope::Projects(
+                                                        ProjectPickerIntent::NewSession,
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    )),
+                            ),
                     )
                     .child(
                         div()
                             .id("session-search-surface")
-                            .h(px(36.0))
+                            .h(theme().size(36.0))
                             .flex()
                             .items_center()
                             .gap(theme().space.xs)
-                            .pl(px(10.0))
-                            .rounded(px(5.0))
+                            .pl(theme().size(10.0))
+                            .rounded(theme().size(5.0))
                             .border(theme().border)
                             .border_color(theme().colors.hover)
                             .bg(theme().colors.surface)
@@ -286,8 +291,8 @@ impl FarcasterApp {
                                     move |menu, _, _| {
                                         let all_entity = project_filter_entity.clone();
                                         let mut menu = menu
-                                            .min_w(px(220.0))
-                                            .max_h(px(420.0))
+                                            .min_w(theme().size(220.0))
+                                            .max_h(theme().size(420.0))
                                             .label("Projects")
                                             .item(PopupMenuItem::new("All").on_click(
                                                 move |_, _, cx| {
@@ -345,8 +350,8 @@ impl FarcasterApp {
                             lists.child(folder_drop_target(
                                 div()
                                     .id("remove-session-folder")
-                                    .px(px(12.0))
-                                    .h(px(28.0))
+                                    .px(theme().size(12.0))
+                                    .h(theme().size(28.0))
                                     .flex()
                                     .items_center()
                                     .text_size(theme().type_scale.caption)

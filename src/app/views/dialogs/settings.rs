@@ -39,7 +39,7 @@ pub(in crate::app::views) fn render(
             let close = entity.clone();
             let clear = entity.clone();
             surface
-                .w(gpui::px(860.0))
+                .w(theme().size(860.0))
                 .max_w_full()
                 .flex()
                 .flex_col()
@@ -47,7 +47,7 @@ pub(in crate::app::views) fn render(
                 .child(
                     div()
                         .flex_none()
-                        .px(gpui::px(24.0))
+                        .px(theme().size(24.0))
                         .py(theme().space.md)
                         .border_b_1()
                         .border_color(theme().colors.surface)
@@ -59,12 +59,12 @@ pub(in crate::app::views) fn render(
                     div()
                         .id("settings-scroll")
                         .min_h_0()
-                        .max_h(gpui::px(520.0))
+                        .max_h(theme().size(520.0))
                         .overflow_y_scroll()
                         .flex()
                         .flex_col()
-                        .gap(gpui::px(24.0))
-                        .p(gpui::px(24.0))
+                        .gap(theme().size(24.0))
+                        .p(theme().size(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
                         .child(appearance::render(app, entity.clone()))
                         .child(harness_profiles::render(app, entity.clone()))
@@ -167,7 +167,7 @@ pub(in crate::app::views) fn render(
                         .items_center()
                         .justify_between()
                         .gap(theme().space.sm)
-                        .px(gpui::px(24.0))
+                        .px(theme().size(24.0))
                         .py(theme().space.md)
                         .border_t_1()
                         .border_color(theme().colors.surface)

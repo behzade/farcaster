@@ -182,7 +182,7 @@ pub(super) fn render(
                         },
                     )
                     .aria_expanded(open)
-                    .h(px(22.0))
+                    .h(theme().size(22.0))
                     .pl(px(depth as f32 * 12.0))
                     .text_size(theme().type_scale.body_small)
                     .text_color(theme().colors.muted)
@@ -230,7 +230,7 @@ fn file_row(key: usize, file: &ChangedFile, entity: WeakEntity<FarcasterApp>) ->
             });
         },
     )
-    .h(px(22.0))
+    .h(theme().size(22.0))
     .text_size(theme().type_scale.body_small)
     .child(file_icon(Path::new(&file.path)))
     .child(

@@ -107,7 +107,7 @@ pub(crate) fn tree_folder_row(
         .aria_expanded(expanded)
         .w_full()
         .min_w_0()
-        .h(gpui::px(24.0))
+        .h(theme().size(24.0))
         .pl(gpui::px(depth as f32 * 12.0 + 4.0))
         .pr(theme().space.xs)
         .flex()
@@ -116,7 +116,7 @@ pub(crate) fn tree_folder_row(
         .rounded(theme().radius)
         .text_size(theme().type_scale.caption)
         .text_color(theme().colors.muted)
-        .child(div().w(gpui::px(14.0)).flex_none().child(app_icon(
+        .child(div().w(theme().size(14.0)).flex_none().child(app_icon(
             if expanded {
                 AppIcon::CaretDown
             } else {

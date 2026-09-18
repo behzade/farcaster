@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use crate::app::FarcasterApp;
@@ -88,7 +88,7 @@ pub(in crate::app::views) fn render(
                 );
             }
 
-            surface.w(px(640.0)).max_w_full().child(
+            surface.w(theme().size(640.0)).max_w_full().child(
                 div()
                     .flex()
                     .flex_col()

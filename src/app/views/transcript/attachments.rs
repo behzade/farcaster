@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Pixels,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
 };
 
 use crate::app::{
@@ -9,8 +9,6 @@ use crate::app::{
     views::attachments::{image_card, open_card},
 };
 use crate::conversation::TranscriptItem;
-
-pub(crate) const ATTACHMENT_ROW_HEIGHT: Pixels = px(60.0);
 
 pub(crate) fn render_attachments(
     key: usize,

@@ -21,7 +21,7 @@ use crate::{
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
-    Task, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Task, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     input::{Input, InputEvent, InputState, TextareaState},
@@ -342,7 +342,7 @@ impl WorkGraphBoardView {
         };
         div()
             .p(theme().space.md)
-            .pr(px(56.0))
+            .pr(theme().size(56.0))
             .child(notice)
             .into_any_element()
     }
@@ -460,10 +460,10 @@ fn render_board_header(
     let back = entity.clone();
     let plans = entity.clone();
     div()
-        .h(px(56.0))
+        .h(theme().size(56.0))
         .flex_none()
         .pl(theme().space.md)
-        .pr(px(56.0))
+        .pr(theme().size(56.0))
         .gap(theme().space.sm)
         .flex()
         .items_center()
@@ -511,7 +511,7 @@ fn render_board_header(
                 .items_center()
                 .gap(theme().space.xs)
                 .when(show_list, |actions| {
-                    actions.child(Input::new(search).w(px(140.0)))
+                    actions.child(Input::new(search).w(theme().size(140.0)))
                 })
                 .child(icon_button(
                     "workgraph-refresh",

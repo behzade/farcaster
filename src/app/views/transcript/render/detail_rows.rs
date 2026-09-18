@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::text::TextViewState;
 
@@ -10,8 +10,8 @@ use crate::{
 };
 
 use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
-    selectable_text_state, technical_text, transcript_title_row, with_file_links,
+    disclosure_detail, fenced_text, selectable_text, selectable_text_state, technical_text,
+    transcript_title_row, with_file_links,
 };
 
 pub(super) fn render_agent_message(
@@ -38,8 +38,8 @@ pub(super) fn render_agent_message(
     div()
         .id(("agent-result-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(
@@ -97,7 +97,7 @@ pub(super) fn render_error(
     div()
         .id(("error-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
+        .px(theme().size(18.0))
         .py(theme().space.sm)
         .flex()
         .flex_col()
@@ -200,8 +200,8 @@ pub(super) fn render_thinking(
     div()
         .id(("thinking-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(

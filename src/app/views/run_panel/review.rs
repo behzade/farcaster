@@ -137,7 +137,7 @@ pub(in crate::app::views) fn render(
                                 )
                                 .w_full()
                                 .min_w_0()
-                                .h(px(24.0))
+                                .h(theme().size(24.0))
                                 .px(theme().space.xs)
                                 .flex()
                                 .items_center()
@@ -165,7 +165,7 @@ pub(in crate::app::views) fn render(
             panel.child(
                 div()
                     .id("review-selection")
-                    .max_h(px(200.0))
+                    .max_h(theme().size(200.0))
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()

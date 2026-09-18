@@ -92,7 +92,7 @@ impl WorkGraphBoardView {
             .child(
                 div()
                     .id("catalog-detail-tasks")
-                    .max_h(px(240.0))
+                    .max_h(theme().size(240.0))
                     .overflow_y_scroll()
                     .flex_none()
                     .children(

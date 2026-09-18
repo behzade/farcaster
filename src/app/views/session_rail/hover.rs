@@ -229,7 +229,7 @@ fn render_panel(details: &SessionHoverDetails, width: Pixels) -> impl IntoElemen
                 .gap(theme().space.sm)
                 .child(
                     div()
-                        .w(px(72.0))
+                        .w(theme().size(72.0))
                         .flex_none()
                         .text_size(theme().type_scale.caption)
                         .font_weight(FontWeight::SEMIBOLD)

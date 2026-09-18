@@ -43,11 +43,11 @@ fn model_result_button(
     button(id, "", ButtonTone::Quiet, true, on_press)
         .accessibility_label(label.clone())
         .tooltip(label.clone())
-        .child(div().w_full().min_w(px(0.0)).truncate().child(label))
+        .child(div().w_full().min_w(theme().size(0.0)).truncate().child(label))
         .w_full()
-        .min_w(px(0.0))
+        .min_w(theme().size(0.0))
         .overflow_hidden()
-        .h(px(32.0))
+        .h(theme().size(32.0))
         .justify_start()
         .when(highlighted, |row| row.bg(theme().colors.surface))
 }
@@ -328,7 +328,7 @@ impl FarcasterApp {
                             ButtonTone::Quiet,
                             providers.len() > 1,
                         )
-                        .min_w(px(0.0))
+                        .min_w(theme().size(0.0))
                         .max_w(px((width - 100.0).max(0.0)))
                         .overflow_hidden()
                         .dropdown_menu(move |mut menu, _, _| {

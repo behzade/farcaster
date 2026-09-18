@@ -84,14 +84,14 @@ impl FarcasterApp {
                             .relative()
                             .w(gpui::px(crate::app::views::workgraph::BOARD_WIDTH))
                             .max_w_full()
-                            .h(gpui::px(620.0))
+                            .h(theme().size(620.0))
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
                             .child(self.views.workgraph.clone())
                             .child(
                                 div()
                                     .absolute()
-                                    .top(gpui::px(12.0))
+                                    .top(theme().size(12.0))
                                     .right(theme().space.md)
                                     .child(icon_button(
                                         "close-project-work",
@@ -126,7 +126,7 @@ impl FarcasterApp {
                     },
                     |surface| {
                         surface
-                            .w(gpui::px(520.0))
+                            .w(theme().size(520.0))
                             .max_w_full()
                             .child(keybindings::render_help())
                     },

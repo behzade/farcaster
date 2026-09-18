@@ -1,6 +1,6 @@
 use gpui::{
     Animation, AnimationExt as _, AnyElement, IntoElement as _, ParentElement as _, Styled as _,
-    Transformation, WeakEntity, div, percentage, prelude::FluentBuilder as _, px,
+    Transformation, WeakEntity, div, percentage, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -105,7 +105,7 @@ pub(in crate::app::views) fn render(
 
 fn runtime_slash() -> AnyElement {
     div()
-        .px(px(6.0))
+        .px(theme().size(6.0))
         .text_color(theme().colors.subtle)
         .child("/")
         .into_any_element()
@@ -140,7 +140,7 @@ fn access_selector(
     let content = div()
         .flex()
         .items_center()
-        .gap(px(5.0))
+        .gap(theme().size(5.0))
         .text_color(match state {
             SandboxState::Active(mode) => access_mode_color(mode),
             _ => theme().colors.muted,

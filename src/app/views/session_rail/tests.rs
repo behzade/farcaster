@@ -105,7 +105,7 @@ fn session_rail_resize_stays_within_design_bounds() {
         clamped_session_rail_width(100.0),
         theme().layout.session_rail_min
     );
-    assert_eq!(clamped_session_rail_width(286.0), gpui::px(286.0));
+    assert_eq!(clamped_session_rail_width(286.0), theme().size(286.0));
     assert_eq!(
         clamped_session_rail_width(500.0),
         theme().layout.session_rail_max

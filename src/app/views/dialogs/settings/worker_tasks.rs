@@ -83,7 +83,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 .flex()
                 .gap(theme().space.md)
                 .child(profile_rail(app, entity.clone()))
-                .child(div().w(gpui::px(1.0)).bg(theme().colors.surface).flex_none())
+                .child(div().w(theme().size(1.0)).bg(theme().colors.surface).flex_none())
                 .child(profile_detail(app, entity)),
         )
         .into_any_element()
@@ -98,7 +98,7 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
         .flex()
         .flex_col()
         .gap(theme().space.xs)
-        .w(gpui::px(132.0))
+        .w(theme().size(132.0))
         .flex_none()
         .child(
             button(
@@ -619,8 +619,8 @@ fn route_menu(
             .w_full()
             .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, _, _| {
                 choices.iter().fold(
-                    menu.min_w(gpui::px(180.0))
-                        .max_h(gpui::px(320.0))
+                    menu.min_w(theme().size(180.0))
+                        .max_h(theme().size(320.0))
                         .scrollable(true),
                     |menu, (label, checked, choice)| {
                         let entity = entity.clone();

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
     MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::tooltip::Tooltip;
 
@@ -54,7 +54,7 @@ pub(in crate::app::views) fn render(
         |surface| {
             let cancel = entity.clone();
             let confirm = entity.clone();
-            surface.w(px(640.0)).max_w_full().child(
+            surface.w(theme().size(640.0)).max_w_full().child(
                 div()
                     .flex()
                     .flex_col()
@@ -276,7 +276,7 @@ fn candidate_row(
         .relative()
         .px(theme().space.sm)
         .py(theme().space.xs)
-        .rounded(px(2.0))
+        .rounded(theme().size(2.0))
         .flex()
         .items_center()
         .gap(theme().space.sm)
@@ -299,7 +299,7 @@ fn candidate_row(
                     .left_0()
                     .top(theme().space.xs)
                     .bottom(theme().space.xs)
-                    .w(px(2.0))
+                    .w(theme().size(2.0))
                     .bg(theme().colors.accent),
             )
         })
@@ -331,7 +331,7 @@ fn candidate_row(
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(theme().size(2.0))
                 .overflow_hidden()
                 .child(
                     div()
@@ -371,7 +371,7 @@ fn candidate_row(
                 ))
                 .child(
                     div()
-                        .w(px(30.0))
+                        .w(theme().size(30.0))
                         .flex_none()
                         .whitespace_nowrap()
                         .text_align(gpui::TextAlign::Right)
@@ -391,7 +391,7 @@ fn selection_checkbox(
     let press = Rc::new(on_press);
     let click = Rc::clone(&press);
     icon_control(id, label)
-        .size(px(20.0))
+        .size(theme().size(20.0))
         .role(Role::CheckBox)
         .aria_toggled(if selected {
             gpui::Toggled::True
@@ -410,10 +410,10 @@ fn selection_checkbox(
         })
         .child(
             div()
-                .size(px(14.0))
+                .size(theme().size(14.0))
                 .border(theme().border)
                 .border_color(theme().colors.muted)
-                .rounded(px(2.0))
+                .rounded(theme().size(2.0))
                 .flex()
                 .items_center()
                 .justify_center()

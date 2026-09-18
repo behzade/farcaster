@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, CursorStyle, Entity, FontWeight, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce, Rgba, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
@@ -158,7 +158,7 @@ impl RenderOnce for SessionRow {
             .items_stretch()
             .px(theme().space.sm)
             .py(theme().space.xs)
-            .rounded(px(2.0))
+            .rounded(theme().size(2.0))
             .group(action_group)
             .bg(if selected {
                 theme().colors.session_selection
@@ -179,7 +179,7 @@ impl RenderOnce for SessionRow {
                         .left_0()
                         .top(theme().space.xs)
                         .bottom(theme().space.xs)
-                        .w(px(2.0))
+                        .w(theme().size(2.0))
                         .bg(theme().colors.accent),
                 )
             })
@@ -248,7 +248,7 @@ impl RenderOnce for SessionRow {
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(theme().size(2.0))
                             .overflow_hidden()
                             .child(session_row_title(
                                 session.title.clone(),
@@ -269,7 +269,7 @@ impl RenderOnce for SessionRow {
                                             .flex_1()
                                             .flex()
                                             .items_center()
-                                            .gap(px(3.0))
+                                            .gap(theme().size(3.0))
                                             .text_size(theme().type_scale.caption)
                                             .text_color(theme().colors.subtle)
                                             .child(
@@ -337,7 +337,7 @@ impl RenderOnce for SessionRow {
             div()
                 .h(row_height)
                 .w_full()
-                .px(px(2.0))
+                .px(theme().size(2.0))
                 .child(context_menu)
                 .into_any_element(),
         )
@@ -363,7 +363,11 @@ fn session_row_title(
             .into_any_element()
     } else {
         div()
-            .pr(if is_archived { px(50.0) } else { px(24.0) })
+            .pr(if is_archived {
+                theme().size(50.0)
+            } else {
+                theme().size(24.0)
+            })
             .whitespace_nowrap()
             .text_ellipsis()
             .text_size(theme().type_scale.body_small)
@@ -405,9 +409,13 @@ fn session_archive_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .absolute()
-        .top(px(4.0))
-        .right(if is_archived { px(28.0) } else { px(5.0) })
-        .size(px(21.0))
+        .top(theme().size(4.0))
+        .right(if is_archived {
+            theme().size(28.0)
+        } else {
+            theme().size(5.0)
+        })
+        .size(theme().size(21.0))
         .flex()
         .items_center()
         .justify_center()
@@ -453,9 +461,9 @@ fn session_delete_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .absolute()
-        .top(px(4.0))
-        .right(px(5.0))
-        .size(px(21.0))
+        .top(theme().size(4.0))
+        .right(theme().size(5.0))
+        .size(theme().size(21.0))
         .flex()
         .items_center()
         .justify_center()
@@ -500,7 +508,7 @@ fn session_context_menu(
             let rename_title = title.clone();
             let rename_entity = entity.clone();
             let mut menu = menu
-                .min_w(px(190.0))
+                .min_w(theme().size(190.0))
                 .item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
                     let _ = rename_entity.update(cx, |this, cx| {
                         this.begin_session_title_edit(
@@ -622,7 +630,7 @@ pub(super) fn session_row_metadata(
         )
         .child(
             div()
-                .w(px(30.0))
+                .w(theme().size(30.0))
                 .flex_none()
                 .whitespace_nowrap()
                 .text_align(gpui::TextAlign::Right)
@@ -674,7 +682,7 @@ pub(super) fn project_badge(project: &Path) -> AnyElement {
         .max_w_full()
         .flex()
         .items_center()
-        .gap(px(3.0))
+        .gap(theme().size(3.0))
         .text_size(theme().type_scale.caption)
         .text_color(theme().colors.subtle)
         .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))

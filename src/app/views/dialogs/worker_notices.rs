@@ -1,6 +1,6 @@
 use gpui::{
     FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use crate::app::{
@@ -31,7 +31,7 @@ pub(in crate::app::views) fn render(
         |surface| {
             let close = entity;
             surface
-                .w(px(560.0))
+                .w(theme().size(560.0))
                 .max_w_full()
                 .overflow_hidden()
                 .child(
@@ -73,7 +73,7 @@ pub(in crate::app::views) fn render(
                 .child(
                     div()
                         .id("worker-notices-list")
-                        .max_h(px(520.0))
+                        .max_h(theme().size(520.0))
                         .overflow_y_scroll()
                         .when(notices.is_empty(), |body| {
                             body.child(
@@ -140,22 +140,18 @@ fn render_notice(index: usize, notice: NoticeView) -> impl IntoElement {
                 .child(notice.message),
         )
         .when(!notice.paths.is_empty(), |row| {
-            row.child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(5.0))
-                    .children(notice.paths.into_iter().map(|path| {
-                        div()
-                            .px(px(6.0))
-                            .py(px(2.0))
-                            .rounded(theme().radius)
-                            .bg(theme().colors.surface)
-                            .text_size(theme().type_scale.caption)
-                            .text_color(theme().colors.muted)
-                            .child(path)
-                    })),
-            )
+            row.child(div().flex().flex_wrap().gap(theme().size(5.0)).children(
+                notice.paths.into_iter().map(|path| {
+                    div()
+                        .px(theme().size(6.0))
+                        .py(theme().size(2.0))
+                        .rounded(theme().radius)
+                        .bg(theme().colors.surface)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
+                        .child(path)
+                }),
+            ))
         })
 }
 

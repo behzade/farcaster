@@ -2,7 +2,7 @@ mod detail;
 
 use gpui::{
     Context, Div, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 use workgraph::{PlanOverview, WorkStatus};
 
@@ -229,7 +229,7 @@ impl WorkGraphBoardView {
                     .gap(theme().space.sm)
                     .py(theme().space.xs)
                     .child(caption("Plan / dependencies").flex_1())
-                    .child(caption("Status / progress").w(px(120.0))),
+                    .child(caption("Status / progress").w(theme().size(120.0))),
             )
             .when(rows.is_empty(), |list| {
                 list.child(
@@ -379,7 +379,7 @@ impl WorkGraphBoardView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(theme().size(3.0))
                     .child(
                         div()
                             .text_size(theme().type_scale.body_small)
@@ -395,11 +395,11 @@ impl WorkGraphBoardView {
             )
             .child(
                 div()
-                    .w(px(120.0))
+                    .w(theme().size(120.0))
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(theme().size(3.0))
                     .child(status_label(row.status))
                     .child(caption(format!("{} / {} done", row.done, row.total))),
             )

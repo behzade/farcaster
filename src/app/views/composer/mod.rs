@@ -177,11 +177,11 @@ impl FarcasterApp {
             )
             .child(
                 div()
-                    .h(gpui::px(36.0))
+                    .h(theme().size(36.0))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .px(gpui::px(12.0))
+                    .px(theme().size(12.0))
                     .border_t(theme().border)
                     .border_color(theme().colors.surface)
                     .bg(theme().colors.panel)

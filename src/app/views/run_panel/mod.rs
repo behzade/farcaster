@@ -151,7 +151,7 @@ impl FarcasterApp {
                     .child(
                         div()
                             .flex_none()
-                            .px(px(15.0))
+                            .px(theme().size(15.0))
                             .py(theme().space.sm)
                             .border_b(theme().border)
                             .border_color(theme().colors.border)
@@ -179,7 +179,7 @@ impl FarcasterApp {
                             .min_h_0()
                             .overflow_y_scroll()
                             .track_scroll(scroll)
-                            .px(px(15.0))
+                            .px(theme().size(15.0))
                             .py(theme().space.sm)
                             .children(workers.iter().skip(RECENT_WORKERS).filter_map(
                                 |(activity, depth, session, _)| {
@@ -304,7 +304,7 @@ impl FarcasterApp {
             .id("run-panel-activity")
             .flex_none()
             .min_h_0()
-            .max_h(px(320.0))
+            .max_h(theme().size(320.0))
             .overflow_y_scroll()
             .track_scroll(scroll)
             .flex()
@@ -334,10 +334,10 @@ impl FarcasterApp {
             .min_h_0()
             .flex()
             .flex_col()
-            .pt(px(17.0))
-            .pr(px(15.0))
-            .pb(px(14.0))
-            .pl(px(18.0))
+            .pt(theme().size(17.0))
+            .pr(theme().size(15.0))
+            .pb(theme().size(14.0))
+            .pl(theme().size(18.0))
             .gap(theme().space.md)
             .child(activity)
             .when(self.project.repository.backend.is_some(), |run| {
@@ -353,5 +353,5 @@ impl FarcasterApp {
 }
 
 fn inspector_section() -> gpui::Div {
-    div().flex().flex_col().gap(px(7.0))
+    div().flex().flex_col().gap(theme().size(7.0))
 }

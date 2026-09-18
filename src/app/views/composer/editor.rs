@@ -74,12 +74,12 @@ impl RenderOnce for ComposerInput {
             .flex()
             .flex_col()
             .flex_1()
-            .min_h(px(48.0))
+            .min_h(theme().size(48.0))
             .font_family(UI_FONT_FAMILY)
             .text_size(theme().type_scale.reading)
             .line_height(theme().type_scale.line_composer)
             .pl(theme().space.sm)
-            .pr(px(48.0))
+            .pr(theme().size(48.0))
             .py(theme().space.sm)
             .capture_action(move |_: &Paste, _, cx| {
                 if paste_entity

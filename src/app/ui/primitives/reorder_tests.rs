@@ -1,6 +1,7 @@
 use gpui::{Bounds, point, size};
 
 use super::*;
+use gpui::px;
 
 #[test]
 fn reorder_position_only_selects_the_row_under_the_pointer() {

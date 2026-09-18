@@ -30,7 +30,7 @@ pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bo
         .gap(theme().space.sm)
         .child(
             div()
-                .h(px(20.0))
+                .h(theme().size(20.0))
                 .flex()
                 .items_center()
                 .text_color(theme().colors.accent)
@@ -42,7 +42,7 @@ pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bo
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
+                .gap(theme().size(3.0))
                 .child(
                     div()
                         .flex()
@@ -140,7 +140,7 @@ fn render_plan_row(
         .cursor_pointer()
         .flex_none()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
-        .border_l(px(2.0))
+        .border_l(theme().size(2.0))
         .border_color(if is_selected {
             theme().colors.accent
         } else {
@@ -159,8 +159,8 @@ fn render_plan_row(
         .gap(theme().space.sm)
         .child(
             div()
-                .w(px(22.0))
-                .h(px(22.0))
+                .w(theme().size(22.0))
+                .h(theme().size(22.0))
                 .flex_none()
                 .flex()
                 .items_center()
@@ -190,7 +190,7 @@ fn render_plan_row(
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
+                .gap(theme().size(3.0))
                 .child(
                     div()
                         .text_size(theme().type_scale.body)
@@ -237,10 +237,10 @@ pub(super) fn render_create_form(
         .flex_col()
         .child(
             div()
-                .h(px(56.0))
+                .h(theme().size(56.0))
                 .flex_none()
-                .pl(px(24.0))
-                .pr(px(56.0))
+                .pl(theme().size(24.0))
+                .pr(theme().size(56.0))
                 .flex()
                 .items_center()
                 .justify_between()
@@ -259,13 +259,13 @@ pub(super) fn render_create_form(
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .p(px(24.0))
+                .p(theme().size(24.0))
                 .flex()
                 .justify_center()
                 .child(
                     div()
                         .w_full()
-                        .max_w(px(520.0))
+                        .max_w(theme().size(520.0))
                         .when(add_node, |form| {
                             form.child(compact_field("Node title", Input::new(title).w_full()))
                                 .child(div().mt(theme().space.md).child(compact_field(
@@ -294,9 +294,9 @@ pub(super) fn render_create_form(
         )
         .child(
             div()
-                .h(px(56.0))
+                .h(theme().size(56.0))
                 .flex_none()
-                .px(px(24.0))
+                .px(theme().size(24.0))
                 .flex()
                 .items_center()
                 .justify_end()

@@ -71,9 +71,9 @@ fn transcript_copy_keeps_image_attachment_markers() {
 
 #[test]
 fn tail_reserve_is_responsive_but_bounded() {
-    assert_eq!(tail_reserve(px(100.0)), px(72.0));
-    assert_eq!(tail_reserve(px(500.0)), px(160.0));
-    assert_eq!(tail_reserve(px(2_000.0)), px(280.0));
+    assert_eq!(tail_reserve(theme().size(100.0)), theme().size(72.0));
+    assert_eq!(tail_reserve(theme().size(500.0)), theme().size(160.0));
+    assert_eq!(tail_reserve(px(2_000.0)), theme().size(280.0));
 }
 
 #[test]
@@ -645,7 +645,7 @@ fn markdown_row_height_estimates_reflect_wrapping_and_physical_lines() {
     assert!(rows.len() > 10);
     assert!(
         rows.iter()
-            .all(|row| estimated_row_height(*row, &items) > TRANSCRIPT_ROW_HEIGHT_HINT)
+            .all(|row| estimated_row_height(*row, &items) > theme().size(24.0))
     );
 }
 
@@ -690,10 +690,7 @@ fn long_worker_messages_remain_one_compact_row() {
     assert_eq!(rows.len(), 1);
     assert!(matches!(rows[0], TranscriptRow::Item { index: 0, .. }));
     assert!(!expanded_by_default(rows[0], &items));
-    assert_eq!(
-        estimated_row_height(rows[0], &items),
-        TRANSCRIPT_ROW_HEIGHT_HINT
-    );
+    assert_eq!(estimated_row_height(rows[0], &items), theme().size(24.0));
 }
 
 #[test]

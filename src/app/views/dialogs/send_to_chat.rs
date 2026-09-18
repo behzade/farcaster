@@ -65,7 +65,7 @@ pub(in crate::app::views) fn render(
                         .child(
                             List::new(&picker.list)
                                 .search_placeholder("Search chats in this project…")
-                                .max_h(gpui::px(360.0)),
+                                .max_h(theme().size(360.0)),
                         ),
                 );
             }

@@ -210,7 +210,7 @@ fn resize_handle(
         .bottom_0()
         .when(right, |handle| handle.right(gpui::px(-4.0)))
         .when(!right, |handle| handle.left(gpui::px(-4.0)))
-        .w(gpui::px(7.0))
+        .w(theme().size(7.0))
         .cursor_col_resize()
         .group(id)
         .on_mouse_down(gpui::MouseButton::Left, move |event, _, cx| {
@@ -219,7 +219,7 @@ fn resize_handle(
         })
         .child(
             div()
-                .ml(gpui::px(3.0))
+                .ml(theme().size(3.0))
                 .w(theme().border)
                 .h_full()
                 .opacity(0.0)

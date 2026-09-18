@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Context, FontWeight, IntoElement, ParentElement as _, Render, Styled as _, Window, div, px,
+    Context, FontWeight, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
 };
 
 use super::groups::SessionRailKind;
@@ -34,7 +34,7 @@ impl DraggedSession {
 impl Render for DraggedSession {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
-            .w(px(260.0))
+            .w(theme().size(260.0))
             .px(theme().space.md)
             .py(theme().space.sm)
             .rounded(theme().radius)
@@ -52,7 +52,7 @@ impl Render for DraggedSession {
             )
             .child(
                 div()
-                    .mt(px(2.0))
+                    .mt(theme().size(2.0))
                     .text_size(theme().type_scale.caption)
                     .text_color(theme().colors.subtle)
                     .child(self.project.clone()),

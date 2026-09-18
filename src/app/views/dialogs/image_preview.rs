@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, IntoElement as _, ObjectFit, ParentElement as _, Styled as _, StyledImage as _,
-    WeakEntity, div, img, px, relative,
+    WeakEntity, div, img, relative,
 };
 
 use crate::app::FarcasterApp;
@@ -28,7 +28,7 @@ pub(in crate::app::views) fn render(
             |surface| {
                 let close = entity.clone();
                 surface
-                    .w(px(960.0))
+                    .w(theme().size(960.0))
                     .max_w_full()
                     .h(relative(0.86))
                     .max_h(relative(0.92))
@@ -37,7 +37,7 @@ pub(in crate::app::views) fn render(
                     .flex_col()
                     .child(
                         div()
-                            .h(px(48.0))
+                            .h(theme().size(48.0))
                             .flex_none()
                             .px(theme().space.md)
                             .flex()

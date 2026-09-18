@@ -51,12 +51,12 @@ impl FarcasterApp {
         });
 
         div()
-            .h(gpui::px(38.0))
+            .h(theme().size(38.0))
             .flex_none()
             .flex()
             .items_center()
             .gap(theme().space.sm)
-            .px(gpui::px(12.0))
+            .px(theme().size(12.0))
             .border_b(theme().border)
             .border_color(theme().colors.surface)
             .bg(theme().colors.canvas)
@@ -111,7 +111,7 @@ impl FarcasterApp {
             .child(self.render_workspace_panels(mode, entity.clone()))
             .child(
                 div()
-                    .w(gpui::px(1.0))
+                    .w(theme().size(1.0))
                     .h(theme().space.md)
                     .bg(theme().colors.surface),
             )
@@ -137,7 +137,7 @@ impl FarcasterApp {
             .h_full()
             .flex()
             .items_center()
-            .gap(gpui::px(2.0))
+            .gap(theme().size(2.0))
             .child(surface_control(
                 "show-chat-surface",
                 chat_hint,
@@ -187,13 +187,13 @@ fn surface_control(
     action: SurfaceAction,
 ) -> gpui::Stateful<gpui::Div> {
     icon_control(id, label)
-        .w(gpui::px(34.0))
+        .w(theme().size(34.0))
         .h_full()
         .rounded_none()
         .hover(|control| control.bg(theme().colors.surface))
         .when(active, |control| {
             control
-                .border_b(gpui::px(2.0))
+                .border_b(theme().size(2.0))
                 .border_color(theme().colors.accent)
                 .text_color(theme().colors.accent)
         })

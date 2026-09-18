@@ -29,7 +29,7 @@ pub(super) fn render(
     let open_entity = entity.clone();
     div()
         .w_full()
-        .px(super::TRANSCRIPT_HORIZONTAL_PADDING)
+        .px(super::theme().size(18.0))
         .py(theme().space.xs)
         .font_family(UI_FONT_FAMILY)
         .text_size(theme().type_scale.body_small * font_scale)

@@ -22,7 +22,6 @@ use crate::{
     app::{
         FarcasterApp,
         views::transcript::{
-            attachments::ATTACHMENT_ROW_HEIGHT,
             list::{self, TranscriptListState, transcript_list_grouped},
             markdown::{MarkdownStateKey, TranscriptMarkdownCache},
         },
@@ -68,9 +67,6 @@ use message_rows::{render_invocation, render_message, render_message_chunk};
 pub(super) use rows::matching_item_prefix;
 pub(crate) use rows::*;
 use tool_rows::{render_activity_group, render_tool};
-
-const TRANSCRIPT_HORIZONTAL_PADDING: Pixels = px(18.0);
-pub(crate) const TRANSCRIPT_ROW_HEIGHT_HINT: Pixels = px(24.0);
 
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptViewport {
@@ -382,7 +378,7 @@ fn transcript_context_menu(
         .dropdown_menu_with_anchor(gpui::Anchor::TopLeft, move |menu, window, cx| {
             // Capture before the popup takes focus or clears the highlight.
             let selected_text = selection_state.copy_selection_text(window, cx);
-            let mut menu = menu.min_w(px(190.0));
+            let mut menu = menu.min_w(theme().size(190.0));
             if let Some(text) = selected_text {
                 menu = menu
                     .item(
@@ -759,7 +755,7 @@ pub(super) fn invocation_transcript_markdown_style(resolved: &str) -> TextViewSt
 
 fn transcript_markdown_style_with_inline_code(inline_code: HighlightStyle) -> TextViewStyle {
     let mut code_block = StyleRefinement::default();
-    code_block.padding.top = Some((theme().controls.icon_button + px(16.0)).into());
+    code_block.padding.top = Some((theme().controls.icon_button + theme().size(16.0)).into());
     code_block.overflow.x = Some(Overflow::Scroll);
     code_block.restrict_scroll_to_axis = Some(true);
     TextViewStyle {

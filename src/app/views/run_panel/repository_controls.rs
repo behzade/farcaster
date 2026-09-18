@@ -22,7 +22,7 @@ use crate::{
 use gpui::{
     AnyElement, App, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use gpui_component::{
@@ -40,7 +40,7 @@ pub(super) fn file_action(
     let press = std::rc::Rc::new(on_press);
     let click = press.clone();
     icon_control(id, label)
-        .size(px(20.0))
+        .size(theme().size(20.0))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             click(window, cx);

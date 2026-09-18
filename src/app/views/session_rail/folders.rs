@@ -99,7 +99,7 @@ pub(super) fn folder_header(
         .w_full()
         .gap(theme().space.xs);
     if id.is_none() || editing {
-        row = row.h(px(40.0));
+        row = row.h(theme().size(40.0));
     }
     if editing {
         let commit = edit_entity.clone();
@@ -166,7 +166,7 @@ pub(super) fn folder_header(
                 true,
             )
             .dropdown_caret(false)
-            .px(px(4.0)),
+            .px(theme().size(4.0)),
         )
         .dropdown_menu(move |menu, _, _| {
             let rename = menu_entity.clone();
@@ -207,7 +207,7 @@ pub(super) fn folder_header(
 
 fn folder_action(button: Button) -> Button {
     button
-        .size(px(24.0))
+        .size(theme().size(24.0))
         .cursor_pointer()
         .opacity(0.0)
         .group_hover("session-folder-header", |style| style.opacity(1.0))

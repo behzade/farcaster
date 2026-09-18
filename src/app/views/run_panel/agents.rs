@@ -25,7 +25,7 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
         .items_center()
         .min_w_0()
         .px(theme().space.sm)
-        .py(px(4.0))
+        .py(theme().size(4.0))
         .rounded(theme().radius)
         .bg(if selected {
             theme().colors.session_selection
@@ -46,7 +46,7 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
                     .left_0()
                     .top(theme().space.xs)
                     .bottom(theme().space.xs)
-                    .w(px(2.0))
+                    .w(theme().size(2.0))
                     .bg(theme().colors.accent),
             )
         })
@@ -192,7 +192,7 @@ impl FarcasterApp {
                             .child(
                                 div()
                                     .flex_none()
-                                    .max_w(px(90.0))
+                                    .max_w(theme().size(90.0))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()

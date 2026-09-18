@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     text::{TextViewState, TextViewStyle},
@@ -15,10 +15,7 @@ use crate::{
     conversation::{TranscriptItem, TranscriptKind},
 };
 
-use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, item_color, selectable_text, selectable_text_state,
-    technical_text, with_file_links,
-};
+use super::{item_color, selectable_text, selectable_text_state, technical_text, with_file_links};
 
 pub(super) fn render_invocation(
     font_scale: f32,
@@ -31,7 +28,7 @@ pub(super) fn render_invocation(
     div()
         .id(("invocation-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
+        .px(theme().size(18.0))
         .py(theme().space.sm)
         .flex()
         .flex_col()
@@ -198,7 +195,7 @@ pub(super) fn render_message(
     div()
         .id(("transcript-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
+        .px(theme().size(18.0))
         .py(theme().space.sm)
         .when(user, |row| {
             row.mt(theme().space.sm)
@@ -250,7 +247,7 @@ pub(super) fn render_message_chunk(
     div()
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
+        .px(theme().size(18.0))
         .when(user, |row| row.bg(theme().colors.selection))
         .when(first, |row| row.pt(theme().space.sm))
         .when(first && user, |row| {
@@ -278,7 +275,7 @@ pub(super) fn render_message_chunk(
 
 fn peer_label(font_scale: f32, label: &str) -> impl gpui::IntoElement {
     div()
-        .mb(px(7.0))
+        .mb(theme().size(7.0))
         .text_size(theme().type_scale.caption * font_scale)
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme().colors.muted)

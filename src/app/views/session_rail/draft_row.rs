@@ -3,7 +3,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use gpui::{
     AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
     IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 
 use super::{
@@ -91,7 +91,7 @@ impl RenderOnce for DraftRow {
             div()
                 .h(theme().layout.session_row_height)
                 .w_full()
-                .px(px(2.0))
+                .px(theme().size(2.0))
                 .child(
                     div()
                         .id(format!("session-{id}"))
@@ -110,7 +110,7 @@ impl RenderOnce for DraftRow {
                         .items_stretch()
                         .px(theme().space.sm)
                         .py(theme().space.xs)
-                        .rounded(px(2.0))
+                        .rounded(theme().size(2.0))
                         .group(action_group.clone())
                         .bg(if selected {
                             theme().colors.session_selection
@@ -131,7 +131,7 @@ impl RenderOnce for DraftRow {
                                     .left_0()
                                     .top(theme().space.xs)
                                     .bottom(theme().space.xs)
-                                    .w(px(2.0))
+                                    .w(theme().size(2.0))
                                     .bg(theme().colors.accent),
                             )
                         })
@@ -187,12 +187,12 @@ impl RenderOnce for DraftRow {
                                 .flex_1()
                                 .flex()
                                 .flex_col()
-                                .gap(px(2.0))
+                                .gap(theme().size(2.0))
                                 .overflow_hidden()
                                 .child(
                                     div()
                                         .min_w_0()
-                                        .pr(px(24.0))
+                                        .pr(theme().size(24.0))
                                         .flex()
                                         .items_center()
                                         .gap(theme().space.xs)
@@ -237,9 +237,9 @@ impl RenderOnce for DraftRow {
                             row.child(
                                 icon_control(format!("discard-{discard_id}"), "Discard draft")
                                     .absolute()
-                                    .top(px(4.0))
-                                    .right(px(5.0))
-                                    .size(px(21.0))
+                                    .top(theme().size(4.0))
+                                    .right(theme().size(5.0))
+                                    .size(theme().size(21.0))
                                     .opacity(0.0)
                                     .group_hover(action_group, |button| button.opacity(1.0))
                                     .focus(|button| button.opacity(1.0))
@@ -267,7 +267,7 @@ fn draft_badge() -> AnyElement {
     div()
         .flex_none()
         .px(theme().space.xs)
-        .rounded(px(3.0))
+        .rounded(theme().size(3.0))
         .border(theme().border)
         .border_color(theme().colors.border)
         .text_size(theme().type_scale.caption)

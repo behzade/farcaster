@@ -88,7 +88,7 @@ fn render_outcome(
 ) -> impl IntoElement {
     detail_section("Outcome")
         .p(theme().space.sm)
-        .border_l(px(2.0))
+        .border_l(theme().size(2.0))
         .border_color(if current {
             theme().colors.accent
         } else {
@@ -246,7 +246,7 @@ impl WorkGraphBoardView {
                         .flex_col()
                         .gap(theme().space.md)
                         .w_full()
-                        .max_w(px(620.0))
+                        .max_w(theme().size(620.0))
                         .mx_auto()
                         .child(render_node_identity(node, current, leaf))
                         .child(render_acceptance(node))

@@ -6,7 +6,7 @@ use std::{
 use gpui::{
     AppContext as _, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     Role, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use super::{
@@ -206,7 +206,7 @@ impl Render for WorkGraphSidebarView {
                 sidebar
                     .flex()
                     .flex_col()
-                    .gap(px(11.0))
+                    .gap(theme().size(11.0))
                     .child(header)
                     .when_some(self.session_goal.as_ref(), |sidebar, goal| {
                         sidebar.child(render_session_goal(goal, true))
@@ -279,11 +279,11 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .cursor_pointer()
-        .px(px(2.0))
-        .py(px(3.0))
+        .px(theme().size(2.0))
+        .py(theme().size(3.0))
         .flex()
         .items_start()
-        .gap(px(7.0))
+        .gap(theme().size(7.0))
         .hover(|row| row.bg(theme().colors.surface))
         .on_click(move |_, window, cx| {
             let _ = app.update(cx, |app, cx| {
@@ -292,8 +292,8 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
         })
         .child(
             div()
-                .w(px(16.0))
-                .h(px(20.0))
+                .w(theme().size(16.0))
+                .h(theme().size(20.0))
                 .flex_none()
                 .flex()
                 .items_center()
@@ -323,7 +323,7 @@ fn render_sidebar_row(row: PlanRow, app: WeakEntity<FarcasterApp>) -> impl IntoE
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(theme().size(2.0))
                 .child(
                     div()
                         .line_clamp(2)

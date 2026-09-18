@@ -1,7 +1,7 @@
 use gpui::{
     App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 
 use super::selectable_dialog_text;
@@ -112,7 +112,7 @@ fn dialog_choice(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .w_full()
-        .min_h(px(48.0))
+        .min_h(theme().size(48.0))
         .flex()
         .items_center()
         .gap(theme().space.sm)

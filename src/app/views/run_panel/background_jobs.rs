@@ -1,4 +1,4 @@
-use gpui::{AnyElement, IntoElement, ParentElement as _, Styled as _, div, px};
+use gpui::{AnyElement, IntoElement, ParentElement as _, Styled as _, div};
 
 use crate::{
     app::ui::assets::AppIcon,
@@ -9,11 +9,11 @@ use crate::{
 
 pub(super) fn background_job_row(job: &BackgroundJob) -> AnyElement {
     div()
-        .px(px(2.0))
-        .py(px(3.0))
+        .px(theme().size(2.0))
+        .py(theme().size(3.0))
         .flex()
         .items_start()
-        .gap(px(7.0))
+        .gap(theme().size(7.0))
         .child(
             div()
                 .size(theme().icons.inline)
@@ -30,7 +30,7 @@ pub(super) fn background_job_row(job: &BackgroundJob) -> AnyElement {
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(theme().size(2.0))
                 .child(
                     div()
                         .min_w_0()

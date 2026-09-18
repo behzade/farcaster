@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::input::Textarea;
 
@@ -67,7 +67,7 @@ pub(in crate::app::views) fn render(
             let _ = dismiss.update(cx, |this, cx| this.close_repository_edit(window, cx));
         },
         |surface| {
-            surface.w(px(480.0)).child(
+            surface.w(theme().size(480.0)).child(
                 div()
                     .p(theme().space.md)
                     .flex()
@@ -85,7 +85,7 @@ pub(in crate::app::views) fn render(
                     .child(
                         div()
                             .id("repository-review-files")
-                            .max_h(px(120.0))
+                            .max_h(theme().size(120.0))
                             .overflow_y_scroll()
                             .font_family(MONO_FONT_FAMILY)
                             .text_size(theme().type_scale.caption)

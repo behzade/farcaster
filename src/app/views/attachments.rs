@@ -6,12 +6,12 @@ use crate::app::{
 };
 use gpui::{
     AnyElement, Div, Image, IntoElement as _, ObjectFit, ParentElement as _, Styled as _,
-    StyledImage as _, WeakEntity, div, img, px,
+    StyledImage as _, WeakEntity, div, img,
 };
 
 fn card() -> Div {
     div()
-        .h(px(48.0))
+        .h(theme().size(48.0))
         .flex_none()
         .flex()
         .items_center()
@@ -29,12 +29,12 @@ fn card() -> Div {
 fn content(name: String, detail: String, image: Option<Arc<Image>>) -> AnyElement {
     let preview = match image {
         Some(image) => img(image)
-            .size(px(32.0))
-            .rounded(px(3.0))
+            .size(theme().size(32.0))
+            .rounded(theme().size(3.0))
             .object_fit(ObjectFit::Cover)
             .into_any_element(),
         None => div()
-            .size(px(32.0))
+            .size(theme().size(32.0))
             .flex()
             .items_center()
             .justify_center()
@@ -51,7 +51,7 @@ fn content(name: String, detail: String, image: Option<Arc<Image>>) -> AnyElemen
             div()
                 .flex()
                 .flex_col()
-                .max_w(px(220.0))
+                .max_w(theme().size(220.0))
                 .child(div().truncate().child(name))
                 .child(div().text_color(theme().colors.muted).child(detail)),
         )
