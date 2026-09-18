@@ -194,8 +194,8 @@ fn surface_control(
         .when(active, |control| {
             control
                 .border_b(theme().size(2.0))
-                .border_color(theme().colors.accent)
-                .text_color(theme().colors.accent)
+                .border_color(theme().colors.text)
+                .text_color(theme().colors.text)
         })
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
