@@ -5,7 +5,7 @@ use gpui_component::highlighter::{
     FontStyle, HighlightTheme, HighlightThemeStyle, StatusColors, SyntaxColors, ThemeStyle,
 };
 
-use super::{Appearance, ColorKey, Colors, Theme, color_hex};
+use crate::app::ui::theme::{Appearance, ColorKey, Colors, Theme, color_hex};
 
 #[derive(Clone, Copy)]
 enum SyntaxKind {
@@ -53,7 +53,7 @@ macro_rules! syntax_keys {
             }
 
             pub(crate) fn label(self) -> String {
-                super::label(self.name())
+                crate::app::ui::theme::label(self.name())
             }
 
             pub(crate) fn default_color(self, colors: Colors) -> Rgba {
@@ -143,7 +143,7 @@ pub(crate) fn for_theme(
         style: HighlightThemeStyle {
             editor_background: Some(colors.canvas.into()),
             editor_foreground: Some(colors.text.into()),
-            editor_active_line: Some(colors.selection.into()),
+            editor_active_line: Some(colors.highlight.into()),
             editor_line_number: Some(colors.subtle.into()),
             editor_active_line_number: Some(colors.text.into()),
             editor_invisible: Some(colors.surface.into()),

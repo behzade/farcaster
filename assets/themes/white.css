@@ -4,10 +4,7 @@
   --inspector: #f3f3ef;
   --composer: #fbfbf8;
   --surface: #ebebe6;
-  --hover: #e0e0d9;
-  --selection: #e9e9e2;
-  --session_selection: #e2e2db;
-  --text_selection: #cfcfc7;
+  --highlight: #e0e0d9;
   --border: #c9c7bf;
   --focus_border: #8b989b;
   --text: #2b2a26;
@@ -44,8 +41,10 @@
   --control-icon-button: 28px;
   --control-utility-row: 44px;
   --control-archived-preview-row: 49px;
-  --radius: 4px;
+  --radius: 0px;
   --border-width: 1px;
+  --scrollbar-width: 6px;
+  --scrollbar-inset: 0px;
   --layout-wide-min-width: 1180px;
   --layout-compact-min-width: 960px;
   --layout-window-width: 1240px;

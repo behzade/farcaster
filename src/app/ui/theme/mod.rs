@@ -9,13 +9,12 @@ use gpui_libghostty::{TerminalColor, TerminalTheme};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod builtin;
-mod highlight;
 mod library;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use highlight::SyntaxKey;
+pub(crate) use crate::app::ui::primitives::{SyntaxKey, highlight};
 pub(crate) use library::{
     Appearance, ThemeDefinition, ThemeLibrary, color_hex, length_label, parse_hex,
     suggested_file_name, token_label,
@@ -45,6 +44,7 @@ pub(crate) struct Theme {
     pub radius: Pixels,
     pub border: Pixels,
     pub layout: Layout,
+    pub scrollbar: ScrollbarScale,
     sizes: [Pixels; SIZE_VALUES.len()],
 }
 
@@ -56,10 +56,7 @@ pub(crate) struct Colors {
     pub inspector: Rgba,
     pub composer: Rgba,
     pub surface: Rgba,
-    pub hover: Rgba,
-    pub selection: Rgba,
-    pub session_selection: Rgba,
-    pub text_selection: Rgba,
+    pub highlight: Rgba,
     pub border: Rgba,
     pub focus_border: Rgba,
     pub text: Rgba,
@@ -168,10 +165,7 @@ color_keys!(
     inspector,
     composer,
     surface,
-    hover,
-    selection,
-    session_selection,
-    text_selection,
+    highlight,
     border,
     focus_border,
     text,
@@ -259,6 +253,12 @@ pub(crate) struct MetricScale {
     pub border_width: Pixels,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ScrollbarScale {
+    pub width: Pixels,
+    pub inset: Pixels,
+}
+
 const SIZE_VALUES: [u16; 94] = [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 28,
     30, 32, 34, 36, 38, 40, 44, 47, 48, 49, 50, 56, 60, 65, 72, 80, 90, 100, 110, 116, 120, 130,
@@ -274,6 +274,7 @@ struct Structure {
     icons: IconScale,
     controls: ControlScale,
     metrics: MetricScale,
+    scrollbar: ScrollbarScale,
     layout: Layout,
     sizes: [Pixels; SIZE_VALUES.len()],
 }
@@ -315,8 +316,12 @@ const STRUCTURE: Structure = Structure {
         archived_preview_row: px(49.0),
     },
     metrics: MetricScale {
-        radius: px(4.0),
+        radius: px(0.0),
         border_width: px(1.0),
+    },
+    scrollbar: ScrollbarScale {
+        width: px(6.0),
+        inset: px(0.0),
     },
     layout: Layout {
         wide_min_width: px(1180.0),
@@ -406,6 +411,8 @@ metric_keys!(
     controls.archived_preview_row => "control-archived-preview-row",
     metrics.radius => "radius",
     metrics.border_width => "border-width",
+    scrollbar.width => "scrollbar-width",
+    scrollbar.inset => "scrollbar-inset",
     layout.wide_min_width => "layout-wide-min-width",
     layout.compact_min_width => "layout-compact-min-width",
     layout.window_width => "layout-window-width",
@@ -484,6 +491,7 @@ impl Theme {
             radius: structure.metrics.radius,
             border: structure.metrics.border_width,
             layout: structure.layout,
+            scrollbar: structure.scrollbar,
             sizes: structure.sizes,
         }
     }
@@ -642,8 +650,20 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     let component_colors = &mut component.colors;
     component_colors.background = colors.canvas.into();
     component_colors.foreground = colors.text.into();
-    component_colors.accent = colors.surface.into();
+    component_colors.accent = colors.highlight.into();
     component_colors.accent_foreground = colors.text.into();
+    component_colors.list = colors.panel.into();
+    component_colors.list_hover = colors.highlight.into();
+    component_colors.list_active = colors.highlight.into();
+    component_colors.list_active_border = colors.highlight.into();
+    component_colors.table = colors.panel.into();
+    component_colors.table_hover = colors.highlight.into();
+    component_colors.table_active = colors.highlight.into();
+    component_colors.sidebar = colors.panel.into();
+    component_colors.sidebar_accent = colors.highlight.into();
+    component_colors.sidebar_primary = colors.highlight.into();
+    component_colors.tab_bar = colors.panel.into();
+    component_colors.tab_active = colors.highlight.into();
     component_colors.link = colors.link.into();
     component_colors.link_active = colors.link.into();
     component_colors.link_hover = colors.link.into();
@@ -654,16 +674,16 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.popover = colors.panel.into();
     component_colors.popover_foreground = colors.text.into();
     component_colors.primary = colors.surface.into();
-    component_colors.primary_hover = colors.hover.into();
-    component_colors.primary_active = colors.hover.into();
+    component_colors.primary_hover = colors.highlight.into();
+    component_colors.primary_active = colors.highlight.into();
     component_colors.primary_foreground = colors.text.into();
     component_colors.secondary = colors.surface.into();
-    component_colors.secondary_hover = colors.hover.into();
-    component_colors.secondary_active = colors.hover.into();
+    component_colors.secondary_hover = colors.highlight.into();
+    component_colors.secondary_active = colors.highlight.into();
     component_colors.secondary_foreground = colors.text.into();
     component_colors.button = colors.surface.into();
-    component_colors.button_hover = colors.hover.into();
-    component_colors.button_active = colors.hover.into();
+    component_colors.button_hover = colors.highlight.into();
+    component_colors.button_active = colors.highlight.into();
     component_colors.button_foreground = colors.text.into();
     component_colors.button_primary = colors.accent.into();
     component_colors.button_primary_hover = colors.accent_hover.into();
@@ -677,6 +697,25 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.success_foreground = colors.canvas.into();
     component_colors.ring = colors.accent.into();
     component_colors.caret = colors.text.into();
-    component_colors.selection = colors.text_selection.into();
+    component_colors.selection = colors.highlight.into();
     component.tokens = ThemeTokens::from(component.colors);
+    install_scrollbar_theme(theme, cx);
+    gpui_component::tooltip::set_metrics(gpui_component::tooltip::TooltipMetrics {
+        padding_x: theme.space.md,
+        padding_y: theme.space.sm,
+        gap: theme.space.sm,
+        font_size: theme.type_scale.caption,
+        max_width: theme.size(360.0),
+    });
+}
+
+fn install_scrollbar_theme(theme: Theme, cx: &mut App) {
+    let base = gpui_base::Theme::global_mut(cx);
+    let styles = base.scrollbar.styles.clone();
+    let thumb = |style: gpui_base::ScrollbarThumbStyle| {
+        style
+            .width(theme.scrollbar.width)
+            .inset(theme.scrollbar.inset)
+    };
+    base.scrollbar.styles = styles.thumb(thumb).thumb_hover(thumb).thumb_active(thumb);
 }

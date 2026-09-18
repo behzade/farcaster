@@ -19,7 +19,7 @@ pub(crate) fn disclosure_button(
     icon_control(id, disclosure_action_label(expanded, &label))
         .aria_expanded(expanded)
         .text_color(theme().colors.muted)
-        .hover(|control| control.bg(theme().colors.hover))
+        .hover(|control| control.bg(theme().colors.highlight))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             on_press(window, cx);
@@ -76,7 +76,7 @@ pub(crate) fn disclosure_title_row(
         .aria_expanded(expanded)
         .tab_index(0)
         .cursor(CursorStyle::PointingHand)
-        .hover(|row| row.bg(theme().colors.hover))
+        .hover(|row| row.bg(theme().colors.highlight))
         .focus_visible(|row| {
             row.border(theme().border)
                 .border_color(theme().colors.accent)
@@ -132,8 +132,8 @@ pub(crate) fn tree_folder_row(
     let click = Rc::clone(&on_press);
     row.tab_index(0)
         .cursor_pointer()
-        .hover(|row| row.bg(theme().colors.hover))
-        .focus_visible(|row| row.bg(theme().colors.selection))
+        .hover(|row| row.bg(theme().colors.highlight))
+        .focus_visible(|row| row.bg(theme().colors.highlight))
         .on_mouse_down(MouseButton::Left, super::preserve_pointer_focus)
         .on_click(move |_, window, cx| click(window, cx))
         .on_key_down(move |event, window, cx| {

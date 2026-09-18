@@ -80,7 +80,7 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
                     .min_w(theme().size(13.0))
                     .h(theme().size(13.0))
                     .px(theme().size(3.0))
-                    .rounded(theme().size(7.0))
+                    .rounded(theme().radius)
                     .flex()
                     .items_center()
                     .justify_center()

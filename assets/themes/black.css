@@ -4,10 +4,7 @@
   --inspector: #080808;
   --composer: #0e0e0e;
   --surface: #161616;
-  --hover: #232323;
-  --selection: #1a1a1a;
-  --session_selection: #202020;
-  --text_selection: #333333;
+  --highlight: #232323;
   --border: #3a3a3a;
   --focus_border: #6a6a6a;
   --text: #ededed;
@@ -44,8 +41,10 @@
   --control-icon-button: 28px;
   --control-utility-row: 44px;
   --control-archived-preview-row: 49px;
-  --radius: 4px;
+  --radius: 0px;
   --border-width: 1px;
+  --scrollbar-width: 6px;
+  --scrollbar-inset: 0px;
   --layout-wide-min-width: 1180px;
   --layout-compact-min-width: 960px;
   --layout-window-width: 1240px;

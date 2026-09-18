@@ -150,7 +150,7 @@ fn length_tokens_default_to_the_designed_structure() {
     let definition = BUILT_IN_THEMES[0].clone();
     let theme = Theme::from_definition(&definition);
     assert_eq!(f32::from(theme.space.xs), 4.0);
-    assert_eq!(f32::from(theme.radius), 4.0);
+    assert_eq!(f32::from(theme.radius), 0.0);
     assert_eq!(f32::from(theme.size(24.0)), 24.0);
     assert_eq!(
         definition.length(LengthKey::from_name("space-xs").expect("token")),

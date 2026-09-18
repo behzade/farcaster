@@ -218,7 +218,7 @@ impl ListDelegate for PickerDelegate {
                                 ("remove-picker-project", index.row),
                                 format!("Remove {}", row.label),
                             )
-                            .hover(|button| button.bg(theme().colors.hover))
+                            .hover(|button| button.bg(theme().colors.highlight))
                             .child(app_icon(AppIcon::X, AppIconSize::Control))
                             .on_click(move |_, window, cx| {
                                 cx.stop_propagation();
