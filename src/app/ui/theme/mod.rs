@@ -474,10 +474,6 @@ impl Theme {
         Self::from_structure(definition.colors, structure)
     }
 
-    pub(crate) fn from_colors(colors: Colors) -> Self {
-        Self::from_structure(colors, STRUCTURE)
-    }
-
     fn from_structure(colors: Colors, structure: Structure) -> Self {
         Self {
             colors,
@@ -498,28 +494,6 @@ impl Theme {
         match SIZE_VALUES.binary_search(&clamped) {
             Ok(index) => self.sizes[index],
             Err(_) => px(rounded),
-        }
-    }
-
-    pub(crate) fn length(self, key: LengthKey) -> Pixels {
-        match key {
-            LengthKey::Metric(key) => self.structure().get(key),
-            LengthKey::Size(index) => self.sizes[index],
-        }
-    }
-
-    fn structure(self) -> Structure {
-        Structure {
-            space: self.space,
-            type_scale: self.type_scale,
-            icons: self.icons,
-            controls: self.controls,
-            metrics: MetricScale {
-                radius: self.radius,
-                border_width: self.border,
-            },
-            layout: self.layout,
-            sizes: self.sizes,
         }
     }
 }

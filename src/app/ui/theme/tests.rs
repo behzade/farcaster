@@ -7,7 +7,7 @@ use crate::app::ui::file_icons;
 use gpui::Hsla;
 
 fn default_theme() -> Theme {
-    Theme::from_colors(BUILT_IN_THEMES[0].colors)
+    Theme::from_definition(&BUILT_IN_THEMES[0])
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn color_hex_drops_opaque_alpha_and_keeps_translucent_alpha() {
 
 #[test]
 fn a_palette_keeps_the_design_tokens_untouched() {
-    let black = Theme::from_colors(BUILT_IN_THEMES[2].colors);
+    let black = Theme::from_definition(&BUILT_IN_THEMES[2]);
     assert_eq!(black.colors.canvas, parse_hex("#000000").expect("hex"));
     assert_eq!(black.space.md, default_theme().space.md);
     assert_eq!(black.type_scale.reading, default_theme().type_scale.reading);
@@ -188,23 +188,22 @@ fn every_editable_length_has_a_name_and_a_label() {
 }
 
 #[test]
-fn bundled_themes_publish_every_token() {
-    for definition in BUILT_IN_THEMES.iter() {
-        let css = definition.to_css().expect("encode bundled theme");
-        for token in super::editable_tokens() {
-            let name = super::library::token_name(token);
+fn bundled_theme_files_publish_every_token() {
+    let mut names: Vec<String> = ColorKey::ALL
+        .iter()
+        .map(|key| key.name().to_owned())
+        .collect();
+    names.extend(
+        super::editable_tokens()
+            .into_iter()
+            .map(super::library::token_name),
+    );
+    names.extend(super::editable_lengths().into_iter().map(|key| key.name()));
+    for file in super::builtin::THEME_FILES {
+        for name in &names {
             assert!(
-                css.contains(&format!("--{name}: ")),
-                "{} does not set --{name}",
-                definition.name
-            );
-        }
-        for key in super::editable_lengths() {
-            assert!(
-                css.contains(&format!("--{}: ", key.name())),
-                "{} does not set --{}",
-                definition.name,
-                key.name()
+                file.contains(&format!("--{name}: ")),
+                "a bundled theme file does not set --{name}"
             );
         }
     }
