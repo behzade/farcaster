@@ -12,10 +12,7 @@ mod rows;
 #[cfg(test)]
 mod tests;
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashSet, path::PathBuf};
 
 use gpui::{Pixels, px};
 
@@ -28,14 +25,15 @@ use self::{
 };
 use super::super::FarcasterApp;
 use crate::{
-    app::ui::primitives::ReorderPosition,
+    app::session_folders::SessionFolders,
+    app::ui::primitives::{PanelBounds, ReorderPosition},
     app::ui::theme::theme,
     sessions::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
 };
 
 pub(in crate::app) use groups::SessionRailKind;
-pub(in crate::app) use hover::{session_hover_details, session_hover_panel};
+pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
 pub(in crate::app) use rows::{project_label, status_visual};
 
 #[cfg(test)]
@@ -61,11 +59,15 @@ enum VisibleSessionTarget {
 impl VisibleSessionTarget {
     fn from_row(row: folders::FolderRow) -> Option<Self> {
         match row {
-            folders::FolderRow::Session(item) => match *item {
-                ActiveSessionItem::Draft(draft) => Some(Self::Draft(draft)),
-                ActiveSessionItem::Session(item) => Some(Self::Persisted(item.session)),
-            },
-            folders::FolderRow::Header(..) | folders::FolderRow::New => None,
+            folders::FolderRow::Session(item) => Self::from_item(&item),
+            folders::FolderRow::Header(..) => None,
+        }
+    }
+
+    fn from_item(item: &ActiveSessionItem) -> Option<Self> {
+        match item {
+            ActiveSessionItem::Draft(draft) => Some(Self::Draft(draft.clone())),
+            ActiveSessionItem::Session(item) => Some(Self::Persisted(item.session.clone())),
         }
     }
 
@@ -123,6 +125,7 @@ fn replacement_index_after_close(len: usize, current: usize) -> Option<usize> {
         .or_else(|| current.checked_sub(1))
 }
 
+#[cfg(test)]
 fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> {
     rows.iter().find_map(|row| match row {
         ActiveSessionItem::Draft(draft) if !draft.submitted => Some(draft),
@@ -130,52 +133,101 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
     })
 }
 
-fn visible_session_shortcuts<'a>(
-    rows: impl IntoIterator<Item = &'a ActiveSessionItem>,
-) -> HashMap<i64, u8> {
-    rows.into_iter()
-        .filter_map(|row| match row {
-            ActiveSessionItem::Draft(draft) if draft.submitted => Some(draft.app_session_id),
-            ActiveSessionItem::Session(item) => Some(item.session.app_session_id),
-            ActiveSessionItem::Draft(_) => None,
-        })
-        .filter(|id| *id > 0)
-        .take(9)
-        .enumerate()
-        .map(|(index, id)| (id, (index + 1) as u8))
-        .collect::<HashMap<_, _>>()
+/// The chats a session number can reach, in rail order. Numbers run from 1 to
+/// 10 so `0` reaches the tenth chat, and a folder with fewer chats simply has
+/// fewer reachable numbers.
+fn numbered_session_items<'a>(
+    items: &'a [ActiveSessionItem],
+    folders: &SessionFolders,
+    only: Option<u64>,
+) -> Vec<(u64, &'a ActiveSessionItem)> {
+    let mut numbered = Vec::new();
+    for folder in &folders.folders {
+        if only.is_some_and(|only| only != folder.id) {
+            continue;
+        }
+        for item in items {
+            if numbered.len() == 10 {
+                return numbered;
+            }
+            if folders.folder_for_session(item.app_session_id(), item.project()) == Some(folder.id)
+            {
+                numbered.push((folder.id, item));
+            }
+        }
+    }
+    numbered
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn switch_to_first_unsubmitted_draft(
-        &mut self,
-        window: &mut gpui::Window,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let lists = session_rail_lists(
-            &self.sessions.visible,
-            &self.sessions.drafts,
-            self.sessions.project_filter.as_deref(),
-            &self.sessions.order,
-        );
-        if let Some(draft) = first_unsubmitted_draft(&lists.active).cloned() {
-            self.select_visible_session(VisibleSessionTarget::Draft(draft), window, cx);
-        }
-    }
-
+    /// Selects the chat a session number points at. Numbers above nine arrive as
+    /// `0`, which addresses the tenth chat.
     pub(in crate::app) fn switch_to_session_number(
         &mut self,
         number: usize,
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        if let Some(target) = self
+        let number = if number == 0 { 10 } else { number };
+        let Some((folder_id, target)) = self
             .numbered_session_targets()
             .get(number.saturating_sub(1))
             .cloned()
-        {
-            self.select_visible_session(target, window, cx);
+        else {
+            return;
+        };
+        self.expand_folder(folder_id, cx);
+        self.select_visible_session(target, window, cx);
+    }
+
+    fn numbered_session_targets(&self) -> Vec<(u64, VisibleSessionTarget)> {
+        let items = self.visible_active_items();
+        numbered_session_items(&items, &self.sessions.folders, self.current_folder_id())
+            .into_iter()
+            .filter_map(|(id, item)| {
+                VisibleSessionTarget::from_item(item).map(|target| (id, target))
+            })
+            .collect()
+    }
+
+    /// The folder holding the chat that is open right now, when there is one.
+    /// Without it the numbers address every folder's chats in rail order.
+    fn current_folder_id(&self) -> Option<u64> {
+        let selected = self.selected_app_session_id()?;
+        let items = self.visible_active_items();
+        let item = items
+            .iter()
+            .find(|item| item.app_session_id() == selected)?;
+        self.sessions
+            .folders
+            .folder_for_session(item.app_session_id(), item.project())
+    }
+
+    fn expand_folder(&mut self, folder_id: u64, cx: &mut gpui::Context<Self>) {
+        let collapsed = self
+            .sessions
+            .folders
+            .folders
+            .iter()
+            .any(|folder| folder.id == folder_id && folder.collapsed);
+        if collapsed {
+            self.set_folder_collapsed(folder_id, false, cx);
         }
+    }
+
+    fn selected_app_session_id(&self) -> Option<i64> {
+        self.sessions
+            .selected_draft
+            .as_deref()
+            .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
+            .map(|draft| draft.app_session_id)
+            .or_else(|| {
+                root_session_for_path(
+                    &self.sessions.visible,
+                    self.snapshot.selected_session.as_deref(),
+                )
+                .map(|session| session.app_session_id)
+            })
     }
 
     pub(in crate::app) fn archive_selected_session_and_advance(
@@ -184,7 +236,7 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let sessions = self.numbered_session_targets();
+        let sessions = self.selectable_session_targets();
         let selected_id = root_session_for_path(&self.sessions.visible, Some(&path))
             .map(|session| session.app_session_id);
         let replacement = selected_id
@@ -207,19 +259,7 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let sessions = self.visible_session_targets();
-        let selected_id = self
-            .sessions
-            .selected_draft
-            .as_deref()
-            .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
-            .map(|draft| draft.app_session_id)
-            .or_else(|| {
-                root_session_for_path(
-                    &self.sessions.visible,
-                    self.snapshot.selected_session.as_deref(),
-                )
-                .map(|session| session.app_session_id)
-            });
+        let selected_id = self.selected_app_session_id();
         let selected = selected_id.and_then(|selected_id| {
             sessions
                 .iter()
@@ -241,7 +281,7 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         if let Some(target) = self
-            .numbered_session_targets()
+            .selectable_session_targets()
             .into_iter()
             .find(|target| target.app_session_id() == app_session_id)
         {
@@ -268,7 +308,7 @@ impl FarcasterApp {
         }
     }
 
-    fn numbered_session_targets(&self) -> Vec<VisibleSessionTarget> {
+    fn selectable_session_targets(&self) -> Vec<VisibleSessionTarget> {
         let mut targets = self.visible_session_targets();
         targets.retain(
             |target| !matches!(target, VisibleSessionTarget::Draft(draft) if !draft.submitted),
@@ -277,19 +317,20 @@ impl FarcasterApp {
     }
 
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
-        folders::folder_rows(
-            session_rail_lists(
-                &self.sessions.visible,
-                &self.sessions.drafts,
-                self.sessions.project_filter.as_deref(),
-                &self.sessions.order,
-            )
-            .active,
-            &self.sessions.folders,
+        folders::folder_rows(self.visible_active_items(), &self.sessions.folders)
+            .into_iter()
+            .filter_map(VisibleSessionTarget::from_row)
+            .collect()
+    }
+
+    fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
+        session_rail_lists(
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
         )
-        .into_iter()
-        .filter_map(VisibleSessionTarget::from_row)
-        .collect()
+        .active
     }
 
     pub(super) fn begin_session_rail_resize(
@@ -327,6 +368,56 @@ impl FarcasterApp {
             .update(cx, |view, _| view.finish_resize())
         {
             cx.notify();
+        }
+    }
+
+    fn notification_panel_bounds(&self) -> PanelBounds {
+        PanelBounds {
+            height: theme().layout.notice_panel,
+            min_height: theme().layout.notice_panel_min,
+            max_height: theme().layout.notice_panel_max,
+        }
+    }
+
+    pub(super) fn toggle_notification_panel(&mut self, cx: &mut gpui::Context<Self>) {
+        let collapsed = self.views.notification_panel.is_collapsed();
+        self.views.notification_panel.set_collapsed(!collapsed);
+        if collapsed {
+            self.extensions.active.mark_notifications_seen();
+        }
+        self.notify_session_rail_shell(cx);
+    }
+
+    pub(super) fn begin_notification_panel_resize(
+        &mut self,
+        pointer_y: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let bounds = self.notification_panel_bounds();
+        self.views
+            .notification_panel
+            .begin_resize(bounds, pointer_y);
+        self.notify_session_rail_shell(cx);
+    }
+
+    pub(super) fn update_notification_panel_resize(
+        &mut self,
+        pointer_y: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let bounds = self.notification_panel_bounds();
+        if self
+            .views
+            .notification_panel
+            .update_resize(bounds, pointer_y)
+        {
+            self.notify_session_rail_shell(cx);
+        }
+    }
+
+    pub(super) fn finish_notification_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.views.notification_panel.finish_resize() {
+            self.notify_session_rail_shell(cx);
         }
     }
 

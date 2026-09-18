@@ -4,10 +4,11 @@ use std::{path::PathBuf, time::SystemTime};
 use super::{
     ARCHIVED_LEADING_GAP, ActiveSessionItem, SessionRailItem, SessionRailKind,
     clamped_session_rail_width, collapsed_inactive_rail_height, first_unsubmitted_draft,
-    hover::session_tooltip_lines, minimal_row_splice, replacement_index_after_close,
-    session_accessible_label, status_visual, subagent_counts, visible_session_shortcuts,
+    hover::session_tooltip_lines, minimal_row_splice, numbered_session_items,
+    replacement_index_after_close, session_accessible_label, status_visual, subagent_counts,
 };
 use crate::{
+    app::session_folders::{SessionFolder, SessionFolders},
     app::ui::assets::AppIcon,
     app::ui::theme::theme,
     sessions::{DraftSession, SessionSummary, UsageSummary},
@@ -21,7 +22,7 @@ fn closing_a_session_keeps_its_visual_slot_when_possible() {
 }
 
 #[test]
-fn shortcuts_number_sessions_without_binding_zero_to_a_draft() {
+fn numbers_address_the_chats_of_one_folder_at_a_time() {
     let mut first_draft =
         DraftSession::with_id(Some(Backend::Pi), "first".into(), PathBuf::from("/project"));
     first_draft.app_session_id = 12;
@@ -39,23 +40,98 @@ fn shortcuts_number_sessions_without_binding_zero_to_a_draft() {
     submitted.app_session_id = 10;
     submitted.submitted = true;
     let persisted = item("persisted", 9, "/other", SessionRailKind::Project, false);
+    let filed = item("filed", 7, "/other", SessionRailKind::Project, false);
     let rows = vec![
         ActiveSessionItem::Draft(first_draft),
         ActiveSessionItem::Draft(second_draft),
         ActiveSessionItem::Draft(submitted),
         ActiveSessionItem::Session(persisted),
+        ActiveSessionItem::Session(filed),
     ];
+    let mut folders = SessionFolders {
+        folders: vec![
+            SessionFolder {
+                id: 1,
+                name: "Project".into(),
+                ..Default::default()
+            },
+            SessionFolder {
+                id: 2,
+                name: "Later".into(),
+                ..Default::default()
+            },
+            SessionFolder {
+                id: 3,
+                name: "Empty".into(),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    folders.assign(12, Some(1));
+    folders.assign(10, Some(1));
+    folders.assign(9, Some(2));
+    folders.assign(7, Some(1));
 
-    let shortcuts = visible_session_shortcuts(&rows);
+    let all = numbered_session_items(&rows, &folders, None);
+    let first_only = numbered_session_items(&rows, &folders, Some(1));
+    let second_only = numbered_session_items(&rows, &folders, Some(2));
+    let empty_only = numbered_session_items(&rows, &folders, Some(3));
 
     assert_eq!(
         first_unsubmitted_draft(&rows).map(|draft| draft.id.as_str()),
         Some("first")
     );
-    assert_eq!(shortcuts.get(&12), None);
-    assert!(!shortcuts.contains_key(&11));
-    assert_eq!(shortcuts.get(&10), Some(&1));
-    assert_eq!(shortcuts.get(&9), Some(&2));
+    assert_eq!(
+        all.iter()
+            .map(|(id, item)| (*id, item.app_session_id()))
+            .collect::<Vec<_>>(),
+        [(1, 12), (1, 10), (1, 7), (2, 9)]
+    );
+    assert_eq!(
+        first_only
+            .iter()
+            .map(|(_, item)| item.app_session_id())
+            .collect::<Vec<_>>(),
+        [12, 10, 7]
+    );
+    assert_eq!(
+        second_only
+            .iter()
+            .map(|(_, item)| item.app_session_id())
+            .collect::<Vec<_>>(),
+        [9]
+    );
+    assert!(empty_only.is_empty());
+}
+
+#[test]
+fn session_numbers_stop_at_ten_so_zero_reaches_the_tenth_chat() {
+    let rows = (0..12)
+        .map(|index| {
+            ActiveSessionItem::Session(item(
+                &format!("chat-{index}"),
+                i64::from(index) + 1,
+                "/project",
+                SessionRailKind::Project,
+                false,
+            ))
+        })
+        .collect::<Vec<_>>();
+    let folders = SessionFolders {
+        folders: vec![SessionFolder {
+            id: 1,
+            name: "Project".into(),
+            project: Some(PathBuf::from("/project")),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let numbered = numbered_session_items(&rows, &folders, None);
+
+    assert_eq!(numbered.len(), 10);
+    assert_eq!(numbered[9].1.app_session_id(), 10);
 }
 
 #[test]

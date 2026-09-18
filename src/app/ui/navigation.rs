@@ -302,11 +302,7 @@ impl FarcasterApp {
                 self.switch_relative_session(direction, window, cx);
             }
             Command::Session(number) => {
-                if number == 0 {
-                    self.switch_to_first_unsubmitted_draft(window, cx);
-                } else {
-                    self.switch_to_session_number(number, window, cx);
-                }
+                self.switch_to_session_number(number, window, cx);
             }
         }
     }

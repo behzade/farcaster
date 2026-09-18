@@ -45,9 +45,9 @@ fn navigation_can_leave_and_return_to_an_unsubmitted_draft() {
         draft
     });
     let rows = session_rail_lists(&[], &drafts, None, &[]).active;
-    let shortcuts = crate::app::views::session_rail::visible_session_shortcuts(&rows);
-    assert_eq!(shortcuts.len(), 1);
-    assert_eq!(shortcuts.get(&20), Some(&1));
+    let shortcuts =
+        crate::app::views::session_rail::numbered_session_items(&rows, &Default::default(), None);
+    assert!(shortcuts.is_empty());
     let ids = folders::folder_rows(rows, &Default::default())
         .into_iter()
         .filter_map(VisibleSessionTarget::from_row)

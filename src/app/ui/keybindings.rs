@@ -114,7 +114,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             .in_picker($show)
         }};
     }
-    let session_prefix = if prefix == "cmd" { "cmd" } else { "super" };
+    let session_prefix = platform_key("cmd", "alt");
     macro_rules! session_shortcut {
         ($label:literal, $key:literal, $action:expr) => {{
             aliases.push(shortcut!(
@@ -155,7 +155,7 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
             crate::app::DecreaseTranscriptFontSize
         ),
         application_shortcut!("Sessions", "New session", "n", NewSession),
-        session_shortcut!("Open first unsubmitted draft", "0", SwitchSession0),
+        session_shortcut!("Open session 10", "0", SwitchSession0),
         session_shortcut!("Open session 1", "1", SwitchSession1),
         session_shortcut!("Open session 2", "2", SwitchSession2),
         session_shortcut!("Open session 3", "3", SwitchSession3),
