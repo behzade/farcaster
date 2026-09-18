@@ -12,7 +12,6 @@ use gpui::{
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
-    kbd::Kbd,
     menu::{DropdownMenu as _, PopupMenuItem},
 };
 
@@ -20,13 +19,13 @@ use super::{
     colors::{ColorTarget, color_menu},
     drag::DraggedSession,
     groups::{SessionRailItem, SessionRailKind},
-    hover::{session_hover_details, session_hover_panel},
+    hover::{session_hover_details, session_tooltip_content},
 };
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, AppTooltip as _, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _,
-        app_icon,
+        AppIconSize, AppTooltip as _, ContextMenuTrigger, DeleteButton, ReorderPosition,
+        ReorderTargetExt as _, app_icon,
     },
     app::ui::theme::theme,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
@@ -36,11 +35,11 @@ pub(super) struct SessionRowInput {
     pub(super) selected: bool,
     pub(super) color: Option<Rgba>,
     pub(super) status: Option<String>,
-    pub(super) shortcut: Option<u8>,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) draggable: bool,
     pub(super) title_editor: Option<Entity<InputState>>,
     pub(super) subagents: usize,
+    pub(super) nested: bool,
     pub(super) row_height: Pixels,
 }
 
@@ -50,11 +49,11 @@ impl SessionRowInput {
             selected,
             color: None,
             status,
-            shortcut: None,
             drop_position: None,
             draggable: true,
             title_editor: None,
             subagents: 0,
+            nested: false,
             row_height: theme().layout.session_row_height,
         }
     }
@@ -90,11 +89,11 @@ impl RenderOnce for SessionRow {
                     selected,
                     color,
                     status,
-                    shortcut,
                     drop_position,
                     draggable,
                     title_editor,
                     subagents,
+                    nested,
                     row_height,
                 },
             entity,
@@ -133,7 +132,6 @@ impl RenderOnce for SessionRow {
         };
         let accessible_label = session_accessible_label(&session.title, accessible_state, &age);
         let hover_details = session_hover_details(session, accessible_state, &age, subagents);
-        let hover_id = format!("session-hover-{}", session.id);
         let action_group = format!("session-actions-{}", session.id);
         let archive_action = session_archive_action(
             &session.id,
@@ -161,6 +159,7 @@ impl RenderOnce for SessionRow {
             .flex()
             .items_stretch()
             .px(theme().space.sm)
+            .when(nested, |row| row.pl(theme().space.md))
             .py(theme().space.xs)
             .rounded(theme().radius)
             .group(action_group)
@@ -238,15 +237,12 @@ impl RenderOnce for SessionRow {
                     .w_full()
                     .min_w_0()
                     .flex()
-                    .items_stretch()
+                    .items_center()
                     .gap(theme().space.sm)
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
-                            .flex()
-                            .flex_col()
-                            .gap(theme().size(2.0))
                             .overflow_hidden()
                             .child(session_row_title(
                                 session.title.clone(),
@@ -254,88 +250,83 @@ impl RenderOnce for SessionRow {
                                 is_archived,
                                 title_editor,
                                 cancel_entity,
-                            ))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap(theme().space.xs)
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .flex_1()
-                                            .flex()
-                                            .items_center()
-                                            .gap(theme().size(3.0))
-                                            .text_size(theme().type_scale.caption)
-                                            .text_color(theme().colors.subtle)
-                                            .child(
-                                                div()
-                                                    .id(format!("move-project-{}", session.id))
-                                                    .min_w_0()
-                                                    .when(crate::agents::supports_session_move(session.harness), |label| {
-                                                        label
-                                                            .role(Role::Button)
-                                                            .aria_label("Move session to another project")
-                                                            .tab_index(0)
-                                                            .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
-                                                            .rounded(theme().radius)
-                                                            .cursor(CursorStyle::PointingHand)
-                                                            .hover(|icon| icon.text_color(theme().colors.indicator))
-                                                            .focus(|icon| {
-                                                                icon.border(theme().border)
-                                                                    .border_color(theme().colors.indicator)
-                                                            })
-                                                            .app_tooltip("Move to project…")
-                                                            .on_click(move |_, window, cx| {
-                                                                cx.stop_propagation();
-                                                                let _ = move_entity.update(cx, |this, cx| {
-                                                                    this.open_picker(
-                                                                        PickerScope::Projects(ProjectPickerIntent::MoveSession {
-                                                                            path: move_path.clone(),
-                                                                            source_project: move_project.clone(),
-                                                                        }),
-                                                                        window,
-                                                                        cx,
-                                                                    );
-                                                                });
-                                                            })
-                                                    })
-                                                    .child(
-                                                        div()
-                                                            .min_w_0()
-                                                            .overflow_hidden()
-                                                            .whitespace_nowrap()
-                                                            .text_ellipsis()
-                                                            .child(project_label(&session.project)),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(session_row_metadata(
-                                        session.harness,
-                                        target_app_session_id,
-                                        &status_text,
-                                        age,
-                                        shortcut,
-                                    )),
-                            ),
-                    ),
-            )
-            .child(archive_action)
-            .when(is_archived, |row| row.child(delete_action));
+                            )),
+                    )
+                    .when(!nested, |content| {
+                        content.child(
+                            div()
+                                .max_w(theme().size(120.0))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap(theme().size(3.0))
+                                .text_size(theme().type_scale.caption)
+                                .text_color(theme().colors.subtle)
+                                .child(
+                                    div()
+                                        .id(format!("move-project-{}", session.id))
+                                        .min_w_0()
+                                        .when(crate::agents::supports_session_move(session.harness), |label| {
+                                            label
+                                                .role(Role::Button)
+                                                .aria_label("Move session to another project")
+                                                .tab_index(0)
+                                                .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
+                                                .rounded(theme().radius)
+                                                .cursor(CursorStyle::PointingHand)
+                                                .hover(|icon| icon.text_color(theme().colors.indicator))
+                                                .focus(|icon| {
+                                                    icon.border(theme().border)
+                                                        .border_color(theme().colors.indicator)
+                                                })
+                                                .app_tooltip("Move to project…")
+                                                .on_click(move |_, window, cx| {
+                                                    cx.stop_propagation();
+                                                    let _ = move_entity.update(cx, |this, cx| {
+                                                        this.open_picker(
+                                                            PickerScope::Projects(ProjectPickerIntent::MoveSession {
+                                                                path: move_path.clone(),
+                                                                source_project: move_project.clone(),
+                                                            }),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                })
+                                        })
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                                .child(project_label(&session.project)),
+                                        ),
+                                ),
+                        )
+                    })
+                    .child(delete_action)
+                    .child(archive_action)
+                    .when_some(
+                        failure_indicator(session.app_session_id, &status_text),
+                        |content, indicator| content.child(indicator),
+                    )
+                    .child(session_row_metadata(
+                        session.harness,
+                        target_app_session_id,
+                        &status_text,
+                        age,
+                    )),
+            );
+        let row = row.app_tooltip_element(move |_, _| session_tooltip_content(&hover_details));
         let context_menu =
             session_context_menu(session, target_kind, entity, row.into_any_element());
 
-        session_hover_panel(
-            hover_id,
-            hover_details,
-            div()
-                .h(row_height)
-                .w_full()
-                .child(context_menu)
-                .into_any_element(),
-        )
+        div()
+            .h(row_height)
+            .w_full()
+            .child(context_menu)
+            .into_any_element()
     }
 }
 
@@ -358,11 +349,6 @@ fn session_row_title(
             .into_any_element()
     } else {
         div()
-            .pr(if is_archived {
-                theme().size(50.0)
-            } else {
-                theme().size(24.0)
-            })
             .whitespace_nowrap()
             .text_ellipsis()
             .text_size(theme().type_scale.body_small)
@@ -403,13 +389,7 @@ fn session_archive_action(
             MouseButton::Left,
             crate::app::ui::primitives::preserve_pointer_focus,
         )
-        .absolute()
-        .top(theme().size(10.0))
-        .right(if is_archived {
-            theme().controls.icon_button + theme().size(7.0)
-        } else {
-            theme().size(5.0)
-        })
+        .flex_none()
         .size(theme().controls.icon_button)
         .flex()
         .items_center()
@@ -446,37 +426,9 @@ fn session_delete_action(
     action_group: String,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    div()
-        .id(format!("delete-{id}"))
-        .role(Role::Button)
-        .aria_label("Delete session permanently")
-        .tab_index(0)
-        .on_mouse_down(
-            MouseButton::Left,
-            crate::app::ui::primitives::preserve_pointer_focus,
-        )
-        .absolute()
-        .top(theme().size(10.0))
-        .right(theme().size(5.0))
-        .size(theme().controls.icon_button)
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(theme().radius)
-        .opacity(0.0)
-        .group_hover(action_group, |button| button.opacity(1.0))
-        .focus(|button| {
-            button
-                .opacity(1.0)
-                .border(theme().border)
-                .border_color(theme().colors.indicator)
-        })
-        .text_color(theme().colors.danger)
-        .hover(|button| button.bg(theme().colors.highlight))
-        .app_tooltip("Delete session permanently")
-        .child(app_icon(AppIcon::Trash, AppIconSize::Control))
-        .on_click(move |_, window, cx| {
-            cx.stop_propagation();
+    DeleteButton::new(format!("delete-{id}"), "Delete session permanently")
+        .reveal_on(action_group)
+        .on_delete(move |window, cx| {
             let _ = entity.update(cx, |this, cx| {
                 this.request_session_delete(path.clone(), window, cx);
             });
@@ -587,19 +539,17 @@ fn session_context_menu(
                 menu
             });
 
-            if kind == SessionRailKind::Archived {
-                let delete_path = path.clone();
-                let delete_entity = entity.clone();
-                menu = menu.separator().item(
-                    PopupMenuItem::new("Delete permanently")
-                        .icon(AppIcon::Trash)
-                        .on_click(move |_, window, cx| {
-                            let _ = delete_entity.update(cx, |this, cx| {
-                                this.request_session_delete(delete_path.clone(), window, cx);
-                            });
-                        }),
-                );
-            }
+            let delete_path = path.clone();
+            let delete_entity = entity.clone();
+            menu = menu.separator().item(
+                PopupMenuItem::new("Delete permanently")
+                    .icon(AppIcon::Trash)
+                    .on_click(move |_, window, cx| {
+                        let _ = delete_entity.update(cx, |this, cx| {
+                            this.request_session_delete(delete_path.clone(), window, cx);
+                        });
+                    }),
+            );
             menu
         })
         .mouse_button(MouseButton::Right)
@@ -616,39 +566,36 @@ pub(super) fn session_row_metadata(
     app_session_id: i64,
     status: &str,
     age: String,
-    shortcut: Option<u8>,
 ) -> AnyElement {
     div()
         .flex_none()
         .flex()
         .items_center()
-        .gap(theme().space.xs)
+        .gap(theme().space.sm)
         .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline))
+        .when(status != "Failed", |metadata| {
+            metadata.when_some(status_icon(app_session_id, status), |metadata, icon| {
+                metadata.child(div().flex_none().flex().items_center().child(icon))
+            })
+        })
         .child(
             div()
-                .size(theme().icons.inline)
-                .flex_none()
-                .when_some(status_icon(app_session_id, status), |slot, icon| {
-                    slot.child(icon)
-                }),
-        )
-        .child(
-            div()
-                .w(theme().size(30.0))
                 .flex_none()
                 .whitespace_nowrap()
-                .text_align(gpui::TextAlign::Right)
                 .text_size(theme().type_scale.caption)
                 .text_color(theme().colors.subtle)
                 .child(age),
         )
-        .when_some(shortcut, |metadata, number| {
-            metadata.child(Kbd::new(
-                gpui::Keystroke::parse(&number.to_string())
-                    .expect("fixed session shortcut must parse"),
-            ))
-        })
         .into_any_element()
+}
+
+/// A failed chat reports itself immediately left of the provider icon, in the
+/// slot a reload action for the same chat will share.
+pub(super) fn failure_indicator(app_session_id: i64, status: &str) -> Option<AnyElement> {
+    if status != "Failed" {
+        return None;
+    }
+    status_icon(app_session_id, status)
 }
 
 fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {

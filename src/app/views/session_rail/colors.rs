@@ -88,12 +88,7 @@ fn color_swatch(
 }
 
 impl FarcasterApp {
-    pub(in crate::app) fn set_rail_color(
-        &mut self,
-        target: ColorTarget,
-        color: Option<u8>,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_rail_color(&mut self, target: ColorTarget, color: Option<u8>, cx: &mut Context<Self>) {
         let mut next = self.sessions.folders.clone();
         let changed = match target {
             ColorTarget::Folder(id) => color.is_some_and(|color| next.set_color(id, color)),

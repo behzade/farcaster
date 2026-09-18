@@ -1,23 +1,20 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use gpui::{
-    AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
+    App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
+    Window, div, prelude::FluentBuilder as _,
 };
 
 use super::{
     drag::DraggedSession,
     groups::SessionRailKind,
-    hover::{draft_hover_details, session_hover_panel},
+    hover::{draft_hover_details, session_tooltip_content},
     rows::{project_badge, project_label, relative_age, session_row_metadata},
 };
 use crate::{
     app::FarcasterApp,
-    app::ui::assets::AppIcon,
-    app::ui::primitives::{
-        AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
-    },
+    app::ui::primitives::{AppTooltip as _, DeleteButton, ReorderPosition, ReorderTargetExt as _},
     app::ui::theme::theme,
     sessions::DraftSession,
 };
@@ -25,8 +22,8 @@ use crate::{
 pub(super) struct DraftRowInput {
     pub(super) selected: bool,
     pub(super) status: String,
-    pub(super) shortcut: Option<u8>,
     pub(super) drop_position: Option<ReorderPosition>,
+    pub(super) nested: bool,
 }
 
 #[derive(IntoElement)]
@@ -58,8 +55,8 @@ impl RenderOnce for DraftRow {
                 DraftRowInput {
                     selected,
                     status,
-                    shortcut,
                     drop_position,
+                    nested,
                 },
             entity,
         } = self;
@@ -83,195 +80,144 @@ impl RenderOnce for DraftRow {
         let drop_entity = entity.clone();
         let drag_entity = entity.clone();
         let action_group = format!("draft-actions-{id}");
-        let hover_id = format!("draft-hover-{id}");
         let hover_details = draft_hover_details(&draft, status);
-        session_hover_panel(
-            hover_id,
-            hover_details,
-            div()
-                .h(theme().layout.session_row_height)
-                .w_full()
-                .child(
-                    div()
-                        .id(format!("session-{id}"))
-                        .role(Role::Button)
-                        .aria_label(format!("Open {status} session in {}", project.display()))
-                        .aria_selected(selected)
-                        .tab_index(0)
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            crate::app::ui::primitives::preserve_pointer_focus,
+        div()
+            .h(theme().layout.session_row_height)
+            .w_full()
+            .child(
+                div()
+                    .id(format!("session-{id}"))
+                    .app_tooltip_element(move |_, _| session_tooltip_content(&hover_details))
+                    .role(Role::Button)
+                    .aria_label(format!("Open {status} session in {}", project.display()))
+                    .aria_selected(selected)
+                    .tab_index(0)
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        crate::app::ui::primitives::preserve_pointer_focus,
+                    )
+                    .size_full()
+                    .h(theme().layout.session_row_height)
+                    .relative()
+                    .flex()
+                    .items_stretch()
+                    .px(theme().space.sm)
+                    .when(nested, |row| row.pl(theme().space.md))
+                    .py(theme().space.xs)
+                    .rounded(theme().radius)
+                    .group(action_group.clone())
+                    .bg(if selected {
+                        theme().colors.highlight
+                    } else {
+                        theme().colors.panel
+                    })
+                    .hover(|row| row.bg(theme().colors.highlight))
+                    .when(selected, |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .top_0()
+                                .bottom_0()
+                                .w(theme().size(2.0))
+                                .bg(theme().colors.indicator),
                         )
-                        .size_full()
-                        .h(theme().layout.session_row_height)
-                        .relative()
-                        .flex()
-                        .items_stretch()
-                        .px(theme().space.sm)
-                        .py(theme().space.xs)
-                        .rounded(theme().radius)
-                        .group(action_group.clone())
-                        .bg(if selected {
-                            theme().colors.highlight
-                        } else {
-                            theme().colors.panel
+                    })
+                    .focus(|row| {
+                        row.border(theme().border)
+                            .border_color(theme().colors.indicator)
+                    })
+                    .cursor(CursorStyle::PointingHand)
+                    .on_drag(drag, move |drag, _, _, cx| {
+                        let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
+                        cx.new(|_| drag.clone())
+                    })
+                    .can_drop(move |value, _, _| {
+                        value.downcast_ref::<DraggedSession>().is_some_and(|drag| {
+                            drag.can_drop_on(SessionRailKind::Project, target_app_session_id)
                         })
-                        .hover(|row| row.bg(theme().colors.highlight))
-                        .when(selected, |row| {
-                            row.child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .top_0()
-                                    .bottom_0()
-                                    .w(theme().size(2.0))
-                                    .bg(theme().colors.indicator),
-                            )
-                        })
-                        .focus(|row| {
-                            row.border(theme().border)
-                                .border_color(theme().colors.indicator)
-                        })
-                        .cursor(CursorStyle::PointingHand)
-                        .on_drag(drag, move |drag, _, _, cx| {
-                            let _ = drag_entity.update(cx, |this, cx| this.begin_session_drag(cx));
-                            cx.new(|_| drag.clone())
-                        })
-                        .can_drop(move |value, _, _| {
-                            value.downcast_ref::<DraggedSession>().is_some_and(|drag| {
-                                drag.can_drop_on(SessionRailKind::Project, target_app_session_id)
-                            })
-                        })
-                        .reorder_target::<DraggedSession>(
-                            drop_position,
-                            theme().colors.indicator,
-                            theme().colors.highlight,
-                            move |position, _, cx| {
-                                let _ = drag_move_entity.update(cx, |this, cx| {
-                                    this.update_session_drop_target(
-                                        target_app_session_id,
-                                        position,
-                                        cx,
-                                    );
-                                });
-                            },
-                            move |drag, window, cx| {
-                                cx.stop_propagation();
-                                let _ = drop_entity.update(cx, |this, cx| {
-                                    this.complete_session_row_drop(
-                                        drag,
-                                        SessionRailKind::Project,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            },
-                        )
-                        .on_click(move |_, window, cx| {
-                            let _ = entity.update(cx, |this, cx| {
-                                this.resume_draft_and_focus(
-                                    id.clone(),
-                                    project.clone(),
+                    })
+                    .reorder_target::<DraggedSession>(
+                        drop_position,
+                        theme().colors.indicator,
+                        theme().colors.highlight,
+                        move |position, _, cx| {
+                            let _ = drag_move_entity.update(cx, |this, cx| {
+                                this.update_session_drop_target(
+                                    target_app_session_id,
+                                    position,
+                                    cx,
+                                );
+                            });
+                        },
+                        move |drag, window, cx| {
+                            cx.stop_propagation();
+                            let _ = drop_entity.update(cx, |this, cx| {
+                                this.complete_session_row_drop(
+                                    drag,
+                                    SessionRailKind::Project,
                                     window,
                                     cx,
                                 );
                             });
-                        })
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex_1()
-                                .flex()
-                                .flex_col()
-                                .gap(theme().size(2.0))
-                                .overflow_hidden()
-                                .child(
+                        },
+                    )
+                    .on_click(move |_, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            this.resume_draft_and_focus(id.clone(), project.clone(), window, cx);
+                        });
+                    })
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(theme().space.sm)
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_size(theme().type_scale.body_small)
+                                    .font_weight(if selected {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
+                                    .text_color(theme().colors.text)
+                                    .child(title),
+                            )
+                            .when(!nested, |row| {
+                                row.child(
                                     div()
-                                        .min_w_0()
-                                        .pr(theme().size(24.0))
-                                        .flex()
-                                        .items_center()
-                                        .gap(theme().space.xs)
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .whitespace_nowrap()
-                                                .text_ellipsis()
-                                                .text_size(theme().type_scale.body_small)
-                                                .font_weight(if selected {
-                                                    FontWeight::SEMIBOLD
-                                                } else {
-                                                    FontWeight::NORMAL
-                                                })
-                                                .text_color(theme().colors.text)
-                                                .child(title),
-                                        )
-                                        .when(is_draft, |title| title.child(draft_badge())),
+                                        .max_w(theme().size(120.0))
+                                        .flex_none()
+                                        .child(project_badge(&draft.project)),
                                 )
-                                .child(
-                                    div()
-                                        .min_w_0()
-                                        .flex()
-                                        .items_center()
-                                        .gap(theme().space.xs)
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .flex_1()
-                                                .child(project_badge(&draft.project)),
-                                        )
-                                        .child(session_row_metadata(
-                                            draft.harness,
-                                            target_app_session_id,
-                                            if is_draft { "" } else { status },
-                                            age,
-                                            shortcut,
-                                        )),
-                                ),
-                        )
-                        .when(draft_can_be_discarded(draft.submitted, status), |row| {
-                            row.child(
-                                icon_control(format!("discard-{discard_id}"), "Discard draft")
-                                    .absolute()
-                                    .top(theme().size(10.0))
-                                    .right(theme().size(5.0))
-                                    .size(theme().controls.icon_button)
-                                    .opacity(0.0)
-                                    .group_hover(action_group, |button| button.opacity(1.0))
-                                    .focus(|button| button.opacity(1.0))
-                                    .hover(|button| button.bg(theme().colors.highlight))
-                                    .child(app_icon(AppIcon::Trash, AppIconSize::Control))
-                                    .on_click(move |_, window, cx| {
-                                        cx.stop_propagation();
+                            })
+                            .child(
+                                DeleteButton::new(format!("discard-{discard_id}"), "Discard draft")
+                                    .reveal_on(action_group)
+                                    .on_delete(move |window, cx| {
                                         let _ = discard_entity.update(cx, |this, cx| {
                                             this.discard_draft(&discard_id, window, cx);
                                         });
                                     }),
                             )
-                        }),
-                )
-                .into_any_element(),
-        )
+                            .when_some(
+                                super::rows::failure_indicator(target_app_session_id, status),
+                                |row, indicator| row.child(indicator),
+                            )
+                            .child(session_row_metadata(
+                                draft.harness,
+                                target_app_session_id,
+                                if is_draft { "" } else { status },
+                                age,
+                            )),
+                    ),
+            )
+            .into_any_element()
     }
 }
-
-fn draft_can_be_discarded(submitted: bool, status: &str) -> bool {
-    !submitted || status == "Failed"
-}
-
-fn draft_badge() -> AnyElement {
-    div()
-        .flex_none()
-        .px(theme().space.xs)
-        .rounded(theme().radius)
-        .border(theme().border)
-        .border_color(theme().colors.border)
-        .text_size(theme().type_scale.caption)
-        .text_color(theme().colors.muted)
-        .child("Draft")
-        .into_any_element()
-}
-
-#[cfg(test)]
-#[path = "draft_row_tests.rs"]
-mod tests;

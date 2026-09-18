@@ -1,12 +1,7 @@
-use std::time::Duration;
-
 use gpui::{
-    AnyElement, App, Bounds, Context, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, RenderOnce, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, deferred, div, prelude::FluentBuilder as _, px,
+    AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div,
+    prelude::FluentBuilder as _,
 };
-use gpui_base::{Align, Positioner};
-use gpui_component::{ElementExt as _, Placement};
 
 use super::super::usage::{format_cost, format_tokens};
 use crate::{
@@ -15,9 +10,6 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
 };
 
-const OPEN_DELAY: Duration = Duration::from_millis(250);
-const MIN_PANEL_WIDTH: f32 = 220.0;
-const MAX_PANEL_WIDTH: f32 = 360.0;
 const PREVIEW_CHARS: usize = 160;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,9 +38,6 @@ pub(in crate::app) fn session_hover_details(
     }
     if !age.is_empty() {
         push_row(&mut rows, "Updated", age.to_owned());
-    }
-    if session.message_count > 0 {
-        push_row(&mut rows, "Messages", session.message_count.to_string());
     }
     if let Some(usage) = usage_value(&session.usage) {
         push_row(&mut rows, "Usage", usage);
@@ -103,118 +92,11 @@ pub(super) fn flatten_details(details: &SessionHoverDetails) -> Vec<String> {
     lines
 }
 
-pub(in crate::app) fn session_hover_panel(
-    id: impl Into<SharedString>,
-    details: SessionHoverDetails,
-    trigger: AnyElement,
-) -> AnyElement {
-    SessionHoverPanel {
-        id: id.into(),
-        details,
-        trigger,
-    }
-    .into_any_element()
-}
-
-#[derive(IntoElement)]
-struct SessionHoverPanel {
-    id: SharedString,
-    details: SessionHoverDetails,
-    trigger: AnyElement,
-}
-
-#[derive(Default)]
-struct HoverState {
-    open: bool,
-    bounds: Bounds<Pixels>,
-    open_task: Option<gpui::Task<()>>,
-}
-
-impl HoverState {
-    fn set_bounds(&mut self, bounds: Bounds<Pixels>, cx: &mut Context<Self>) {
-        if self.bounds != bounds {
-            self.bounds = bounds;
-            if self.open {
-                cx.notify();
-            }
-        }
-    }
-
-    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        self.open_task = None;
-        if hovered {
-            if self.open {
-                return;
-            }
-            self.open_task = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(OPEN_DELAY).await;
-                let _ = this.update(cx, |this, cx| {
-                    this.open = true;
-                    cx.notify();
-                });
-            }));
-            return;
-        }
-        if self.open {
-            self.open = false;
-            cx.notify();
-        }
-    }
-}
-
-impl RenderOnce for SessionHoverPanel {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(ElementId::Name(self.id.clone()), cx, |_, _| {
-            HoverState::default()
-        });
-        let bounds = state.read(cx).bounds;
-        let open = state.read(cx).open && bounds.size.width > px(0.0);
-        let hover_state = state.clone();
-        let width = panel_width(window.viewport_size().width);
-        div()
-            .id(ElementId::Name(format!("{}-host", self.id).into()))
-            .w_full()
-            .on_prepaint(move |bounds, _, cx| {
-                hover_state.update(cx, |this, cx| this.set_bounds(bounds, cx));
-            })
-            .on_hover({
-                let state = state.clone();
-                move |hovered, _, cx| {
-                    state.update(cx, |this, cx| this.set_hovered(*hovered, cx));
-                }
-            })
-            .child(self.trigger)
-            .when(open, |host| {
-                host.child(
-                    deferred(
-                        Positioner::side(bounds)
-                            .placement(Placement::Right)
-                            .align(Align::Start)
-                            .offset(theme().space.sm)
-                            .child(render_panel(&self.details, width)),
-                    )
-                    .with_priority(100),
-                )
-            })
-    }
-}
-
-fn render_panel(details: &SessionHoverDetails, width: Pixels) -> impl IntoElement {
+pub(in crate::app) fn session_tooltip_content(details: &SessionHoverDetails) -> AnyElement {
     div()
-        .id("session-hover-panel")
-        .w(width)
-        .max_w(width)
         .flex()
         .flex_col()
         .gap(theme().space.xs)
-        .px(theme().space.md)
-        .py(theme().space.sm)
-        .rounded(theme().radius)
-        .bg(theme().colors.surface)
-        .border(theme().border)
-        .border_color(theme().colors.border)
-        .shadow_md()
-        .occlude()
         .child(
             div()
                 .text_size(theme().type_scale.body_small)
@@ -246,8 +128,8 @@ fn render_panel(details: &SessionHoverDetails, width: Pixels) -> impl IntoElemen
                         .child(value.clone()),
                 )
         }))
-        .when_some(details.preview.clone(), |panel, preview| {
-            panel.child(
+        .when_some(details.preview.clone(), |content, preview| {
+            content.child(
                 div()
                     .mt(theme().space.xs)
                     .pt(theme().space.xs)
@@ -258,11 +140,7 @@ fn render_panel(details: &SessionHoverDetails, width: Pixels) -> impl IntoElemen
                     .child(preview),
             )
         })
-}
-
-fn panel_width(viewport_width: Pixels) -> Pixels {
-    let to_middle = f32::from(viewport_width) / 2.0 - f32::from(theme().layout.session_rail);
-    px(to_middle.clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH))
+        .into_any_element()
 }
 
 fn push_row(rows: &mut Vec<(String, String)>, label: &str, value: String) {
