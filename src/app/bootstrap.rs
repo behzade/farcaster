@@ -246,6 +246,7 @@ impl FarcasterApp {
                     project_terminals: HashMap::new(),
                 },
                 native_surface_snapshot: None,
+                native_surface_refresh: None,
                 native_surface_covered: false,
                 tooltip_watch: None,
                 surface: AppSurface::Chat,
@@ -300,6 +301,7 @@ impl FarcasterApp {
                 workgraph_detail: regions.workgraph_detail,
                 workgraph_sidebar: regions.workgraph_sidebar,
                 workgraph_inspector_issue: None,
+                notification_panel: Default::default(),
             },
             overlays: views::AppOverlays {
                 view: Default::default(),

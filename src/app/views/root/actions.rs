@@ -194,7 +194,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         }
     }))
     .on_action(cx.listener(|this, _: &SwitchSession0, window, cx| {
-        this.switch_to_first_unsubmitted_draft(window, cx);
+        this.switch_to_session_number(10, window, cx);
     }))
     .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
         this.switch_to_session_number(1, window, cx);
@@ -229,12 +229,14 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
     root.on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
         this.update_session_rail_resize(event.position.x, cx);
         this.update_run_panel_resize(event.position.x, cx);
+        this.update_notification_panel_resize(event.position.y, cx);
     }))
     .on_mouse_up(
         gpui::MouseButton::Left,
         cx.listener(|this, _, _, cx| {
             this.finish_session_rail_resize(cx);
             this.finish_run_panel_resize(cx);
+            this.finish_notification_panel_resize(cx);
         }),
     )
     .on_mouse_up_out(
@@ -242,6 +244,7 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
         cx.listener(|this, _, _, cx| {
             this.finish_session_rail_resize(cx);
             this.finish_run_panel_resize(cx);
+            this.finish_notification_panel_resize(cx);
         }),
     )
 }

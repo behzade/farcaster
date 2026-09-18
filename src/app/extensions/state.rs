@@ -118,7 +118,12 @@ impl FarcasterApp {
         generation: u64,
         _cx: &mut Context<Self>,
     ) {
-        match self.extensions.active.apply(request) {
+        let notification = matches!(request, ExtensionUiRequest::Notify { .. });
+        let applied = self.extensions.active.apply(request);
+        if notification && !self.views.notification_panel.is_collapsed() {
+            self.extensions.active.mark_notifications_seen();
+        }
+        match applied {
             ExtensionEffect::DialogOpened => self.extensions.pending_dialog_setup = true,
             ExtensionEffect::SetTitle(title) => {
                 self.extensions.pending_title = Some((generation, title))

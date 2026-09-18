@@ -2,13 +2,9 @@ use std::cell::RefCell;
 
 use gpui::{
     Anchor, AnyElement, InteractiveElement as _, IntoElement, ListState, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, list,
-    prelude::FluentBuilder as _,
+    Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _,
 };
-use gpui_component::{
-    input::Input,
-    menu::{DropdownMenu as _, PopupMenuItem},
-};
+use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 
 use super::{
     FarcasterApp, active_item_identity,
@@ -19,48 +15,78 @@ use super::{
     reconcile_list_rows,
     rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
-    visible_session_shortcuts,
 };
 use crate::{
     app::PickerScope,
+    app::ProjectPickerIntent,
     app::session::status::{resolved_session_status, roots_waiting_for_active_descendants},
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, FeedbackTone, app_icon, dropdown_button, feedback, icon_button,
+        AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, SearchField, app_icon,
+        feedback, icon_button,
     },
     app::ui::theme::theme,
     sessions::root_session_for_path,
 };
 
+fn notification_tone(tone: crate::protocol::NotifyTone) -> FeedbackTone {
+    match tone {
+        crate::protocol::NotifyTone::Error => FeedbackTone::Error,
+        crate::protocol::NotifyTone::Warning => FeedbackTone::Warning,
+        crate::protocol::NotifyTone::Info => FeedbackTone::Info,
+    }
+}
+
 impl FarcasterApp {
     fn render_rail_notices(&self, entity: WeakEntity<Self>) -> Option<AnyElement> {
-        let task_notice = self.render_code_task_notice(entity);
-        let notifications = &self.extensions.active.notifications;
-        if notifications.is_empty() && task_notice.is_none() {
-            return None;
-        }
+        let task_notice = self.render_code_task_notice(entity)?;
         Some(
             div()
                 .flex_none()
                 .flex()
                 .flex_col()
-                .gap(theme().space.xs)
                 .px(theme().size(10.0))
                 .pb(theme().space.sm)
-                .children(task_notice)
-                .children(notifications.iter().enumerate().map(|(index, notice)| {
-                    feedback(
-                        ("rail-notification", index),
-                        notice.message.clone(),
-                        match notice.tone {
-                            crate::protocol::NotifyTone::Error => FeedbackTone::Error,
-                            crate::protocol::NotifyTone::Warning => FeedbackTone::Warning,
-                            crate::protocol::NotifyTone::Info => FeedbackTone::Info,
-                        },
-                    )
-                }))
+                .child(task_notice)
                 .into_any_element(),
         )
+    }
+
+    fn render_notification_panel(&self, entity: WeakEntity<Self>) -> AnyElement {
+        let toggle_entity = entity.clone();
+        let resize_entity = entity;
+        let notifications = self
+            .extensions
+            .active
+            .notification_history
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(index, notice)| {
+                feedback(
+                    ("rail-notification", index),
+                    notice.message.clone(),
+                    notification_tone(notice.tone),
+                )
+            })
+            .collect::<Vec<_>>();
+        Panel::new(
+            "notification-panel",
+            &self.views.notification_panel,
+            self.notification_panel_bounds(),
+            "Notifications",
+        )
+        .badge(self.extensions.active.unseen_notifications())
+        .on_toggle(move |_, cx| {
+            let _ = toggle_entity.update(cx, |this, cx| this.toggle_notification_panel(cx));
+        })
+        .on_resize(move |event, _, cx| {
+            let _ = resize_entity.update(cx, |this, cx| {
+                this.begin_notification_panel_resize(event.position.y, cx);
+            });
+        })
+        .children(notifications)
+        .into_any_element()
     }
 
     pub(in crate::app::views) fn render_sessions(
@@ -75,7 +101,6 @@ impl FarcasterApp {
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
-        let search_focus = self.navigation.search_focus.clone();
         let selected_root = self.selected_rail_root().map(|session| session.id.clone());
         let live_root = root_session_for_path(
             &self.sessions.visible,
@@ -104,8 +129,15 @@ impl FarcasterApp {
         };
         let active_drop_list = session_list.clone();
         let active_rows = folder_rows(active_rows, &self.sessions.folders);
-        let session_shortcuts =
-            visible_session_shortcuts(active_rows.iter().filter_map(FolderRow::session));
+        let nested_rows = active_rows
+            .iter()
+            .scan(false, |nested, row| {
+                if let FolderRow::Header(header) = row {
+                    *nested = !header.collapsed;
+                }
+                Some(*nested)
+            })
+            .collect::<Vec<_>>();
         let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
         reconcile_list_rows(
             &session_list,
@@ -115,7 +147,6 @@ impl FarcasterApp {
                 .map(|row| match row {
                     FolderRow::Session(item) => active_item_identity(item),
                     FolderRow::Header(folder) => format!("folder:{}", folder.id),
-                    FolderRow::New => "new-folder".to_owned(),
                 })
                 .collect(),
         );
@@ -145,7 +176,6 @@ impl FarcasterApp {
                             &submitted_drafts,
                             &active_run_statuses,
                         );
-                        let shortcut = session_shortcuts.get(&draft.app_session_id).copied();
                         let drop_position = active_drop_target
                             .filter(|(target, _)| *target == draft.app_session_id)
                             .map(|(_, position)| position);
@@ -154,8 +184,8 @@ impl FarcasterApp {
                             DraftRowInput {
                                 selected,
                                 status,
-                                shortcut,
                                 drop_position,
+                                nested: nested_rows.get(index).copied().unwrap_or(false),
                             },
                             active_row_entity.clone(),
                         )
@@ -172,7 +202,6 @@ impl FarcasterApp {
                             &active_live_status,
                             active_waiting_roots.contains(&item.session.id),
                         ));
-                        let shortcut = session_shortcuts.get(&item.session.app_session_id).copied();
                         let editing =
                             active_editing_path.as_deref() == Some(item.session.path.as_path());
                         let drop_position = active_drop_target
@@ -187,7 +216,6 @@ impl FarcasterApp {
                                     .copied()
                                     .map(palette_color),
                                 status: badge,
-                                shortcut,
                                 drop_position,
                                 draggable: true,
                                 title_editor: editing.then(|| active_title_input.clone()),
@@ -195,6 +223,7 @@ impl FarcasterApp {
                                     .get(item.session.id.as_str())
                                     .copied()
                                     .unwrap_or(0),
+                                nested: nested_rows.get(index).copied().unwrap_or(false),
                                 row_height: theme().layout.session_row_height,
                             },
                             active_row_entity.clone(),
@@ -203,14 +232,8 @@ impl FarcasterApp {
                     }
                 },
                 Some(FolderRow::Header(folder)) => folder_header(
-                    Some(folder.clone()),
+                    folder.clone(),
                     editing_folder == Some(Some(folder.id)),
-                    active_title_input.clone(),
-                    active_row_entity.clone(),
-                ),
-                Some(FolderRow::New) => folder_header(
-                    None,
-                    editing_folder == Some(None),
                     active_title_input.clone(),
                     active_row_entity.clone(),
                 ),
@@ -273,49 +296,47 @@ impl FarcasterApp {
                                         },
                                     ))
                                     .child(icon_button(
-                                        "open-folder",
-                                        AppIcon::FolderPlus,
-                                        "Open folder",
+                                        "new-session",
+                                        AppIcon::Plus,
+                                        "New session",
                                         ButtonTone::Quiet,
                                         move |window, cx| {
                                             let _ = new_entity.update(cx, |this, cx| {
-                                                this.choose_project_folder(None, window, cx);
+                                                this.open_picker(
+                                                    PickerScope::Projects(
+                                                        ProjectPickerIntent::NewSession,
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
                                             });
                                         },
                                     )),
                             ),
                     )
                     .child(
-                        div()
-                            .id("session-search-surface")
-                            .h(theme().size(36.0))
-                            .flex()
-                            .items_center()
-                            .gap(theme().space.xs)
-                            .pl(theme().size(10.0))
-                            .rounded(theme().radius)
-                            .border(theme().border)
-                            .border_color(theme().colors.highlight)
-                            .bg(theme().colors.surface)
-                            .text_color(theme().colors.muted)
-                            .on_click(move |_, window, cx| search_focus.focus(window, cx))
-                            .child(app_icon(AppIcon::MagnifyingGlass, AppIconSize::Inline))
-                            .child(
-                                Input::new(&self.navigation.search)
-                                    .flex_1()
-                                    .min_w_0()
-                                    .appearance(false),
-                            )
-                            .child(
-                                dropdown_button(
-                                    "project-filter",
-                                    filter_label,
-                                    ButtonTone::Quiet,
-                                    true,
+                        SearchField::new("session-search", &self.navigation.search)
+                            .accessible_label("Search sessions")
+                            .trailing(
+                                ContextMenuTrigger::new(
+                                    "project-filter-menu",
+                                    div()
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .gap(theme().space.xs)
+                                        .px(theme().space.sm)
+                                        .border_l(theme().border)
+                                        .border_color(theme().colors.border)
+                                        .cursor_pointer()
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.muted)
+                                        .hover(|filter| filter.bg(theme().colors.highlight))
+                                        .child(filter_label)
+                                        .child(app_icon(AppIcon::CaretDown, AppIconSize::Inline))
+                                        .into_any_element(),
                                 )
-                                .flex_none()
-                                .h(theme().controls.icon_button)
-                                .px(theme().space.sm)
+                                .h_full()
                                 .dropdown_menu_with_anchor(
                                     Anchor::TopRight,
                                     move |menu, _, _| {
@@ -355,9 +376,6 @@ impl FarcasterApp {
             )
             .when_some(self.sessions.error.clone(), |rail, error| {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
-            })
-            .when_some(self.render_rail_notices(entity.clone()), |rail, notices| {
-                rail.child(notices)
             })
             .child(
                 div()
@@ -431,6 +449,10 @@ impl FarcasterApp {
                     )
                 },
             )
+            .when_some(self.render_rail_notices(entity.clone()), |rail, notices| {
+                rail.child(notices)
+            })
+            .child(self.render_notification_panel(entity))
             .into_any_element()
     }
 }

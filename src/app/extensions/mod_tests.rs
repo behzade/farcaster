@@ -69,7 +69,52 @@ fn workspace_errors_are_transient_notifications() {
     let notice = state.notifications[0].clone();
     assert_eq!(notice.tone, NotifyTone::Error);
     assert!(state.remove_notification(&notice.id, notice.expires_at));
-    assert_eq!(state, ExtensionUiState::default());
+    assert!(state.notifications.is_empty());
+}
+
+#[test]
+fn expired_notifications_stay_in_the_history_until_they_are_seen() {
+    let mut state = ExtensionUiState::default();
+    state.push_notification(
+        "workspace:Neovim".into(),
+        "Neovim: request timed out".into(),
+        NotifyTone::Error,
+    );
+
+    assert_eq!(state.unseen_notifications(), 1);
+    assert_eq!(state.notification_history.len(), 1);
+    assert_eq!(
+        state.notification_history[0].message,
+        "Neovim: request timed out"
+    );
+    assert_eq!(state.notification_history[0].tone, NotifyTone::Error);
+
+    let notice = state.notifications[0].clone();
+    assert!(state.remove_notification(&notice.id, notice.expires_at));
+
+    assert!(state.notifications.is_empty());
+    assert_eq!(state.notification_history.len(), 1);
+    assert_eq!(state.unseen_notifications(), 1);
+
+    state.mark_notifications_seen();
+    assert_eq!(state.unseen_notifications(), 0);
+    assert_eq!(state.notification_history.len(), 1);
+}
+
+#[test]
+fn notification_history_is_bounded() {
+    let mut state = ExtensionUiState::default();
+    for index in 0..MAX_NOTIFICATION_HISTORY + 5 {
+        state.push_notification(
+            format!("notice-{index}"),
+            format!("message {index}"),
+            NotifyTone::Info,
+        );
+    }
+
+    assert_eq!(state.notification_history.len(), MAX_NOTIFICATION_HISTORY);
+    assert_eq!(state.notification_history[0].message, "message 5");
+    assert_eq!(state.unseen_notifications(), MAX_NOTIFICATION_HISTORY + 5);
 }
 
 #[test]
