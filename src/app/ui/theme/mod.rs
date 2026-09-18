@@ -245,6 +245,9 @@ pub(crate) struct Layout {
     pub tool_max_height: Pixels,
     pub session_row_height: Pixels,
     pub status_row_height: Pixels,
+    pub notice_panel: Pixels,
+    pub notice_panel_min: Pixels,
+    pub notice_panel_max: Pixels,
 }
 
 #[derive(Clone, Copy)]
@@ -313,7 +316,7 @@ const STRUCTURE: Structure = Structure {
     controls: ControlScale {
         icon_button: px(28.0),
         utility_row: px(44.0),
-        archived_preview_row: px(49.0),
+        archived_preview_row: px(32.0),
     },
     metrics: MetricScale {
         radius: px(0.0),
@@ -340,8 +343,11 @@ const STRUCTURE: Structure = Structure {
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
-        session_row_height: px(49.0),
+        session_row_height: px(32.0),
         status_row_height: px(24.0),
+        notice_panel: px(160.0),
+        notice_panel_min: px(76.0),
+        notice_panel_max: px(320.0),
     },
     sizes: default_sizes(),
 };
@@ -431,6 +437,9 @@ metric_keys!(
     layout.tool_max_height => "layout-tool-max-height",
     layout.session_row_height => "layout-session-row-height",
     layout.status_row_height => "layout-status-row-height",
+    layout.notice_panel => "layout-notice-panel",
+    layout.notice_panel_min => "layout-notice-panel-min",
+    layout.notice_panel_max => "layout-notice-panel-max",
 );
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
