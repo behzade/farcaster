@@ -1,0 +1,2270 @@
+use super::*;
+use crate::Backend;
+use crate::WorkerContext;
+use std::io::Write as _;
+
+#[cfg(unix)]
+#[test]
+fn antigravity_sandbox_restart_without_history_replay_preserves_transcript() -> Result<(), String> {
+    use crate::{
+        SessionCommand, SessionEvent, SessionHistory, SessionResponsePayload, SessionTransport,
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    // Antigravity resumes the saved session without replaying session/update messages.
+    // Exercise the real ACP startup and main-session history response, not a fabricated
+    // SessionHistory value: Some(empty history) is different from unavailable history.
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
+    *'"method":"authenticate"'*) result='{}' ;;
+    *'"method":"cursor/list_available_models"'*) result='{"models":[]}' ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*|*'"method":"session/load"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]}]}' ;;
+    *'"method":"session/set_config_option"'*) result='{}' ;;
+    *'"method":"session/close"'*) result='{}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+  case "$line" in *'"method":"session/close"'*) exit 0 ;; esac
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("agent");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(project.path().join("localharness_external"), "fixture")
+        .map_err(|error| error.to_string())?;
+    let mut command = AgentLaunchConfig {
+        program: executable.clone(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let profile = &super::super::super::antigravity::PROFILE;
+    let (mut original, _, _) = spawn_session(&command, profile, project.path(), None, None, None)?;
+    let locator = original.session_id.clone();
+    // This is the visible conversation retained by restart_process_preserving_transcript.
+    let mut conversation = crate::conversation::ConversationState::default();
+    conversation.replace_history(&[
+        json!({"role":"user", "content":"Remember the previous work"}),
+        json!({"role":"assistant", "content":[{"type":"text", "text":"I have the context"}]}),
+    ]);
+    assert_eq!(conversation.items.len(), 2);
+    original.close()?;
+
+    command.access_mode = HarnessAccessMode::Full;
+    let (resumed, metadata, history) = spawn_session(
+        &command,
+        profile,
+        project.path(),
+        Some(&locator),
+        None,
+        None,
+    )?;
+    assert_eq!(resumed.session_id, locator);
+    let mut transport = main_session::WorkerSessionTransport::new(
+        project.path(),
+        Backend::Antigravity,
+        locator,
+        Box::new(resumed),
+        metadata,
+        history,
+    )?;
+    transport.send(SessionCommand::LoadHistory)?;
+    let Some(SessionEvent::Response(response)) = transport.poll() else {
+        return Err("expected startup history response".into());
+    };
+    let SessionResponsePayload::LoadHistory(history) =
+        response.result.map_err(|error| format!("{error:?}"))?
+    else {
+        return Err("expected LoadHistory payload".into());
+    };
+    transport.close()?;
+
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        !requests.contains("authenticate"),
+        "Antigravity ACP must not send authenticate"
+    );
+    assert_eq!(requests.matches("\"method\":\"session/new\"").count(), 1);
+    assert_eq!(requests.matches("\"method\":\"session/resume\"").count(), 1);
+    assert!(requests.contains("\"value\":\"default\""));
+    assert!(requests.contains("\"value\":\"yolo\""));
+
+    // Apply the same history contract as RuntimeOwner's startup projection.
+    if let SessionHistory::Replace { messages, .. } = &history {
+        conversation.replace_history(messages);
+    }
+    assert_eq!(
+        conversation.items.len(),
+        2,
+        "sandbox restart must retain the visible transcript when Antigravity resumes without replay; got {history:?}"
+    );
+
+    // An empty session/load replay is authoritative. Do not fix the regression
+    // by discarding all empty histories, which would leave stale rows visible.
+    let (mut loaded, _, history) = spawn_session(
+        &command,
+        &PROFILE,
+        project.path(),
+        Some("saved-session"),
+        None,
+        None,
+    )?;
+    loaded.close()?;
+    assert!(
+        history
+            .expect("session/load must return history")
+            .messages
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
+    *'"method":"authenticate"'*) result='{}' ;;
+    *'"method":"session/resume"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]}]}' ;;
+    *'"method":"session/set_mode"'*|*'"method":"session/set_config_option"'*) result='{}' ;;
+    *'"method":"session/prompt"'*) result='{"stopReason":"end_turn"}' ;;
+    *'"method":"session/close"'*) result='{}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+  case "$line" in *'"method":"session/close"'*) exit 0 ;; esac
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("agent");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(project.path().join("localharness_external"), "fixture")
+        .map_err(|error| error.to_string())?;
+    let command = AgentLaunchConfig {
+        program: executable.clone(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let factory = AcpWorkerFactory::new(command, super::super::super::antigravity::PROFILE.clone());
+    let mut worker = factory.create(WorkerLaunch {
+        slot: None,
+        worker_id: "resumed-worker".into(),
+        worker_name: "resumed".into(),
+        project: project.path().to_owned(),
+        parent_session: "parent-session".into(),
+        parent_worker_id: None,
+        context: WorkerContext::Resume {
+            session_locator: "saved-session".into(),
+        },
+        provider: None,
+        model: None,
+        effort: None,
+        access_mode: HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        ephemeral: false,
+    })?;
+
+    assert_eq!(
+        worker.poll(),
+        Some(WorkerEvent::SessionChanged {
+            locator: "saved-session".into(),
+        })
+    );
+    worker.send("after restart".into(), WorkerSendMode::Prompt)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match worker.poll() {
+            Some(WorkerEvent::Settled { .. }) => break,
+            Some(WorkerEvent::Failed(error)) => return Err(error),
+            _ if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            _ => return Err("resumed ACP prompt did not settle".into()),
+        }
+    }
+    worker.close()?;
+
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        requests.contains("\"method\":\"session/resume\""),
+        "{requests}"
+    );
+    assert!(
+        requests.contains("\"sessionId\":\"saved-session\""),
+        "{requests}"
+    );
+    assert!(
+        !requests.contains("\"method\":\"session/new\""),
+        "{requests}"
+    );
+    assert!(requests.contains("after restart"), "{requests}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn external_acp_processes_apply_access_prompt_cancel_and_resume() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+    const SCRIPT: &str = r#"#!/bin/sh
+reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$1"; }
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) reply '{"protocolVersion":1,"agentCapabilities":{"loadSession":true,"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
+    *'"method":"authenticate"'*) reply '{}' ;;
+    *'"method":"session/new"'*|*'"method":"session/load"'*|*'"method":"session/resume"'*)
+      reply '{"sessionId":"one","configOptions":[{"id":"model","category":"model","currentValue":"base","options":[{"value":"base","name":"Base"}]},{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"bypassPermissions"},{"value":"yolo"}]}]}' ;;
+    *'"method":"session/set_mode"'*|*'"method":"session/set_config_option"'*) reply '{}' ;;
+    *'"method":"session/prompt"'*)
+      prompt_id=$id
+      case "$line" in
+        *'hold'*) ;;
+        *) printf '%s\n' '{"jsonrpc":"2.0","id":"approval","method":"session/request_permission","params":{"sessionId":"one","toolCall":{"toolCallId":"tool","title":"Read fixture","kind":"read","status":"pending"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Decline","kind":"reject_once"}]}}' ;;
+      esac ;;
+    *'"id":"approval"'*)
+      printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"one","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fixture ok"}}}}'
+      id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
+    *'"method":"session/cancel"'*) id=$prompt_id; reply '{"stopReason":"cancelled"}' ;;
+    *'"method":"session/close"'*) reply '{}'; exit 0 ;;
+    *) exit 2 ;;
+  esac
+done
+"#;
+    fn settle(session: &mut AcpWorkerSession) -> (String, usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut approvals = 0;
+        while Instant::now() < deadline {
+            match session.poll() {
+                Some(WorkerEvent::NeedsInput(input)) => {
+                    approvals += 1;
+                    session
+                        .respond(WorkerInputResponse {
+                            id: input.id,
+                            value: Some("Allow".into()),
+                            cancel: false,
+                        })
+                        .expect("test operation should succeed");
+                }
+                Some(WorkerEvent::Settled { output }) => return (output, approvals),
+                Some(WorkerEvent::Failed(error)) => panic!("{error}"),
+                _ => thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        panic!("fixture did not settle");
+    }
+    for profile in [&super::super::super::antigravity::PROFILE] {
+        for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
+            let project = tempfile::tempdir().expect("test operation should succeed");
+            let executable = project.path().join("agent");
+            std::fs::write(&executable, SCRIPT).expect("test operation should succeed");
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+                .expect("test operation should succeed");
+            std::fs::write(project.path().join("localharness_external"), "fixture")
+                .expect("test operation should succeed");
+            let command = AgentLaunchConfig {
+                program: executable.clone(),
+                prefix_args: vec![],
+                access_mode,
+                app_proxy: None,
+                session_locator_root: None,
+            };
+            let (mut session, metadata, _) =
+                spawn_session(&command, profile, project.path(), None, None, None)
+                    .expect("test operation should succeed");
+            assert_eq!(
+                metadata.modes[0]["id"],
+                profile
+                    .permission_mode(access_mode)
+                    .expect("test operation should succeed")
+            );
+            session
+                .send("hello".into(), WorkerSendMode::Prompt)
+                .expect("test operation should succeed");
+            assert_eq!(settle(&mut session), ("fixture ok".into(), 1));
+            session
+                .send("hold".into(), WorkerSendMode::Prompt)
+                .expect("test operation should succeed");
+            session.abort().expect("test operation should succeed");
+            assert_eq!(settle(&mut session).1, 0);
+            session.close().expect("test operation should succeed");
+            assert!(
+                session
+                    .child
+                    .try_wait()
+                    .expect("test operation should succeed")
+                    .is_some()
+            );
+            let (mut resumed, _, _) =
+                spawn_session(&command, profile, project.path(), Some("one"), None, None)
+                    .expect("test operation should succeed");
+            resumed.close().expect("test operation should succeed");
+            let requests = std::fs::read_to_string(executable.with_extension("requests"))
+                .expect("test operation should succeed");
+            assert!(requests.contains(profile.resume_method));
+            assert!(
+                !requests.contains("authenticate"),
+                "Antigravity ACP must not send authenticate"
+            );
+            assert!(
+                requests.contains(
+                    profile
+                        .permission_mode(access_mode)
+                        .expect("test operation should succeed")
+                )
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_transport_admits_on_execution_and_recovers_after_preexecution_rejection() {
+    use crate::adapter::main_session::{MainSessionMetadata, WorkerSessionTransport};
+    use crate::extensions::PromptMode;
+    use crate::{SessionCommand, SessionEvent, SessionTransport};
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    const SCRIPT: &str = r#"#!/bin/sh
+reply() { printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$1"; }
+reject() { printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"prompt rejected"}}\n' "$id"; }
+update() { printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"one","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"%s"}}}}\n' "$1"; }
+tool() { printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"one","update":{"sessionUpdate":"tool_call","toolCallId":"fixture-tool","title":"Read fixture","kind":"read","rawInput":{"path":"fixture.txt"}}}}'; }
+permission() { printf '{"jsonrpc":"2.0","id":"%s","method":"session/request_permission","params":{"sessionId":"one","toolCall":{"toolCallId":"tool","title":"Read fixture","kind":"read","status":"pending"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Decline","kind":"reject_once"}]}}\n' "$1"; }
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) reply '{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}}}' ;;
+    *'"method":"cursor/list_available_models"'*) reply '{"models":[]}' ;;
+    *'"method":"session/new"'*) reply '{"sessionId":"one"}' ;;
+    *'"method":"session/prompt"'*'reject before execution'*) reject ;;
+    *'"method":"session/prompt"'*'cancel before evidence'*) prompt_id=$id ;;
+    *'"method":"session/prompt"'*'waiting handoff'*) prompt_id=$id ;;
+    *'"method":"session/prompt"'*'never dispatch'*) exit 3 ;;
+    *'"method":"session/prompt"'*'recover'*) prompt_id=$id; update 'recovered'; id=$prompt_id; reply '{"stopReason":"end_turn"}' ;;
+    *'"method":"session/prompt"'*'text evidence'*) prompt_id=$id; update 'text evidence' ;;
+    *'"method":"session/prompt"'*'tool evidence'*) prompt_id=$id; tool ;;
+    *'"method":"session/prompt"'*'cancel after evidence'*) prompt_id=$id; permission 'approval-cancel' ;;
+    *'"method":"session/prompt"'*'first turn'*) prompt_id=$id; permission 'approval-first' ;;
+    *'"method":"session/prompt"'*'queued turn'*) prompt_id=$id; tool ;;
+    *'"id":"approval-first"'*) ;;
+    *'"id":"approval-cancel"'*) ;;
+    *'"method":"session/cancel"'*) id=$prompt_id; reply '{"stopReason":"cancelled"}' ;;
+    *'"method":"session/close"'*) reply '{}'; exit 0 ;;
+    *) exit 2 ;;
+  esac
+done
+"#;
+
+    let project = tempfile::tempdir().expect("fixture directory");
+    let executable = project.path().join("agent");
+    std::fs::write(&executable, SCRIPT).expect("write ACP fixture");
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .expect("make ACP fixture executable");
+    let command = AgentLaunchConfig {
+        program: executable.clone(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Sandboxed,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+
+    let (session, _, _) = spawn_session(&command, &PROFILE, project.path(), None, None, None)
+        .expect("start ACP fixture");
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        PROFILE.backend,
+        "one".into(),
+        Box::new(session),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("ACP transport");
+    let deadline = || Instant::now() + Duration::from_secs(5);
+    let next_event = |transport: &mut WorkerSessionTransport, until: Instant, phase: &str| loop {
+        if let Some(event) = transport.poll() {
+            break event;
+        }
+        assert!(
+            Instant::now() < until,
+            "ACP fixture timed out during {phase}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    };
+    let admit_evidence_then_abort = |transport: &mut WorkerSessionTransport,
+                                     message: &str,
+                                     evidence_type: &str| {
+        let submission = transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: message.into(),
+                images: Vec::new(),
+            })
+            .expect("submit evidence prompt");
+        let mut admissions = 0;
+        let mut saw_evidence = false;
+        while admissions == 0 || !saw_evidence {
+            match next_event(transport, deadline(), message) {
+                SessionEvent::Response(response) if response.id.as_deref() == Some(&submission) => {
+                    response.result.expect("execution admits prompt");
+                    admissions += 1;
+                }
+                SessionEvent::Activity(activity) if activity.value()["type"] == evidence_type => {
+                    saw_evidence = true;
+                }
+                SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                    panic!("{message} settled before the test released it")
+                }
+                SessionEvent::Failure(error) => panic!("{message} failed: {error}"),
+                _ => {}
+            }
+        }
+        assert_eq!(admissions, 1);
+        transport
+            .send(SessionCommand::Abort)
+            .expect("cancel admitted evidence prompt");
+        loop {
+            match next_event(transport, deadline(), "evidence cancellation") {
+                SessionEvent::Response(response) if response.id.as_deref() == Some(&submission) => {
+                    panic!("cancel reversed an admitted prompt: {response:?}")
+                }
+                SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                    break;
+                }
+                SessionEvent::Failure(error) => panic!("evidence cancellation failed: {error}"),
+                _ => {}
+            }
+        }
+    };
+
+    let waiting = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "waiting handoff".into(),
+            images: Vec::new(),
+        })
+        .expect("submit waiting prompt");
+    let never_dispatched = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "never dispatch".into(),
+            images: Vec::new(),
+        })
+        .expect("queue cancelled handoff");
+    transport
+        .send(SessionCommand::ApplySteering)
+        .expect("begin waiting handoff");
+    transport
+        .send(SessionCommand::Abort)
+        .expect("cancel waiting handoff");
+    let mut waiting_unknown = 0;
+    let mut local_rejections = 0;
+    let mut waiting_settled = false;
+    while !waiting_settled || waiting_unknown == 0 || local_rejections == 0 {
+        match next_event(&mut transport, deadline(), "cancel waiting handoff") {
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&waiting) => {
+                assert_eq!(
+                    response
+                        .result
+                        .expect_err("active request is uncertain")
+                        .kind,
+                    crate::SessionResponseErrorKind::DeliveryUnknown
+                );
+                waiting_unknown += 1;
+            }
+            SessionEvent::Response(response)
+                if response.id.as_deref() == Some(&never_dispatched) =>
+            {
+                assert_eq!(
+                    response.result.expect_err("local prompt is rejected").kind,
+                    crate::SessionResponseErrorKind::RejectedBeforeAcceptance
+                );
+                local_rejections += 1;
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                waiting_settled = true;
+            }
+            SessionEvent::Failure(error) => panic!("waiting handoff cancellation failed: {error}"),
+            _ => {}
+        }
+    }
+    assert_eq!(waiting_unknown, 1);
+    assert_eq!(local_rejections, 1);
+
+    let cancelled_before_ack = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "cancel before evidence".into(),
+            images: Vec::new(),
+        })
+        .expect("submit prompt cancelled before evidence");
+    transport
+        .send(SessionCommand::Abort)
+        .expect("cancel prompt before evidence");
+    let mut unknown = 0;
+    let mut settled = false;
+    while !settled || unknown == 0 {
+        match next_event(&mut transport, deadline(), "pre-evidence cancellation") {
+            SessionEvent::Response(response)
+                if response.id.as_deref() == Some(&cancelled_before_ack) =>
+            {
+                assert_eq!(
+                    response
+                        .result
+                        .expect_err("delivery must stay unknown")
+                        .kind,
+                    crate::SessionResponseErrorKind::DeliveryUnknown
+                );
+                unknown += 1;
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                settled = true;
+            }
+            SessionEvent::Failure(error) => panic!("pre-evidence cancellation failed: {error}"),
+            _ => {}
+        }
+    }
+    assert_eq!(unknown, 1);
+
+    let rejected = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "reject before execution".into(),
+            images: Vec::new(),
+        })
+        .expect("submit rejected prompt");
+    loop {
+        if let SessionEvent::Response(response) =
+            next_event(&mut transport, deadline(), "pre-execution rejection")
+            && response.id.as_deref() == Some(rejected.as_str())
+        {
+            assert_eq!(
+                response
+                    .result
+                    .expect_err("pre-execution rejection")
+                    .message,
+                "prompt rejected"
+            );
+            break;
+        }
+    }
+    loop {
+        if let SessionEvent::Activity(activity) =
+            next_event(&mut transport, deadline(), "rejection settlement")
+            && activity.value()["type"] == "agent_settled"
+        {
+            break;
+        }
+    }
+
+    let recovered = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "recover".into(),
+            images: Vec::new(),
+        })
+        .expect("submit recovery prompt");
+    let mut recovered_acks = 0;
+    let mut recovered_settled = false;
+    while !recovered_settled || recovered_acks == 0 {
+        match next_event(&mut transport, deadline(), "recovery") {
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&recovered) => {
+                response.result.expect("execution admits recovery prompt");
+                recovered_acks += 1;
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                recovered_settled = true;
+            }
+            SessionEvent::Failure(error) => panic!("recovery failed: {error}"),
+            _ => {}
+        }
+    }
+    assert_eq!(recovered_acks, 1);
+    admit_evidence_then_abort(&mut transport, "text evidence", "message_update");
+    admit_evidence_then_abort(&mut transport, "tool evidence", "tool_execution_start");
+
+    let cancelled = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "cancel after evidence".into(),
+            images: Vec::new(),
+        })
+        .expect("submit cancellable prompt");
+    let mut cancelled_acks = 0;
+    let mut saw_permission = false;
+    while cancelled_acks == 0 || !saw_permission {
+        match next_event(&mut transport, deadline(), "execution admission") {
+            SessionEvent::Interaction(_) => saw_permission = true,
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&cancelled) => {
+                response.result.expect("permission proves execution");
+                cancelled_acks += 1;
+            }
+            SessionEvent::Failure(error) => panic!("cancellable prompt failed: {error}"),
+            _ => {}
+        }
+    }
+    transport
+        .send(SessionCommand::Abort)
+        .expect("cancel admitted prompt");
+    loop {
+        match next_event(&mut transport, deadline(), "cancellation settlement") {
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&cancelled) => {
+                panic!("cancel restored an already admitted prompt: {response:?}")
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                break;
+            }
+            SessionEvent::Failure(error) => panic!("cancel failed: {error}"),
+            _ => {}
+        }
+    }
+    assert_eq!(cancelled_acks, 1);
+
+    let first = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "first turn".into(),
+            images: Vec::new(),
+        })
+        .expect("submit first prompt");
+    let mut first_acks = 0;
+    let _interaction = loop {
+        match next_event(&mut transport, deadline(), "first permission") {
+            SessionEvent::Interaction(interaction) => break interaction,
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&first) => {
+                response.result.expect("permission proves first execution");
+                first_acks += 1;
+            }
+            SessionEvent::Failure(error) => panic!("first prompt failed: {error}"),
+            _ => {}
+        }
+    };
+    let queued_steer = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "queued turn".into(),
+            images: vec![crate::extensions::PromptImage::new(
+                "aW1hZ2U=".into(),
+                "image/png".into(),
+            )],
+        })
+        .expect("submit mid-turn steer");
+    let queued_follow_up = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "queued turn".into(),
+            images: vec![crate::extensions::PromptImage::new(
+                "BAUG".into(),
+                "image/png".into(),
+            )],
+        })
+        .expect("submit identical mid-turn follow-up");
+    transport
+        .send(SessionCommand::ApplySteering)
+        .expect("apply ACP steering handoff");
+    let mut accepted = HashMap::from([
+        (first, first_acks),
+        (queued_steer.clone(), 0usize),
+        (queued_follow_up.clone(), 0usize),
+    ]);
+    let mut settlements = 0;
+    let mut queued_starts = 0;
+    let mut delivered = HashMap::from([
+        (queued_steer.clone(), 0usize),
+        (queued_follow_up.clone(), 0usize),
+    ]);
+    let mut delivered_images = HashMap::new();
+    let mut handoff_aborted = false;
+    let mut boundaries = Vec::new();
+    let mut conversation = crate::conversation::ConversationState::default();
+    while settlements < 2 || accepted.values().any(|count| *count == 0) {
+        let event = next_event(&mut transport, deadline(), "queued turn");
+        if let SessionEvent::Activity(activity) = &event {
+            conversation.reduce(activity.value());
+        }
+        match event {
+            SessionEvent::Response(response) if response.id.as_deref() == Some(&cancelled) => {
+                panic!("cancelled prompt was acknowledged or rejected again: {response:?}")
+            }
+            SessionEvent::Response(response) => {
+                if let Some(count) = response.id.as_ref().and_then(|id| accepted.get_mut(id)) {
+                    response.result.expect("execution admits prompt");
+                    *count += 1;
+                }
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_settled" => {
+                settlements += 1;
+                boundaries.push("settled");
+            }
+            SessionEvent::Activity(activity) if activity.value()["type"] == "agent_start" => {
+                queued_starts += 1;
+                boundaries.push("started");
+            }
+            SessionEvent::Activity(activity)
+                if activity.value()["type"] == "prompt_delivery"
+                    && activity.value()["status"] == "delivered" =>
+            {
+                if let Some(count) = activity.value()["submissionId"]
+                    .as_str()
+                    .and_then(|id| delivered.get_mut(id))
+                {
+                    *count += 1;
+                    let image = activity.value()["message"]["content"]
+                        .as_array()
+                        .and_then(|content| content.get(1))
+                        .and_then(|image| image.get("data"))
+                        .and_then(Value::as_str)
+                        .expect("correlated delivery image")
+                        .to_owned();
+                    delivered_images.insert(
+                        activity.value()["submissionId"]
+                            .as_str()
+                            .expect("delivery submission id")
+                            .to_owned(),
+                        image,
+                    );
+                }
+            }
+            SessionEvent::Failure(error) => panic!("queued ACP turn failed: {error}"),
+            _ => {}
+        }
+        if !handoff_aborted
+            && accepted.values().all(|count| *count == 1)
+            && delivered.values().all(|count| *count == 1)
+        {
+            transport
+                .send(SessionCommand::Abort)
+                .expect("abort the started handoff");
+            handoff_aborted = true;
+        }
+    }
+    assert!(accepted.values().all(|count| *count == 1));
+    assert!(delivered.values().all(|count| *count == 1));
+    assert_eq!(delivered_images[&queued_steer], "aW1hZ2U=");
+    assert_eq!(delivered_images[&queued_follow_up], "BAUG");
+    assert!(handoff_aborted);
+    assert_eq!(queued_starts, 1, "queued prompt must begin a new turn");
+    assert_eq!(boundaries, ["settled", "started", "settled"]);
+    let users = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == crate::conversation::TranscriptKind::User)
+        .collect::<Vec<_>>();
+    assert_eq!(users.len(), 5);
+    let handoff_users = users
+        .iter()
+        .filter(|item| item.text == "queued turn")
+        .collect::<Vec<_>>();
+    assert_eq!(handoff_users.len(), 2);
+    assert!(handoff_users.iter().all(|item| item.label.is_empty()));
+    assert!(handoff_users.iter().all(|item| item.images.len() == 1));
+    assert_ne!(handoff_users[0].images, handoff_users[1].images);
+    for (text, label) in [
+        ("first turn", ""),
+        ("waiting handoff", "Delivery unknown"),
+        ("cancel before evidence", "Delivery unknown"),
+    ] {
+        let prior = users
+            .iter()
+            .filter(|item| item.text == text && item.label == label)
+            .collect::<Vec<_>>();
+        assert_eq!(prior.len(), 1, "unexpected projected rows for {text}");
+        assert!(prior[0].images.is_empty());
+    }
+    transport.close().expect("close ACP fixture");
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .expect("read ACP fixture requests");
+    assert!(!requests.contains("never dispatch"), "{requests}");
+    let handoff_request = requests
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|request| {
+            request["method"] == "session/prompt"
+                && request["params"]["prompt"]
+                    .as_array()
+                    .is_some_and(|prompt| prompt.len() == 4)
+        })
+        .expect("batched ACP handoff request");
+    assert_eq!(
+        handoff_request["params"]["prompt"],
+        json!([
+            {"type":"text", "text":"queued turn"},
+            {"type":"image", "mimeType":"image/png", "data":"aW1hZ2U="},
+            {"type":"text", "text":"queued turn"},
+            {"type":"image", "mimeType":"image/png", "data":"BAUG"},
+        ])
+    );
+}
+
+const PROFILE: AcpProfile = AcpProfile {
+    backend: Backend::Cursor,
+    name: "Test ACP",
+    command: "test-acp",
+    path_environment: "FARCASTER_TEST_ACP_PATH",
+    arguments: &["acp"],
+    auth_method: None,
+    force_argument: Some("--force"),
+    resume_method: "session/load",
+    permission_modes: None,
+};
+
+struct PendingReader;
+
+impl futures::io::AsyncRead for PendingReader {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        _buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::task::Poll::Pending
+    }
+}
+
+#[cfg(unix)]
+fn inert_session() -> AcpWorkerSession {
+    AcpWorkerSession {
+        profile: PROFILE.clone(),
+        child: std::process::Command::new("true")
+            .spawn()
+            .expect("test operation should succeed"),
+        connection: AcpConnection::new(
+            PendingReader,
+            futures::io::Cursor::new(Vec::<u8>::new()),
+            None,
+        )
+        .expect("test operation should succeed"),
+        session_id: "one".into(),
+        current_prompt: Some(AcpRequestId::Number(1)),
+        current_inputs: Vec::new(),
+        current_prompt_proven: false,
+        prompt_acks: VecDeque::new(),
+        queued_prompts: VecDeque::new(),
+        handoff: None,
+        output: String::new(),
+        thought_started: false,
+        pending_inputs: HashMap::new(),
+        tool_states: HashMap::new(),
+        peer_messages: VecDeque::new(),
+        events: VecDeque::new(),
+        config_ids: ConfigIds::default(),
+        features: AcpFeatures { close: false },
+        caller_identity: None,
+        pending_prompt_result: None,
+    }
+}
+
+#[cfg(unix)]
+fn track_inert_submission(session: &mut AcpWorkerSession, id: &str) {
+    session.current_inputs.push(PendingPrompt {
+        mode: WorkerSendMode::Prompt,
+        message: "work".into(),
+        images: Vec::new(),
+        submission_id: Some(id.into()),
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn queued_acp_admission_does_not_replace_the_executing_review_turn() {
+    let registry = crate::CallerRegistry::default();
+    registry.set_execution_sinks(
+        Some(std::sync::Arc::new(|_| Ok(1))),
+        Some(std::sync::Arc::new(|_| Ok(()))),
+    );
+    let identity = registry.issue(
+        std::path::Path::new("/project"),
+        crate::CallerProfile {
+            backend: crate::Backend::Cursor,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    identity.bind("one");
+    identity.begin_execution(Some("running"));
+    let token = identity.token().to_owned();
+    let mut session = inert_session().with_identity(identity);
+    session
+        .submit_prompt(
+            "queued".into(),
+            "next".into(),
+            WorkerSendMode::Queue,
+            Vec::new(),
+        )
+        .expect("admit queue");
+    assert_eq!(
+        registry
+            .resolve_execution(&token)
+            .expect("execution")
+            .1
+            .prompt_id
+            .as_deref(),
+        Some("running")
+    );
+    assert_eq!(session.queued_prompts.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn model_and_service_tier_are_sent_independently() {
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::net::UnixStream;
+    let (client, peer) = UnixStream::pair().expect("test operation should succeed");
+    peer.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .expect("test operation should succeed");
+    let peer = thread::spawn(move || {
+        let mut peer = std::io::BufReader::new(peer);
+        for (config, value) in [
+            ("model", "base"),
+            ("context", "1m"),
+            ("fast", "true"),
+            ("fast", "false"),
+        ] {
+            let mut line = String::new();
+            peer.read_line(&mut line)
+                .expect("test operation should succeed");
+            let request: Value =
+                serde_json::from_str(&line).expect("test operation should succeed");
+            assert_eq!(request["method"], "session/set_config_option");
+            assert_eq!(request["params"]["configId"], config);
+            assert_eq!(request["params"]["value"], value);
+            let response = json!({"jsonrpc":"2.0","id":request["id"],"result":{"configOptions":[
+                {"id":"model","category":"model","currentValue":"base","options":[{"value":"base"}]},
+                {"id":"context","category":"model_config","currentValue":if config == "model" {"272k"} else {"1m"}},
+                {"id":"fast","category":"model_config","currentValue":if config == "fast" {value} else {"false"},"options":[{"value":"false"},{"value":"true"}]},
+                {"id":"effort","category":"thought_level","currentValue":"high","options":[{"value":"high"}]}
+            ]}});
+            writeln!(peer.get_mut(), "{response}").expect("test operation should succeed");
+            peer.get_mut()
+                .flush()
+                .expect("test operation should succeed");
+        }
+    });
+    let mut session = inert_session();
+    session.profile = super::super::super::cursor::PROFILE;
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("test operation should succeed")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("test operation should succeed");
+    session.config_ids.model = Some("model".into());
+    session.config_ids.service_tier = Some("fast".into());
+    session.config_ids.selected_service_tier = Some("priority".into());
+    session.config_ids.catalog = vec![json!({"value":"base","configOptions":[
+        {"id":"context","category":"model_config","options":[{"value":"272k"},{"value":"1m"}]},
+        {"id":"fast","category":"model_config","options":[{"value":"false"},{"value":"true"}]}
+    ]})];
+    session.config_ids.selections.insert(
+        "base[context=1m]".into(),
+        super::super::configuration::ModelSelection {
+            model: "base".into(),
+            parameters: vec![("context".into(), "1m".into())],
+        },
+    );
+    session
+        .select_model("cursor-cli", "base[context=1m]")
+        .expect("test operation should succeed");
+    assert_eq!(
+        session.config_ids.selected_service_tier.as_deref(),
+        Some("priority")
+    );
+    let model = session.config_ids.selected_model.clone();
+    session
+        .select_service_tier("standard")
+        .expect("test operation should succeed");
+    assert_eq!(session.config_ids.selected_model, model);
+    assert_eq!(model.as_deref(), Some("base[context=1m]"));
+    assert_eq!(
+        session.config_ids.selected_service_tier.as_deref(),
+        Some("standard")
+    );
+    assert!(session.events.iter().any(|event| matches!(event,
+        WorkerEvent::Activity(WorkerActivity::ServiceTierChanged {selected:Some(tier),options})
+            if tier == "priority" && options == &["standard", "priority"])));
+    peer.join().expect("test operation should succeed");
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
+    let mut session = inert_session();
+    assert!(
+        matches!(session.update(json!({"sessionId":"one","update":{"sessionUpdate":"current_mode_update","currentModeId":"ask"}})),
+        Some(WorkerEvent::Activity(WorkerActivity::ModeChanged(mode))) if mode == "ask")
+    );
+    assert!(
+        matches!(session.update(json!({"sessionId":"one","update":{"sessionUpdate":"session_info_update","title":"Named"}})),
+        Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(title))) if title == "Named")
+    );
+    assert!(session.update(json!({"sessionId":"other","update":{"sessionUpdate":"session_info_update","title":"Wrong"}})).is_none());
+    for (index, status) in ["pending", "completed"].into_iter().enumerate() {
+        let event = session.update(json!({"sessionId":"one","update":{"sessionUpdate":"plan","entries":[{"content":"Check","status":status,"priority":"high"}]}})).expect("test operation should succeed");
+        if index == 0 {
+            assert!(matches!(
+                event,
+                WorkerEvent::Activity(WorkerActivity::ToolStarted { .. })
+            ));
+        } else {
+            assert!(matches!(
+                event,
+                WorkerEvent::Activity(WorkerActivity::ToolMetadataChanged { .. })
+            ));
+        }
+        assert!(
+            matches!(session.events.pop_front(), Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {result,..})) if result.to_string().contains(status))
+        );
+        assert!(session.events.is_empty());
+    }
+}
+
+#[test]
+fn cursor_access_configures_sandbox_and_approvals() {
+    for (mode, expected) in [
+        (
+            HarnessAccessMode::Sandboxed,
+            vec!["--sandbox", "enabled", "acp"],
+        ),
+        (
+            HarnessAccessMode::Auto,
+            vec!["--sandbox", "enabled", "--force", "acp"],
+        ),
+        (
+            HarnessAccessMode::Full,
+            vec!["--sandbox", "disabled", "--force", "acp"],
+        ),
+    ] {
+        let mut command = std::process::Command::new("agent");
+        configure_command(&mut command, &PROFILE, mode).expect("configure Cursor");
+        assert_eq!(command.get_args().collect::<Vec<_>>(), expected);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_model_catalog_is_reused_across_processes_and_access_modes() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"authMethods":[{"id":"cursor_login"}]}' ;;
+    *'"method":"authenticate"'*) result='{}' ;;
+    *'"method":"session/new"'*) result='{"sessionId":"cached-model-session","configOptions":[{"id":"model","category":"model","currentValue":"base","options":[{"value":"base"}]}]}' ;;
+    *'"method":"cursor/list_available_models"'*) result='{"models":[{"value":"base","name":"Base"}]}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("agent");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    for access_mode in [HarnessAccessMode::Sandboxed, HarnessAccessMode::Full] {
+        let command = AgentLaunchConfig {
+            program: executable.clone(),
+            access_mode,
+            ..AgentLaunchConfig::default()
+        };
+        let (mut session, metadata, _) = spawn_session(
+            &command,
+            &super::super::super::cursor::PROFILE,
+            project.path(),
+            None,
+            None,
+            None,
+        )?;
+        assert_eq!(metadata.models.len(), 1);
+        session.close()?;
+    }
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        !requests.contains("authenticate"),
+        "Cursor ACP must not send authenticate"
+    );
+    assert_eq!(
+        requests
+            .matches("\"method\":\"cursor/list_available_models\"")
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires signed-in Cursor and network; creates a scratch session"]
+fn live_cursor_configuration_and_listing() {
+    let project = tempfile::tempdir().expect("test operation should succeed");
+    let command = AgentLaunchConfig {
+        program: "agent".into(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Auto,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let profile = &super::super::super::cursor::PROFILE;
+    let (mut session, metadata, _) =
+        spawn_session(&command, profile, project.path(), None, None, None)
+            .expect("test operation should succeed");
+    assert!(!metadata.models.is_empty());
+    assert!(
+        metadata
+            .models
+            .iter()
+            .all(|model| model["id"].as_str().is_some_and(|id| !id.contains("fast=")))
+    );
+    assert!(
+        metadata
+            .models
+            .iter()
+            .any(|model| model["contextWindow"].as_u64() == Some(1_000_000))
+    );
+    assert!(metadata.models.iter().any(|model| {
+        model["efforts"]
+            .as_array()
+            .is_some_and(|efforts| !efforts.is_empty())
+    }));
+    let original_mode = metadata
+        .modes
+        .first()
+        .expect("test operation should succeed")["id"]
+        .as_str()
+        .expect("test operation should succeed")
+        .to_owned();
+    if let Some(tier) = &metadata.service_tier {
+        let original_model = session.config_ids.selected_model.clone();
+        session
+            .select_service_tier(tier)
+            .expect("test operation should succeed");
+        assert_eq!(session.config_ids.selected_model, original_model);
+        assert_eq!(
+            session.config_ids.selected_service_tier.as_ref(),
+            Some(tier)
+        );
+        writeln!(
+            std::io::stderr().lock(),
+            "Service tier {tier} confirmed without changing model identity"
+        )
+        .expect("write test diagnostics");
+    }
+    session
+        .select_mode("ask")
+        .expect("test operation should succeed");
+    assert!(session.events.iter().any(|event| matches!(event,
+        WorkerEvent::Activity(WorkerActivity::ModeChanged(mode)) if mode == "ask")));
+    assert!(session.events.iter().any(|event| matches!(
+        event,
+        WorkerEvent::Activity(WorkerActivity::ConfigurationChanged {
+            selected_model: Some(_),
+            ..
+        })
+    )));
+    session
+        .select_mode(&original_mode)
+        .expect("test operation should succeed");
+    session.close().expect("test operation should succeed");
+    assert!(
+        session
+            .child
+            .try_wait()
+            .expect("test operation should succeed")
+            .is_some()
+    );
+    let sessions =
+        super::super::catalog::list_sessions(profile).expect("test operation should succeed");
+    assert!(
+        sessions
+            .iter()
+            .all(|entry| entry["sessionId"].is_string() && entry["cwd"].is_string())
+    );
+    writeln!(std::io::stderr().lock(),
+        "Live configuration: {} model choices; service tier excluded from model IDs; context/effort present; mode response refreshed; listing returned {} sessions",
+        metadata.models.len(),
+        sessions.len()
+    ).expect("write test diagnostics");
+}
+
+/// Uses the installed, signed-in Cursor CLI and makes real model requests.
+#[test]
+#[ignore = "requires Cursor login and network; consumes model usage"]
+fn live_cursor_session_round_trip() {
+    use std::time::{Duration, Instant};
+
+    fn settle(session: &mut AcpWorkerSession) -> String {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            match session.poll() {
+                Some(WorkerEvent::Settled { output }) => return output,
+                Some(WorkerEvent::Activity(WorkerActivity::CommandsChanged { commands })) => {
+                    writeln!(
+                        std::io::stderr().lock(),
+                        "Live command update: {} commands",
+                        commands.len()
+                    )
+                    .expect("write test diagnostics");
+                }
+                Some(WorkerEvent::Failed(error)) => panic!("Cursor failed: {error}"),
+                Some(WorkerEvent::NeedsInput(input)) => {
+                    session
+                        .respond(WorkerInputResponse {
+                            id: input.id,
+                            value: None,
+                            cancel: true,
+                        })
+                        .expect("test operation should succeed");
+                    panic!("no-tool prompt unexpectedly requested permission");
+                }
+                _ => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        panic!("Cursor did not settle within 60 seconds");
+    }
+
+    fn permission_turn(session: &mut AcpWorkerSession, action: &str) {
+        session.send(
+            "Use the shell tool exactly once to run `printf FARCASTER_PERMISSION_CHECK`. Do not read or change files or run any other command. If denied, do not retry; just reply DENIED.".into(),
+            WorkerSendMode::Prompt,
+        ).expect("test operation should succeed");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut permissions = 0;
+        let mut approvals = 0;
+        while Instant::now() < deadline {
+            match session.poll() {
+                Some(WorkerEvent::NeedsInput(input)) => {
+                    permissions += 1;
+                    if action == "cancel" {
+                        session.abort().expect("test operation should succeed");
+                    } else {
+                        // Only approve the harmless command named by this test.
+                        let approved = action == "allow"
+                            && input.prompt.contains("printf FARCASTER_PERMISSION_CHECK");
+                        approvals += usize::from(approved);
+                        session
+                            .respond(WorkerInputResponse {
+                                id: input.id,
+                                value: Some(if approved { "Allow" } else { "Decline" }.into()),
+                                cancel: false,
+                            })
+                            .expect("test operation should succeed");
+                    }
+                }
+                Some(WorkerEvent::Settled { .. }) => {
+                    writeln!(std::io::stderr().lock(),
+                        "Permission phase {action}: {permissions} requests, {approvals} approved; settled"
+                    ).expect("write test diagnostics");
+                    assert!(session.pending_inputs.is_empty());
+                    assert!(session.current_prompt.is_none());
+                    return;
+                }
+                Some(WorkerEvent::Failed(error)) => panic!("permission phase {action}: {error}"),
+                _ => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        panic!("permission phase {action} did not settle");
+    }
+
+    let project = tempfile::tempdir().expect("test operation should succeed");
+    let command = AgentLaunchConfig {
+        program: "agent".into(),
+        prefix_args: Vec::new(),
+        access_mode: HarnessAccessMode::Auto,
+        app_proxy: None,
+        session_locator_root: None,
+    };
+    let profile = &super::super::super::cursor::PROFILE;
+    let (mut session, metadata, history) = spawn_session(
+        &command,
+        profile,
+        project.path(),
+        None,
+        None,
+        Some(thread::current()),
+    )
+    .expect("create live Cursor session");
+    assert!(history.is_none());
+    writeln!(
+        std::io::stderr().lock(),
+        "Cursor session created; commands: {}, models: {}",
+        metadata.commands.len(),
+        metadata.models.len()
+    )
+    .expect("write test diagnostics");
+    session
+        .send(
+            "Do not call tools or access files. Reply with exactly FARCASTER_ACP_LIVE_OK.".into(),
+            WorkerSendMode::Queue,
+        )
+        .expect("test operation should succeed");
+    assert!(settle(&mut session).contains("FARCASTER_ACP_LIVE_OK"));
+    let locator = session.session_id.clone();
+    session.close().expect("test operation should succeed");
+    assert!(
+        session
+            .child
+            .try_wait()
+            .expect("test operation should succeed")
+            .is_some()
+    );
+    writeln!(
+        std::io::stderr().lock(),
+        "Prompt settled and original process reaped"
+    )
+    .expect("write test diagnostics");
+
+    let (mut resumed, _, history) = spawn_session(
+        &command,
+        profile,
+        project.path(),
+        Some(&locator),
+        None,
+        Some(thread::current()),
+    )
+    .expect("resume live Cursor session");
+    let history = history.expect("resume history");
+    assert_eq!(
+        history.messages.len(),
+        2,
+        "expected one user and one assistant message"
+    );
+    writeln!(
+        std::io::stderr().lock(),
+        "Resume loaded {} history messages",
+        history.messages.len()
+    )
+    .expect("write test diagnostics");
+    resumed
+        .send(
+            "Do not call tools. Reply with exactly FARCASTER_ACP_RESUMED_OK.".into(),
+            WorkerSendMode::Queue,
+        )
+        .expect("test operation should succeed");
+    let output = settle(&mut resumed);
+    assert!(
+        output.contains("FARCASTER_ACP_RESUMED_OK"),
+        "resumed output: {output:?}"
+    );
+    for action in ["allow", "deny", "cancel"] {
+        permission_turn(&mut resumed, action);
+    }
+    // Cancel independently of whether Cursor asks permission for printf.
+    resumed
+        .send(
+            "Do not use tools. Count from one to one hundred.".into(),
+            WorkerSendMode::Prompt,
+        )
+        .expect("test operation should succeed");
+    resumed.abort().expect("test operation should succeed");
+    let _ = settle(&mut resumed);
+    assert!(resumed.current_prompt.is_none());
+    writeln!(std::io::stderr().lock(), "Immediate cancellation settled")
+        .expect("write test diagnostics");
+    resumed.close().expect("test operation should succeed");
+    assert!(
+        resumed
+            .child
+            .try_wait()
+            .expect("test operation should succeed")
+            .is_some()
+    );
+    writeln!(
+        std::io::stderr().lock(),
+        "Resumed prompt settled and process reaped"
+    )
+    .expect("write test diagnostics");
+}
+
+#[test]
+fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
+    let mut cases = ["end_turn", "max_tokens", "max_turn_requests", "refusal"]
+        .into_iter()
+        .map(|stop_reason| {
+            (
+                AcpInbound::Response {
+                    id: AcpRequestId::Number(1),
+                    result: json!({"stopReason":stop_reason}),
+                },
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    cases.push((
+        AcpInbound::Error {
+            id: AcpRequestId::Number(1),
+            message: "rejected".into(),
+        },
+        false,
+    ));
+    for (reply, accepted) in cases {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "submission");
+        assert!(session.poll_prompt_ack().is_none());
+        session.connection.restore_queued(VecDeque::from([reply]));
+        session.poll();
+        let (id, result) = session.poll_prompt_ack().expect("correlated reply");
+        assert_eq!(id, "submission");
+        assert_eq!(result.is_ok(), accepted);
+    }
+}
+
+#[test]
+fn acp_terminal_response_without_evidence_is_unknown_not_rejected() {
+    for result in [
+        json!({"stopReason":"cancelled"}),
+        json!({"stopReason":"not_an_acp_stop_reason"}),
+        json!({}),
+    ] {
+        let reports_invalid_response =
+            result.get("stopReason").and_then(Value::as_str) != Some("cancelled");
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "submission");
+        session
+            .connection
+            .restore_queued(VecDeque::from([AcpInbound::Response {
+                id: AcpRequestId::Number(1),
+                result,
+            }]));
+
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
+                if submission_id == "submission"
+        ));
+        if reports_invalid_response {
+            assert!(matches!(
+                session.poll(),
+                Some(WorkerEvent::RequestFailed { operation, .. }) if operation == "ACP prompt"
+            ));
+        }
+        assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+        assert!(session.poll_prompt_ack().is_none());
+    }
+}
+
+#[test]
+fn acp_claims_queued_steering_and_abort_rejects_only_local_inputs() {
+    use std::os::unix::net::UnixStream;
+
+    let mut session = inert_session();
+    let (client, _peer) = UnixStream::pair().expect("fixture socket pair");
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("clone fixture socket")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("create fixture connection");
+    session
+        .submit_prompt(
+            "steer".into(),
+            "same".into(),
+            WorkerSendMode::Steer,
+            Vec::new(),
+        )
+        .expect("submit fixture prompt");
+    session
+        .submit_prompt(
+            "follow-up".into(),
+            "same".into(),
+            WorkerSendMode::Queue,
+            vec![crate::extensions::PromptImage::new(
+                "aW1hZ2U=".into(),
+                "image/png".into(),
+            )],
+        )
+        .expect("submit fixture prompt");
+
+    session.apply_steering().expect("apply steering");
+    assert!(session.queued_prompts.is_empty());
+    let handoff = session.handoff.as_ref().expect("claimed handoff");
+    assert_eq!(handoff.inputs.len(), 2);
+    assert_eq!(handoff.inputs[0].submission_id.as_deref(), Some("steer"));
+    assert_eq!(
+        handoff.inputs[1].submission_id.as_deref(),
+        Some("follow-up")
+    );
+    assert_eq!(handoff.inputs[1].images.len(), 1);
+    assert!(session.poll_prompt_ack().is_none());
+
+    session.abort().expect("abort session");
+    assert!(session.handoff.is_none());
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some((
+            "steer".into(),
+            Err("Prompt cancelled before delivery".into())
+        ))
+    );
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some((
+            "follow-up".into(),
+            Err("Prompt cancelled before delivery".into())
+        ))
+    );
+    assert_eq!(session.current_inputs.len(), 0);
+}
+
+#[test]
+fn acp_in_memory_queue_is_not_an_acknowledgement() {
+    let mut session = inert_session();
+    assert!(
+        !session
+            .submit_prompt(
+                "queued".into(),
+                "work".into(),
+                WorkerSendMode::Queue,
+                Vec::new()
+            )
+            .expect("submit fixture prompt")
+    );
+    assert!(session.poll_prompt_ack().is_none());
+    assert_eq!(
+        session
+            .queued_prompts
+            .back()
+            .expect("queued prompt")
+            .submission_id
+            .as_deref(),
+        Some("queued")
+    );
+}
+
+#[test]
+fn acp_prompt_delivery_precedes_the_first_execution_chunk() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    assert!(session.poll_prompt_ack().is_none());
+
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"agent_message_chunk",
+                "content":{"type":"text","text":"working"}
+            }}),
+        }]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+        )) if submission_id == "prompt"
+    ));
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+            if delta == "working"
+    ));
+
+    let current = session.current_prompt.clone().expect("active prompt");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Response {
+            id: current,
+            result: json!({"stopReason":"cancelled"}),
+        }]));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.poll_prompt_ack().is_none());
+}
+
+#[cfg(unix)]
+fn agent_message_chunk(text: &str) -> AcpInbound {
+    AcpInbound::Notification {
+        method: "session/update".into(),
+        params: json!({
+            "sessionId": "one",
+            "update": {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": text}
+            }
+        }),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_prompt_result_settles_after_queued_chunks_and_still_applies_late_text() {
+    let mut session = inert_session();
+    let current = session.current_prompt.clone().expect("active prompt");
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Response {
+            id: current,
+            result: json!({"stopReason": "end_turn"}),
+        },
+        agent_message_chunk("the answer"),
+    ]));
+
+    assert!(
+        matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+                if delta == "the answer"
+        ),
+        "queued agent_message_chunk must be applied before session/prompt settlement"
+    );
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Settled { output }) if output == "the answer"
+    ));
+
+    session
+        .connection
+        .restore_queued(VecDeque::from([agent_message_chunk("late")]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. })) if delta == "late"
+    ));
+}
+
+#[test]
+fn acp_user_message_chunk_delivers_current_inputs_before_the_model_reply() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    let image = crate::extensions::PromptImage::new("YWJj".into(), "image/png".into());
+    session.current_inputs.push(PendingPrompt {
+        mode: WorkerSendMode::Queue,
+        message: "follow-up with image".into(),
+        images: vec![image.clone()],
+        submission_id: Some("follow-up".into()),
+    });
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"user_message_chunk",
+                "content":{"type":"text","text":"wo"}
+            }}),
+        }]));
+
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: "prompt".into(),
+                mode: WorkerSendMode::Prompt,
+                message: "work".into(),
+            }
+        ))
+    );
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id: "follow-up".into(),
+                mode: WorkerSendMode::Queue,
+                message: "follow-up with image".into(),
+                images: vec![image],
+            }
+        ))
+    );
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("follow-up".into(), Ok(())))
+    );
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty());
+    assert!(session.output.is_empty());
+
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"user_message_chunk",
+                "content":{"type":"text","text":"rk"}
+            }}),
+        },
+        AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"agent_message_chunk",
+                "content":{"type":"text","text":"working"}
+            }}),
+        },
+    ]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { delta, .. }))
+            if delta == "working"
+    ));
+    assert_eq!(session.output, "working");
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty());
+}
+
+#[test]
+fn acp_user_message_chunk_commits_delivery_before_a_cancel_or_error() {
+    for terminal in [
+        AcpInbound::Response {
+            id: AcpRequestId::Number(1),
+            result: json!({"stopReason":"cancelled"}),
+        },
+        AcpInbound::Error {
+            id: AcpRequestId::Number(1),
+            message: "failed after admission".into(),
+        },
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "prompt");
+        session.connection.restore_queued(VecDeque::from([
+            AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":"one","update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"wo"}
+                }}),
+            },
+            terminal,
+        ]));
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+                submission_id, ..
+            })) if submission_id == "prompt"
+        ));
+        assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Settled {
+                output: String::new()
+            })
+        );
+        assert!(session.current_prompt.is_none());
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(
+            session.events.is_empty(),
+            "delivery must not become unknown"
+        );
+    }
+}
+
+#[test]
+fn acp_user_message_chunk_malformed_content_preserves_cancel_and_error_recovery() {
+    for content in [
+        None,
+        Some(Value::Null),
+        Some(json!("wo")),
+        Some(json!({"text":"wo"})),
+        Some(json!({"type":"unknown","text":"wo"})),
+        Some(json!({"type":"text"})),
+        Some(json!({"type":"text","text":7})),
+        Some(json!({"type":"image","mimeType":"image/png"})),
+        Some(json!({"type":"image","data":"YWJj","mimeType":null})),
+        Some(json!({"type":"audio","data":7,"mimeType":"audio/wav"})),
+        Some(json!({"type":"resource_link","uri":"file:///fixture.txt"})),
+        Some(json!({"type":"resource","resource":{"uri":"file:///fixture.txt"}})),
+    ] {
+        for rejected in [false, true] {
+            let mut session = inert_session();
+            track_inert_submission(&mut session, "prompt");
+            let mut update = json!({"sessionUpdate":"user_message_chunk"});
+            if let Some(content) = &content {
+                update["content"] = content.clone();
+            }
+            session.connection.restore_queued(VecDeque::from([
+                AcpInbound::Notification {
+                    method: "session/update".into(),
+                    params: json!({"sessionId":"one","update":update}),
+                },
+                AcpInbound::Notification {
+                    method: "session/update".into(),
+                    params: json!({"sessionId":"one","update":{
+                        "sessionUpdate":"session_info_update","title":"Waiting for delivery"
+                    }}),
+                },
+            ]));
+            assert!(
+                matches!(
+                    session.poll(),
+                    Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(_)))
+                ),
+                "malformed echo must not deliver: {content:?}"
+            );
+            assert!(!session.current_prompt_proven);
+            assert!(session.poll_prompt_ack().is_none());
+            assert!(session.events.is_empty());
+
+            let terminal = if rejected {
+                AcpInbound::Error {
+                    id: AcpRequestId::Number(1),
+                    message: "prompt rejected".into(),
+                }
+            } else {
+                AcpInbound::Response {
+                    id: AcpRequestId::Number(1),
+                    result: json!({"stopReason":"cancelled"}),
+                }
+            };
+            session
+                .connection
+                .restore_queued(VecDeque::from([terminal]));
+            if rejected {
+                assert_eq!(
+                    session.poll(),
+                    Some(WorkerEvent::Settled {
+                        output: String::new()
+                    })
+                );
+                assert_eq!(
+                    session.poll_prompt_ack(),
+                    Some(("prompt".into(), Err("prompt rejected".into())))
+                );
+            } else {
+                assert!(session.poll_prompt_ack().is_none());
+                assert!(matches!(
+                    session.poll(),
+                    Some(WorkerEvent::PromptDeliveryUnknown { submission_id, .. })
+                        if submission_id == "prompt"
+                ));
+                assert_eq!(
+                    session.poll(),
+                    Some(WorkerEvent::Settled {
+                        output: String::new()
+                    })
+                );
+            }
+            assert!(session.current_prompt.is_none());
+            assert!(session.poll_prompt_ack().is_none());
+            assert!(session.events.is_empty());
+        }
+    }
+}
+
+#[test]
+fn acp_user_message_chunk_accepts_empty_text_and_non_text_content() {
+    for content in [
+        json!({"type":"text","text":""}),
+        json!({"type":"image","data":"YWJj","mimeType":"image/png"}),
+        json!({"type":"audio","data":"YWJj","mimeType":"audio/wav"}),
+        json!({"type":"resource_link","name":"fixture","uri":"file:///fixture.txt"}),
+        json!({"type":"resource","resource":{"uri":"file:///fixture.txt","text":"fixture"}}),
+        json!({"type":"resource","resource":{"uri":"file:///fixture.bin","blob":"YWJj"}}),
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "prompt");
+        session
+            .connection
+            .restore_queued(VecDeque::from([AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":"one","update":{
+                    "sessionUpdate":"user_message_chunk","content":content
+                }}),
+            }]));
+        assert_eq!(
+            session.poll(),
+            Some(WorkerEvent::Activity(
+                WorkerActivity::SubmittedInputDelivered {
+                    submission_id: "prompt".into(),
+                    mode: WorkerSendMode::Prompt,
+                    message: "work".into(),
+                }
+            )),
+            "valid echo should deliver before model output: {content}"
+        );
+        assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(session.events.is_empty());
+        assert!(session.output.is_empty());
+    }
+}
+
+#[test]
+fn acp_user_message_chunk_requires_the_current_prompt_and_session() {
+    for (current_prompt, session_id) in [
+        (None, Some("one")),
+        (Some(AcpRequestId::Number(1)), Some("other")),
+        (Some(AcpRequestId::Number(1)), None),
+    ] {
+        let mut session = inert_session();
+        track_inert_submission(&mut session, "prompt");
+        session.current_prompt = current_prompt;
+        session.connection.restore_queued(VecDeque::from([
+            AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":session_id,"update":{
+                    "sessionUpdate":"user_message_chunk",
+                    "content":{"type":"text","text":"work"}
+                }}),
+            },
+            AcpInbound::Notification {
+                method: "session/update".into(),
+                params: json!({"sessionId":"one","update":{
+                    "sessionUpdate":"session_info_update","title":"Still unacknowledged"
+                }}),
+            },
+        ]));
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(_)))
+        ));
+        assert!(session.poll_prompt_ack().is_none());
+        assert!(session.events.is_empty());
+        assert!(!session.current_prompt_proven);
+    }
+}
+
+#[test]
+fn acp_completed_tool_with_nonzero_exit_finishes_as_an_error() {
+    let mut session = inert_session();
+    let event = session
+        .update(json!({
+            "sessionId":"one",
+            "update":{
+                "sessionUpdate":"tool_call_update",
+                "toolCallId":"antigravity-shell",
+                "title":"cat farcaster_e2e_missing_file",
+                "kind":"execute",
+                "status":"completed",
+                "rawOutput":{
+                    "exitCode":1,
+                    "combinedOutput":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+                }
+            }
+        }))
+        .expect("completed tool should emit its start first");
+    assert!(matches!(
+        event,
+        WorkerEvent::Activity(WorkerActivity::ToolStarted { id, .. })
+            if id == "antigravity-shell"
+    ));
+    assert!(matches!(
+        session.events.pop_front(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
+            id,
+            result,
+            is_error: true,
+        })) if id == "antigravity-shell"
+            && result.to_string().contains("farcaster_e2e_missing_file")
+    ));
+}
+
+#[test]
+fn acp_first_completed_tool_update_delivers_before_exact_tool_lifecycle() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({
+                "sessionId":"one",
+                "update":{
+                    "sessionUpdate":"tool_call_update",
+                    "toolCallId":"antigravity-shell",
+                    "title":"cat farcaster_e2e_missing_file",
+                    "kind":"execute",
+                    "status":"completed",
+                    "rawOutput":{
+                        "exitCode":1,
+                        "combinedOutput":"cat: farcaster_e2e_missing_file: No such file or directory\n"
+                    }
+                }
+            }),
+        },
+        AcpInbound::Response {
+            id: AcpRequestId::Number(1),
+            result: json!({"stopReason":"end_turn"}),
+        },
+    ]));
+
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered { submission_id, .. }
+        )) if submission_id == "prompt"
+    ));
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolStarted { id, .. }))
+            if id == "antigravity-shell"
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::ToolFinished {
+            id,
+            result,
+            is_error: true,
+        })) if id == "antigravity-shell"
+            && result.to_string().contains("farcaster_e2e_missing_file")
+    ));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.events.is_empty());
+    assert!(session.poll_prompt_ack().is_none());
+}
+
+#[test]
+fn acp_close_waits_for_the_matching_response_before_reaping() {
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::net::UnixStream;
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let mut session = inert_session();
+    session.features.close = true;
+    session.child = std::process::Command::new("sh")
+        .args(["-c", "read _"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("spawn close fixture child");
+    let child_pid = session.child.id().to_string();
+    let (client, peer) = UnixStream::pair().expect("create close fixture transport");
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("clone client transport")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("create ACP close fixture connection");
+
+    let (request_seen, request_received) = mpsc::sync_channel(1);
+    let (release_response, response_released) = mpsc::sync_channel(1);
+    let peer = thread::spawn(move || {
+        let mut reader = std::io::BufReader::new(peer.try_clone().expect("clone peer transport"));
+        let mut request = String::new();
+        reader
+            .read_line(&mut request)
+            .expect("read session close request");
+        let request: Value = serde_json::from_str(&request).expect("parse session close request");
+        assert_eq!(request["method"], "session/close");
+        assert_eq!(request["params"]["sessionId"], "one");
+        request_seen.send(()).expect("report close request");
+        response_released
+            .recv_timeout(Duration::from_secs(3))
+            .expect("release close response");
+        let mut peer = peer;
+        writeln!(
+            peer,
+            "{}",
+            json!({"jsonrpc":"2.0", "id":request["id"], "result":{}})
+        )
+        .expect("write session close response");
+        peer.flush().expect("flush session close response");
+    });
+
+    let close = thread::spawn(move || {
+        let result = session.close();
+        let status = session.child.try_wait().expect("inspect reaped ACP child");
+        (result, status)
+    });
+    request_received
+        .recv_timeout(Duration::from_secs(3))
+        .expect("observe close request");
+    assert!(
+        !close.is_finished(),
+        "ACP close returned before its matching response"
+    );
+    let child_alive = std::process::Command::new("/bin/kill")
+        .args(["-0", child_pid.as_str()])
+        .status()
+        .expect("probe ACP close fixture child");
+    assert!(
+        child_alive.success(),
+        "ACP child exited before its matching close response"
+    );
+    release_response.send(()).expect("release close response");
+    let (result, status) = close.join().expect("join ACP close");
+    result.expect("close response should complete graceful shutdown");
+    assert!(status.is_some(), "ACP child was not reaped");
+    peer.join().expect("join ACP close peer");
+}
+
+#[test]
+fn acp_close_reports_eof_before_response_and_still_reaps() {
+    use std::io::BufRead as _;
+    use std::os::unix::net::UnixStream;
+    use std::process::Stdio;
+
+    let mut session = inert_session();
+    session.features.close = true;
+    session.child = std::process::Command::new("sh")
+        .args(["-c", "read _"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .expect("spawn EOF fixture child");
+    let (client, peer) = UnixStream::pair().expect("create EOF fixture transport");
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("clone client transport")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("create ACP EOF fixture connection");
+    let peer = thread::spawn(move || {
+        let mut request = String::new();
+        std::io::BufReader::new(peer)
+            .read_line(&mut request)
+            .expect("read session close request");
+        let request: Value = serde_json::from_str(&request).expect("parse session close request");
+        assert_eq!(request["method"], "session/close");
+    });
+
+    let error = session
+        .close()
+        .expect_err("EOF cannot confirm session close completion");
+    let cause = error
+        .strip_prefix("close Test ACP session: ")
+        .expect("close error should name the ACP profile once");
+    assert!(
+        !cause.trim().is_empty(),
+        "close error omitted the EOF cause"
+    );
+    assert!(
+        session
+            .child
+            .try_wait()
+            .expect("inspect reaped ACP child")
+            .is_some(),
+        "ACP child was not reaped after early EOF"
+    );
+    peer.join().expect("join ACP EOF peer");
+}
+
+#[test]
+fn acp_permission_request_proves_prompt_admission() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::AgentRequest {
+            id: AcpRequestId::Number(2),
+            method: "session/request_permission".into(),
+            params: json!({
+                "sessionId":"one",
+                "toolCall":{"title":"Read fixture"},
+                "options":[
+                    {"optionId":"allow","name":"Allow","kind":"allow_once"},
+                    {"optionId":"deny","name":"Decline","kind":"reject_once"}
+                ]
+            }),
+        }]));
+
+    assert!(matches!(session.poll(), Some(WorkerEvent::NeedsInput(_))));
+    assert_eq!(session.poll_prompt_ack(), Some(("prompt".into(), Ok(()))));
+}
+
+#[test]
+fn acp_pre_execution_rejection_is_request_local() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Error {
+            id: AcpRequestId::Number(1),
+            message: "prompt rejected".into(),
+        }]));
+
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("prompt".into(), Err("prompt rejected".into())))
+    );
+    assert!(session.current_prompt.is_none());
+}
+
+#[test]
+fn acp_metadata_does_not_acknowledge_prompt_execution() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "prompt");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"session_info_update",
+                "title":"Named before execution"
+            }}),
+        }]));
+
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TitleChanged(_)))
+    ));
+    assert!(session.poll_prompt_ack().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
+    use std::os::unix::net::UnixStream;
+    let mut session = inert_session();
+    let (client, _peer) = UnixStream::pair().expect("fixture socket pair");
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("clone fixture socket")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("create fixture connection");
+    let image = crate::extensions::PromptImage::new("YWJj".into(), "image/png".into());
+    for (id, mode) in [
+        ("steer-1", WorkerSendMode::Steer),
+        ("steer-2", WorkerSendMode::Steer),
+        ("queue", WorkerSendMode::Queue),
+    ] {
+        session
+            .submit_prompt(id.into(), "same".into(), mode, vec![image.clone()])
+            .expect("submit fixture prompt");
+    }
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Response {
+            id: AcpRequestId::Number(1),
+            result: json!({"stopReason":"end_turn"}),
+        }]));
+    assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(session.queued_prompts.is_empty());
+    assert!(matches!(session.poll(), Some(WorkerEvent::Started)));
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty(), "dispatch alone is not delivery");
+    session
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Notification {
+            method: "session/update".into(),
+            params: json!({"sessionId":"one","update":{
+                "sessionUpdate":"user_message_chunk",
+                "content":{"type":"text","text":"sa"}
+            }}),
+        }]));
+    for (id, expected_mode) in [
+        ("steer-1", WorkerSendMode::Steer),
+        ("steer-2", WorkerSendMode::Steer),
+        ("queue", WorkerSendMode::Queue),
+    ] {
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDeliveredWithImages {
+                submission_id, mode, message, images,
+            })) if submission_id == id && mode == expected_mode
+                && message == "same" && images == vec![image.clone()]
+        ));
+        assert_eq!(session.poll_prompt_ack(), Some((id.into(), Ok(()))));
+    }
+    assert!(session.poll_prompt_ack().is_none());
+    assert!(session.events.is_empty());
+}

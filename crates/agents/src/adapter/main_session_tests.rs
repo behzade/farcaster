@@ -1,0 +1,2257 @@
+use crate::Backend;
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+use super::*;
+use crate::extensions::SessionState;
+
+struct IdleWorker;
+
+#[derive(Default)]
+struct ControlledPromptState {
+    requests: Vec<(
+        String,
+        WorkerSendMode,
+        String,
+        Vec<crate::extensions::PromptImage>,
+    )>,
+    acks: VecDeque<(String, Result<(), String>)>,
+    events: VecDeque<WorkerEvent>,
+    can_cancel_before_delivery: bool,
+    aborts: usize,
+    closes: usize,
+}
+
+struct ControlledPromptWorker(Arc<std::sync::Mutex<ControlledPromptState>>);
+
+impl WorkerSession for ControlledPromptWorker {
+    fn tracks_prompt_delivery(&self, _: WorkerSendMode) -> bool {
+        true
+    }
+
+    fn can_cancel_prompt_before_delivery(&self, _: WorkerSendMode) -> bool {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .can_cancel_before_delivery
+    }
+
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        Ok(())
+    }
+    fn submit_prompt(
+        &mut self,
+        id: String,
+        text: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::extensions::PromptImage>,
+    ) -> Result<bool, String> {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .requests
+            .push((id, mode, text, images));
+        Ok(false)
+    }
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .acks
+            .pop_front()
+    }
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .events
+            .pop_front()
+    }
+    fn abort(&mut self) -> Result<(), String> {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .aborts += 1;
+        Ok(())
+    }
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+    fn close(&mut self) -> Result<(), String> {
+        self.0
+            .lock()
+            .expect("test lock should not be poisoned")
+            .closes += 1;
+        Ok(())
+    }
+}
+
+fn project_transport(
+    transport: &mut WorkerSessionTransport,
+    conversation: &mut crate::conversation::ConversationState,
+) -> Vec<SessionResponse> {
+    let mut responses = Vec::new();
+    while let Some(event) = transport.poll() {
+        match event {
+            SessionEvent::Activity(event) => {
+                conversation.reduce(event.value());
+            }
+            SessionEvent::Response(response) => responses.push(response),
+            SessionEvent::Failure(_) => {}
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    responses
+}
+
+#[derive(Default)]
+struct StrictProjection {
+    responses: Vec<SessionResponse>,
+    deliveries: Vec<(String, String)>,
+    delivery_events: Vec<serde_json::Value>,
+}
+
+fn project_transport_without_failures(
+    transport: &mut WorkerSessionTransport,
+    conversation: &mut crate::conversation::ConversationState,
+) -> StrictProjection {
+    let mut projection = StrictProjection::default();
+    while let Some(event) = transport.poll() {
+        match event {
+            SessionEvent::Activity(event) => {
+                let event = event.value();
+                if event["type"] == "prompt_delivery" {
+                    projection.deliveries.push((
+                        event["submissionId"]
+                            .as_str()
+                            .expect("prompt delivery submission id")
+                            .to_owned(),
+                        event["status"]
+                            .as_str()
+                            .expect("prompt delivery status")
+                            .to_owned(),
+                    ));
+                    projection.delivery_events.push(event.clone());
+                }
+                conversation.reduce(event);
+            }
+            SessionEvent::Response(response) => projection.responses.push(response),
+            SessionEvent::Failure(error) => panic!("unexpected session failure: {error}"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    projection
+}
+
+#[test]
+fn request_local_unknown_reconciles_by_id_without_poisoning_later_prompts() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+
+    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
+    for (prompt_mode, worker_mode) in [
+        (PromptMode::Normal, WorkerSendMode::Prompt),
+        (PromptMode::Steer, WorkerSendMode::Steer),
+        (PromptMode::FollowUp, WorkerSendMode::Queue),
+    ] {
+        let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "request-local-unknown".into(),
+            Box::new(ControlledPromptWorker(backend.clone())),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        let mut conversation = ConversationState::default();
+        let old_image = crate::extensions::PromptImage::new(PNG.into(), "image/png".into());
+        let new_image = crate::extensions::PromptImage::new(GIF.into(), "image/gif".into());
+
+        let old_id = transport
+            .send(SessionCommand::Prompt {
+                mode: prompt_mode,
+                message: "same text".into(),
+                images: vec![old_image.clone()],
+            })
+            .expect("old prompt submission");
+        {
+            let state = backend.lock().expect("test lock should not be poisoned");
+            assert_eq!(
+                state.requests[0],
+                (
+                    old_id.clone(),
+                    worker_mode,
+                    "same text".into(),
+                    vec![old_image.clone()],
+                )
+            );
+        }
+
+        for _ in 0..2 {
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .events
+                .push_back(WorkerEvent::PromptDeliveryUnknown {
+                    submission_id: old_id.clone(),
+                    error: "request channel closed before receipt".into(),
+                });
+        }
+        let unknown = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(unknown.deliveries, [(old_id.clone(), "unknown".into())]);
+        assert_eq!(
+            unknown.delivery_events[0]["message"]["content"],
+            json!([
+                {"type":"text", "text":"same text"},
+                {"type":"image", "data":PNG, "mimeType":"image/png"},
+            ])
+        );
+        assert_eq!(unknown.responses.len(), 1, "repeated unknown is idempotent");
+        let error = unknown.responses[0]
+            .result
+            .as_ref()
+            .expect_err("unknown response");
+        assert_eq!(unknown.responses[0].id.as_deref(), Some(old_id.as_str()));
+        assert_eq!(error.kind, crate::SessionResponseErrorKind::DeliveryUnknown);
+        assert_eq!(error.operation, SessionOperation::Prompt(prompt_mode));
+        assert_eq!(error.message, "request channel closed before receipt");
+        if prompt_mode == PromptMode::Normal {
+            assert_eq!(conversation.items.len(), 1);
+            assert_eq!(conversation.items[0].label, "Delivery unknown");
+            assert_eq!(conversation.items[0].images.len(), 1);
+        } else {
+            assert!(
+                conversation.items.is_empty(),
+                "queued Unknown is not delivered"
+            );
+        }
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .closes,
+            0
+        );
+
+        let new_id = transport
+            .send(SessionCommand::Prompt {
+                mode: prompt_mode,
+                message: "same text".into(),
+                images: vec![new_image.clone()],
+            })
+            .expect("new prompt submission");
+        assert_ne!(old_id, new_id);
+        {
+            let state = backend.lock().expect("test lock should not be poisoned");
+            assert_eq!(
+                state.requests[1],
+                (
+                    new_id.clone(),
+                    worker_mode,
+                    "same text".into(),
+                    vec![new_image.clone()],
+                )
+            );
+        }
+
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .acks
+            .push_back((old_id.clone(), Ok(())));
+        let old_acceptance = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(
+            old_acceptance.deliveries,
+            [(old_id.clone(), "accepted".into())]
+        );
+        assert!(old_acceptance.responses.iter().any(|response| {
+            response.id.as_deref() == Some(old_id.as_str()) && response.result.is_ok()
+        }));
+        assert!(
+            !old_acceptance
+                .responses
+                .iter()
+                .any(|response| response.id.as_deref() == Some(new_id.as_str()))
+        );
+
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .events
+            .push_back(WorkerEvent::Activity(
+                WorkerActivity::SubmittedInputDeliveredWithImages {
+                    submission_id: old_id.clone(),
+                    mode: worker_mode,
+                    message: "same text".into(),
+                    images: vec![old_image],
+                },
+            ));
+        let old_delivery = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(
+            old_delivery.deliveries,
+            [(old_id.clone(), "delivered".into())]
+        );
+        assert_eq!(
+            old_delivery.delivery_events[0]["message"]["content"],
+            json!([
+                {"type":"text", "text":"same text"},
+                {"type":"image", "data":PNG, "mimeType":"image/png"},
+            ])
+        );
+        assert!(old_delivery.responses.is_empty());
+
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .events
+            .push_back(WorkerEvent::PromptDeliveryUnknown {
+                submission_id: old_id,
+                error: "stale timeout".into(),
+            });
+        let stale_unknown = project_transport_without_failures(&mut transport, &mut conversation);
+        assert!(stale_unknown.deliveries.is_empty());
+        assert!(stale_unknown.responses.is_empty());
+        assert_eq!(conversation.items.len(), 1);
+        assert!(conversation.items[0].label.is_empty());
+
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .acks
+            .push_back((new_id.clone(), Ok(())));
+        let new_acceptance = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(
+            new_acceptance.deliveries,
+            [(new_id.clone(), "accepted".into())]
+        );
+        assert!(new_acceptance.responses.iter().any(|response| {
+            response.id.as_deref() == Some(new_id.as_str()) && response.result.is_ok()
+        }));
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .count(),
+            if prompt_mode == PromptMode::Normal {
+                2
+            } else {
+                1
+            }
+        );
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .map(|item| item.images.len())
+                .sum::<usize>(),
+            if prompt_mode == PromptMode::Normal {
+                2
+            } else {
+                1
+            }
+        );
+
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .events
+            .push_back(WorkerEvent::PromptDeliveryUnknown {
+                submission_id: new_id.clone(),
+                error: "late timeout after acceptance".into(),
+            });
+        let accepted_unknown =
+            project_transport_without_failures(&mut transport, &mut conversation);
+        assert!(accepted_unknown.deliveries.is_empty());
+        assert!(accepted_unknown.responses.is_empty());
+        assert!(conversation.items.iter().all(|item| item.label.is_empty()));
+
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .events
+            .push_back(WorkerEvent::Activity(
+                WorkerActivity::SubmittedInputDeliveredWithImages {
+                    submission_id: new_id.clone(),
+                    mode: worker_mode,
+                    message: "same text".into(),
+                    images: vec![new_image],
+                },
+            ));
+        let new_delivery = project_transport_without_failures(&mut transport, &mut conversation);
+        assert_eq!(new_delivery.deliveries, [(new_id, "delivered".into())]);
+        assert_eq!(
+            new_delivery.delivery_events[0]["message"]["content"],
+            json!([
+                {"type":"text", "text":"same text"},
+                {"type":"image", "data":GIF, "mimeType":"image/gif"},
+            ])
+        );
+        assert!(new_delivery.responses.is_empty());
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .count(),
+            2
+        );
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .map(|item| item.images.len())
+                .sum::<usize>(),
+            2
+        );
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .closes,
+            0
+        );
+    }
+}
+
+#[test]
+fn abort_before_ack_retains_unknown_then_reconciles_by_submission_id() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    for delivery_first in [false, true] {
+        let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "race".into(),
+            Box::new(ControlledPromptWorker(backend.clone())),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("create fixture transport");
+        let mut conversation = ConversationState::default();
+        let id = transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::FollowUp,
+                message: "duplicate text".into(),
+                images: Vec::new(),
+            })
+            .expect("submit fixture prompt");
+        transport
+            .send(SessionCommand::Abort)
+            .expect("abort transport");
+        let mut responses = project_transport(&mut transport, &mut conversation);
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .aborts,
+            1
+        );
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .requests
+                .len(),
+            1
+        );
+        assert!(
+            conversation.items.is_empty(),
+            "Abort cannot prove queued input was delivered"
+        );
+        assert!(
+            !responses
+                .iter()
+                .any(|r| matches!(r.operation(), SessionOperation::Prompt(_))),
+            "interrupt is not a prompt acknowledgement"
+        );
+        let delivered = WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered {
+            submission_id: id.clone(),
+            mode: WorkerSendMode::Queue,
+            message: "duplicate text".into(),
+        });
+        if delivery_first {
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .events
+                .push_back(delivered);
+            responses.extend(project_transport(&mut transport, &mut conversation));
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .acks
+                .push_back((id.clone(), Ok(())));
+        } else {
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .acks
+                .push_back((id.clone(), Ok(())));
+            responses.extend(project_transport(&mut transport, &mut conversation));
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .events
+                .push_back(delivered);
+        }
+        responses.extend(project_transport(&mut transport, &mut conversation));
+        let prompt_responses = responses
+            .iter()
+            .filter(|r| r.id.as_deref() == Some(&id))
+            .collect::<Vec<_>>();
+        assert_eq!(prompt_responses.len(), 1);
+        assert!(prompt_responses[0].result.is_ok());
+        assert_eq!(
+            conversation
+                .items
+                .iter()
+                .filter(|item| item.kind == TranscriptKind::User)
+                .count(),
+            1
+        );
+        assert!(conversation.items[0].label.is_empty());
+        assert!(
+            conversation.queue.follow_up.is_empty(),
+            "late acknowledgement cannot revive an aborted queue"
+        );
+        assert_eq!(
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .requests
+                .len(),
+            1,
+            "uncertain receipt never causes replay"
+        );
+    }
+}
+
+#[test]
+fn disconnected_submission_is_unknown_but_explicit_rejection_is_not() {
+    use crate::conversation::ConversationState;
+    for rejected in [false, true] {
+        let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "failure".into(),
+            Box::new(ControlledPromptWorker(backend.clone())),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("create fixture transport");
+        let mut conversation = ConversationState::default();
+        let id = transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Steer,
+                message: "preserve me".into(),
+                images: Vec::new(),
+            })
+            .expect("submit fixture prompt");
+        transport
+            .send(SessionCommand::Abort)
+            .expect("abort transport");
+        project_transport(&mut transport, &mut conversation);
+        if rejected {
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .acks
+                .push_back((id.clone(), Err("invalid input".into())));
+        } else {
+            backend
+                .lock()
+                .expect("test lock should not be poisoned")
+                .events
+                .push_back(WorkerEvent::Failed("connection lost".into()));
+        }
+        let responses = project_transport(&mut transport, &mut conversation);
+        let response = responses
+            .iter()
+            .find(|r| r.id.as_deref() == Some(&id))
+            .expect("prompt outcome");
+        let error = response.result.as_ref().expect_err("prompt must fail");
+        assert_eq!(
+            error.kind,
+            if rejected {
+                crate::SessionResponseErrorKind::RejectedBeforeAcceptance
+            } else {
+                crate::SessionResponseErrorKind::DeliveryUnknown
+            }
+        );
+        assert!(
+            conversation.items.is_empty(),
+            "queued input is not delivered"
+        );
+        if !rejected {
+            let pending = conversation.pending_receipts();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].id, id);
+            assert_eq!(pending[0].text, "preserve me");
+            assert!(pending[0].unknown);
+        } else {
+            assert!(conversation.pending_receipts().is_empty());
+        }
+    }
+}
+
+#[test]
+fn equal_text_submissions_stay_distinct_through_out_of_order_receipts_and_abort() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "same".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("create fixture transport");
+    let mut conversation = ConversationState::default();
+    let first = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "same text".into(),
+            images: vec![crate::extensions::PromptImage::new(
+                "AQID".into(),
+                "image/png".into(),
+            )],
+        })
+        .expect("submit first prompt");
+    let second = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "same text".into(),
+            images: vec![],
+        })
+        .expect("submit second prompt");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((second.clone(), Ok(())));
+    project_transport(&mut transport, &mut conversation);
+    transport
+        .send(SessionCommand::Abort)
+        .expect("abort transport");
+    project_transport(&mut transport, &mut conversation);
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: first.clone(),
+                mode: WorkerSendMode::Steer,
+                message: "same text".into(),
+            },
+        ));
+    project_transport(&mut transport, &mut conversation);
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((first, Ok(())));
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: second,
+                mode: WorkerSendMode::Steer,
+                message: "same text".into(),
+            },
+        ));
+    project_transport(&mut transport, &mut conversation);
+    let users = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User)
+        .collect::<Vec<_>>();
+    assert_eq!(users.len(), 2);
+    assert_eq!(users.iter().map(|item| item.images.len()).sum::<usize>(), 1);
+    assert!(
+        users
+            .iter()
+            .all(|item| item.text == "same text" && item.label.is_empty())
+    );
+    assert!(conversation.queue.steering.is_empty());
+    assert_eq!(
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .requests
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn replacement_transports_do_not_reuse_persisted_submission_ids() {
+    let submit = || {
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "same".into(),
+            Box::new(IdleWorker),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("create fixture transport");
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Steer,
+                message: "next".into(),
+                images: vec![],
+            })
+            .expect("submit fixture prompt")
+    };
+    assert_ne!(submit(), submit());
+}
+
+#[test]
+fn normal_receipt_and_user_echo_share_identity_and_emit_delivery_evidence() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "normal".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("create fixture transport");
+    let mut conversation = ConversationState::default();
+    let item = conversation.push_local_user_with_prompt_images("normal text".into(), &[], false);
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "normal text".into(),
+            images: vec![],
+        })
+        .expect("submit fixture prompt");
+    conversation.bind_submitted_prompt(&id, &item);
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+    project_transport(&mut transport, &mut conversation);
+    assert_eq!(conversation.items.len(), 1);
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: id.clone(),
+                mode: WorkerSendMode::Prompt,
+                message: "normal text".into(),
+            },
+        ));
+    let mut delivered_ids = Vec::new();
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            let event = event.value();
+            if event["type"] == "prompt_delivery" && event["status"] == "delivered" {
+                delivered_ids.push(
+                    event["submissionId"]
+                        .as_str()
+                        .expect("delivered submission ID")
+                        .to_owned(),
+                );
+            }
+            conversation.reduce(event);
+        }
+    }
+    assert_eq!(delivered_ids, [id]);
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .count(),
+        1
+    );
+    assert!(conversation.queue.steering.is_empty() && conversation.queue.follow_up.is_empty());
+    assert!(transport.prompt_deliveries.is_empty());
+}
+
+#[test]
+fn acknowledged_queue_stays_off_transcript_until_late_delivery_after_abort() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-abort".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let input = crate::extensions::PromptImage::new("AQID".into(), "image/png".into());
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "keep this accepted instruction".into(),
+            images: vec![input.clone()],
+        })
+        .expect("submit");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+    project_transport(&mut transport, &mut conversation);
+    transport.send(SessionCommand::Abort).expect("abort");
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    let users = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        users.len(),
+        0,
+        "backend acknowledgement alone must not create a transcript row"
+    );
+    conversation.replace_history(&[
+        json!({"role":"assistant", "content":[{"type":"text", "text":"old response"}]}),
+    ]);
+    assert_eq!(
+        conversation.items.len(),
+        1,
+        "history refresh must not expose undelivered input"
+    );
+    transport.enqueue_activity(WorkerActivity::SubmittedInputDeliveredWithImages {
+        submission_id: id,
+        mode: WorkerSendMode::Steer,
+        message: "keep this accepted instruction".into(),
+        images: vec![input],
+    });
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .count(),
+        1,
+        "late delivery must reveal exactly one row"
+    );
+    assert_eq!(conversation.items[1].text, "keep this accepted instruction");
+    assert_eq!(conversation.items[1].images.len(), 1);
+}
+
+#[test]
+fn delivered_image_only_prompt_survives_transcript_finalization() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let image = crate::extensions::PromptImage::new("AQID".into(), "image/png".into());
+    let mut conversation = ConversationState::default();
+    conversation.push_local_user_with_prompt_images(
+        String::new(),
+        std::slice::from_ref(&image),
+        false,
+    );
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Claude,
+        "one".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("test operation should succeed");
+    transport.enqueue_worker_event(WorkerEvent::Activity(
+        WorkerActivity::InputDeliveredWithImages {
+            mode: WorkerSendMode::Prompt,
+            message: String::new(),
+            images: vec![image],
+        },
+    ));
+    for event in &transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    let users = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::User)
+        .collect::<Vec<_>>();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0].images.len(), 1);
+}
+
+struct FatalAfterWriteWorker {
+    events: VecDeque<WorkerEvent>,
+}
+
+impl WorkerSession for FatalAfterWriteWorker {
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        self.events
+            .push_back(WorkerEvent::Failed("worker connection lost".into()));
+        Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::extensions::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        Ok(false)
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        self.events.pop_front()
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn prompt_response_does_not_precede_worker_rejection() {
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "do not delete the durable row yet".into(),
+            images: Vec::new(),
+        })
+        .expect("worker write");
+    assert!(
+        transport.poll().is_none(),
+        "a worker write is not prompt admission"
+    );
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Err("native backend rejected the prompt".into())));
+    let rejection = transport.poll().expect("rejection activity");
+    assert!(
+        matches!(rejection, SessionEvent::Activity(activity)
+            if activity.value()["type"] == "prompt_delivery"
+                && activity.value()["status"] == "rejected"
+                && activity.value()["submissionId"] == id),
+        "the rejected delivery must precede its response"
+    );
+    let response = match transport.poll().expect("correlated rejection response") {
+        SessionEvent::Response(response) => response,
+        event => panic!("unexpected event after rejection: {event:?}"),
+    };
+    assert_eq!(response.id.as_deref(), Some(id.as_str()));
+    let error = response.result.expect_err("explicit rejection response");
+    assert_eq!(
+        error.kind,
+        crate::SessionResponseErrorKind::RejectedBeforeAcceptance
+    );
+    assert_eq!(error.message, "native backend rejected the prompt");
+    assert!(transport.poll().is_none());
+}
+
+#[test]
+fn fatal_worker_failure_marks_the_prompt_unknown_and_fails_the_transport() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(FatalAfterWriteWorker {
+            events: VecDeque::new(),
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "preserve uncertain input".into(),
+            images: Vec::new(),
+        })
+        .expect("worker write");
+
+    let mut saw_unknown_activity = false;
+    let mut saw_unknown_response = false;
+    let mut saw_failure = false;
+    while let Some(event) = transport.poll() {
+        match event {
+            SessionEvent::Activity(activity) => {
+                let activity = activity.value();
+                if activity["type"] == "prompt_delivery" {
+                    assert_eq!(activity["submissionId"], id);
+                    assert_eq!(activity["status"], "unknown");
+                    saw_unknown_activity = true;
+                }
+            }
+            SessionEvent::Response(response) => {
+                assert_eq!(response.id.as_deref(), Some(id.as_str()));
+                let error = response.result.expect_err("fatal delivery outcome");
+                assert_eq!(error.kind, crate::SessionResponseErrorKind::DeliveryUnknown);
+                saw_unknown_response = true;
+            }
+            SessionEvent::Failure(error) => {
+                assert_eq!(error, "worker connection lost");
+                saw_failure = true;
+            }
+            event => panic!("unexpected event after fatal worker loss: {event:?}"),
+        }
+    }
+    assert!(saw_unknown_activity);
+    assert!(saw_unknown_response);
+    assert!(saw_failure);
+}
+
+#[test]
+fn neutral_metadata_events_refresh_session_state_and_modes() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("test operation should succeed");
+    transport.enqueue_activity(WorkerActivity::TitleChanged("Generated title".into()));
+    assert_eq!(
+        transport.state().session_name.as_deref().expect("title"),
+        "Generated title"
+    );
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.operation() == SessionOperation::LoadState)
+    );
+    transport.enqueue_activity(WorkerActivity::ModeChanged("plan".into()));
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if matches!(&response.result, Ok(Payload::ListModes { selected: Some(selected), .. }) if selected == "plan"))
+    );
+    transport.enqueue_activity(WorkerActivity::ConfigurationChanged {
+        models: vec![json!({"id":"model-fast","name":"Fast","provider":Backend::Codex})],
+        efforts: vec!["high".into()],
+        modes: Vec::new(),
+        selected_model: Some(
+            json!({"id":"model-fast","provider":Backend::Codex,"contextWindow":1000000}),
+        ),
+        selected_effort: Some("high".into()),
+    });
+    assert_eq!(transport.state().model.expect("model").id, "model-fast");
+    assert_eq!(
+        transport.state().model.expect("model").context_window,
+        1000000
+    );
+    assert_eq!(
+        transport.state().thinking_level.as_deref().expect("effort"),
+        "high"
+    );
+    transport.enqueue_activity(WorkerActivity::ServiceTierChanged {
+        selected: Some("priority".into()),
+        options: vec!["standard".into(), "priority".into()],
+    });
+    assert_eq!(
+        transport.state().service_tier.as_deref().expect("tier"),
+        "priority"
+    );
+    assert_eq!(transport.state().model.expect("model").id, "model-fast");
+    transport.enqueue_activity(WorkerActivity::ServiceTierChanged {
+        selected: None,
+        options: Vec::new(),
+    });
+    assert!(transport.state().service_tier.is_none());
+    assert!(transport.state().service_tiers.is_empty());
+}
+
+#[test]
+fn two_choice_questions_preserve_their_options() {
+    let options = vec!["TypeScript".into(), "Rust".into()];
+    assert_eq!(
+        interaction(WorkerInput {
+            id: "question".into(),
+            prompt: "Choose a language".into(),
+            options: options.clone(),
+            secret: false,
+        }),
+        ExtensionUiRequest::Select {
+            id: "question".into(),
+            title: "Choose a language".into(),
+            options,
+            timeout: None,
+        }
+    );
+}
+
+#[test]
+fn native_child_activity_carries_metadata_without_discovery() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "parent".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("test operation should succeed");
+    transport.enqueue_worker_event(WorkerEvent::Activity(
+        WorkerActivity::ChildSessionsChanged {
+            id: "child".into(),
+            title: Some("Reviewer".into()),
+            is_running: true,
+            outcome: None,
+            execution: Some(crate::WorkerModelSelection {
+                model: Some(("child-provider".into(), "child-model".into())),
+                effort: Some("xhigh".into()),
+            }),
+        },
+    ));
+    let Some(SessionEvent::Activity(event)) = transport.poll() else {
+        panic!("child activity")
+    };
+    assert_eq!(event.value()["child"]["path"], "/locators/codex-cli/child");
+    assert_eq!(event.value()["child"]["outcome"], Value::Null);
+    assert_eq!(event.value()["child"]["parent_session"], "parent");
+    assert_eq!(event.value()["child"]["is_running"], true);
+    assert_eq!(
+        event.value()["child"]["model"],
+        json!(["child-provider", "child-model"])
+    );
+    assert_eq!(event.value()["child"]["thinking_level"], "xhigh");
+
+    transport.enqueue_worker_event(WorkerEvent::Activity(
+        WorkerActivity::ChildSessionsChanged {
+            id: "child".into(),
+            title: Some("Reviewer".into()),
+            is_running: false,
+            outcome: Some(crate::ChildSessionOutcome::Failed),
+            execution: None,
+        },
+    ));
+    let Some(SessionEvent::Activity(event)) = transport.poll() else {
+        panic!("failed child activity")
+    };
+    assert_eq!(event.value()["child"]["outcome"], "failed");
+}
+
+struct SteeringWorker(WorkerSendMode, Arc<AtomicBool>);
+
+impl WorkerSession for SteeringWorker {
+    fn apply_steering(&mut self) -> Result<(), String> {
+        self.1.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn send(&mut self, _: String, mode: WorkerSendMode) -> Result<(), String> {
+        assert_eq!(mode, self.0);
+        Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::extensions::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        Ok(true)
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        panic!("applying steering must not abort the worker")
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        None
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn applying_steering_preserves_the_running_worker_and_pending_delivery() {
+    for (harness, mode) in [
+        ("codex-cli", WorkerSendMode::Steer),
+        ("opencode", WorkerSendMode::Steer),
+        ("cursor-cli", WorkerSendMode::Queue),
+        ("claude", WorkerSendMode::Steer),
+        ("antigravity-acp", WorkerSendMode::Queue),
+    ] {
+        let applied = Arc::new(AtomicBool::new(false));
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            harness.parse().expect("fixture backend"),
+            "session-1".into(),
+            Box::new(SteeringWorker(mode, applied.clone())),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        transport.enqueue_worker_event(WorkerEvent::Started);
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Steer,
+                message: "redirect".into(),
+                images: vec![],
+            })
+            .expect("send steer");
+        transport
+            .send(SessionCommand::ApplySteering)
+            .expect("apply steer");
+        assert!(applied.load(Ordering::SeqCst));
+        assert!(transport.running);
+        let (queued, other) = if mode == WorkerSendMode::Queue {
+            (&transport.follow_up, &transport.steering)
+        } else {
+            (&transport.steering, &transport.follow_up)
+        };
+        assert_eq!(queued, &["redirect"]);
+        assert!(other.is_empty());
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            mode,
+            message: "redirect".into(),
+        }));
+        assert!(transport.steering.is_empty());
+        assert!(transport.follow_up.is_empty());
+    }
+}
+
+struct DeliveryBeforeAckWorker {
+    polls: usize,
+    acknowledged: bool,
+    submitted_id: Option<String>,
+}
+
+impl WorkerSession for DeliveryBeforeAckWorker {
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        id: String,
+        _: String,
+        _: WorkerSendMode,
+        _: Vec<crate::extensions::PromptImage>,
+    ) -> Result<bool, String> {
+        self.submitted_id = Some(id);
+        Ok(false)
+    }
+
+    fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
+        self.acknowledged
+            .then(|| {
+                (
+                    self.submitted_id.clone().expect("submitted request"),
+                    Ok(()),
+                )
+            })
+            .inspect(|_| self.acknowledged = false)
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        self.polls += 1;
+        match self.polls {
+            1 => Some(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+                mode: WorkerSendMode::Queue,
+                message: "next task".into(),
+            })),
+            2 => {
+                self.acknowledged = true;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn delivery_before_ack_does_not_restore_a_completed_follow_up() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Claude,
+        "session-1".into(),
+        Box::new(DeliveryBeforeAckWorker {
+            polls: 0,
+            acknowledged: false,
+            submitted_id: None,
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "next task".into(),
+            images: Vec::new(),
+        })
+        .expect("submit follow-up");
+
+    while transport.poll().is_some() {}
+
+    assert!(transport.follow_up.is_empty());
+}
+
+#[test]
+fn queue_tracking_correlates_real_ids_across_event_orders_and_rejection() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Claude,
+        "session-1".into(),
+        Box::new(DeliveryBeforeAckWorker {
+            polls: usize::MAX,
+            acknowledged: false,
+            submitted_id: None,
+        }),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let submit = |transport: &mut WorkerSessionTransport, message: &str| {
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::FollowUp,
+                message: message.into(),
+                images: Vec::new(),
+            })
+            .expect("submit follow-up")
+    };
+
+    let ack_first = submit(&mut transport, "same text");
+    transport.finish_prompt_ack(ack_first, Ok(()));
+    transport.enqueue_activity(WorkerActivity::InputDelivered {
+        mode: WorkerSendMode::Queue,
+        message: "same text".into(),
+    });
+    assert!(transport.follow_up.is_empty());
+
+    let first = submit(&mut transport, "same text");
+    let second = submit(&mut transport, "same text");
+    transport.finish_prompt_ack(second.clone(), Ok(()));
+    transport.enqueue_activity(WorkerActivity::SubmittedInputDelivered {
+        submission_id: "unknown-submission".into(),
+        mode: WorkerSendMode::Queue,
+        message: "same text".into(),
+    });
+    assert_eq!(transport.follow_up, ["same text"]);
+    transport.enqueue_activity(WorkerActivity::SubmittedInputDelivered {
+        submission_id: second,
+        mode: WorkerSendMode::Queue,
+        message: "same text".into(),
+    });
+    assert!(transport.follow_up.is_empty());
+    assert_eq!(transport.prompt_deliveries[0].request_id, first);
+    transport.finish_prompt_ack(first, Err("first request rejected".into()));
+    assert!(transport.follow_up.is_empty());
+
+    let rejected = submit(&mut transport, "rejected text");
+    transport.finish_prompt_ack(rejected, Err("backend rejected it".into()));
+    assert!(
+        !transport
+            .follow_up
+            .iter()
+            .any(|item| item == "rejected text")
+    );
+}
+
+#[test]
+fn request_local_failure_is_visible_without_failing_the_transport() {
+    use crate::conversation::ConversationState;
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_worker_event(WorkerEvent::RequestFailed {
+        operation: "Codex interrupt".into(),
+        error: "turn is no longer active".into(),
+    });
+    let mut conversation = ConversationState::default();
+    while let Some(event) = transport.pending.pop_front() {
+        assert!(!matches!(event, SessionEvent::Failure(_)));
+        if let SessionEvent::Activity(activity) = event {
+            conversation.reduce(activity.value());
+        }
+    }
+    assert!(conversation.items.iter().any(|item| {
+        item.complete_text()
+            .contains("Codex interrupt: turn is no longer active")
+    }));
+}
+
+#[test]
+fn settlement_preserves_an_undelivered_follow_up() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "next task".into(),
+            images: Vec::new(),
+        })
+        .expect("queue follow-up");
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: "first turn done".into(),
+    });
+
+    assert_eq!(transport.follow_up, ["next task"]);
+}
+
+#[test]
+fn repeated_started_during_a_stream_does_not_duplicate_visible_text() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "session-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "hello ".into(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "world".into(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: "hello world".into(),
+    });
+
+    let mut conversation = ConversationState::default();
+    for event in transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    let assistant = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::Assistant)
+        .map(|item| item.complete_text())
+        .collect::<Vec<_>>();
+    assert_eq!(assistant, ["hello world"]);
+}
+
+#[test]
+fn started_after_settlement_begins_a_real_new_assistant_turn() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    for output in ["first", "second"] {
+        transport.enqueue_worker_event(WorkerEvent::Started);
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: output.into(),
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Settled {
+            output: output.into(),
+        });
+    }
+    let mut conversation = ConversationState::default();
+    for event in transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce(event.value());
+        }
+    }
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::Assistant)
+            .map(|item| item.complete_text())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+}
+
+#[test]
+fn late_text_after_settlement_still_lands_in_the_transcript() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Cursor,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: String::new(),
+    });
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "late answer".into(),
+    }));
+
+    let types = transport
+        .pending
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::Activity(event) => event.value().get("type")?.as_str().map(str::to_owned),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        types,
+        [
+            "agent_start",
+            "agent_settled",
+            "message_start",
+            "message_update"
+        ]
+    );
+
+    let mut conversation = ConversationState::default();
+    for event in &transport.pending {
+        if let SessionEvent::Activity(event) = event {
+            conversation.reduce_deferred(event.value());
+        }
+    }
+    conversation.flush_live_projection();
+    let assistant = conversation
+        .items
+        .iter()
+        .filter(|item| item.kind == TranscriptKind::Assistant)
+        .map(|item| item.complete_text())
+        .collect::<Vec<_>>();
+    assert_eq!(assistant, ["late answer"]);
+}
+
+impl WorkerSession for IdleWorker {
+    fn send_with_images(
+        &mut self,
+        message: String,
+        mode: WorkerSendMode,
+        _: Vec<crate::extensions::PromptImage>,
+    ) -> Result<(), String> {
+        self.send(message, mode)
+    }
+
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn submit_prompt(
+        &mut self,
+        _id: String,
+        message: String,
+        mode: WorkerSendMode,
+        images: Vec<crate::extensions::PromptImage>,
+    ) -> Result<bool, String> {
+        self.send_with_images(message, mode, images)?;
+        Ok(true)
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn rename(&mut self, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        None
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_id() {
+    let path = external_session_path(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "session/one",
+    );
+    let launch = crate::SessionLaunch {
+        harness: Backend::OpenCode,
+        session_id: None,
+        project: "/project".into(),
+        start: crate::SessionStart::Resume(path),
+        wake: None,
+    };
+
+    assert_eq!(
+        launch_session_locator(&launch).as_deref(),
+        Some("session/one")
+    );
+}
+
+#[test]
+fn text_around_tools_is_emitted_as_chronological_messages() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+
+    transport.enqueue_worker_event(WorkerEvent::Started);
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "before".into(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::ToolStarted {
+        id: "tool-1".into(),
+        name: "command".into(),
+        args: json!({}),
+        metadata: Default::default(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::TextDelta {
+        content_index: 0,
+        delta: "after".into(),
+    }));
+    transport.enqueue_worker_event(WorkerEvent::Settled {
+        output: "beforeafter".into(),
+    });
+
+    let activities = transport
+        .pending
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::Activity(activity) => Some(activity),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        activities
+            .iter()
+            .map(|activity| activity.value()["type"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        [
+            "agent_start",
+            "message_start",
+            "message_update",
+            "message_end",
+            "tool_execution_start",
+            "message_start",
+            "message_update",
+            "message_end",
+            "agent_settled",
+        ]
+    );
+    assert_eq!(
+        activities[3].value()["message"]["content"][0]["text"],
+        "before"
+    );
+    assert_eq!(
+        activities[7].value()["message"]["content"][0]["text"],
+        "after"
+    );
+}
+
+#[test]
+fn delivered_worker_message_leaves_the_queue_and_enters_the_transcript() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+
+    transport.steering.push("redirect".into());
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+        mode: WorkerSendMode::Steer,
+        message: "redirect".into(),
+    }));
+    assert!(transport.steering.is_empty());
+
+    let delivered = transport
+        .pending
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::Activity(activity)
+                if matches!(
+                    activity.value()["type"].as_str(),
+                    Some("message_start" | "message_end")
+                ) =>
+            {
+                Some(activity.value().clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        delivered,
+        [
+            json!({"type": "message_start", "message": {"role": "user", "content": "redirect", "queued": true}}),
+            json!({"type": "message_end", "message": {"role": "user", "content": "redirect", "queued": true}}),
+        ]
+    );
+}
+
+#[test]
+fn tracked_admission_waits_for_delivery_and_duplicate_ack_is_idempotent() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+        can_cancel_before_delivery: true,
+        ..Default::default()
+    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "tracked-admission".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::FollowUp,
+            message: "do this next".into(),
+            images: Vec::new(),
+        })
+        .expect("submit follow-up");
+
+    for _ in 0..2 {
+        backend
+            .lock()
+            .expect("test lock should not be poisoned")
+            .acks
+            .push_back((id.clone(), Ok(())));
+        let responses = project_transport(&mut transport, &mut conversation);
+        assert!(
+            responses
+                .iter()
+                .all(|response| response.id.as_deref() != Some(&id)),
+            "admission alone must not terminally resolve a tracked prompt"
+        );
+        assert_eq!(conversation.queue.follow_up, ["do this next"]);
+    }
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::Activity(
+            WorkerActivity::SubmittedInputDelivered {
+                submission_id: id.clone(),
+                mode: WorkerSendMode::Queue,
+                message: "do this next".into(),
+            },
+        ));
+    let responses = project_transport(&mut transport, &mut conversation);
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|response| response.id.as_deref() == Some(&id) && response.result.is_ok())
+            .count(),
+        1
+    );
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .count(),
+        1
+    );
+    assert!(conversation.queue.follow_up.is_empty());
+}
+
+#[test]
+fn delivery_tracking_without_cancellation_proof_keeps_admission_terminal() {
+    use crate::conversation::ConversationState;
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState::default()));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "delivery-only".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("submit steer");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+
+    let responses = project_transport(&mut transport, &mut conversation);
+
+    assert!(
+        responses
+            .iter()
+            .any(|response| { response.id.as_deref() == Some(&id) && response.result.is_ok() })
+    );
+}
+
+#[test]
+fn definitive_abort_cancellation_rejects_undelivered_prompt_once() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+        can_cancel_before_delivery: true,
+        ..Default::default()
+    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "cancelled-admission".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("submit steer");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+    assert!(project_transport(&mut transport, &mut conversation).is_empty());
+    transport.send(SessionCommand::Abort).expect("abort");
+    project_transport(&mut transport, &mut conversation);
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::PromptCancelled {
+            submission_id: id.clone(),
+        });
+    let responses = project_transport(&mut transport, &mut conversation);
+    let prompt_responses = responses
+        .iter()
+        .filter(|response| response.id.as_deref() == Some(&id))
+        .collect::<Vec<_>>();
+    assert_eq!(prompt_responses.len(), 1);
+    assert_eq!(
+        prompt_responses[0]
+            .result
+            .as_ref()
+            .expect_err("cancelled prompt must fail")
+            .kind,
+        crate::SessionResponseErrorKind::Cancelled
+    );
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .filter(|item| item.kind == TranscriptKind::User)
+            .count(),
+        0
+    );
+    assert!(conversation.queue.steering.is_empty());
+}
+
+#[test]
+fn cancellation_after_delivery_unknown_does_not_emit_a_second_terminal_response() {
+    use crate::conversation::ConversationState;
+    let backend = Arc::new(std::sync::Mutex::new(ControlledPromptState {
+        can_cancel_before_delivery: true,
+        ..Default::default()
+    }));
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "unknown-then-cancelled".into(),
+        Box::new(ControlledPromptWorker(backend.clone())),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    let mut conversation = ConversationState::default();
+    let id = transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Steer,
+            message: "redirect".into(),
+            images: Vec::new(),
+        })
+        .expect("submit steer");
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .acks
+        .push_back((id.clone(), Ok(())));
+    project_transport(&mut transport, &mut conversation);
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::PromptDeliveryUnknown {
+            submission_id: id.clone(),
+            error: "receipt lost".into(),
+        });
+    let unknown = project_transport(&mut transport, &mut conversation);
+    assert_eq!(
+        unknown
+            .iter()
+            .filter(|response| response.id.as_deref() == Some(&id))
+            .count(),
+        1
+    );
+
+    backend
+        .lock()
+        .expect("test lock should not be poisoned")
+        .events
+        .push_back(WorkerEvent::PromptCancelled {
+            submission_id: id.clone(),
+        });
+    let cancelled = project_transport(&mut transport, &mut conversation);
+    assert!(
+        cancelled
+            .iter()
+            .all(|response| response.id.as_deref() != Some(&id))
+    );
+}
+
+#[test]
+fn peer_delivery_is_a_first_class_activity_instead_of_a_user_message() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+
+    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::PeerInputDelivered {
+        message: crate::PeerMessage {
+            from: "worker-7".into(),
+            message: "review complete".into(),
+        },
+    }));
+
+    let event = transport.pending.pop_front().expect("peer event");
+    let SessionEvent::Activity(activity) = event else {
+        panic!("expected activity");
+    };
+    assert_eq!(activity.value()["type"], "peer_message");
+    assert_eq!(activity.value()["from"], "worker-7");
+    assert_eq!(activity.value()["message"], "review complete");
+}
+
+#[test]
+fn worker_session_state_retains_titles_and_counts_new_messages() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "session-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    assert_eq!(transport.state().message_count, 0);
+    assert!(transport.state().session_name.is_none());
+
+    for turn in 0..2 {
+        let prompt = format!("Request {turn}");
+        transport
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Normal,
+                message: prompt.clone(),
+                images: Vec::new(),
+            })
+            .expect("send prompt");
+        assert_eq!(transport.state().message_count, turn * 2 + 1);
+        transport.enqueue_worker_event(WorkerEvent::Started);
+        transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::InputDelivered {
+            mode: WorkerSendMode::Prompt,
+            message: prompt,
+        }));
+        transport.enqueue_worker_event(WorkerEvent::Settled {
+            output: "Done".into(),
+        });
+        if turn == 0 {
+            transport
+                .send(SessionCommand::Rename {
+                    name: "Generated title".into(),
+                })
+                .expect("rename");
+        }
+        transport.pending.clear();
+        transport
+            .send(SessionCommand::LoadState)
+            .expect("load state");
+        let Some(SessionEvent::Response(response)) = transport.poll() else {
+            panic!("expected state response");
+        };
+        let state = state_of(response.result.expect("state response"));
+        assert_eq!(state.session_name.as_deref(), Some("Generated title"));
+        assert_eq!(state.message_count, (turn + 1) * 2);
+    }
+}
+
+#[test]
+fn resumed_transport_returns_persisted_history() {
+    let history = crate::DiscoveredHistory {
+        messages: vec![json!({"role": "user", "content": "persisted"})],
+        model: Some(("openai".into(), "gpt-test".into())),
+        thinking_level: Some("high".into()),
+        prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
+            delivered: vec!["receipt:delivered".into()],
+            pending: vec!["receipt:pending".into()],
+        }),
+    };
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        Some(history),
+    )
+    .expect("transport");
+
+    transport
+        .send(SessionCommand::LoadHistory)
+        .expect("load history");
+    let SessionEvent::Response(response) = transport.poll().expect("history response") else {
+        panic!("expected history response");
+    };
+    assert_eq!(response.operation(), SessionOperation::LoadHistory);
+    let Ok(Payload::LoadHistory(SessionHistory::Replace {
+        messages,
+        prompt_deliveries,
+    })) = response.result
+    else {
+        panic!("expected replacement history");
+    };
+    assert_eq!(messages[0]["content"], "persisted");
+    assert_eq!(
+        prompt_deliveries.expect("prompt delivery evidence").pending,
+        ["receipt:pending"]
+    );
+
+    transport
+        .send(SessionCommand::LoadState)
+        .expect("load state");
+    let SessionEvent::Response(response) = transport.poll().expect("state response") else {
+        panic!("expected state response");
+    };
+    let state = state_of(response.result.expect("state response"));
+    assert_eq!(state.message_count, 1);
+    assert_eq!(state.model.expect("model").id, "gpt-test");
+    assert_eq!(state.thinking_level.as_deref(), Some("high"));
+
+    transport
+        .send(SessionCommand::Prompt {
+            mode: PromptMode::Normal,
+            message: "New request".into(),
+            images: Vec::new(),
+        })
+        .expect("send prompt");
+    assert_eq!(transport.state().message_count, 2);
+}
+
+#[test]
+fn a_new_transport_without_a_picked_effort_reports_no_level() {
+    let metadata = MainSessionMetadata {
+        models: vec![json!({
+            "id": "gpt-test",
+            "provider": "openai",
+            "reasoning": true,
+        })],
+        ..MainSessionMetadata::default()
+    };
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::OpenCode,
+        "thread-1".into(),
+        Box::new(IdleWorker),
+        metadata,
+        None,
+    )
+    .expect("transport");
+
+    transport
+        .send(SessionCommand::LoadState)
+        .expect("load state");
+    let SessionEvent::Response(response) = transport.poll().expect("state response") else {
+        panic!("expected state response");
+    };
+    assert!(
+        state_of(response.result.expect("state response"))
+            .thinking_level
+            .is_none()
+    );
+}
+
+#[test]
+fn completion_is_an_authoritative_message_before_settling() {
+    let mut message = AssistantMessage::default();
+    message.append_delta(0, "thinking", "thinking", "plan");
+    message.append_delta(1, "text", "text", "partial");
+    message.replace_text("final");
+    assert_eq!(
+        message.content(),
+        vec![
+            json!({"type": "thinking", "thinking": "plan"}),
+            json!({"type": "text", "text": "final"}),
+        ]
+    );
+}
+
+fn state_of(payload: Payload) -> SessionState {
+    let Payload::LoadState(state) = payload else {
+        panic!("expected state")
+    };
+    *state
+}
+
+#[test]
+fn malformed_worker_catalogs_fail_without_dropping_invalid_entries() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata {
+            models: vec![
+                json!({"id":"valid","name":"Valid","provider":Backend::Codex}),
+                json!({"id":"bad"}),
+            ],
+            modes: vec![json!({"id":"plan"})],
+            commands: vec![json!({"name":"review","source":"unknown"})],
+            ..Default::default()
+        },
+        None,
+    )
+    .expect("transport");
+    for command in [
+        SessionCommand::ListModels,
+        SessionCommand::ListModes,
+        SessionCommand::ListCommands,
+    ] {
+        let operation = command.response_operation();
+        let id = transport.send(command).expect("request");
+        let Some(SessionEvent::Response(response)) = transport.poll() else {
+            panic!("response")
+        };
+        assert_eq!(response.id.as_deref(), Some(id.as_str()));
+        assert_eq!(response.operation(), operation);
+        assert!(response.result.is_err());
+    }
+    transport
+        .send(SessionCommand::LoadState)
+        .expect("state request");
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response)) if response.result.is_ok())
+    );
+}

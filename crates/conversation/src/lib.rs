@@ -1,0 +1,518 @@
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+
+use farcaster_agent_protocol as agents;
+use farcaster_agent_protocol::extensions as protocol;
+use farcaster_utility as utility;
+use serde_json::Value;
+
+use crate::{
+    agents::{CommonTool, PeerMessage},
+    protocol::PromptImage,
+    utility::persistent_vec::PersistentVec,
+};
+
+#[cfg(test)]
+#[path = "conversation/notices_tests.rs"]
+mod notices_tests;
+
+#[path = "conversation/attachments.rs"]
+mod attachments;
+#[path = "conversation/delivery.rs"]
+mod delivery;
+pub use delivery::PendingReceipt;
+#[cfg(test)]
+#[path = "conversation/delivery_tests.rs"]
+mod delivery_tests;
+#[path = "conversation/history.rs"]
+mod history;
+#[path = "conversation/images.rs"]
+mod images;
+pub use images::EncodedImage;
+#[path = "conversation/stream.rs"]
+mod stream;
+#[path = "conversation/tool_details.rs"]
+mod tool_details;
+#[path = "conversation/tools.rs"]
+mod tools;
+pub use tool_details::{ToolDetails, ToolExecutionState};
+
+#[cfg(test)]
+use attachments::pasted_file_summary;
+use attachments::{FileAttachment, split_pasted_files};
+pub use history::annotate_prompt_presentations;
+#[cfg(test)]
+use history::user_message_text;
+use history::{decode_prompt_images, message_text, peer_transcript_item, project_message_items};
+use tools::{apply_tool_result, tool_arguments, tool_name, tool_presentation};
+pub use tools::{display_tool_name, split_command_block};
+
+const MAX_DIAGNOSTICS: usize = 32;
+const STREAM_CHUNK_BYTES: usize = 2 * 1024;
+const STREAM_TAIL_MAX_BYTES: usize = STREAM_CHUNK_BYTES;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TranscriptKind {
+    User,
+    Assistant,
+    Thinking,
+    Tool,
+    Error,
+    Notice,
+    Custom,
+    AgentResult,
+    PeerMessage,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolPresentation {
+    path: String,
+    additions: usize,
+    deletions: usize,
+    first_changed_line: Option<u64>,
+}
+
+impl ToolPresentation {
+    fn edit(path: String, (additions, deletions): (usize, usize)) -> Self {
+        Self {
+            path,
+            additions,
+            deletions,
+            first_changed_line: None,
+        }
+    }
+
+    fn write(path: String, content: &str) -> Self {
+        Self {
+            path,
+            additions: content.lines().count(),
+            deletions: 0,
+            first_changed_line: None,
+        }
+    }
+
+    fn apply_edit_result(&mut self, diff: &str, first_changed_line: Option<u64>) {
+        (self.additions, self.deletions) = change_counts(diff);
+        self.first_changed_line = first_changed_line;
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub const fn counts(&self) -> (usize, usize) {
+        (self.additions, self.deletions)
+    }
+
+    pub const fn first_changed_line(&self) -> Option<u64> {
+        self.first_changed_line
+    }
+}
+
+fn change_counts(diff: &str) -> (usize, usize) {
+    diff.lines().fold((0, 0), |(additions, deletions), line| {
+        match line.as_bytes().first() {
+            Some(b'+') => (additions + 1, deletions),
+            Some(b'-') => (additions, deletions + 1),
+            _ => (additions, deletions),
+        }
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolReviewState {
+    Reviewing,
+    Approved,
+    Blocked,
+}
+
+impl ToolReviewState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Reviewing => "in progress",
+            Self::Approved => "approved",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolReview {
+    pub state: ToolReviewState,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TranscriptItem {
+    pub kind: TranscriptKind,
+    pub label: String,
+    pub text: String,
+    pub images: Arc<Vec<Arc<EncodedImage>>>,
+    pub files: Arc<Vec<FileAttachment>>,
+    pub stream_chunks: Arc<Vec<Arc<str>>>,
+    pub streaming: bool,
+    pub is_error: bool,
+    pub tool_call_id: Option<String>,
+    pub tool_output: String,
+    pub tool_presentation: Option<ToolPresentation>,
+    pub tool_details: Option<Arc<ToolDetails>>,
+    pub tool_review: Option<ToolReview>,
+    pub invocation: Option<String>,
+}
+
+impl TranscriptItem {
+    pub fn has_attachments(&self) -> bool {
+        !self.images.is_empty() || !self.files.is_empty()
+    }
+
+    pub fn complete_text(&self) -> String {
+        if self.stream_chunks.is_empty() {
+            return self.text.clone();
+        }
+        let mut text = String::with_capacity(
+            self.stream_chunks
+                .iter()
+                .map(|chunk| chunk.len())
+                .sum::<usize>()
+                + self.text.len(),
+        );
+        for chunk in self.stream_chunks.iter() {
+            text.push_str(chunk);
+        }
+        text.push_str(&self.text);
+        text
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct QueueState {
+    pub steering: Vec<String>,
+    pub follow_up: Vec<String>,
+}
+
+impl QueueState {
+    fn acknowledge(&mut self, message: &str) {
+        for queue in [&mut self.steering, &mut self.follow_up] {
+            if let Some(index) = queue.iter().position(|queued| queued == message) {
+                queue.remove(index);
+                return;
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ConversationState {
+    pub items: PersistentVec<Arc<TranscriptItem>>,
+    pub queue: QueueState,
+    pub running: bool,
+    run_started_at: Option<usize>,
+    pub completed_runs: Vec<std::ops::Range<usize>>,
+    pub settled: bool,
+    pub compacting: bool,
+    pub retrying: bool,
+    pub average_cache_hit_rate: Option<f64>,
+    pub diagnostics: Vec<String>,
+    cache_read_tokens: u64,
+    prompt_tokens: u64,
+    live_message: Option<LiveMessage>,
+    content: BTreeMap<usize, PartialContent>,
+    dirty_content: std::collections::BTreeSet<usize>,
+    projected_content: std::collections::BTreeSet<usize>,
+    tools: HashMap<String, usize>,
+    optimistic_user: Option<Arc<TranscriptItem>>,
+    submitted_users: HashMap<String, delivery::SubmittedUser>,
+    next_submission_order: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LiveMessage {
+    start: usize,
+    len: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+struct PartialContent {
+    kind: PartialKind,
+    label: String,
+    value: String,
+    chunks: Arc<Vec<Arc<str>>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum PartialKind {
+    #[default]
+    Text,
+    Thinking,
+    ToolCall,
+}
+
+impl ConversationState {
+    #[cfg(test)]
+    pub fn push_local_user(
+        &mut self,
+        message: String,
+        image_count: usize,
+        invocation: bool,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(
+            user_message_text(&message, image_count),
+            Arc::default(),
+            invocation.then(String::new),
+        )
+    }
+
+    #[cfg(test)]
+    pub fn push_local_invocation(
+        &mut self,
+        message: String,
+        image_count: usize,
+        resolution: String,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(
+            user_message_text(&message, image_count),
+            Arc::default(),
+            Some(resolution),
+        )
+    }
+
+    pub fn push_local_user_with_prompt_images(
+        &mut self,
+        message: String,
+        images: &[PromptImage],
+        invocation: bool,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(
+            message,
+            decode_prompt_images(images),
+            invocation.then(String::new),
+        )
+    }
+
+    pub fn push_local_invocation_with_prompt_images(
+        &mut self,
+        message: String,
+        images: &[PromptImage],
+        resolution: String,
+    ) -> Arc<TranscriptItem> {
+        self.push_local_user_with_images(message, decode_prompt_images(images), Some(resolution))
+    }
+
+    pub fn push_local_user_with_images(
+        &mut self,
+        message: String,
+        images: Arc<Vec<Arc<EncodedImage>>>,
+        invocation: Option<String>,
+    ) -> Arc<TranscriptItem> {
+        let (message, files) = split_pasted_files(&message);
+        let item = Arc::new(TranscriptItem {
+            kind: TranscriptKind::User,
+            label: String::new(),
+            text: message.to_owned(),
+            images,
+            files: Arc::new(files),
+            stream_chunks: Arc::default(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation,
+        });
+        self.items.push(item.clone());
+        self.optimistic_user = Some(item.clone());
+        item
+    }
+
+    pub fn rollback_local_user(&mut self, optimistic: &Arc<TranscriptItem>) -> bool {
+        let Some(index) = self.items.rposition(|item| Arc::ptr_eq(item, optimistic)) else {
+            return false;
+        };
+        self.remove_transcript_item(index);
+        if self
+            .optimistic_user
+            .as_ref()
+            .is_some_and(|item| Arc::ptr_eq(item, optimistic))
+        {
+            self.optimistic_user = None;
+        }
+        true
+    }
+
+    fn remove_transcript_item(&mut self, index: usize) {
+        self.items.remove(index);
+        let shift = |offset: usize| offset - usize::from(offset > index);
+        if let Some(live) = &mut self.live_message {
+            if index < live.start {
+                live.start -= 1;
+            } else if index < live.start + live.len {
+                live.len -= 1;
+            }
+        }
+        self.tools.retain(|_, offset| {
+            if *offset == index {
+                return false;
+            }
+            *offset = shift(*offset);
+            true
+        });
+        self.run_started_at = self.run_started_at.map(shift);
+        for range in &mut self.completed_runs {
+            range.start = shift(range.start);
+            range.end = shift(range.end);
+        }
+    }
+
+    pub fn begin_run(&mut self) {
+        if !self.running || self.run_started_at.is_none() {
+            self.run_started_at = Some(self.items.len());
+        }
+        self.running = true;
+    }
+
+    pub fn active_run_start(&self) -> Option<usize> {
+        self.running.then(|| {
+            self.run_started_at
+                .unwrap_or_else(|| {
+                    self.items
+                        .rposition(|item| item.kind == TranscriptKind::User)
+                        .unwrap_or(0)
+                })
+                .min(self.items.len())
+        })
+    }
+
+    pub fn ended_in_error(&self) -> bool {
+        self.items
+            .iter_rev()
+            .find(|item| item.kind != TranscriptKind::Notice)
+            .is_some_and(|item| item.kind == TranscriptKind::Error)
+    }
+
+    pub fn push_transport_error(&mut self, message: String) {
+        self.running = false;
+        self.items.push(Arc::new(TranscriptItem {
+            kind: TranscriptKind::Error,
+            label: "Connection error".into(),
+            text: message,
+            images: Arc::default(),
+            files: Arc::default(),
+            stream_chunks: Arc::default(),
+            streaming: false,
+            is_error: true,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation: None,
+        }));
+    }
+
+    pub fn push_extension_notice(&mut self, message: String) -> usize {
+        let index = self.items.len().saturating_sub(1);
+        if let Some(last) = self.items.last()
+            && last.kind == TranscriptKind::Notice
+            && last.label == "Extension"
+            && self.run_started_at != Some(self.items.len())
+        {
+            let mut item = last.clone();
+            let text = &mut Arc::make_mut(&mut item).text;
+            text.push('\n');
+            text.push_str(&message);
+            self.items.set(index, item);
+            return index;
+        }
+        let index = self.items.len();
+        self.items.push(Arc::new(TranscriptItem {
+            kind: TranscriptKind::Notice,
+            label: "Extension".into(),
+            text: message,
+            images: Arc::default(),
+            files: Arc::default(),
+            stream_chunks: Arc::default(),
+            streaming: false,
+            is_error: false,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation: None,
+        }));
+        index
+    }
+
+    pub fn push_extension_error(&mut self, message: String) {
+        self.items.push(Arc::new(TranscriptItem {
+            kind: TranscriptKind::Error,
+            label: "Extension error".into(),
+            text: message,
+            images: Arc::default(),
+            files: Arc::default(),
+            stream_chunks: Arc::default(),
+            streaming: false,
+            is_error: true,
+            tool_call_id: None,
+            tool_output: String::new(),
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation: None,
+        }));
+    }
+
+    pub fn push_local_error(&mut self, label: &str, message: String) {
+        self.push_local_error_with_details(label, message, String::new());
+    }
+
+    pub fn push_local_error_with_details(&mut self, label: &str, message: String, details: String) {
+        self.items.push(Arc::new(TranscriptItem {
+            kind: TranscriptKind::Error,
+            label: label.into(),
+            text: message,
+            images: Arc::default(),
+            files: Arc::default(),
+            stream_chunks: Arc::default(),
+            streaming: false,
+            is_error: true,
+            tool_call_id: None,
+            tool_output: details,
+            tool_presentation: None,
+            tool_details: None,
+            tool_review: None,
+            invocation: None,
+        }));
+    }
+}
+
+fn text_field(value: &Value, field: &str) -> String {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+fn strings(value: Option<&Value>) -> Vec<String> {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+#[cfg(test)]
+#[path = "conversation/conversation_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "conversation/receipt_fallback_tests.rs"]
+mod receipt_fallback_tests;

@@ -1,0 +1,648 @@
+use serde_json::{Value, json};
+
+use super::AcpProfile;
+use crate::{CommonTool, TokenUsage, ToolCategory, ToolMetadata, WorkerUsage};
+
+#[derive(Clone, Default)]
+pub(super) struct ConfigIds {
+    pub service_tier: Option<String>,
+    pub selected_service_tier: Option<String>,
+    pub service_tiers: Vec<String>,
+    pub selected_model: Option<String>,
+    pub catalog: Vec<Value>,
+    pub selections: std::collections::HashMap<String, super::configuration::ModelSelection>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+}
+
+pub(super) fn metadata_from_session(
+    profile: &AcpProfile,
+    response: &Value,
+) -> (super::super::main_session::MainSessionMetadata, ConfigIds) {
+    let options = response
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let (mut metadata, mut ids) = metadata_from_options(profile, options);
+    if metadata.models.is_empty()
+        && let Some(models) = response
+            .pointer("/models/availableModels")
+            .and_then(Value::as_array)
+    {
+        metadata.models = models
+            .iter()
+            .filter_map(|model| {
+                let id = model.get("modelId")?.as_str()?;
+                Some(
+                    json!({"id":id,"name":model.get("name").and_then(Value::as_str).unwrap_or(id),
+                "provider":profile.backend,"contextWindow":0,"reasoning":false}),
+                )
+            })
+            .collect();
+        ids.selected_model = response
+            .pointer("/models/currentModelId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(index) = metadata.models.iter().position(|model| {
+            model.get("id").and_then(Value::as_str) == ids.selected_model.as_deref()
+        }) {
+            metadata.models.swap(0, index);
+        }
+    }
+    if metadata.modes.is_empty()
+        && let Some(modes) = response
+            .pointer("/modes/availableModes")
+            .and_then(Value::as_array)
+    {
+        metadata.modes = modes
+            .iter()
+            .filter_map(|mode| {
+                let id = mode.get("id")?.as_str()?;
+                Some(json!({
+                    "id": id,
+                    "name": mode.get("name").and_then(Value::as_str).unwrap_or(id),
+                    "description": mode.get("description").cloned(),
+                }))
+            })
+            .collect();
+        if let Some(current) = response
+            .pointer("/modes/currentModeId")
+            .and_then(Value::as_str)
+            && let Some(index) = metadata
+                .modes
+                .iter()
+                .position(|mode| mode.get("id").and_then(Value::as_str) == Some(current))
+        {
+            metadata.modes.swap(0, index);
+        }
+    }
+    for option in options {
+        let Some(current) = option.get("currentValue").and_then(Value::as_str) else {
+            continue;
+        };
+        let id = option.get("id").and_then(Value::as_str);
+        if id == ids.model.as_deref() {
+            ids.selected_model = Some(current.into());
+            if let Some(index) = metadata
+                .models
+                .iter()
+                .position(|model| model.get("id").and_then(Value::as_str) == Some(current))
+            {
+                metadata.models.swap(0, index);
+            }
+        } else if id == ids.mode.as_deref() {
+            if let Some(index) = metadata
+                .modes
+                .iter()
+                .position(|mode| mode.get("id").and_then(Value::as_str) == Some(current))
+            {
+                metadata.modes.swap(0, index);
+            }
+        } else if id == ids.effort.as_deref()
+            && let Some(index) = metadata.efforts.iter().position(|effort| effort == current)
+        {
+            metadata.efforts.swap(0, index);
+        }
+    }
+    (metadata, ids)
+}
+
+pub(super) fn metadata_from_options(
+    profile: &AcpProfile,
+    options: &[Value],
+) -> (super::super::main_session::MainSessionMetadata, ConfigIds) {
+    let mut metadata = super::super::main_session::MainSessionMetadata::default();
+    let mut ids = ConfigIds::default();
+    for option in options {
+        let category = option.get("category").and_then(Value::as_str).unwrap_or("");
+        let id = option.get("id").and_then(Value::as_str).unwrap_or("");
+        let values = option
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|value| {
+                value
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_else(|| std::slice::from_ref(value))
+            });
+        if category == "model" || id == "model" {
+            ids.model = Some(id.into());
+            metadata.models = values
+                .filter_map(|value| {
+                    let id = value.get("value")?.as_str()?;
+                    Some(json!({
+                        "id": id,
+                        "name": value.get("name").and_then(Value::as_str).unwrap_or(id),
+                        "provider": profile.backend,
+                        "contextWindow": 0,
+                        "reasoning": true,
+                    }))
+                })
+                .collect();
+        } else if category == "mode" || id == "mode" {
+            ids.mode = Some(id.into());
+            metadata.modes = values
+                .filter_map(|value| {
+                    let id = value.get("value")?.as_str()?;
+                    Some(json!({
+                        "id": id,
+                        "name": value.get("name").and_then(Value::as_str).unwrap_or(id),
+                        "description": value.get("description").cloned(),
+                    }))
+                })
+                .collect();
+        } else if category == "thought_level"
+            || category == "reasoning"
+            || id.contains("effort")
+            || id.contains("reasoning")
+        {
+            ids.effort = Some(id.into());
+            metadata.efforts = values
+                .filter_map(|value| value.get("value")?.as_str().map(str::to_owned))
+                .collect();
+        }
+    }
+    (metadata, ids)
+}
+
+pub(super) fn commands_from_update(
+    message: &super::events::AcpInbound,
+    session_id: &str,
+) -> Option<Vec<Value>> {
+    let super::events::AcpInbound::Notification { method, params } = message else {
+        return None;
+    };
+    if method != "session/update"
+        || params.get("sessionId").and_then(Value::as_str) != Some(session_id)
+        || params
+            .pointer("/update/sessionUpdate")
+            .and_then(Value::as_str)
+            != Some("available_commands_update")
+    {
+        return None;
+    }
+    commands_from_value(params.get("update")?)
+}
+
+pub(super) fn commands_from_value(update: &Value) -> Option<Vec<Value>> {
+    Some(
+        update
+            .get("availableCommands")?
+            .as_array()?
+            .iter()
+            .filter_map(|command| {
+                let name = command.get("name")?.as_str()?.trim_start_matches('/');
+                Some(json!({
+                    "name": name,
+                    "description": command.get("description").and_then(Value::as_str),
+                    "source": "prompt",
+                }))
+            })
+            .collect(),
+    )
+}
+
+pub(super) fn content_text(content: &Value) -> Option<String> {
+    content
+        .get("text")
+        .and_then(Value::as_str)
+        .or_else(|| content.as_str())
+        .map(str::to_owned)
+}
+
+pub(super) fn normalize_tool_name(update: &Value, title: &str) -> String {
+    match update.get("kind").and_then(Value::as_str).unwrap_or("") {
+        "read" => CommonTool::Read.name().into(),
+        "edit" | "delete" | "move" => CommonTool::Edit.name().into(),
+        "search" => "grep".into(),
+        "fetch" => "web_fetch".into(),
+        _ => title.to_owned(),
+    }
+}
+
+pub(super) fn merge_tool_metadata(metadata: &mut ToolMetadata, update: &Value) {
+    let mut native = metadata
+        .native
+        .take()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    merge_value(&mut native, update);
+
+    metadata.category = native
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(|kind| match kind {
+            "read" => ToolCategory::Read,
+            "search" => ToolCategory::Search,
+            "list" => ToolCategory::List,
+            "edit" | "delete" | "move" => ToolCategory::Change,
+            "execute" => ToolCategory::Execute,
+            "fetch" => ToolCategory::Fetch,
+            "delegate" => ToolCategory::Delegate,
+            _ => ToolCategory::Other,
+        });
+    metadata.title = native
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    metadata.targets = native
+        .get("locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|location| {
+            location
+                .as_str()
+                .or_else(|| location.get("path").and_then(Value::as_str))
+                .or_else(|| location.get("uri").and_then(Value::as_str))
+                .map(str::to_owned)
+        })
+        .collect();
+    metadata.native = Some(native);
+}
+
+pub(super) fn tool_metadata(update: &Value) -> ToolMetadata {
+    let mut metadata = ToolMetadata::default();
+    merge_tool_metadata(&mut metadata, update);
+    metadata
+}
+
+const PATH_KEYS: &[&str] = &["path", "file_path", "filePath"];
+const OLD_TEXT_KEYS: &[&str] = &["oldText", "old_string", "oldString"];
+const NEW_TEXT_KEYS: &[&str] = &["newText", "new_string", "newString"];
+
+pub(super) fn tool_args(metadata: &ToolMetadata) -> Value {
+    let native = metadata.native.as_ref();
+    let mut arguments = native
+        .and_then(|native| native.get("rawInput"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    promote(&mut arguments, "path", PATH_KEYS);
+    promote(&mut arguments, "oldText", OLD_TEXT_KEYS);
+    promote(&mut arguments, "newText", NEW_TEXT_KEYS);
+    if let Some(diff) = native.and_then(first_diff_block) {
+        fill_missing(&mut arguments, "path", text_field(diff, PATH_KEYS));
+    }
+    fill_missing(
+        &mut arguments,
+        "path",
+        metadata.targets.first().map(String::as_str),
+    );
+    Value::Object(arguments)
+}
+
+fn promote(arguments: &mut serde_json::Map<String, Value>, canonical: &str, names: &[&str]) {
+    let value = names
+        .iter()
+        .filter(|name| **name != canonical)
+        .find_map(|name| arguments.remove(*name));
+    if let Some(value) = value {
+        arguments.entry(canonical.to_owned()).or_insert(value);
+    }
+}
+
+fn fill_missing(arguments: &mut serde_json::Map<String, Value>, key: &str, value: Option<&str>) {
+    if !arguments.contains_key(key)
+        && let Some(value) = value
+    {
+        arguments.insert(key.into(), json!(value));
+    }
+}
+
+fn text_field<'a>(value: &'a Value, names: &[&str]) -> Option<&'a str> {
+    names
+        .iter()
+        .find_map(|name| value.get(*name).and_then(Value::as_str))
+}
+
+fn first_diff_block(native: &Value) -> Option<&Value> {
+    content_values(native.get("content")?).find_map(|value| {
+        let block = unwrap_content_block(value);
+        (block.get("type").and_then(Value::as_str) == Some("diff")).then_some(block)
+    })
+}
+
+fn content_values(content: &Value) -> impl Iterator<Item = &Value> {
+    content
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| std::slice::from_ref(content))
+        .iter()
+}
+
+fn unwrap_content_block(value: &Value) -> &Value {
+    match value.get("type").and_then(Value::as_str) {
+        Some("content") => value.get("content").unwrap_or(value),
+        _ => value,
+    }
+}
+
+fn merge_value(current: &mut Value, update: &Value) {
+    if let (Some(current), Some(update)) = (current.as_object_mut(), update.as_object()) {
+        for (key, value) in update {
+            if let Some(previous) = current.get_mut(key) {
+                merge_value(previous, value);
+            } else {
+                current.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        *current = update.clone();
+    }
+}
+
+pub(super) fn merged_tool_content(metadata: &ToolMetadata, update: &Value) -> Value {
+    tool_content(metadata.native.as_ref().unwrap_or(update))
+}
+
+pub(super) fn tool_result(metadata: &ToolMetadata, update: &Value) -> Value {
+    let mut result = json!({"content": merged_tool_content(metadata, update)});
+    if let Some(details) = edit_result_details(metadata) {
+        result["details"] = details;
+    }
+    result
+}
+
+pub(super) fn tool_result_is_error(metadata: &ToolMetadata, update: &Value) -> bool {
+    let native = metadata.native.as_ref().unwrap_or(update);
+    exit_code(native)
+        .or_else(|| exit_code(update))
+        .is_some_and(|code| code != 0)
+}
+
+fn exit_code(value: &Value) -> Option<i64> {
+    value
+        .get("rawOutput")
+        .into_iter()
+        .chain(std::iter::once(value))
+        .find_map(|output| {
+            ["exitCode", "exit_code"]
+                .into_iter()
+                .find_map(|key| match output.get(key)? {
+                    Value::Number(code) => code.as_i64(),
+                    Value::String(code) => code.parse().ok(),
+                    _ => None,
+                })
+        })
+}
+
+fn edit_result_details(metadata: &ToolMetadata) -> Option<Value> {
+    let (old, new) = edit_texts(metadata)?;
+    let diff = line_diff(old, new);
+    if diff.is_empty() {
+        return None;
+    }
+    let mut details = json!({"diff": diff});
+    if let Some(line) = first_changed_line(metadata) {
+        details["firstChangedLine"] = json!(line);
+    }
+    Some(details)
+}
+
+fn edit_texts(metadata: &ToolMetadata) -> Option<(&str, &str)> {
+    let native = metadata.native.as_ref()?;
+    if let Some(diff) = first_diff_block(native) {
+        let old = text_field(diff, OLD_TEXT_KEYS).unwrap_or("");
+        let new = text_field(diff, NEW_TEXT_KEYS).unwrap_or("");
+        if !old.is_empty() || !new.is_empty() {
+            return Some((old, new));
+        }
+    }
+    let raw = native.get("rawInput")?;
+    let old = text_field(raw, OLD_TEXT_KEYS)?;
+    let new = text_field(raw, NEW_TEXT_KEYS)?;
+    Some((old, new))
+}
+
+fn line_diff(old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let mut diff = String::new();
+    for edit in changed_lines(&old_lines, &new_lines) {
+        match edit {
+            LineEdit::Delete(line) => {
+                diff.push('-');
+                diff.push_str(line);
+                diff.push('\n');
+            }
+            LineEdit::Insert(line) => {
+                diff.push('+');
+                diff.push_str(line);
+                diff.push('\n');
+            }
+        }
+    }
+    diff
+}
+
+#[derive(Clone, Copy)]
+enum LineEdit<'a> {
+    Delete(&'a str),
+    Insert(&'a str),
+}
+
+fn changed_lines<'a>(old: &'a [&str], new: &'a [&str]) -> Vec<LineEdit<'a>> {
+    let prefix = old
+        .iter()
+        .zip(new.iter())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let old = &old[prefix..];
+    let new = &new[prefix..];
+    let suffix = old
+        .iter()
+        .rev()
+        .zip(new.iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let old = &old[..old.len().saturating_sub(suffix)];
+    let new = &new[..new.len().saturating_sub(suffix)];
+    if old.len().saturating_mul(new.len()) > 1_000_000 {
+        return old
+            .iter()
+            .copied()
+            .map(LineEdit::Delete)
+            .chain(new.iter().copied().map(LineEdit::Insert))
+            .collect();
+    }
+    lcs_edits(old, new)
+}
+
+fn lcs_edits<'a>(old: &'a [&str], new: &'a [&str]) -> Vec<LineEdit<'a>> {
+    let n = old.len();
+    let m = new.len();
+    let width = m.saturating_add(1);
+    let mut dp = vec![0_u32; n.saturating_add(1).saturating_mul(width)];
+    let cell = |row: usize, column: usize| row.saturating_mul(width).saturating_add(column);
+    for i in 0..n {
+        for j in 0..m {
+            dp[cell(i + 1, j + 1)] = if old[i] == new[j] {
+                dp[cell(i, j)].saturating_add(1)
+            } else {
+                dp[cell(i + 1, j)].max(dp[cell(i, j + 1)])
+            };
+        }
+    }
+    let mut edits = Vec::new();
+    let mut i = n;
+    let mut j = m;
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
+            i -= 1;
+            j -= 1;
+        } else if j > 0 && (i == 0 || dp[cell(i, j - 1)] >= dp[cell(i - 1, j)]) {
+            j -= 1;
+            edits.push(LineEdit::Insert(new[j]));
+        } else if i > 0 {
+            i -= 1;
+            edits.push(LineEdit::Delete(old[i]));
+        }
+    }
+    edits.reverse();
+    edits
+}
+
+fn first_changed_line(metadata: &ToolMetadata) -> Option<u64> {
+    metadata
+        .native
+        .as_ref()?
+        .get("locations")?
+        .as_array()?
+        .iter()
+        .find_map(|location| location.get("line").and_then(Value::as_u64))
+}
+
+pub(super) fn tool_content(update: &Value) -> Value {
+    let content = update
+        .get("content")
+        .map(normalize_content)
+        .unwrap_or_else(|| json!([]));
+    if content
+        .as_array()
+        .is_some_and(|content| !content.is_empty())
+    {
+        content
+    } else {
+        update
+            .get("rawOutput")
+            .map(normalize_content)
+            .unwrap_or_else(|| json!([]))
+    }
+}
+
+pub(super) fn normalize_content(content: &Value) -> Value {
+    Value::Array(
+        content_values(content)
+            .flat_map(|value| match value.get("type").and_then(Value::as_str) {
+                Some("content") => value.get("content").cloned().into_iter().collect(),
+                Some("text" | "image" | "resource") => vec![value.clone()],
+                Some("diff") => vec![json!({
+                    "type": "text",
+                    "text": format_diff(value),
+                })],
+                _ => value
+                    .as_str()
+                    .or_else(|| value.get("text").and_then(Value::as_str))
+                    .or_else(|| value.get("output").and_then(Value::as_str))
+                    .map(|text| vec![json!({"type": "text", "text": text})])
+                    .unwrap_or_else(|| normalize_process_output(value)),
+            })
+            .collect(),
+    )
+}
+
+fn normalize_process_output(value: &Value) -> Vec<Value> {
+    for key in ["combinedOutput", "combined_output", "formatted_output"] {
+        if let Some(text) = value.get(key).and_then(Value::as_str)
+            && !text.is_empty()
+        {
+            return vec![json!({"type": "text", "text": text})];
+        }
+    }
+    ["stdout", "stderr"]
+        .into_iter()
+        .filter_map(|key| value.get(key).and_then(Value::as_str))
+        .filter(|text| !text.is_empty())
+        .map(|text| json!({"type": "text", "text": text}))
+        .collect()
+}
+
+fn format_diff(value: &Value) -> String {
+    let path = text_field(value, PATH_KEYS).unwrap_or("file");
+    let old = text_field(value, OLD_TEXT_KEYS).unwrap_or("");
+    let new = text_field(value, NEW_TEXT_KEYS).unwrap_or("");
+    format!("Diff for {path}\n--- before\n{old}\n+++ after\n{new}")
+}
+
+pub(super) fn usage_update(update: &Value) -> Option<WorkerUsage> {
+    let usage = update.get("usage").unwrap_or(update);
+    let input = number(usage, &["inputTokens", "input"]);
+    let output = number(usage, &["outputTokens", "output"]);
+    let cache_read = number(usage, &["cachedInputTokens", "cacheRead"]);
+    let cache_write = number(usage, &["cacheWriteInputTokens", "cacheWrite"]);
+    let context_window = number(update, &["size", "contextWindow"]);
+    (input + output + cache_read + cache_write + context_window > 0).then_some(WorkerUsage {
+        turn: TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+        },
+        session: TokenUsage {
+            input,
+            output,
+            cache_read,
+            cache_write,
+        },
+        context_window,
+        cost: None,
+    })
+}
+
+fn number(value: &Value, names: &[&str]) -> u64 {
+    names
+        .iter()
+        .find_map(|name| value.get(*name).and_then(Value::as_u64))
+        .unwrap_or(0)
+}
+
+pub(super) fn find_permission_option(options: &[Value], allow: bool) -> Option<String> {
+    let preferred = if allow {
+        ["allow_once", "allow-once", "allow_always", "allow-always"]
+    } else {
+        ["reject_once", "reject-once", "deny_once", "deny-once"]
+    };
+    preferred.into_iter().find_map(|wanted| {
+        options.iter().find_map(|option| {
+            let kind = option.get("kind").and_then(Value::as_str).unwrap_or("");
+            let id = option
+                .get("optionId")
+                .or_else(|| option.get("id"))
+                .and_then(Value::as_str)?;
+            (kind == wanted || id == wanted).then(|| id.to_owned())
+        })
+    })
+}
+
+pub(super) fn is_acceptance(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "yes"
+            | "true"
+            | "allow"
+            | "accept"
+            | "accepted"
+            | "allow once"
+            | "allow always"
+            | "include"
+    )
+}
+
+#[cfg(test)]
+#[path = "translate_tests.rs"]
+mod tests;

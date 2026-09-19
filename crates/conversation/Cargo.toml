@@ -1,0 +1,24 @@
+[package]
+name = "farcaster-conversation"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "GPL-3.0-or-later"
+
+[dependencies]
+base64 = "0.22.1"
+farcaster-agent-protocol = { path = "../agent-protocol" }
+farcaster-utility = { path = "../utility" }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+unwrap_used = "deny"

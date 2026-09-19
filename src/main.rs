@@ -1,20 +1,21 @@
 mod app;
-mod builtin_mcp;
 mod infrastructure;
 #[cfg(target_os = "linux")]
 mod linux_graphics;
-mod modules;
 
 use app::infrastructure::performance::StartupTiming;
 pub(crate) use app::runtime;
 pub(crate) use farcaster_access as access;
+pub(crate) use farcaster_agents as agents;
+pub(crate) use farcaster_agents::builtin_mcp;
+pub(crate) use farcaster_agents::extensions as protocol;
+pub(crate) use farcaster_conversation as conversation;
 pub(crate) use farcaster_projects as projects;
 pub(crate) use farcaster_repository as repository;
+pub(crate) use farcaster_reviews as reviews;
 pub(crate) use farcaster_sessions as sessions;
 pub(crate) use farcaster_sessions::activity as agent_activity;
 pub(crate) use farcaster_utility as utility;
-pub(crate) use modules::agents::extensions as protocol;
-pub(crate) use modules::{agents, conversation, reviews};
 
 fn main() -> std::process::ExitCode {
     if let Err(error) = app::infrastructure::neovim_launch::run_if_requested() {

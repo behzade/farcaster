@@ -247,7 +247,7 @@ fn run_pi_extension_worker_send_test() {
     std::fs::copy(
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/src/modules/agents/adapter/pi/farcaster.js"
+            "/crates/agents/src/adapter/pi/farcaster.js"
         ),
         &extension,
     )

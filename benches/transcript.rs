@@ -11,8 +11,8 @@ use farcaster_utility::persistent_vec;
 use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
-#[path = "../src/modules/reviews.rs"]
-mod reviews;
+pub(crate) use farcaster_conversation as conversation;
+pub(crate) use farcaster_reviews as reviews;
 
 mod app {
     pub(crate) use crate::reviews;
@@ -175,33 +175,8 @@ mod app {
 }
 
 mod agents {
+    pub(crate) use farcaster_agent_protocol::{CommonTool, ToolCategory, ToolMetadata};
     pub(crate) use farcaster_contracts::Backend;
-    mod tool {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/modules/agents/core/tool.rs"
-        ));
-    }
-    pub(crate) use tool::{ToolCategory, ToolMetadata};
-    #[derive(Clone, Copy)]
-    pub(crate) enum CommonTool {
-        Read,
-        Write,
-        Edit,
-        Bash,
-    }
-
-    impl CommonTool {
-        pub(crate) fn from_name(name: &str) -> Option<Self> {
-            match name.to_ascii_lowercase().as_str() {
-                "read" => Some(Self::Read),
-                "write" => Some(Self::Write),
-                "edit" => Some(Self::Edit),
-                "bash" => Some(Self::Bash),
-                _ => None,
-            }
-        }
-    }
 
     #[derive(Clone)]
     pub(crate) struct PeerMessage {
@@ -248,8 +223,6 @@ mod performance;
 pub(crate) mod utility {
     pub(crate) use farcaster_utility::persistent_vec;
 }
-#[path = "../src/modules/conversation.rs"]
-mod conversation;
 // Use the real transcript primitives without app-wide dialog dependencies.
 mod primitives {
     pub(crate) use crate::bench_button::*;
@@ -285,8 +258,9 @@ enum HarnessAccessMode {
 }
 #[path = "../src/app/composer/prompt_fragments.rs"]
 pub(crate) mod prompt_fragments;
-#[path = "../src/modules/agents/contract/extensions.rs"]
-mod protocol;
+mod protocol {
+    pub(crate) use farcaster_agent_protocol::extensions::*;
+}
 #[path = "../src/app/ui/theme.rs"]
 mod theme;
 

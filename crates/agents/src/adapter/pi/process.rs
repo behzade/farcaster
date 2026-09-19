@@ -1,0 +1,1424 @@
+use crate::Backend;
+#[path = "process_metadata.rs"]
+mod metadata;
+
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fs::OpenOptions,
+    io::{Read as _, Seek as _, SeekFrom, Write as _},
+    path::{Path, PathBuf},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{Arc, Mutex, mpsc},
+    thread,
+    time::{Duration, Instant},
+};
+
+use serde_json::Value;
+
+use super::{
+    framing::{JsonlFramer, encode_json_line},
+    wire::{PiWireMessage, parse_frame},
+};
+#[cfg(test)]
+use crate::adapter::process_command::resolve_agent_program;
+use crate::{
+    agents::extensions::ExtensionUiResponse,
+    agents::{
+        AgentLaunchConfig, HarnessAccessMode, PeerMessage, SessionActivityKind, SessionCommand,
+        SessionEvent, SessionResponse, WorkerActivityState, WorkerSendMode,
+    },
+    contract::SessionActivity,
+};
+
+pub fn launch_configuration(config: &AgentLaunchConfig) -> AgentLaunchConfig {
+    let mut config = config.clone();
+    if config.program.as_os_str().is_empty() {
+        config.program = pi_program(std::env::var_os("FARCASTER_PI_PATH"));
+    }
+    config
+}
+
+fn pi_program(packaged_path: Option<std::ffi::OsString>) -> PathBuf {
+    packaged_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("pi"))
+}
+
+/// Pi's model/thinking RPCs change global defaults. Automatic launches must
+/// select their own configuration without changing the user's next session.
+pub(super) fn launch_selection(
+    command: &mut AgentLaunchConfig,
+    model: Option<(&str, &str)>,
+    reasoning: Option<&str>,
+) {
+    if let Some((provider, model)) = model {
+        command.prefix_args.extend([
+            "--provider".into(),
+            provider.into(),
+            "--model".into(),
+            model.into(),
+        ]);
+    }
+    if let Some(reasoning) = reasoning {
+        command
+            .prefix_args
+            .extend(["--thinking".into(), reasoning.into()]);
+    }
+}
+
+#[derive(Clone)]
+struct ReaderSender {
+    sender: mpsc::Sender<ReaderItem>,
+    wake: Option<thread::Thread>,
+}
+
+impl ReaderSender {
+    fn send(&self, item: ReaderItem) -> Result<(), ()> {
+        self.sender.send(item).map_err(|_| ())?;
+        if let Some(wake) = &self.wake {
+            wake.unpark();
+        }
+        Ok(())
+    }
+}
+
+enum ReaderItem {
+    Wire(Box<Result<PiWireMessage, String>>),
+    Stderr(String),
+    StderrEof,
+    Eof,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum SessionLaunch<'a> {
+    Catalog,
+    New,
+    Resume(&'a Path),
+    Fork(&'a Path),
+}
+
+fn rpc_command(
+    command: &AgentLaunchConfig,
+    project: &Path,
+    launch: SessionLaunch<'_>,
+) -> Result<std::process::Command, String> {
+    let mut prepared = launch_configuration(command).command(project)?;
+    prepared.args(["--mode", "rpc"]);
+    prepared
+        .env("FARCASTER_NATIVE_NOTIFICATIONS", "1")
+        .env("PI_GPUI_NATIVE_NOTIFICATIONS", "1");
+    match launch {
+        SessionLaunch::Catalog => {
+            prepared.arg("--no-session");
+        }
+        SessionLaunch::New => {}
+        SessionLaunch::Resume(session) => {
+            prepared.arg("--session").arg(session);
+        }
+        SessionLaunch::Fork(source) => {
+            prepared.arg("--fork").arg(source);
+        }
+    }
+    Ok(prepared)
+}
+
+fn apply_farcaster_tools(command: &mut std::process::Command, caller_token: Option<&str>) {
+    match caller_token {
+        Some(token) => {
+            command
+                .env("FARCASTER_MCP_URL", crate::adapter::farcaster_mcp::URL)
+                .env(
+                    "FARCASTER_MCP_HEADER",
+                    crate::adapter::farcaster_mcp::CALLER_HEADER,
+                )
+                .env("FARCASTER_MCP_CALLER", token);
+        }
+        None => {
+            command
+                .env_remove("FARCASTER_MCP_URL")
+                .env_remove("FARCASTER_MCP_HEADER")
+                .env_remove("FARCASTER_MCP_CALLER");
+        }
+    }
+}
+
+struct RpcMetadata<'a> {
+    extension: &'a Path,
+    is_worker: bool,
+    identity: Option<&'a (String, String)>,
+    parent_worker: Option<&'a str>,
+    parent_session: Option<&'a str>,
+    caller_token: &'a str,
+}
+
+fn prepare_rpc(
+    command: &AgentLaunchConfig,
+    project: &Path,
+    launch: SessionLaunch<'_>,
+    metadata: RpcMetadata<'_>,
+) -> Result<std::process::Command, String> {
+    let mut prepared = rpc_command(command, project, launch)?;
+    prepared.arg("--extension").arg(metadata.extension);
+    metadata::apply(
+        &mut prepared,
+        project,
+        &launch,
+        metadata.is_worker,
+        metadata.identity,
+        metadata.parent_worker,
+        metadata.parent_session,
+    );
+    apply_farcaster_tools(
+        &mut prepared,
+        (!metadata.is_worker && crate::adapter::farcaster_mcp::enabled())
+            .then_some(metadata.caller_token),
+    );
+    Ok(prepared)
+}
+
+pub struct PiRpcProcess {
+    commands: Vec<super::wire::PiCommand>,
+    sandbox_adapter: Option<&'static dyn super::sandbox::PiSandboxAdapter>,
+    sandbox_mode: Option<HarnessAccessMode>,
+    caller_identity: crate::core::CallerIdentity,
+    steering_extension: tempfile::NamedTempFile,
+    launch_command: AgentLaunchConfig,
+    project: PathBuf,
+    is_worker: bool,
+    parent_worker_id: Option<String>,
+    native_parent_session: Option<String>,
+    wake: Option<thread::Thread>,
+    steering_configured: bool,
+    selected_model: Option<(String, String)>,
+    selected_reasoning: Option<String>,
+    pending_configurations: HashMap<String, PendingConfiguration>,
+    pending_queue_configurations: HashMap<String, PendingQueueConfiguration>,
+    apply_steering_requests: HashSet<String>,
+    apply_steering_settled: bool,
+    child: Arc<Mutex<Child>>,
+    stdin: Arc<Mutex<ChildStdin>>,
+    incoming: mpsc::Receiver<ReaderItem>,
+    queued: VecDeque<SessionEvent>,
+    pending: HashMap<String, String>,
+    pending_prompt_modes: HashMap<String, crate::extensions::PromptMode>,
+    peer_messages: VecDeque<PeerMessage>,
+    next_id: u64,
+    request_namespace: uuid::Uuid,
+    activity: WorkerActivityState,
+    stderr: String,
+    parent_session: Option<String>,
+    pending_parent_stamp: Option<PathBuf>,
+    expected_resume: Option<PathBuf>,
+    session_locator: Option<PathBuf>,
+}
+
+enum PendingConfiguration {
+    Model { provider: String, model_id: String },
+    Reasoning(String),
+}
+
+enum PendingQueueConfiguration {
+    Steering { public_id: String },
+    FollowUp { public_id: String },
+}
+
+impl PiRpcProcess {
+    pub(super) fn set_worker_slot(&mut self, slot: Option<crate::core::WorkerSlot>) {
+        self.caller_identity.set_slot(slot);
+    }
+
+    pub fn spawn_catalog(command: &AgentLaunchConfig, project: &Path) -> Result<Self, String> {
+        Self::spawn_inner(command, project, SessionLaunch::Catalog, None, None, None)
+    }
+
+    pub fn spawn(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        session: Option<&Path>,
+    ) -> Result<Self, String> {
+        let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
+        Self::spawn_inner(command, project, launch, None, None, None)
+    }
+
+    pub fn spawn_with_optional_waker(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        session: Option<&Path>,
+        wake: Option<thread::Thread>,
+    ) -> Result<Self, String> {
+        let launch = session.map_or(SessionLaunch::New, SessionLaunch::Resume);
+        Self::spawn_inner(command, project, launch, wake, None, None)
+    }
+
+    pub fn spawn_fork_with_optional_waker(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        source: &Path,
+        wake: Option<thread::Thread>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(
+            command,
+            project,
+            SessionLaunch::Fork(source),
+            wake,
+            None,
+            None,
+        )
+    }
+
+    pub(super) fn spawn_worker(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        launch: SessionLaunch<'_>,
+        worker_id: String,
+        worker_name: String,
+        parent: Option<(String, String)>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(
+            command,
+            project,
+            launch,
+            None,
+            Some((worker_id, worker_name)),
+            parent,
+        )
+    }
+
+    fn spawn_inner(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        launch: SessionLaunch<'_>,
+        wake: Option<thread::Thread>,
+        worker: Option<(String, String)>,
+        parent: Option<(String, String)>,
+    ) -> Result<Self, String> {
+        if super::trust::startup_trust(project)? == farcaster_projects::StartupTrust::Prompt {
+            return Err("Pi project trust needs a decision before starting this session".into());
+        }
+        let registry = crate::core::CallerRegistry::shared();
+        let profile = crate::core::CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        };
+        let is_worker = worker.is_some();
+        let parent_worker_id = parent.as_ref().map(|(id, _)| id.clone());
+        let parent_session = parent
+            .as_ref()
+            .and_then(|(id, _)| registry.native_parent_session(id, Backend::Pi));
+        let caller_identity = if let Some((worker_id, worker_name)) = worker {
+            registry.issue_as_with_access(
+                project,
+                profile,
+                wake.clone(),
+                worker_id,
+                worker_name,
+                parent_worker_id.clone(),
+                command.access_mode,
+            )?
+        } else {
+            registry.issue_with_access(project, profile, wake.clone(), command.access_mode)
+        };
+        let mut steering_extension = tempfile::Builder::new()
+            .prefix("farcaster-extension-")
+            .suffix(".mjs")
+            .tempfile()
+            .map_err(|error| format!("create Pi extension: {error}"))?;
+        steering_extension
+            .write_all(include_bytes!("farcaster.js"))
+            .map_err(|error| format!("write Pi extension: {error}"))?;
+        let mut prepared = prepare_rpc(
+            command,
+            project,
+            launch,
+            RpcMetadata {
+                extension: steering_extension.path(),
+                is_worker,
+                identity: caller_identity.worker_identity().as_ref(),
+                parent_worker: parent.as_ref().map(|(id, _)| id.as_str()),
+                parent_session: parent_session.as_deref(),
+                caller_token: caller_identity.token(),
+            },
+        )?;
+        let mut child = prepared
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                format!(
+                    "start {} for {}: {error}",
+                    command.program.display(),
+                    project.display()
+                )
+            })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Pi stdin was not piped".to_owned())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "Pi stdout was not piped".to_owned())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "Pi stderr was not piped".to_owned())?;
+        let child = Arc::new(Mutex::new(child));
+        let (sender, incoming) = mpsc::channel();
+        let sender = ReaderSender {
+            sender,
+            wake: wake.clone(),
+        };
+        spawn_stdout_reader(stdout, sender.clone());
+        spawn_stderr_reader(stderr, sender);
+        let mut rpc = Self {
+            commands: Vec::new(),
+            sandbox_adapter: None,
+            sandbox_mode: None,
+            caller_identity,
+            steering_extension,
+            launch_command: command.clone(),
+            project: project.to_path_buf(),
+            is_worker,
+            parent_worker_id,
+            native_parent_session: parent_session.clone(),
+            wake,
+            steering_configured: false,
+            selected_model: None,
+            selected_reasoning: None,
+            pending_configurations: HashMap::new(),
+            pending_queue_configurations: HashMap::new(),
+            apply_steering_requests: HashSet::new(),
+            apply_steering_settled: false,
+            child,
+            stdin: Arc::new(Mutex::new(stdin)),
+            incoming,
+            queued: VecDeque::new(),
+            pending: HashMap::new(),
+            pending_prompt_modes: HashMap::new(),
+            peer_messages: VecDeque::new(),
+            next_id: 0,
+            request_namespace: uuid::Uuid::new_v4(),
+            activity: WorkerActivityState::Idle,
+            stderr: String::new(),
+            parent_session,
+            pending_parent_stamp: None,
+            expected_resume: match launch {
+                SessionLaunch::Resume(path) => {
+                    Some(farcaster_sessions::normalize_session_path(path))
+                }
+                _ => None,
+            },
+            session_locator: None,
+        };
+        rpc.readiness_handshake(Duration::from_secs(15))?;
+        rpc.configure_sandbox(command.access_mode)?;
+        Ok(rpc)
+    }
+
+    fn configure_sandbox(&mut self, requested: HarnessAccessMode) -> Result<(), String> {
+        self.sandbox_adapter = None;
+        self.sandbox_mode = None;
+        self.request_and_wait(SessionCommand::ListCommands)?;
+        let commands = std::mem::take(&mut self.commands);
+        let effective_mode = if let Some((adapter, control)) = super::sandbox::discover(&commands)?
+        {
+            self.sandbox_adapter = Some(adapter);
+            let mode = adapter.launch_mode(requested)?;
+            adapter.confirm(self, control, mode)?;
+            self.sandbox_mode = Some(mode);
+            mode
+        } else if requested == HarnessAccessMode::Sandboxed {
+            return Err("Pi cannot confirm the requested access mode: no supported sandbox control was detected".into());
+        } else {
+            HarnessAccessMode::Full
+        };
+        self.caller_identity.set_access_mode(effective_mode);
+        Ok(())
+    }
+
+    fn set_activity(&mut self, activity: WorkerActivityState) {
+        self.activity = activity;
+        self.caller_identity.set_activity(activity);
+    }
+
+    pub fn send_request(&mut self, mut request: SessionCommand) -> Result<String, String> {
+        let compact_prompt = matches!(&request, SessionCommand::Prompt { message, .. }
+            if super::protocol::compact_invocation(message).is_some());
+        if compact_prompt && self.activity != WorkerActivityState::Idle {
+            return Err("Run /compact when the current turn has finished".into());
+        }
+        if matches!(&request, SessionCommand::Prompt { .. })
+            && self.sandbox_adapter.is_some()
+            && self.sandbox_mode.is_none()
+        {
+            return Err("The sandbox adapter has not confirmed an active mode".into());
+        }
+        if let SessionCommand::Prompt { images, .. } = &mut request {
+            *images = std::mem::take(images)
+                .into_iter()
+                .map(crate::extensions::PromptImage::into_inline)
+                .collect::<Result<Vec<_>, _>>()?;
+        }
+        let starts_run = matches!(
+            &request,
+            SessionCommand::Prompt {
+                mode: crate::extensions::PromptMode::Normal,
+                ..
+            }
+        );
+        if matches!(&request, SessionCommand::Abort) {
+            self.restart_after_abort()?;
+            let id = self.next_request_id();
+            self.queued
+                .push_back(SessionEvent::Response(SessionResponse::success(
+                    Some(id.clone()),
+                    crate::SessionResponsePayload::Abort,
+                )));
+            self.queued.push_back(SessionEvent::Activity(
+                serde_json::json!({"type": "agent_settled"}).into(),
+            ));
+            return Ok(id);
+        }
+        if matches!(&request, SessionCommand::ConfigureSteering) {
+            let public_id = self.next_request_id();
+            let id = self.send_command(serde_json::json!({
+                "type": "set_steering_mode",
+                "mode": "all",
+            }))?;
+            self.pending_queue_configurations.insert(
+                id,
+                PendingQueueConfiguration::Steering {
+                    public_id: public_id.clone(),
+                },
+            );
+            return Ok(public_id);
+        }
+        let prompt_mode = match &request {
+            SessionCommand::Prompt { mode, .. } => Some(*mode),
+            _ => None,
+        };
+        let apply_steering = matches!(&request, SessionCommand::ApplySteering);
+        let configuration = match &request {
+            SessionCommand::SelectModel { provider, model_id } => {
+                Some(PendingConfiguration::Model {
+                    provider: provider.clone(),
+                    model_id: model_id.clone(),
+                })
+            }
+            SessionCommand::SelectReasoning { level } => {
+                Some(PendingConfiguration::Reasoning(level.clone()))
+            }
+            _ => None,
+        };
+        let id = self.send_command(super::protocol::encode_request(request)?)?;
+        if let Some(mode) = prompt_mode {
+            self.pending_prompt_modes.insert(id.clone(), mode);
+        }
+        if apply_steering {
+            self.apply_steering_requests.insert(id.clone());
+        }
+        if let Some(configuration) = configuration {
+            self.pending_configurations
+                .insert(id.clone(), configuration);
+        }
+        if starts_run {
+            self.set_activity(WorkerActivityState::Starting);
+        }
+        if compact_prompt {
+            self.queued.push_back(SessionEvent::Activity(
+                serde_json::json!({"type":"compaction_start", "reason":"manual"}).into(),
+            ));
+        }
+        Ok(id)
+    }
+
+    fn send_command(&mut self, mut command: Value) -> Result<String, String> {
+        let object = command
+            .as_object_mut()
+            .ok_or_else(|| "RPC command must be an object".to_owned())?;
+        let command_type = object
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "RPC command requires a string type".to_owned())?
+            .to_owned();
+        let id = self.next_request_id();
+        object.insert("id".into(), Value::String(id.clone()));
+        if command_type == "prompt" {
+            self.caller_identity.begin_execution(Some(&id));
+        }
+        let encoded = encode_json_line(&command)
+            .map_err(|error| format!("encode {command_type}: {error}"))?;
+        self.pending.insert(id.clone(), command_type);
+        if let Err(error) = self.write(&encoded) {
+            self.pending.remove(&id);
+            return Err(error);
+        }
+        Ok(id)
+    }
+
+    fn next_request_id(&mut self) -> String {
+        self.next_id = self.next_id.saturating_add(1);
+        // Receipts outlive the transport in runtime recovery and saved history.
+        format!("gpui-{}-{}", self.request_namespace, self.next_id)
+    }
+
+    fn restart_after_abort(&mut self) -> Result<(), String> {
+        let session = self.session_locator.clone();
+        let restore_steering = self.steering_configured;
+        let restore_model = self.selected_model.clone();
+        let restore_reasoning = self.selected_reasoning.clone();
+        self.peer_messages.clear();
+        self.caller_identity.discard_pending_messages();
+        self.force_stop()?;
+
+        let launch = session
+            .as_deref()
+            .map_or(SessionLaunch::New, SessionLaunch::Resume);
+        let mut command = self.launch_command.clone();
+        launch_selection(
+            &mut command,
+            restore_model
+                .as_ref()
+                .map(|(provider, model)| (provider.as_str(), model.as_str())),
+            restore_reasoning.as_deref(),
+        );
+        let mut prepared = prepare_rpc(
+            &command,
+            &self.project,
+            launch,
+            RpcMetadata {
+                extension: self.steering_extension.path(),
+                is_worker: self.is_worker,
+                identity: self.caller_identity.worker_identity().as_ref(),
+                parent_worker: self.parent_worker_id.as_deref(),
+                parent_session: self.native_parent_session.as_deref(),
+                caller_token: self.caller_identity.token(),
+            },
+        )
+        .map_err(|error| restart_error(session.as_deref(), error))?;
+        let mut child = prepared
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| restart_error(session.as_deref(), error.to_string()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| restart_error(session.as_deref(), "stdin was not piped".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| restart_error(session.as_deref(), "stdout was not piped".into()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| restart_error(session.as_deref(), "stderr was not piped".into()))?;
+        let (sender, incoming) = mpsc::channel();
+        let sender = ReaderSender {
+            sender,
+            wake: self.wake.clone(),
+        };
+        spawn_stdout_reader(stdout, sender.clone());
+        spawn_stderr_reader(stderr, sender);
+        self.child = Arc::new(Mutex::new(child));
+        self.stdin = Arc::new(Mutex::new(stdin));
+        self.incoming = incoming;
+        let completed = self
+            .queued
+            .drain(..)
+            .filter(|event| {
+                matches!(event, SessionEvent::Response(response)
+                    if matches!(response.operation(), crate::SessionOperation::Prompt(_)))
+            })
+            .collect::<Vec<_>>();
+        let abandoned = std::mem::take(&mut self.pending);
+        let abandoned_apply_steering = std::mem::take(&mut self.apply_steering_requests);
+        self.apply_steering_settled = false;
+        self.pending_configurations.clear();
+        self.pending_queue_configurations.clear();
+        self.stderr.clear();
+        self.expected_resume = session
+            .as_deref()
+            .map(farcaster_sessions::normalize_session_path);
+        self.set_activity(WorkerActivityState::Idle);
+        let restore = (|| {
+            self.readiness_handshake(Duration::from_secs(15))?;
+            if restore_steering {
+                self.request_and_wait(SessionCommand::ConfigureSteering)?;
+            }
+            if let Some((provider, model_id)) = &restore_model {
+                self.confirm_model(provider, model_id)?;
+            }
+            if restore_reasoning.is_some() && self.selected_reasoning != restore_reasoning {
+                return Err("Pi did not restore the selected thinking level".into());
+            }
+            self.configure_sandbox(self.launch_command.access_mode)
+        })();
+        if let Err(error) = restore {
+            let cleanup = self.force_stop();
+            return Err(restart_error(
+                session.as_deref(),
+                cleanup.map_or_else(
+                    |cleanup| format!("{error}; cleanup failed: {cleanup}"),
+                    |()| error.clone(),
+                ),
+            ));
+        }
+        self.queued.extend(completed);
+        let abandoned = abandoned
+            .into_iter()
+            .map(|(id, command)| {
+                let operation = if abandoned_apply_steering.contains(&id) {
+                    crate::SessionOperation::ApplySteering
+                } else {
+                    super::wire::response_operation(&command)
+                };
+                if let Some(mode) = self.pending_prompt_modes.remove(&id) {
+                    SessionEvent::Response(SessionResponse::prompt_delivery_unknown(
+                        id,
+                        mode,
+                        "prompt dispatch was interrupted before Pi acknowledged it".into(),
+                    ))
+                } else {
+                    SessionEvent::Response(SessionResponse::cancelled(
+                        id,
+                        operation,
+                        "request cancelled because Pi stopped".into(),
+                    ))
+                }
+            })
+            .collect::<Vec<_>>();
+        self.queued.extend(abandoned);
+        self.pending_prompt_modes.clear();
+        Ok(())
+    }
+
+    pub(super) fn confirm_model(&self, provider: &str, model_id: &str) -> Result<(), String> {
+        if self
+            .selected_model
+            .as_ref()
+            .is_some_and(|(actual_provider, actual_model)| {
+                actual_provider == provider && actual_model == model_id
+            })
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "Pi did not select requested model {provider}/{model_id}; actual {:?}",
+                self.selected_model
+            ))
+        }
+    }
+
+    fn force_stop(&mut self) -> Result<(), String> {
+        let mut child = self
+            .child
+            .lock()
+            .map_err(|_| "Pi process lock was poisoned".to_owned())?;
+        if child
+            .try_wait()
+            .map_err(|error| format!("check Pi before forced stop: {error}"))?
+            .is_none()
+        {
+            child
+                .kill()
+                .map_err(|error| format!("force stop Pi: {error}"))?;
+        }
+        child
+            .wait()
+            .map_err(|error| format!("confirm forced Pi stop: {error}"))?;
+        Ok(())
+    }
+
+    pub fn request_and_wait(&mut self, request: SessionCommand) -> Result<SessionResponse, String> {
+        let recheck_sandbox = matches!(&request, SessionCommand::ForkAt { .. });
+        let sandbox_mode = self.sandbox_mode;
+        if recheck_sandbox {
+            self.sandbox_mode = None;
+        }
+        let operation = request.operation();
+        let id = self.send_request(request)?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < deadline {
+            match self.incoming.recv_timeout(Duration::from_millis(50)) {
+                Ok(ReaderItem::StderrEof) => {}
+                Ok(item) => match self.route(item) {
+                    SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                        match &response.result {
+                            Err(error) => return Err(error.to_string()),
+                            Ok(crate::SessionResponsePayload::ForkAt { cancelled: true }) => {
+                                return Err("Pi cancelled the session fork".into());
+                            }
+                            _ => {}
+                        }
+                        if recheck_sandbox && let Some(mode) = sandbox_mode {
+                            self.configure_sandbox(mode)?;
+                        }
+                        return Ok(response);
+                    }
+                    SessionEvent::Failure(error) => return Err(error),
+                    other => self.queued.push_back(other),
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(format!(
+                        "Pi readers stopped while attempting to {operation}"
+                    ));
+                }
+            }
+        }
+        Err(format!("Pi did not {operation} within 15 seconds"))
+    }
+
+    pub fn rename_session(
+        command: &AgentLaunchConfig,
+        project: &Path,
+        session: &Path,
+        name: &str,
+    ) -> Result<(), String> {
+        let mut rpc = Self::spawn(command, project, Some(session))?;
+        let result = (|| {
+            let id = rpc.send_request(SessionCommand::Rename {
+                name: name.to_owned(),
+            })?;
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                match rpc.try_next() {
+                    Some(SessionEvent::Response(response))
+                        if response.id.as_deref() == Some(&id) =>
+                    {
+                        return response
+                            .result
+                            .map(|_| ())
+                            .map_err(|error| error.to_string());
+                    }
+                    Some(SessionEvent::Failure(error)) => return Err(error),
+                    Some(_) | None => thread::sleep(Duration::from_millis(10)),
+                }
+            }
+            Err("timed out while setting the session name".to_owned())
+        })();
+        let termination = rpc.terminate();
+        result.and(termination)
+    }
+
+    pub fn send_extension_response(&mut self, response: ExtensionUiResponse) -> Result<(), String> {
+        let value = serde_json::to_value(response)
+            .map_err(|error| format!("encode extension UI response: {error}"))?;
+        let encoded = encode_json_line(&value)
+            .map_err(|error| format!("encode extension UI response: {error}"))?;
+        self.write(&encoded)
+    }
+
+    pub fn try_next(&mut self) -> Option<SessionEvent> {
+        if let Some(item) = self.queued.pop_front() {
+            return Some(item);
+        }
+        if let Some(message) = self.caller_identity.try_recv() {
+            self.peer_messages.push_back(message);
+        }
+        if let Some(mode) = WorkerSendMode::for_peer(self.activity)
+            && !self.peer_messages.is_empty()
+            && self.caller_identity.try_activate()
+            && let Some(message) = self.peer_messages.pop_front()
+        {
+            let mode = match mode {
+                WorkerSendMode::Prompt => crate::extensions::PromptMode::Normal,
+                WorkerSendMode::Steer => crate::extensions::PromptMode::Steer,
+                WorkerSendMode::Queue => unreachable!(),
+            };
+            if let Err(error) = self.send_request(SessionCommand::Prompt {
+                mode,
+                message: message.prompt(),
+                images: Vec::new(),
+            }) {
+                return Some(SessionEvent::Failure(error));
+            }
+        }
+        match self.incoming.try_recv() {
+            Ok(ReaderItem::StderrEof) => None,
+            Ok(ReaderItem::Eof) => Some(self.finish_after_stdout_eof()),
+            Ok(item) => Some(self.route(item)),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Some(SessionEvent::Failure("Pi reader threads stopped".into()))
+            }
+        }
+    }
+
+    pub fn terminate(&mut self) -> Result<(), String> {
+        let pid = {
+            let mut child = self
+                .child
+                .lock()
+                .map_err(|_| "Pi process lock was poisoned".to_owned())?;
+            if child
+                .try_wait()
+                .map_err(|error| format!("check Pi before terminate: {error}"))?
+                .is_some()
+            {
+                return Ok(());
+            }
+            child.id()
+        };
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let exited = self
+                .child
+                .lock()
+                .map_err(|_| "Pi process lock was poisoned".to_owned())?
+                .try_wait()
+                .map_err(|error| format!("wait for Pi: {error}"))?
+                .is_some();
+            if exited {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        self.child
+            .lock()
+            .map_err(|_| "Pi process lock was poisoned".to_owned())?
+            .kill()
+            .map_err(|error| format!("kill Pi after timeout: {error}"))?;
+        let reap_deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let exited = self
+                .child
+                .lock()
+                .map_err(|_| "Pi process lock was poisoned".to_owned())?
+                .try_wait()
+                .map_err(|error| format!("reap Pi after kill: {error}"))?
+                .is_some();
+            if exited {
+                return Ok(());
+            }
+            if Instant::now() >= reap_deadline {
+                return Err("Pi did not exit after forced termination".to_owned());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn readiness_handshake(&mut self, timeout: Duration) -> Result<(), String> {
+        let id = self.send_request(SessionCommand::LoadState)?;
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            match self.incoming.recv_timeout(Duration::from_millis(50)) {
+                Ok(ReaderItem::StderrEof) => continue,
+                Ok(item) => match self.route(item) {
+                    SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                        if response.operation() != crate::SessionOperation::LoadState {
+                            return Err(format!(
+                                "readiness response was for {:?}",
+                                response.operation()
+                            ));
+                        }
+                        if let Err(error) = response.result {
+                            return Err(format!("Pi readiness failed: {error}"));
+                        }
+                        return Ok(());
+                    }
+                    SessionEvent::Failure(error) => return Err(error),
+                    other => self.queued.push_back(other),
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("Pi readers stopped during readiness".into());
+                }
+            }
+        }
+        Err(format!(
+            "Pi did not answer get_state within {} seconds. Stderr: {}",
+            timeout.as_secs(),
+            self.stderr
+        ))
+    }
+
+    /// A local extension command must acknowledge both the RPC request and its
+    /// effect. Neither a successful prompt response nor a status alone is enough.
+    pub(super) fn confirm_control(
+        &mut self,
+        command: Value,
+        timeout: Duration,
+        mut confirmation: impl FnMut(&SessionEvent) -> Option<Result<(), String>>,
+    ) -> Result<(), String> {
+        let id = self.send_command(command)?;
+        let deadline = Instant::now() + timeout;
+        let mut acknowledged = false;
+        let mut confirmed = false;
+        while Instant::now() < deadline {
+            let item = match self.incoming.recv_timeout(Duration::from_millis(50)) {
+                Ok(ReaderItem::StderrEof) => continue,
+                Ok(item) => item,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("Pi disconnected during sandbox confirmation".into());
+                }
+            };
+            let event = self.route(item);
+            if let Some(result) = confirmation(&event) {
+                result?;
+                confirmed = true;
+            } else {
+                match event {
+                    SessionEvent::Response(response) if response.id.as_deref() == Some(&id) => {
+                        response.result.map_err(|error| error.to_string())?;
+                        acknowledged = true;
+                    }
+                    SessionEvent::Failure(error) => return Err(error),
+                    other => self.queued.push_back(other),
+                }
+            }
+            if acknowledged && confirmed {
+                return Ok(());
+            }
+        }
+        Err("Pi sandbox adapter did not confirm the requested mode in time".into())
+    }
+
+    pub(super) fn sandbox_adapter_id(&self) -> Option<&str> {
+        self.sandbox_adapter.map(|adapter| adapter.id())
+    }
+
+    #[cfg(test)]
+    pub(super) fn confirmed_sandbox_mode(&self) -> Option<HarnessAccessMode> {
+        self.sandbox_mode
+    }
+
+    pub(super) fn effective_access_mode(&self) -> Option<HarnessAccessMode> {
+        self.sandbox_mode.or_else(|| {
+            self.sandbox_adapter
+                .is_none()
+                .then_some(HarnessAccessMode::Full)
+        })
+    }
+
+    fn write(&self, bytes: &[u8]) -> Result<(), String> {
+        let mut stdin = self
+            .stdin
+            .lock()
+            .map_err(|_| "Pi stdin lock was poisoned".to_owned())?;
+        stdin
+            .write_all(bytes)
+            .and_then(|()| stdin.flush())
+            .map_err(|error| format!("write Pi stdin: {error}"))
+    }
+
+    fn route(&mut self, item: ReaderItem) -> SessionEvent {
+        self.retry_parent_stamp();
+        match item {
+            ReaderItem::Wire(wire) => match *wire {
+                Ok(PiWireMessage::Response {
+                    mut response,
+                    command,
+                    commands,
+                }) => {
+                    let Some(id) = response.id.clone() else {
+                        return SessionEvent::Failure(format!(
+                            "uncorrelated response for {command}"
+                        ));
+                    };
+                    let Some(expected_command) = self.pending.remove(&id) else {
+                        return SessionEvent::Failure(format!(
+                            "response used unknown request id {id}"
+                        ));
+                    };
+                    if command != expected_command {
+                        return SessionEvent::Failure(format!(
+                            "response {id} was for {command}, expected {expected_command}"
+                        ));
+                    }
+                    if let Some(configuration) = self.pending_queue_configurations.remove(&id) {
+                        return self.route_queue_configuration(response, configuration);
+                    }
+                    if self.apply_steering_requests.remove(&id) {
+                        if self.apply_steering_requests.is_empty() && self.apply_steering_settled {
+                            self.apply_steering_settled = false;
+                            self.set_activity(WorkerActivityState::Idle);
+                            self.queued.push_back(SessionEvent::Activity(
+                                serde_json::json!({"type":"agent_settled"}).into(),
+                            ));
+                        }
+                        response = remap_response(
+                            response,
+                            crate::SessionOperation::ApplySteering,
+                            crate::SessionResponsePayload::ApplySteering,
+                        );
+                    }
+                    if let Some(configuration) = self.pending_configurations.remove(&id)
+                        && response.result.is_ok()
+                    {
+                        match configuration {
+                            PendingConfiguration::Model { provider, model_id } => {
+                                self.caller_identity.select_model(&provider, &model_id);
+                                self.selected_model = Some((provider, model_id));
+                            }
+                            PendingConfiguration::Reasoning(level) => {
+                                self.caller_identity.select_effort(&level);
+                                self.selected_reasoning = Some(level);
+                            }
+                        }
+                    }
+                    if matches!(
+                        &response.result,
+                        Ok(crate::SessionResponsePayload::ListCommands(_))
+                    ) {
+                        self.commands = commands;
+                    }
+                    let prompt_operation = response.operation();
+                    if command == "compact"
+                        && let Some(mode) = self.pending_prompt_modes.remove(&id)
+                    {
+                        self.set_activity(WorkerActivityState::Idle);
+                        self.queued.push_back(SessionEvent::Activity(
+                            serde_json::json!({"type":"compaction_end", "errorMessage": response.result.as_ref().err().map(|error| &error.message)}).into(),
+                        ));
+                        self.queued.push_back(SessionEvent::Activity(
+                            serde_json::json!({"type":"agent_settled"}).into(),
+                        ));
+                        response = remap_response(
+                            response,
+                            crate::SessionOperation::Prompt(mode),
+                            crate::SessionResponsePayload::Prompt(mode),
+                        );
+                    }
+                    if matches!(prompt_operation, crate::SessionOperation::Prompt(_)) {
+                        self.pending_prompt_modes.remove(&id);
+                    }
+                    if response.result.is_err()
+                        && prompt_operation
+                            == crate::SessionOperation::Prompt(
+                                crate::extensions::PromptMode::Normal,
+                            )
+                    {
+                        self.set_activity(WorkerActivityState::Idle);
+                    }
+                    if let Ok(crate::SessionResponsePayload::LoadState(state)) = &response.result {
+                        self.selected_model = state.model.as_ref().map(|model| {
+                            self.caller_identity
+                                .select_model(&model.provider, &model.id);
+                            (model.provider.clone(), model.id.clone())
+                        });
+                        self.selected_reasoning = state.thinking_level.clone();
+                        if let Some(level) = &self.selected_reasoning {
+                            self.caller_identity.select_effort(level);
+                        }
+                        let session = state.session_file.as_deref();
+                        self.session_locator = session.map(PathBuf::from);
+                        if let Some(expected) = self.expected_resume.take() {
+                            let actual = session.map(|path| {
+                                farcaster_sessions::normalize_session_path(Path::new(path))
+                            });
+                            if actual.as_ref() != Some(&expected) {
+                                return SessionEvent::Failure(format!(
+                                    "Pi did not resume the requested session: {}",
+                                    expected.display()
+                                ));
+                            }
+                        }
+                        if let Some(session) = session
+                        // An inherited worker resumes the parent before forking it.
+                        && self.parent_session.as_deref() != Some(session)
+                        {
+                            self.caller_identity.bind(session);
+                            if self.parent_session.is_some() {
+                                self.pending_parent_stamp = Some(PathBuf::from(session));
+                                self.retry_parent_stamp();
+                            }
+                        }
+                    }
+                    SessionEvent::Response(response)
+                }
+                Ok(PiWireMessage::ExtensionUi(request)) => {
+                    if let (Some(adapter), Some(expected)) =
+                        (self.sandbox_adapter, self.sandbox_mode)
+                        && let Some(report) = adapter.mode_report(&request)
+                    {
+                        match report {
+                            Ok(mode) if mode == expected => {
+                                return SessionEvent::Stderr(String::new());
+                            }
+                            report => {
+                                self.sandbox_mode = None;
+                                return SessionEvent::Failure(report.err().unwrap_or_else(|| "Sandbox mode changed outside Farcaster. Restart the session to confirm its mode.".into()));
+                            }
+                        }
+                    }
+                    SessionEvent::Interaction(request)
+                }
+                Ok(PiWireMessage::Event(event)) => {
+                    let activity: SessionActivity = event.into();
+                    match activity.kind() {
+                        SessionActivityKind::AgentStarted => {
+                            self.caller_identity.ensure_execution();
+                            self.apply_steering_settled = false;
+                            self.set_activity(WorkerActivityState::Working);
+                        }
+                        SessionActivityKind::AgentSettled => {
+                            if !self.apply_steering_requests.is_empty() {
+                                self.apply_steering_settled = true;
+                                return SessionEvent::Stderr(String::new());
+                            }
+                            self.set_activity(WorkerActivityState::Idle);
+                        }
+                        _ => {}
+                    }
+                    SessionEvent::Activity(activity)
+                }
+                Err(error) => SessionEvent::Failure(error),
+            },
+            ReaderItem::Stderr(chunk) => {
+                self.stderr.push_str(&chunk);
+                SessionEvent::Stderr(chunk)
+            }
+            ReaderItem::Eof => self.finish_after_stdout_eof(),
+            ReaderItem::StderrEof => SessionEvent::Stderr(String::new()),
+        }
+    }
+
+    fn route_queue_configuration(
+        &mut self,
+        response: SessionResponse,
+        configuration: PendingQueueConfiguration,
+    ) -> SessionEvent {
+        match configuration {
+            PendingQueueConfiguration::Steering { public_id } => {
+                if let Err(error) = response.result {
+                    return SessionEvent::Response(SessionResponse::failure(
+                        Some(public_id),
+                        crate::SessionOperation::ConfigureSteering,
+                        error.to_string(),
+                    ));
+                }
+                match self.send_command(serde_json::json!({
+                    "type": "set_follow_up_mode",
+                    "mode": "all",
+                })) {
+                    Ok(id) => {
+                        self.pending_queue_configurations
+                            .insert(id, PendingQueueConfiguration::FollowUp { public_id });
+                        SessionEvent::Stderr(String::new())
+                    }
+                    Err(error) => SessionEvent::Response(SessionResponse::failure(
+                        Some(public_id),
+                        crate::SessionOperation::ConfigureSteering,
+                        error,
+                    )),
+                }
+            }
+            PendingQueueConfiguration::FollowUp { public_id } => {
+                if response.result.is_ok() {
+                    self.steering_configured = true;
+                }
+                SessionEvent::Response(remap_response(
+                    SessionResponse {
+                        id: Some(public_id),
+                        result: response.result,
+                    },
+                    crate::SessionOperation::ConfigureSteering,
+                    crate::SessionResponsePayload::ConfigureSteering,
+                ))
+            }
+        }
+    }
+
+    fn retry_parent_stamp(&mut self) {
+        let (Some(path), Some(parent)) = (
+            self.pending_parent_stamp.as_deref(),
+            self.parent_session.as_deref(),
+        ) else {
+            return;
+        };
+        if stamp_parent_session(path, parent).is_ok() {
+            self.pending_parent_stamp = None;
+            self.parent_session = None;
+        }
+    }
+
+    fn finish_after_stdout_eof(&mut self) -> SessionEvent {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            match self.incoming.recv_timeout(Duration::from_millis(20)) {
+                Ok(ReaderItem::Stderr(chunk)) => self.stderr.push_str(&chunk),
+                Ok(ReaderItem::StderrEof) => break,
+                Ok(ReaderItem::Wire(wire)) => {
+                    let event = self.route(ReaderItem::Wire(wire));
+                    self.queued.push_back(event);
+                }
+                Ok(ReaderItem::Eof) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let exit = self.exit_description();
+        if self.pending.is_empty() {
+            SessionEvent::Failure(format!(
+                "Pi closed stdout ({exit}). Stderr: {}",
+                self.stderr
+            ))
+        } else {
+            SessionEvent::Failure(format!(
+                "Pi closed stdout with {} pending request(s), {exit}. Stderr: {}",
+                self.pending.len(),
+                self.stderr
+            ))
+        }
+    }
+
+    fn exit_description(&self) -> String {
+        let deadline = Instant::now() + Duration::from_millis(100);
+        loop {
+            if let Ok(mut child) = self.child.lock()
+                && let Ok(Some(status)) = child.try_wait()
+            {
+                return status.code().map_or_else(
+                    || format!("process terminated by signal ({status})"),
+                    |code| format!("exit code {code}"),
+                );
+            }
+            if Instant::now() >= deadline {
+                return "exit status not available".to_owned();
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+impl Drop for PiRpcProcess {
+    fn drop(&mut self) {
+        let _ = self.terminate();
+    }
+}
+
+fn remap_response(
+    response: SessionResponse,
+    operation: crate::SessionOperation,
+    payload: crate::SessionResponsePayload,
+) -> SessionResponse {
+    match response.result {
+        Ok(_) => SessionResponse::success(response.id, payload),
+        Err(error) => SessionResponse::failure(response.id, operation, error.to_string()),
+    }
+}
+
+fn restart_error(session: Option<&Path>, error: String) -> String {
+    session.map_or_else(
+        || format!("Pi stopped; could not start a fresh session: {error}"),
+        |session| {
+            format!(
+                "Pi stopped; could not resume {}: {error}",
+                session.display()
+            )
+        },
+    )
+}
+
+fn spawn_stdout_reader(mut stdout: impl std::io::Read + Send + 'static, sender: ReaderSender) {
+    thread::Builder::new()
+        .name("farcaster-stdout".into())
+        .spawn(move || {
+            let mut framer = JsonlFramer::default();
+            let mut buffer = [0_u8; 8 * 1024];
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        for frame in framer.push(&buffer[..count]) {
+                            if sender
+                                .send(ReaderItem::Wire(Box::new(parse_frame(&frame))))
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender.send(ReaderItem::Wire(Box::new(Err(format!(
+                            "read Pi stdout: {error}"
+                        )))));
+                        return;
+                    }
+                }
+            }
+            if let Some(frame) = framer.finish() {
+                let _ = sender.send(ReaderItem::Wire(Box::new(parse_frame(&frame))));
+            }
+            let _ = sender.send(ReaderItem::Eof);
+        })
+        .ok();
+}
+
+fn spawn_stderr_reader(mut stderr: impl std::io::Read + Send + 'static, sender: ReaderSender) {
+    thread::Builder::new()
+        .name("farcaster-stderr".into())
+        .spawn(move || {
+            let mut buffer = [0_u8; 2 * 1024];
+            loop {
+                match stderr.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        let chunk = String::from_utf8_lossy(&buffer[..count]).into_owned();
+                        if sender.send(ReaderItem::Stderr(chunk)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ =
+                            sender.send(ReaderItem::Stderr(format!("stderr read failed: {error}")));
+                        break;
+                    }
+                }
+            }
+            let _ = sender.send(ReaderItem::StderrEof);
+        })
+        .ok();
+}
+
+fn stamp_parent_session(path: &Path, parent: &str) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("open Pi child session {}: {error}", path.display()))?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|error| format!("read Pi child session {}: {error}", path.display()))?;
+    let (header_line, rest) = contents.split_once('\n').unwrap_or((contents.as_str(), ""));
+    let mut header: Value = serde_json::from_str(header_line)
+        .map_err(|error| format!("decode Pi child session header: {error}"))?;
+    let object = header
+        .as_object_mut()
+        .filter(|header| header.get("type").and_then(Value::as_str) == Some("session"))
+        .ok_or_else(|| format!("invalid Pi child session header: {}", path.display()))?;
+    if object.get("parentSession").and_then(Value::as_str) == Some(parent) {
+        return Ok(());
+    }
+    object.insert("parentSession".into(), Value::String(parent.to_owned()));
+    let mut encoded = serde_json::to_string(&header)
+        .map_err(|error| format!("encode Pi child session header: {error}"))?;
+    encoded.push('\n');
+    encoded.push_str(rest);
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| format!("seek Pi child session: {error}"))?;
+    file.write_all(encoded.as_bytes())
+        .map_err(|error| format!("write Pi child session: {error}"))?;
+    file.set_len(encoded.len() as u64)
+        .map_err(|error| format!("truncate Pi child session: {error}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "process_tests.rs"]
+mod tests;
