@@ -5,8 +5,8 @@ use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 
 use crate::agents::CallerContext;
-pub(super) use crate::app::worker_notices::NoticeBoard;
-use crate::app::worker_notices::NoticeView;
+pub(super) use crate::notice_board::NoticeBoard;
+use crate::notice_board::NoticeView;
 
 const MAX_MESSAGE_BYTES: usize = 2_000;
 const MAX_PATHS: usize = 64;

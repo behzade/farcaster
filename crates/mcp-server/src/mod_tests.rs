@@ -191,7 +191,7 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
         None,
     );
     caller.bind("review-test");
-    let store = crate::app::persistence::StateStore::open_at(&database).expect("store");
+    let store = crate::storage::StateStore::open_at(&database).expect("store");
     let context = crate::agents::CallerRegistry::shared()
         .resolve(caller.token())
         .expect("caller");
@@ -207,35 +207,35 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
             serde_json::from_value(serde_json::json!({
                 "title":"Review", "items":[{"path":"README.md","note":"Inspect"}]
             }))
-            .unwrap(),
+            .expect("valid review params"),
         )
     };
     let parts = || {
         let request = axum::http::Request::builder()
             .header(CALLER_HEADER, caller.token())
             .body(())
-            .unwrap();
+            .expect("valid review request");
         Extension(request.into_parts().0)
     };
-    let revision = crate::reviews::delivery::revision();
+    let revision = crate::review_domain::delivery::revision();
     let Json(result) = server
         .submit_review(params(), parts())
         .await
         .expect("submit");
-    assert!(crate::reviews::delivery::revision() > revision);
-    let store = crate::app::persistence::StateStore::open_at(&database).unwrap();
+    assert!(crate::review_domain::delivery::revision() > revision);
+    let store = crate::storage::StateStore::open_at(&database).expect("open review store");
     drop(store);
-    let connection = rusqlite::Connection::open(&database).unwrap();
+    let connection = rusqlite::Connection::open(&database).expect("open review database");
     let saved: String = connection
         .query_row("SELECT artifact FROM session_reviews", [], |r| r.get(0))
-        .unwrap();
+        .expect("load saved review");
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&saved).unwrap(),
+        serde_json::from_str::<serde_json::Value>(&saved).expect("parse saved review"),
         serde_json::Value::Object(result)
     );
-    rusqlite::Connection::open(&database).unwrap().execute_batch(
+    rusqlite::Connection::open(&database).expect("open review database").execute_batch(
         "CREATE TRIGGER reject_review BEFORE INSERT ON session_reviews BEGIN SELECT RAISE(FAIL,'disk failure'); END;"
-    ).unwrap();
+    ).expect("install failing review trigger");
     let error = server
         .submit_review(params(), parts())
         .await
@@ -247,7 +247,7 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
             .query_row("SELECT count(*) FROM session_reviews", [], |r| {
                 r.get::<_, i64>(0)
             })
-            .unwrap(),
+            .expect("count saved reviews"),
         1
     );
 }

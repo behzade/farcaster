@@ -9,7 +9,7 @@ const NOTICE_TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_PROJECT_NOTICES: usize = 256;
 
 #[derive(Clone)]
-pub(crate) struct NoticeBoard {
+pub struct NoticeBoard {
     entries: Arc<Mutex<HashMap<PathBuf, Vec<Notice>>>>,
     updates: async_channel::Sender<()>,
     update_receiver: async_channel::Receiver<()>,
@@ -25,19 +25,19 @@ struct Notice {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct NoticeView {
-    pub(crate) from: String,
-    pub(crate) message: String,
-    pub(crate) paths: Vec<String>,
-    pub(crate) age_seconds: u64,
+pub struct NoticeView {
+    pub from: String,
+    pub message: String,
+    pub paths: Vec<String>,
+    pub age_seconds: u64,
 }
 
 impl NoticeBoard {
-    pub(crate) fn updates(&self) -> async_channel::Receiver<()> {
+    pub fn updates(&self) -> async_channel::Receiver<()> {
         self.update_receiver.clone()
     }
 
-    pub(crate) fn post(
+    pub fn post(
         &self,
         project: &Path,
         from_id: String,
@@ -67,7 +67,7 @@ impl NoticeBoard {
         Ok(())
     }
 
-    pub(crate) fn matching(
+    pub fn matching(
         &self,
         project: &Path,
         excluded_worker: &str,
@@ -83,7 +83,7 @@ impl NoticeBoard {
         })
     }
 
-    pub(crate) fn snapshot(&self, project: &Path) -> Vec<NoticeView> {
+    pub fn snapshot(&self, project: &Path) -> Vec<NoticeView> {
         self.read(project, |board, now| {
             board
                 .iter()
@@ -149,5 +149,5 @@ fn prune(board: &mut Vec<Notice>, now: Instant) {
 }
 
 #[cfg(test)]
-#[path = "worker_notices_tests.rs"]
+#[path = "notice_board_tests.rs"]
 mod tests;

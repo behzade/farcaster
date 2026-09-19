@@ -39,13 +39,13 @@ minimum-system-version = "14.0"
 
 [dependencies]
 async-channel = "2.5.0"
-axum = "0.8.8"
 base64 = "0.22.1"
 farcaster-contracts = { path = "crates/contracts" }
 farcaster-access = { path = "crates/access" }
 farcaster-agent-protocol = { path = "crates/agent-protocol" }
 farcaster-agents = { path = "crates/agents" }
 farcaster-conversation = { path = "crates/conversation" }
+farcaster-mcp-server = { path = "crates/mcp-server" }
 farcaster-projects = { path = "crates/projects" }
 farcaster-repository = { path = "crates/repository" }
 farcaster-reviews = { path = "crates/reviews" }
@@ -61,14 +61,12 @@ gpui_platform = { path = "third_party/zed-gpui-cc053a4/crates/gpui_platform", fe
 notify = "7.0.0"
 nucleo-matcher = "0.3.1"
 path-clean = "1.0.1"
-rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sum_tree = { path = "third_party/zed-gpui-cc053a4/crates/sum_tree" }
 tempfile = "3.27.0"
 thiserror = "2.0.19"
 time = { version = "0.3.54", features = ["formatting", "parsing"] }
-tokio = { version = "1.49.0", features = ["net", "rt-multi-thread"] }
 toml = "1.1.3"
 unicode-segmentation = "1.12.0"
 url = "2.5.8"
@@ -81,6 +79,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 uzers = { version = "0.12.2", default-features = false }
 
 [dev-dependencies]
+farcaster-mcp-server = { path = "crates/mcp-server", features = ["test-support"] }
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 sha2 = "0.10.9"

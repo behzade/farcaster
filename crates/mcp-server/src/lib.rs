@@ -1,14 +1,23 @@
+#[cfg(test)]
+use farcaster_agent_protocol::extensions as protocol;
+use farcaster_agents as agents;
+use farcaster_agents::builtin_mcp;
+use farcaster_reviews as review_domain;
+use farcaster_sessions as sessions;
+use farcaster_storage as storage;
+
 mod lifecycle;
+mod notice_board;
 mod notices;
 mod reviews;
-#[cfg(test)]
-pub(crate) use lifecycle::with_test_worker_pool;
-pub(crate) use lifecycle::{
+#[cfg(any(test, feature = "test-support"))]
+pub use lifecycle::with_test_worker_pool;
+pub use lifecycle::{
     finish_session_family_worker_stop, set_enabled, set_worker_app_proxy, start,
     stop_session_family_workers, worker_snapshots,
 };
-#[cfg(test)]
-mod live_children_tests;
+pub use notice_board::{NoticeBoard, NoticeView};
+pub use workers::{SendParams, send};
 mod workers;
 mod workgraph;
 
@@ -116,9 +125,9 @@ impl FarcasterMcp {
             crate::agents::CallerRegistry::shared().resolve_execution(&token)?;
         let result = tokio::task::spawn_blocking(move || {
             let artifact = reviews::submit(&caller, params)?;
-            crate::app::persistence::StateStore::open_at(&database)?
+            crate::storage::StateStore::open_at(&database)?
                 .save_review(&caller, &execution, &artifact)?;
-            crate::reviews::delivery::notify();
+            crate::review_domain::delivery::notify();
             Ok::<_, String>(artifact)
         })
         .await
@@ -139,7 +148,7 @@ impl FarcasterMcp {
         let pool = self.workers.clone();
         let database = self.database.clone();
         let value = tokio::task::spawn_blocking(move || {
-            let store = crate::app::persistence::StateStore::open_at(&database)?;
+            let store = crate::storage::StateStore::open_at(&database)?;
             let profiles = store.load_worker_profiles()?;
             let catalogs = store.load_configuration_catalogs()?;
             let backends = crate::agents::backend_statuses()
@@ -335,7 +344,7 @@ impl ServerHandler for FarcasterMcp {
         let child = crate::agents::CallerRegistry::shared()
             .is_child(&token)
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
-        let tasks = crate::app::persistence::StateStore::open_at(&self.database)
+        let tasks = crate::storage::StateStore::open_at(&self.database)
             .and_then(|store| store.load_worker_profiles())
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
         Ok(rmcp::model::ListToolsResult {

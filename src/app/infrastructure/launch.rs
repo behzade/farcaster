@@ -71,7 +71,7 @@ pub(crate) fn run(
     project: PathBuf,
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
-    notice_board: crate::app::worker_notices::NoticeBoard,
+    notice_board: crate::app::mcp_server::NoticeBoard,
 ) -> Result<(), LaunchError> {
     let launch_timing = StartupTiming::always("launch.until_window_open");
     #[cfg(target_os = "linux")]

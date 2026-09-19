@@ -233,7 +233,7 @@ impl CallerRegistry {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn issue(
         &self,
         project: &Path,
@@ -618,7 +618,7 @@ impl CallerIdentity {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn bind_execution_for_test(&self, execution: ExecutionBinding) {
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(caller) = callers.get_mut(&self.token)

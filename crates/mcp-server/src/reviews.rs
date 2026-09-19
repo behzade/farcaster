@@ -5,7 +5,7 @@ mod tests;
 use rmcp::schemars;
 use serde::Deserialize;
 
-use crate::reviews::{Review, ReviewLocation, resolve_path};
+use crate::review_domain::{Review, ReviewLocation, resolve_path};
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

@@ -6,6 +6,7 @@ const EXTRACTED_CRATES: &[&str] = &[
     "agents",
     "contracts",
     "conversation",
+    "mcp-server",
     "projects",
     "repository",
     "reviews",

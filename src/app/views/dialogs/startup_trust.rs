@@ -27,7 +27,7 @@ pub(crate) struct ProjectTrustView {
     notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
-    notice_board: crate::app::worker_notices::NoticeBoard,
+    notice_board: crate::app::mcp_server::NoticeBoard,
     focus: FocusHandle,
     error: Option<String>,
 }
@@ -39,7 +39,7 @@ impl ProjectTrustView {
         notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
         workgraph_updates: async_channel::Receiver<()>,
         worker_updates: async_channel::Receiver<()>,
-        notice_board: crate::app::worker_notices::NoticeBoard,
+        notice_board: crate::app::mcp_server::NoticeBoard,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

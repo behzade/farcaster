@@ -78,7 +78,7 @@ fn main() -> std::process::ExitCode {
     };
     let worker_updates = worker_pool.updates();
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
-    let notice_board = app::worker_notices::NoticeBoard::default();
+    let notice_board = app::mcp_server::NoticeBoard::default();
     let _mcp_server = match app::persistence::state_path().and_then(|database| {
         app::mcp_server::start(
             database,

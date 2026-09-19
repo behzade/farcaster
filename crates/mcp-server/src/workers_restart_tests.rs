@@ -69,7 +69,7 @@ fn persisted_child_reuses_name_session_assignment_and_access_mode() -> Result<()
             effort: Some("high".into()),
         },
     };
-    crate::app::persistence::StateStore::open_at(&database)?.save_worker_family(
+    crate::storage::StateStore::open_at(&database)?.save_worker_family(
         &crate::agents::WorkerFamilyLink {
             project: temp.path().to_owned(),
             child_backend: Backend::Codex,
@@ -93,9 +93,7 @@ fn persisted_child_reuses_name_session_assignment_and_access_mode() -> Result<()
         temp.path().to_owned(),
         1,
     )?;
-    pool.restore_families(
-        crate::app::persistence::StateStore::open_at(&database)?.load_worker_routes()?,
-    )?;
+    pool.restore_families(crate::storage::StateStore::open_at(&database)?.load_worker_routes()?)?;
     let parent = CallerRegistry::shared().issue_with_access(
         temp.path(),
         CallerProfile {

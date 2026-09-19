@@ -77,14 +77,12 @@ fn steering_client_sequence_handshakes() {
     })
     .to_string();
     let (status, response) = request(initialize, &[]);
-    println!("initialize: status={status}");
     assert_eq!(status, 200, "initialize failed: {response}");
 
     let (status, response) = request(
         serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}).to_string(),
         &[("Mcp-Method", "notifications/initialized")],
     );
-    println!("initialized notification: status={status}");
     assert!(
         status == 202 || status == 200,
         "notification failed: {response}"
@@ -98,7 +96,6 @@ fn steering_client_sequence_handshakes() {
         .to_string(),
         &[("Mcp-Method", "tools/list")],
     );
-    println!("tools/list: status={status}");
     assert_eq!(status, 200, "tools/list failed: {response}");
     let payload: serde_json::Value =
         serde_json::from_str(response.split_once("\r\n\r\n").expect("body").1).expect("json");
@@ -119,7 +116,6 @@ fn steering_client_sequence_handshakes() {
             ("Mcp-Name", "workgraph_search"),
         ],
     );
-    println!("tools/call: status={status}");
     assert_eq!(status, 200, "tools/call failed: {response}");
     server.disable();
 }
@@ -221,7 +217,7 @@ fn run_pi_extension_worker_send_test() {
     caller.bind("parent-session");
 
     let database = project.path().join("state.db");
-    crate::app::persistence::StateStore::open_at(&database)
+    crate::storage::StateStore::open_at(&database)
         .expect("state store")
         .save_worker_profiles(&WorkerProfiles {
             profiles: vec![WorkerProfile {
@@ -247,7 +243,7 @@ fn run_pi_extension_worker_send_test() {
     std::fs::copy(
         concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/crates/agents/src/adapter/pi/farcaster.js"
+            "/../agents/src/adapter/pi/farcaster.js"
         ),
         &extension,
     )

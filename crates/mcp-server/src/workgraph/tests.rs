@@ -1,8 +1,8 @@
 use super::*;
 use crate::agents::Backend;
 use crate::{
-    app::persistence::StateStore,
     sessions::{SessionSummary, UsageSummary},
+    storage::StateStore,
 };
 
 #[cfg(unix)]
@@ -45,7 +45,7 @@ fn index(database: &Path, callers: &[CallerContext]) -> Result<(), String> {
             )
         })
         .collect::<Vec<_>>();
-    StateStore::open_at(database)?.replace_sessions(&sessions)
+    StateStore::open_at(database)?.index_sessions(&sessions, true)
 }
 
 #[test]

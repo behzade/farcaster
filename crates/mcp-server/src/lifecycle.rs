@@ -13,13 +13,13 @@ use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, server_config};
 
 static SERVER: Mutex<Option<ServerState>> = Mutex::new(None);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_WORKER_POOL: Mutex<Option<crate::agents::WorkerPool>> = Mutex::new(None);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static TEST_WORKER_POOL_LOCK: Mutex<()> = Mutex::new(());
 
-pub(crate) struct McpServer;
+pub struct McpServer;
 
 struct ServerState {
     service: FarcasterMcp,
@@ -31,11 +31,11 @@ struct RunningServer {
     thread: JoinHandle<()>,
 }
 
-pub(crate) fn start(
+pub fn start(
     database: PathBuf,
     workers: crate::agents::WorkerPool,
     updates: async_channel::Sender<()>,
-    notices: crate::app::worker_notices::NoticeBoard,
+    notices: crate::notice_board::NoticeBoard,
 ) -> Result<McpServer, String> {
     let mut current = SERVER
         .lock()
@@ -49,28 +49,26 @@ pub(crate) fn start(
         BIND_ADDRESS,
     )?;
     crate::agents::CallerRegistry::shared().set_family_sink(Some(std::sync::Arc::new(
-        move |link| {
-            crate::app::persistence::StateStore::open_at(&database)?.save_worker_family(link)
-        },
+        move |link| crate::storage::StateStore::open_at(&database)?.save_worker_family(link),
     )));
     let binding_database = server.service.database.clone();
     let execution_database = binding_database.clone();
     crate::agents::CallerRegistry::shared().set_execution_sinks(
         Some(std::sync::Arc::new(move |caller| {
-            crate::app::persistence::StateStore::open_at(&binding_database)?
-                .register_caller_session(caller)
+            crate::storage::StateStore::open_at(&binding_database)?.register_caller_session(caller)
         })),
         Some(std::sync::Arc::new(move |execution| {
-            crate::app::persistence::StateStore::open_at(&execution_database)?
-                .register_execution(execution)
+            crate::storage::StateStore::open_at(&execution_database)?.register_execution(execution)
         })),
     );
     *current = Some(server);
     Ok(McpServer)
 }
 
-pub(crate) fn set_enabled(enabled: bool) -> Result<(), String> {
-    let store = crate::app::persistence::open()?;
+pub fn set_enabled(
+    enabled: bool,
+    save_setting: impl FnOnce(bool) -> Result<(), String>,
+) -> Result<(), String> {
     let mut current = SERVER
         .lock()
         .map_err(|_| "MCP server state is unavailable")?;
@@ -79,7 +77,7 @@ pub(crate) fn set_enabled(enabled: bool) -> Result<(), String> {
     if enabled {
         server.enable(BIND_ADDRESS)?;
     }
-    if let Err(error) = store.save_builtin_mcp_enabled(enabled) {
+    if let Err(error) = save_setting(enabled) {
         if !was_running {
             server.disable();
         }
@@ -92,8 +90,8 @@ pub(crate) fn set_enabled(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn set_worker_app_proxy(proxy: Option<String>) -> Result<(), String> {
-    #[cfg(test)]
+pub fn set_worker_app_proxy(proxy: Option<String>) -> Result<(), String> {
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(workers) = TEST_WORKER_POOL
         .lock()
         .map_err(|_| "test worker pool is unavailable")?
@@ -111,11 +109,11 @@ pub(crate) fn set_worker_app_proxy(proxy: Option<String>) -> Result<(), String> 
     server.service.workers.set_app_proxy(proxy)
 }
 
-pub(crate) fn stop_session_family_workers(
+pub fn stop_session_family_workers(
     project: &std::path::Path,
     sessions: &[(crate::agents::Backend, PathBuf)],
 ) -> Result<usize, String> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(workers) = TEST_WORKER_POOL
         .lock()
         .map_err(|_| "test worker pool is unavailable")?
@@ -136,11 +134,11 @@ pub(crate) fn stop_session_family_workers(
         .stop_session_family(project, sessions)
 }
 
-pub(crate) fn finish_session_family_worker_stop(
+pub fn finish_session_family_worker_stop(
     project: &std::path::Path,
     sessions: &[(crate::agents::Backend, PathBuf)],
 ) -> Result<(), String> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(workers) = TEST_WORKER_POOL
         .lock()
         .map_err(|_| "test worker pool is unavailable")?
@@ -161,11 +159,8 @@ pub(crate) fn finish_session_family_worker_stop(
         .finish_session_family_stop(project, sessions)
 }
 
-#[cfg(test)]
-pub(crate) fn with_test_worker_pool<T>(
-    workers: crate::agents::WorkerPool,
-    test: impl FnOnce() -> T,
-) -> T {
+#[cfg(any(test, feature = "test-support"))]
+pub fn with_test_worker_pool<T>(workers: crate::agents::WorkerPool, test: impl FnOnce() -> T) -> T {
     let _serial = TEST_WORKER_POOL_LOCK.lock().expect("test worker pool lock");
     *TEST_WORKER_POOL.lock().expect("test worker pool") = Some(workers);
     struct Clear;
@@ -178,7 +173,7 @@ pub(crate) fn with_test_worker_pool<T>(
     test()
 }
 
-pub(crate) fn worker_snapshots() -> Result<Vec<crate::agents::WorkerSnapshot>, String> {
+pub fn worker_snapshots() -> Result<Vec<crate::agents::WorkerSnapshot>, String> {
     let current = SERVER
         .lock()
         .map_err(|_| "MCP server state is unavailable")?;
@@ -269,7 +264,7 @@ async fn serve(
     tokio::select! {
         result = axum::serve(listener, router).into_future() => {
             if let Err(error) = result {
-                zlog::error!("MCP server stopped: {error}");
+                log::error!("MCP server stopped: {error}");
             }
         }
         _ = stopped => {}

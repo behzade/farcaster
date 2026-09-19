@@ -1895,13 +1895,13 @@ name = "farcaster"
 version = "0.3.5"
 dependencies = [
  "async-channel",
- "axum",
  "base64 0.22.1",
  "farcaster-access",
  "farcaster-agent-protocol",
  "farcaster-agents",
  "farcaster-contracts",
  "farcaster-conversation",
+ "farcaster-mcp-server",
  "farcaster-projects",
  "farcaster-repository",
  "farcaster-reviews",
@@ -1918,7 +1918,6 @@ dependencies = [
  "notify",
  "nucleo-matcher",
  "path-clean",
- "rmcp",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1927,7 +1926,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "time",
- "tokio",
  "toml 1.1.3+spec-1.1.0",
  "unicode-segmentation",
  "url",
@@ -2000,6 +1998,26 @@ dependencies = [
  "farcaster-agent-protocol",
  "farcaster-utility",
  "serde_json",
+]
+
+[[package]]
+name = "farcaster-mcp-server"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "axum",
+ "farcaster-agents",
+ "farcaster-reviews",
+ "farcaster-sessions",
+ "farcaster-storage",
+ "log",
+ "path-clean",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "workgraph",
 ]
 
 [[package]]

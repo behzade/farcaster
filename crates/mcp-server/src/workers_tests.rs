@@ -118,10 +118,7 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
         assert_eq!(launch.context, WorkerContext::Fresh);
         assert_eq!(launch.provider.as_deref(), Some("openai"));
         assert_eq!(launch.effort.as_deref(), Some("medium"));
-        assert_eq!(
-            launch.access_mode,
-            crate::agents::HarnessAccessMode::Sandboxed
-        );
+        assert_eq!(launch.access_mode, crate::agents::HarnessAccessMode::Auto);
         assert_eq!(launch.parent_session, "/sessions/parent.jsonl");
         assert_eq!(
             launch.project,
@@ -740,7 +737,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
     let profiles = crate::agents::WorkerProfiles::default();
     let project = std::path::Path::new("/project");
     let backends = vec![Backend::Pi];
-    let catalog = crate::app::persistence::CachedConfigurationCatalog {
+    let catalog = crate::storage::CachedConfigurationCatalog {
         harness: Backend::Pi,
         project: project.into(),
         catalog: crate::agents::ConfigurationCatalog {
@@ -959,7 +956,7 @@ fn auto_parent_can_route_to_pi_when_its_sandbox_adapter_is_configured() {
         model: "model".into(),
         effort: None,
     };
-    let catalogs = [crate::app::persistence::CachedConfigurationCatalog {
+    let catalogs = [crate::storage::CachedConfigurationCatalog {
         harness: Backend::Pi,
         project: project.into(),
         catalog: crate::agents::ConfigurationCatalog {

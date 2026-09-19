@@ -260,7 +260,7 @@ impl WorkerPool {
         self.start_assigned(request, None)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn start_assigned(
         &self,
         request: StartWorker,

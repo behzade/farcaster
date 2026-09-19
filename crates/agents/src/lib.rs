@@ -20,7 +20,7 @@ pub use adapter::{
     supports_startup_command, supports_steering, validate_launch, validate_session_move,
     worker_factories,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use contract::WorkerStatus;
 pub use contract::extensions;
 pub use contract::{
@@ -55,5 +55,5 @@ pub use core::{
 
 #[cfg(test)]
 pub use adapter::live_tests::support as live_e2e_support;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use core::CallerIdentity;

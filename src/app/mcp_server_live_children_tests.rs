@@ -12,7 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::workers::{self, SendParams};
 use crate::{
     agent_activity::{AgentLifecycle, AgentOutcome},
     agents::{
@@ -26,6 +25,7 @@ use crate::{
     },
     protocol::{ExtensionUiRequest, ExtensionUiResponse},
 };
+use farcaster_mcp_server::{SendParams, send};
 
 const TURN_TIMEOUT: Duration = Duration::from_secs(180);
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -341,9 +341,9 @@ struct FamilyPersistence;
 
 impl FamilyPersistence {
     fn install(database: PathBuf) -> Result<Self, String> {
-        crate::app::persistence::StateStore::open_at(&database)?;
+        crate::storage::StateStore::open_at(&database)?;
         CallerRegistry::shared().set_family_sink(Some(Arc::new(move |link| {
-            crate::app::persistence::StateStore::open_at(&database)?.save_worker_family(link)
+            crate::storage::StateStore::open_at(&database)?.save_worker_family(link)
         })));
         Ok(Self)
     }
@@ -603,7 +603,7 @@ impl LiveChildFixture {
         message: String,
         profile: Option<String>,
     ) -> Result<serde_json::Value, String> {
-        workers::send(
+        send(
             &self.pool,
             SendParams {
                 to: Some(name.into()),
@@ -882,7 +882,7 @@ impl LiveChildFixture {
             "persisted child catalog row",
             || {
                 let sessions =
-                    crate::app::persistence::StateStore::open_at(&database)?.cached_sessions("")?;
+                    crate::storage::StateStore::open_at(&database)?.cached_sessions("")?;
                 Ok(sessions
                     .iter()
                     .any(|session| {

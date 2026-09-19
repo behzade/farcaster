@@ -5,13 +5,13 @@ use crate::agents::{CallerContext, CallerRegistry, StartWorker, WorkerContext, W
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct SendParams {
-    pub(super) to: Option<String>,
-    pub(super) message: String,
-    pub(super) profile: Option<String>,
+pub struct SendParams {
+    pub to: Option<String>,
+    pub message: String,
+    pub profile: Option<String>,
 }
 
-pub(super) fn send(
+pub fn send(
     pool: &WorkerPool,
     params: SendParams,
     caller_token: Option<String>,
@@ -212,7 +212,7 @@ pub(super) fn child_access_mode(
     project: &std::path::Path,
     parent_access_mode: crate::agents::HarnessAccessMode,
     backends: &[crate::agents::Backend],
-    catalogs: &[crate::app::persistence::CachedConfigurationCatalog],
+    catalogs: &[crate::storage::CachedConfigurationCatalog],
 ) -> Option<crate::agents::HarnessAccessMode> {
     if !model_available(model, project, backends, catalogs) {
         return None;
@@ -271,7 +271,7 @@ pub(super) fn model_available(
     model: &crate::agents::WorkerExecution,
     project: &std::path::Path,
     backends: &[crate::agents::Backend],
-    catalogs: &[crate::app::persistence::CachedConfigurationCatalog],
+    catalogs: &[crate::storage::CachedConfigurationCatalog],
 ) -> bool {
     if !backends.contains(&model.harness) {
         return false;

@@ -5,12 +5,12 @@ use gpui::{
 
 use crate::app::{
     FarcasterApp, OVERLAY_KEY_CONTEXT,
+    mcp_server::NoticeView,
     ui::{
         assets::AppIcon,
         primitives::{ButtonTone, icon_button, modal},
         theme::THEME,
     },
-    worker_notices::NoticeView,
 };
 
 pub(in crate::app::views) fn render(

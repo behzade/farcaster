@@ -8,6 +8,8 @@ pub(crate) mod infrastructure;
 #[cfg(test)]
 mod live_e2e_tests;
 #[cfg(test)]
+mod mcp_server_live_children_tests;
+#[cfg(test)]
 pub(crate) mod test_support;
 #[allow(unused_imports)]
 pub(crate) use infrastructure::{launch, paths, persistence, shell_environment};
@@ -19,7 +21,6 @@ mod session;
 mod session_folders;
 pub(crate) mod ui;
 pub(crate) mod views;
-pub(crate) mod worker_notices;
 mod workspace;
 use change_detection::*;
 pub(crate) use composer::ComposerImage;
@@ -192,7 +193,7 @@ pub(crate) struct FarcasterApp {
     views: views::AppViews,
     overlays: views::AppOverlays,
     lifecycle: infrastructure::AppLifecycle,
-    worker_notices: worker_notices::NoticeBoard,
+    worker_notices: mcp_server::NoticeBoard,
 }
 
 #[cfg(test)]
