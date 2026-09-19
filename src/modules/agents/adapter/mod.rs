@@ -603,8 +603,12 @@ fn program_available(program: &std::path::Path) -> bool {
     })
 }
 
-impl Backend {
-    pub(super) fn descriptor(self) -> super::contract::AgentBackendDescriptor {
+trait BackendDescriptor {
+    fn descriptor(self) -> super::contract::AgentBackendDescriptor;
+}
+
+impl BackendDescriptor for Backend {
+    fn descriptor(self) -> super::contract::AgentBackendDescriptor {
         match self {
             Self::Pi => pi::descriptor(),
             Self::Codex => codex::descriptor(),
@@ -617,7 +621,7 @@ impl Backend {
 }
 
 pub(super) fn known_backend_descriptors() -> [super::contract::AgentBackendDescriptor; 6] {
-    Backend::ALL.map(Backend::descriptor)
+    Backend::ALL.map(BackendDescriptor::descriptor)
 }
 
 #[cfg(test)]

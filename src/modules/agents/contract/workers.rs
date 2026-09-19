@@ -1,9 +1,8 @@
-use crate::agents::Backend;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use farcaster_contracts::Backend;
 
-use super::{WorkerContext, WorkerInput};
+use super::WorkerContext;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PeerMessage {
@@ -57,17 +56,6 @@ pub(crate) struct StartWorker {
     pub(crate) access_mode: super::HarnessAccessMode,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum WorkerStatus {
-    Pending,
-    Running,
-    Idle,
-    NeedsInput,
-    Failed,
-    Stopped,
-}
-
 pub(crate) fn validate_child_access(
     parent: super::HarnessAccessMode,
     child: super::HarnessAccessMode,
@@ -76,25 +64,6 @@ pub(crate) fn validate_child_access(
         return Err("restricted parent cannot reuse an unrestricted child".into());
     }
     Ok(())
-}
-
-impl WorkerStatus {
-    pub(crate) const fn terminal(self) -> bool {
-        matches!(self, Self::Failed | Self::Stopped)
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkerSnapshot {
-    pub(crate) id: String,
-    pub(crate) backend: Backend,
-    pub(crate) project: PathBuf,
-    pub(crate) session_locator: Option<String>,
-    pub(crate) status: WorkerStatus,
-    pub(crate) output: Option<String>,
-    pub(crate) error: Option<String>,
-    pub(crate) pending_input: Option<WorkerInput>,
 }
 
 #[cfg(test)]

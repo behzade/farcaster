@@ -1,4 +1,4 @@
-use crate::agents::Backend;
+use farcaster_contracts::Backend;
 use std::{
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -112,7 +112,7 @@ pub(crate) struct Registry {
 }
 
 mod draft_backend {
-    use crate::agents::Backend;
+    use farcaster_contracts::Backend;
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub(super) fn serialize<S: Serializer>(

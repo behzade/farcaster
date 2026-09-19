@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub(crate) enum Backend {
+pub enum Backend {
     #[serde(rename = "pi")]
     Pi,
     #[serde(rename = "codex-cli")]
@@ -17,7 +17,7 @@ pub(crate) enum Backend {
 }
 
 impl Backend {
-    pub(crate) const ALL: [Self; 6] = [
+    pub const ALL: [Self; 6] = [
         Self::Pi,
         Self::Codex,
         Self::Cursor,
@@ -26,7 +26,7 @@ impl Backend {
         Self::Antigravity,
     ];
 
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Pi => "pi",
             Self::Codex => "codex-cli",

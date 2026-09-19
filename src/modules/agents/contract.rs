@@ -1,5 +1,6 @@
 use std::{path::PathBuf, thread, time::SystemTime};
 
+pub(crate) use farcaster_contracts::{Backend, WorkerInput, WorkerSnapshot, WorkerStatus};
 use serde::{Deserialize, Serialize};
 
 mod effort;
@@ -7,10 +8,7 @@ pub(crate) mod extensions;
 pub(crate) use effort::{effort_rank, model_efforts};
 mod workers;
 
-pub(crate) use workers::{
-    PeerMessage, StartWorker, WorkerSnapshot, WorkerStatus, valid_worker_name,
-    validate_child_access,
-};
+pub(crate) use workers::{PeerMessage, StartWorker, valid_worker_name, validate_child_access};
 
 use extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode};
 
@@ -412,9 +410,6 @@ pub(crate) struct SessionLaunch {
     pub(crate) wake: Option<thread::Thread>,
 }
 
-mod backend;
-pub(crate) use backend::Backend;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CapabilitySupport {
     Available,
@@ -515,15 +510,6 @@ pub(crate) enum WorkerContext {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WorkerInput {
-    pub(crate) id: String,
-    pub(crate) prompt: String,
-    pub(crate) options: Vec<String>,
-    pub(crate) secret: bool,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkerInputResponse {
     pub(crate) id: String,
@@ -550,7 +536,3 @@ pub(crate) enum SandboxState {
     Active(HarnessAccessMode),
     Failed,
 }
-
-#[cfg(test)]
-#[path = "contract_tests.rs"]
-mod tests;

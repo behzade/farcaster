@@ -185,7 +185,12 @@ pub(super) fn ensure_locator_session(
         .map_err(|error| format!("prepare family session lookup: {error}"))?;
     let ids = statement
         .query_map(
-            params![harness, project_id, locator_text.as_ref(), native_id],
+            params![
+                harness.as_str(),
+                project_id,
+                locator_text.as_ref(),
+                native_id
+            ],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .map_err(|error| format!("find family session: {error}"))?
@@ -223,7 +228,13 @@ pub(super) fn ensure_locator_session(
             "INSERT INTO sessions(
                project_id, harness, locator, backend_id, modified_ms, created_ms
              ) VALUES(?1, ?2, ?3, ?4, ?5, ?5)",
-            params![project_id, harness, locator_text.as_ref(), native_id, now],
+            params![
+                project_id,
+                harness.as_str(),
+                locator_text.as_ref(),
+                native_id,
+                now
+            ],
         )
         .map_err(|error| format!("insert locator session: {error}"))?;
     Ok(transaction.last_insert_rowid())
@@ -299,7 +310,7 @@ pub(super) fn create_target_session(
          VALUES(?1,?2,?3,?4,?5,?5)",
         params![
             project_id,
-            harness,
+            harness.as_str(),
             locator.as_ref().map(|path| path.to_string_lossy()),
             client_key,
             now
@@ -321,7 +332,7 @@ impl StateStore {
                 .connection
                 .query_row(
                     "SELECT id FROM sessions WHERE client_key=?1 AND (?2 IS NULL OR harness=?2)",
-                    params![key, harness],
+                    params![key, harness.map(Backend::as_str)],
                     |row| row.get(0),
                 )
                 .optional()
@@ -341,9 +352,10 @@ impl StateStore {
             )
             .map_err(|error| format!("resolve session: {error}"))?;
         let ids = statement
-            .query_map(params![locator.to_string_lossy(), harness], |row| {
-                row.get(0)
-            })
+            .query_map(
+                params![locator.to_string_lossy(), harness.map(Backend::as_str)],
+                |row| row.get(0),
+            )
             .map_err(|error| format!("resolve session: {error}"))?
             .collect::<rusqlite::Result<Vec<i64>>>()
             .map_err(|error| format!("resolve session: {error}"))?;
@@ -377,7 +389,7 @@ fn legacy_session_ids_for_locator(
         )
         .map_err(|error| format!("prepare legacy session lookup: {error}"))?;
     statement
-        .query_map([harness], |row| {
+        .query_map([harness.map(Backend::as_str)], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,

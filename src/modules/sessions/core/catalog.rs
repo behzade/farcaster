@@ -62,7 +62,7 @@ pub(crate) fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary>
 }
 
 pub(crate) struct SessionRootIndex<'a> {
-    by_id: HashMap<(&'a Path, crate::agents::Backend, &'a str), &'a SessionSummary>,
+    by_id: HashMap<(&'a Path, farcaster_contracts::Backend, &'a str), &'a SessionSummary>,
     by_path: HashMap<&'a Path, &'a SessionSummary>,
     by_app_id: HashMap<i64, &'a SessionSummary>,
 }

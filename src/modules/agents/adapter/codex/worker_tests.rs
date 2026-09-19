@@ -1,5 +1,5 @@
 use super::*;
-use crate::agents::Backend;
+use crate::agents::{AccountUsage, AccountUsageWindow, Backend};
 
 #[test]
 fn worker_factory_resumes_the_saved_thread_and_accepts_a_new_prompt() -> Result<(), String> {

@@ -1,4 +1,4 @@
-use crate::agents::Backend;
+use farcaster_contracts::Backend;
 use tempfile::tempdir;
 
 use super::*;

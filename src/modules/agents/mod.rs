@@ -14,6 +14,8 @@ pub(crate) use adapter::{
     supports_startup_command, supports_steering, validate_launch, validate_session_move,
     worker_factories,
 };
+#[cfg(test)]
+pub(crate) use contract::WorkerStatus;
 pub(crate) use contract::extensions;
 pub(crate) use contract::{
     AccountUsage, AccountUsageWindow, AgentLaunchConfig, Backend, ConfigurationCatalog,
@@ -22,8 +24,8 @@ pub(crate) use contract::{
     SessionCommand, SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionLaunch,
     SessionMetadata, SessionOperation, SessionResponse, SessionResponseErrorKind,
     SessionResponsePayload, SessionStart, SessionTransport, SessionUsage, SessionUsageTokens,
-    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerSnapshot, WorkerStatus,
-    effort_rank, model_efforts, valid_worker_name, validate_child_access,
+    StartWorker, WorkerContext, WorkerInput, WorkerInputResponse, WorkerSnapshot, effort_rank,
+    model_efforts, valid_worker_name, validate_child_access,
 };
 pub(crate) use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,

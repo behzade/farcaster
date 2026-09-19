@@ -131,7 +131,12 @@ impl StateStore {
             .map_err(|error| error.to_string())?;
         let mut candidates = statement
             .query_map(
-                params![update.harness, project, update.id, path.to_string_lossy()],
+                params![
+                    update.harness.as_str(),
+                    project,
+                    update.id,
+                    path.to_string_lossy()
+                ],
                 |row| row.get(0),
             )
             .map_err(|error| error.to_string())?
@@ -161,7 +166,7 @@ impl StateStore {
                  VALUES(?1,?2,?3,?4,?5,?5)",
                 params![
                     project,
-                    update.harness,
+                    update.harness.as_str(),
                     path.to_string_lossy(),
                     update.id,
                     now
@@ -183,7 +188,7 @@ impl StateStore {
                 access_mode=COALESCE(?11,access_mode)
               WHERE id=?1",
             params![id, project, path.to_string_lossy(), update.id, update.title,
-                update.first_user_message, update.parent_session, update.harness,
+                update.first_user_message, update.parent_session, update.harness.as_str(),
                 update.message_count.map(|n| n as i64), now, access_mode],
         ).map_err(|error| format!("update live session metadata: {error}"))?;
         tx.execute(
@@ -505,7 +510,7 @@ fn upsert_bound_session(
                (locator=?2 OR (backend_id=?3 AND project_id=?4))
              ORDER BY locator=?2 DESC LIMIT 1",
             params![
-                session.harness,
+                session.harness.as_str(),
                 locator_text.as_ref(),
                 session.id,
                 project_id
@@ -550,7 +555,7 @@ fn upsert_bound_session(
                 params![
                     id,
                     project_id,
-                    session.harness,
+                    session.harness.as_str(),
                     locator_text.as_ref(),
                     session.id,
                     session.title,
@@ -581,7 +586,7 @@ fn upsert_bound_session(
                  ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'unloaded', ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?9)",
                 params![
                     project_id,
-                    session.harness,
+                    session.harness.as_str(),
                     locator_text.as_ref(),
                     session.id,
                     session.title,
@@ -703,7 +708,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
     let effort = row.get::<_, Option<String>>(20)?;
     let mut session = SessionSummary::from_cached_for_harness(
         row.get(21)?,
-        row.get(17)?,
+        super::backend::get(row, 17)?,
         crate::sessions::normalize_session_path(Path::new(&locator)),
         crate::sessions::normalize_session_path(Path::new(&project)),
         row.get(3)?,

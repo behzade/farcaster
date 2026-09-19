@@ -162,7 +162,7 @@ impl StateStore {
                     id: row.get(0)?,
                     submission_id: None,
                     target,
-                    harness: row.get(3)?,
+                    harness: super::backend::get(row, 3)?,
                     project: crate::sessions::normalize_session_path(Path::new(&project)),
                     session: locator
                         .map(PathBuf::from)

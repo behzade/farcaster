@@ -7,6 +7,8 @@ use std::{
 use serde_json::Value;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
+use farcaster_contracts::{WorkerSnapshot, WorkerStatus};
+
 use crate::sessions::{SessionSummary, UsageSummary};
 
 const MAX_ACTIVITY_CHARS: usize = 160;
@@ -85,22 +87,18 @@ impl AgentActivity {
 
     pub(crate) fn from_worker_snapshot(
         session: &SessionSummary,
-        snapshot: &crate::agents::WorkerSnapshot,
+        snapshot: &WorkerSnapshot,
     ) -> Self {
         let mut activity = Self::limited_fallback(session);
         activity.lifecycle = match snapshot.status {
-            crate::agents::WorkerStatus::Pending | crate::agents::WorkerStatus::Running => {
-                AgentLifecycle::Working
-            }
-            crate::agents::WorkerStatus::NeedsInput => AgentLifecycle::NeedsInput,
-            crate::agents::WorkerStatus::Idle if snapshot.output.is_some() => {
+            WorkerStatus::Pending | WorkerStatus::Running => AgentLifecycle::Working,
+            WorkerStatus::NeedsInput => AgentLifecycle::NeedsInput,
+            WorkerStatus::Idle if snapshot.output.is_some() => {
                 AgentLifecycle::Completed(AgentOutcome::Complete)
             }
-            crate::agents::WorkerStatus::Idle => AgentLifecycle::Unknown,
-            crate::agents::WorkerStatus::Failed => AgentLifecycle::Completed(AgentOutcome::Failed),
-            crate::agents::WorkerStatus::Stopped => {
-                AgentLifecycle::Completed(AgentOutcome::Incomplete)
-            }
+            WorkerStatus::Idle => AgentLifecycle::Unknown,
+            WorkerStatus::Failed => AgentLifecycle::Completed(AgentOutcome::Failed),
+            WorkerStatus::Stopped => AgentLifecycle::Completed(AgentOutcome::Incomplete),
         };
         activity.explicit_outcome = matches!(activity.lifecycle, AgentLifecycle::Completed(_));
         if matches!(activity.lifecycle, AgentLifecycle::Completed(_)) {

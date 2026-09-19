@@ -2207,15 +2207,6 @@ fn typed_backend_persistence_preserves_unselected_drafts_and_rejects_unknown_nam
         |row| row.get(0),
     )?;
     assert_eq!(stored, "");
-    for backend in Backend::ALL {
-        let restored: Backend = connection.query_row("SELECT ?1", [backend], |row| row.get(0))?;
-        assert_eq!(restored, backend);
-    }
-    assert!(
-        connection
-            .query_row("SELECT 'unknown'", [], |row| row.get::<_, Backend>(0))
-            .is_err()
-    );
     connection.execute(
         "UPDATE sessions SET harness='unknown' WHERE client_key='unselected'",
         [],

@@ -87,7 +87,7 @@ impl StateStore {
             .execute(
                 "INSERT INTO meta(key, value) VALUES('preferred_harness', ?1)
                  ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                [harness],
+                [harness.as_str()],
             )
             .map(|_| ())
             .map_err(|error| format!("save preferred harness: {error}"))
@@ -223,10 +223,10 @@ impl StateStore {
         statement
             .query_map([], |row| {
                 Ok((
-                    row.get::<_, Backend>(0)?,
+                    super::backend::get(row, 0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Backend>(3)?,
+                    super::backend::get(row, 3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, String>(6)?,

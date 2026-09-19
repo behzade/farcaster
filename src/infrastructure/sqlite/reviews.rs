@@ -22,7 +22,7 @@ impl StateStore {
                 &root.join(caller.backend.as_str()).join(encoded),
             );
             tx.execute("UPDATE sessions SET backend_id=?1 WHERE harness=?2 AND project_id=?3 AND locator=?4 AND backend_id IS NULL",
-                params![caller.session,caller.backend,project,legacy.to_string_lossy()]).map_err(|e| format!("bind native session identity: {e}"))?;
+                params![caller.session,caller.backend.as_str(),project,legacy.to_string_lossy()]).map_err(|e| format!("bind native session identity: {e}"))?;
         }
         let root = super::identity::family_locator_root(
             &crate::sessions::normalize_session_path(&root),
@@ -76,7 +76,7 @@ impl StateStore {
                     execution.turn_id,
                     artifact.to_string(),
                     now_ms(),
-                    caller.backend,
+                    caller.backend.as_str(),
                     crate::sessions::normalize_session_path(&caller.project).to_string_lossy(),
                     caller.session,
                     crate::sessions::normalize_session_path(Path::new(&caller.session))
