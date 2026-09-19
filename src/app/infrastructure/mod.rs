@@ -10,7 +10,5 @@ pub(crate) mod neovim_launch;
 pub(crate) mod paths;
 pub(crate) mod performance;
 pub(crate) mod persistence;
-#[cfg(test)]
-mod persistence_tests;
 pub(super) mod quit;
 pub(crate) mod shell_environment;

@@ -108,11 +108,12 @@ pub(crate) enum HistoryNavigation {
 
 impl ComposerSessions {
     pub(crate) fn load(current_target: String) -> (Self, Option<String>) {
-        let (records, error) =
-            match StateStore::open().and_then(|store| store.load_composer_sessions()) {
-                Ok(records) => (records, None),
-                Err(error) => (Vec::new(), Some(error)),
-            };
+        let (records, error) = match crate::app::persistence::open()
+            .and_then(|store| store.load_composer_sessions())
+        {
+            Ok(records) => (records, None),
+            Err(error) => (Vec::new(), Some(error)),
+        };
         (
             Self::from_records(current_target, records, ComposerPersistence::spawn()),
             error,
@@ -438,7 +439,7 @@ impl ComposerPersistence {
         let worker = std::thread::Builder::new()
             .name("farcaster-composer-state".into())
             .spawn(move || {
-                let store = match StateStore::open() {
+                let store = match crate::app::persistence::open() {
                     Ok(store) => store,
                     Err(error) => {
                         zlog::error!("Open composer state: {error}");

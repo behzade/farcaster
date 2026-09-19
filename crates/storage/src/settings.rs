@@ -30,7 +30,7 @@ fn stored_family_identity(
 }
 
 impl StateStore {
-    pub(crate) fn load_expand_transcript_folders(&self) -> Result<bool, String> {
+    pub fn load_expand_transcript_folders(&self) -> Result<bool, String> {
         self.connection
             .query_row(
                 "SELECT value FROM meta WHERE key='expand_transcript_folders'",
@@ -42,7 +42,7 @@ impl StateStore {
             .map_err(|error| format!("load transcript folder setting: {error}"))
     }
 
-    pub(crate) fn save_expand_transcript_folders(&self, expanded: bool) -> Result<(), String> {
+    pub fn save_expand_transcript_folders(&self, expanded: bool) -> Result<(), String> {
         self.connection
             .execute(
                 "INSERT INTO meta(key, value) VALUES('expand_transcript_folders', ?1)
@@ -53,7 +53,7 @@ impl StateStore {
             .map_err(|error| format!("save transcript folder setting: {error}"))
     }
 
-    pub(crate) fn load_preferred_harness(&self, project: &Path) -> Result<Option<Backend>, String> {
+    pub fn load_preferred_harness(&self, project: &Path) -> Result<Option<Backend>, String> {
         // Before the first saved choice, infer it from this project's main sessions.
         let normalized_project = crate::sessions::normalize_session_path(project);
         let legacy_project = project.to_string_lossy();
@@ -82,7 +82,7 @@ impl StateStore {
             })
     }
 
-    pub(crate) fn save_preferred_harness(&self, harness: Backend) -> Result<(), String> {
+    pub fn save_preferred_harness(&self, harness: Backend) -> Result<(), String> {
         self.connection
             .execute(
                 "INSERT INTO meta(key, value) VALUES('preferred_harness', ?1)
@@ -93,10 +93,7 @@ impl StateStore {
             .map_err(|error| format!("save preferred harness: {error}"))
     }
 
-    pub(crate) fn save_worker_family(
-        &self,
-        link: &crate::agents::WorkerFamilyLink,
-    ) -> Result<(), String> {
+    pub fn save_worker_family(&self, link: &crate::agents::WorkerFamilyLink) -> Result<(), String> {
         let transaction = self
             .connection
             .unchecked_transaction()
@@ -178,15 +175,11 @@ impl StateStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn load_worker_families(
-        &self,
-    ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
+    pub fn load_worker_families(&self) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
         self.load_worker_families_filtered(false)
     }
 
-    pub(crate) fn load_worker_routes(
-        &self,
-    ) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
+    pub fn load_worker_routes(&self) -> Result<Vec<crate::agents::WorkerFamilyLink>, String> {
         self.load_worker_families_filtered(true)
     }
 
@@ -250,7 +243,7 @@ impl StateStore {
                 let execution = execution.and_then(|value| {
                     serde_json::from_str(&value)
                         .map_err(|error| {
-                            zlog::warn!("Ignore malformed worker execution: {error}");
+                            log::warn!("Ignore malformed worker execution: {error}");
                         })
                         .ok()
                         .flatten()
@@ -258,7 +251,7 @@ impl StateStore {
                 let routing: Option<crate::agents::WorkerRouting> = routing.and_then(|value| {
                     serde_json::from_str(&value)
                         .map_err(|error| {
-                            zlog::warn!("Ignore malformed worker routing: {error}");
+                            log::warn!("Ignore malformed worker routing: {error}");
                         })
                         .ok()
                 });
@@ -287,7 +280,7 @@ impl StateStore {
             .collect()
     }
 
-    pub(crate) fn load_worker_profiles(&self) -> Result<crate::agents::WorkerProfiles, String> {
+    pub fn load_worker_profiles(&self) -> Result<crate::agents::WorkerProfiles, String> {
         let tasks = self
             .load_json_setting("worker_tasks_json", "worker profiles")?
             .map(crate::agents::WorkerProfiles::from_saved)
@@ -297,7 +290,7 @@ impl StateStore {
         Ok(tasks)
     }
 
-    pub(crate) fn save_worker_profiles(
+    pub fn save_worker_profiles(
         &self,
         tasks: &crate::agents::WorkerProfiles,
     ) -> Result<(), String> {
@@ -305,29 +298,29 @@ impl StateStore {
         self.save_json_setting("worker_tasks_json", "worker profiles", tasks)
     }
 
-    pub(crate) fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {
+    pub fn load_window_placement(&self) -> Result<Option<WindowPlacement>, String> {
         self.load_json_setting("window_placement_json", "window placement")
     }
 
-    pub(crate) fn save_window_placement(&self, placement: &WindowPlacement) -> Result<(), String> {
+    pub fn save_window_placement(&self, placement: &WindowPlacement) -> Result<(), String> {
         self.save_json_setting("window_placement_json", "window placement", placement)
     }
 
-    pub(crate) fn load_app_session_order(&self) -> Result<Vec<i64>, String> {
+    pub fn load_app_session_order(&self) -> Result<Vec<i64>, String> {
         Ok(self
             .load_json_setting("app_session_order_json", "application session order")?
             .unwrap_or_default())
     }
 
-    pub(crate) fn save_app_session_order(&self, order: &[i64]) -> Result<(), String> {
+    pub fn save_app_session_order(&self, order: &[i64]) -> Result<(), String> {
         self.save_json_setting("app_session_order_json", "application session order", order)
     }
 
-    pub(crate) fn load_network_proxy(&self) -> Result<Option<String>, String> {
+    pub fn load_network_proxy(&self) -> Result<Option<String>, String> {
         self.load_text_setting("network_proxy", "network proxy")
     }
 
-    pub(crate) fn save_network_proxy(&self, proxy: Option<&str>) -> Result<(), String> {
+    pub fn save_network_proxy(&self, proxy: Option<&str>) -> Result<(), String> {
         if let Some(proxy) = proxy {
             crate::access::validate_app_proxy(proxy)?;
         }
@@ -338,7 +331,7 @@ impl StateStore {
             .map_err(|error| format!("save network proxy: {error}"))
     }
 
-    pub(crate) fn load_builtin_mcp_enabled(&self) -> Result<bool, String> {
+    pub fn load_builtin_mcp_enabled(&self) -> Result<bool, String> {
         let value = self
             .connection
             .query_row(
@@ -351,7 +344,7 @@ impl StateStore {
         Ok(!matches!(value, Some(0)))
     }
 
-    pub(crate) fn save_builtin_mcp_enabled(&self, enabled: bool) -> Result<(), String> {
+    pub fn save_builtin_mcp_enabled(&self, enabled: bool) -> Result<(), String> {
         self.ensure_ui_state()?;
         self.connection
             .execute(
@@ -362,15 +355,13 @@ impl StateStore {
             .map_err(|error| format!("save built-in MCP setting: {error}"))
     }
 
-    pub(crate) fn load_configuration_catalogs(
-        &self,
-    ) -> Result<Vec<CachedConfigurationCatalog>, String> {
+    pub fn load_configuration_catalogs(&self) -> Result<Vec<CachedConfigurationCatalog>, String> {
         self.load_json_setting("configuration_catalogs_json", "configuration catalogs")
             .map(Option::unwrap_or_default)
             .map(normalize_configuration_catalogs)
     }
 
-    pub(crate) fn save_configuration_catalogs(
+    pub fn save_configuration_catalogs(
         &self,
         catalogs: &[CachedConfigurationCatalog],
     ) -> Result<(), String> {
@@ -381,14 +372,14 @@ impl StateStore {
         )
     }
 
-    pub(crate) fn load_session_control_defaults(
+    pub fn load_session_control_defaults(
         &self,
     ) -> Result<Vec<CachedSessionControlDefaults>, String> {
         self.load_json_setting("session_control_defaults_json", "session control defaults")
             .map(Option::unwrap_or_default)
     }
 
-    pub(crate) fn save_session_control_defaults(
+    pub fn save_session_control_defaults(
         &self,
         defaults: &[CachedSessionControlDefaults],
     ) -> Result<(), String> {
@@ -449,9 +440,7 @@ impl StateStore {
             .map_err(|error| format!("ensure ui_state: {error}"))
     }
 
-    pub(crate) fn load_repository_backend_preferences(
-        &self,
-    ) -> Result<BTreeMap<PathBuf, String>, String> {
+    pub fn load_repository_backend_preferences(&self) -> Result<BTreeMap<PathBuf, String>, String> {
         let mut statement = self
             .connection
             .prepare(
@@ -476,7 +465,7 @@ impl StateStore {
         Ok(preferences)
     }
 
-    pub(crate) fn save_repository_backend_preferences(
+    pub fn save_repository_backend_preferences(
         &self,
         preferences: &BTreeMap<PathBuf, String>,
     ) -> Result<(), String> {
@@ -547,7 +536,7 @@ fn validate_repository_backend_preferences(
 }
 
 impl StateStore {
-    pub(crate) fn load_session_folders(&self) -> Result<crate::sessions::SessionFolders, String> {
+    pub fn load_session_folders(&self) -> Result<crate::sessions::SessionFolders, String> {
         let json: Option<String> = self
             .connection
             .query_row(
@@ -564,7 +553,7 @@ impl StateStore {
         .map(Option::unwrap_or_default)
     }
 
-    pub(crate) fn save_session_folders(
+    pub fn save_session_folders(
         &self,
         folders: &crate::sessions::SessionFolders,
     ) -> Result<(), String> {

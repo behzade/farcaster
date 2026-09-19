@@ -1,5 +1,12 @@
 //! SQLite adapter for application state and domain persistence ports.
 
+use farcaster_access as access;
+use farcaster_agent_protocol::extensions as protocol;
+use farcaster_agents as agents;
+use farcaster_projects as projects;
+use farcaster_repository as repository;
+use farcaster_sessions as sessions;
+
 use crate::agents::Backend;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -30,11 +37,15 @@ mod migrate_v16;
 mod migrate_v17;
 mod migrate_v18;
 mod migrate_v19;
-mod projects;
+#[cfg(test)]
+mod persistence_tests;
+#[path = "projects.rs"]
+mod project_storage;
 mod prompts;
 mod reviews;
 mod schema;
-mod sessions;
+#[path = "sessions.rs"]
+mod session_storage;
 mod settings;
 mod traits;
 mod transcript;
@@ -46,13 +57,13 @@ const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 
-pub(crate) struct StateStore {
+pub struct StateStore {
     connection: Connection,
     image_directory: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub(crate) struct WindowPlacement {
+pub struct WindowPlacement {
     pub bounds: [f32; 4],
     pub display_uuid: Option<String>,
     pub display_origin: [f32; 2],
@@ -60,21 +71,21 @@ pub(crate) struct WindowPlacement {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub(crate) enum WindowState {
+pub enum WindowState {
     Windowed,
     Maximized,
     Fullscreen,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub(crate) struct CachedConfigurationCatalog {
+pub struct CachedConfigurationCatalog {
     pub harness: Backend,
     pub project: PathBuf,
     pub catalog: crate::agents::ConfigurationCatalog,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub(crate) struct CachedSessionControlDefaults {
+pub struct CachedSessionControlDefaults {
     pub harness: Backend,
     pub model: Option<crate::protocol::Model>,
     pub effort: Option<String>,
@@ -82,7 +93,7 @@ pub(crate) struct CachedSessionControlDefaults {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ComposerRecord {
+pub struct ComposerRecord {
     pub target: String,
     pub text: String,
     pub cursor: usize,
@@ -93,7 +104,7 @@ pub(crate) struct ComposerRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ComposerAttachment {
+pub enum ComposerAttachment {
     Image(PromptImage),
     TextFile { path: PathBuf },
 }

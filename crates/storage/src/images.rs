@@ -18,10 +18,7 @@ pub(super) enum StoredImage {
 }
 
 impl StateStore {
-    pub(crate) fn store_prompt_images(
-        &self,
-        images: &[PromptImage],
-    ) -> Result<Vec<PromptImage>, String> {
+    pub fn store_prompt_images(&self, images: &[PromptImage]) -> Result<Vec<PromptImage>, String> {
         images
             .iter()
             .map(|image| {

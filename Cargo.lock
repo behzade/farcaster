@@ -1906,6 +1906,7 @@ dependencies = [
  "farcaster-repository",
  "farcaster-reviews",
  "farcaster-sessions",
+ "farcaster-storage",
  "farcaster-utility",
  "futures",
  "gpui",
@@ -2041,6 +2042,25 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+]
+
+[[package]]
+name = "farcaster-storage"
+version = "0.1.0"
+dependencies = [
+ "farcaster-access",
+ "farcaster-agent-protocol",
+ "farcaster-agents",
+ "farcaster-projects",
+ "farcaster-repository",
+ "farcaster-sessions",
+ "log",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

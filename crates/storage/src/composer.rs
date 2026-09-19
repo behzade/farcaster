@@ -8,7 +8,7 @@ enum StoredAttachment {
 }
 
 impl StateStore {
-    pub(crate) fn load_composer_sessions(&self) -> Result<Vec<ComposerRecord>, String> {
+    pub fn load_composer_sessions(&self) -> Result<Vec<ComposerRecord>, String> {
         let mut statement = self
             .connection
             .prepare(
@@ -53,7 +53,7 @@ impl StateStore {
             .collect()
     }
 
-    pub(crate) fn save_composer_session(&self, record: &ComposerRecord) -> Result<(), String> {
+    pub fn save_composer_session(&self, record: &ComposerRecord) -> Result<(), String> {
         let Some(session_id) = self.session_id_for_target(&record.target, None, None)? else {
             return Ok(());
         };
@@ -88,7 +88,7 @@ impl StateStore {
             .map_err(|error| format!("save composer session {}: {error}", record.target))
     }
 
-    pub(crate) fn delete_composer_session(&self, target: &str) -> Result<(), String> {
+    pub fn delete_composer_session(&self, target: &str) -> Result<(), String> {
         let Some(session_id) = self.session_id_for_target(target, None, None)? else {
             return Ok(());
         };

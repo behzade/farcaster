@@ -707,9 +707,7 @@ impl FarcasterApp {
         if self.settings.proxy_save.is_some() {
             self.save_settings_proxy(cx);
         }
-        match crate::app::infrastructure::persistence::StateStore::open()
-            .and_then(|store| crate::access::load_proxy(&store))
-        {
+        match crate::app::persistence::open().and_then(|store| crate::access::load_proxy(&store)) {
             Ok(proxy) => {
                 self.settings.network_proxy_input.update(cx, |input, cx| {
                     input.set_value(proxy.unwrap_or_default(), window, cx);
@@ -749,7 +747,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn toggle_settings_transcript_folders(&mut self, cx: &mut Context<Self>) {
         let expanded = !self.settings.expand_transcript_folders;
-        match crate::app::infrastructure::persistence::StateStore::open()
+        match crate::app::persistence::open()
             .and_then(|store| store.save_expand_transcript_folders(expanded))
         {
             Ok(()) => {
@@ -775,14 +773,13 @@ impl FarcasterApp {
             .trim()
             .to_owned();
         let proxy = (!value.is_empty()).then_some(value);
-        let result =
-            crate::app::infrastructure::persistence::StateStore::open().and_then(|store| {
-                if store.load_network_proxy()? == proxy {
-                    return Ok(false);
-                }
-                store.save_network_proxy(proxy.as_deref())?;
-                Ok(true)
-            });
+        let result = crate::app::persistence::open().and_then(|store| {
+            if store.load_network_proxy()? == proxy {
+                return Ok(false);
+            }
+            store.save_network_proxy(proxy.as_deref())?;
+            Ok(true)
+        });
         match result {
             Ok(changed) => {
                 self.settings.network_proxy_error = None;

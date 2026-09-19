@@ -6,12 +6,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 use gpui::{AppContext as _, Context, FocusHandle, Window};
 
 use super::FarcasterApp;
-use crate::{
-    app::infrastructure::persistence::StateStore,
-    repository::{
-        BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation,
-        RepositorySyncAction, RepositoryWatcher, WorkingCopySnapshot,
-    },
+use crate::repository::{
+    BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation, RepositorySyncAction,
+    RepositoryWatcher, WorkingCopySnapshot,
 };
 
 #[derive(Default)]
@@ -111,7 +108,7 @@ pub(in crate::app) struct RepositoryState {
 
 impl RepositoryState {
     pub(in crate::app) fn load(project: PathBuf, execution_allowed: bool) -> Self {
-        let (preferences, preference_error) = StateStore::open()
+        let (preferences, preference_error) = crate::app::persistence::open()
             .and_then(|store| crate::repository::load_preferences(&store))
             .map_or_else(
                 |error| (BTreeMap::new(), Some(error)),
@@ -551,7 +548,7 @@ impl FarcasterApp {
         self.project.repository.preference_save_in_flight = true;
         let preferences = self.project.repository.preferences.clone();
         let task = cx.background_spawn(async move {
-            crate::repository::save_preferences(&StateStore::open()?, &preferences)
+            crate::repository::save_preferences(&crate::app::persistence::open()?, &preferences)
         });
         cx.spawn(async move |weak, cx| {
             let result = task.await;

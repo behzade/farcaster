@@ -7,7 +7,7 @@ mod tests;
 
 impl StateStore {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn enqueue_prompt(
+    pub fn enqueue_prompt(
         &self,
         target: &str,
         harness: Backend,
@@ -23,7 +23,7 @@ impl StateStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn enqueue_prompt_with_presentation(
+    pub fn enqueue_prompt_with_presentation(
         &self,
         target: &str,
         harness: Backend,
@@ -82,11 +82,11 @@ impl StateStore {
         Ok(id)
     }
 
-    pub(crate) fn queued_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
+    pub fn queued_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
         self.prompts_in_state("queued")
     }
 
-    pub(crate) fn recover_interrupted_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
+    pub fn recover_interrupted_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
         let transaction = self
             .connection
             .unchecked_transaction()
@@ -104,11 +104,11 @@ impl StateStore {
         self.prompts_in_state("unknown")
     }
 
-    pub(crate) fn unknown_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
+    pub fn unknown_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
         self.prompts_in_state("unknown")
     }
 
-    pub(crate) fn cancel_queued_prompts(&self, ids: &[i64]) -> Result<(), String> {
+    pub fn cancel_queued_prompts(&self, ids: &[i64]) -> Result<(), String> {
         let transaction = self
             .connection
             .unchecked_transaction()
@@ -179,7 +179,7 @@ impl StateStore {
             .collect()
     }
 
-    pub(crate) fn discard_unknown_prompt(
+    pub fn discard_unknown_prompt(
         &self,
         id: i64,
         target: &str,
@@ -206,7 +206,7 @@ impl StateStore {
         }
     }
 
-    pub(crate) fn reconcile_unknown_prompt(
+    pub fn reconcile_unknown_prompt(
         &mut self,
         id: i64,
         target: &str,
@@ -240,10 +240,7 @@ impl StateStore {
         Ok(())
     }
 
-    pub(crate) fn prompt_presentations(
-        &self,
-        session: &Path,
-    ) -> Result<Vec<PromptPresentation>, String> {
+    pub fn prompt_presentations(&self, session: &Path) -> Result<Vec<PromptPresentation>, String> {
         let locator = crate::sessions::normalize_session_path(session);
         let mut statement = self
             .connection
@@ -287,7 +284,7 @@ impl StateStore {
             .collect()
     }
 
-    pub(crate) fn accepted_prompt_history(
+    pub fn accepted_prompt_history(
         &self,
         session: &Path,
     ) -> Result<Vec<serde_json::Value>, String> {
@@ -357,7 +354,7 @@ impl StateStore {
         .collect()
     }
 
-    pub(crate) fn reconcile_prompt_deliveries(
+    pub fn reconcile_prompt_deliveries(
         &mut self,
         session: &Path,
         evidence: &crate::sessions::PromptDeliveryReconciliation,
@@ -441,7 +438,7 @@ impl StateStore {
             .map_err(|error| format!("commit prompt delivery reconciliation: {error}"))
     }
 
-    pub(crate) fn complete_prompt(
+    pub fn complete_prompt(
         &mut self,
         id: i64,
         target: &str,
@@ -450,7 +447,7 @@ impl StateStore {
         self.complete_prompt_with_receipt(id, target, session, &format!("outbox:{id}"), false)
     }
 
-    pub(crate) fn complete_prompt_with_receipt(
+    pub fn complete_prompt_with_receipt(
         &mut self,
         id: i64,
         target: &str,
@@ -461,7 +458,7 @@ impl StateStore {
         self.complete_prompt_receipt(id, target, session, receipt_id, delivery_tracked, false)
     }
 
-    pub(crate) fn complete_delivered_prompt(
+    pub fn complete_delivered_prompt(
         &mut self,
         id: i64,
         target: &str,
@@ -558,7 +555,7 @@ impl StateStore {
             .map_err(|error| format!("commit queued prompt completion {id}: {error}"))
     }
 
-    pub(crate) fn record_prompt_receipt_delivered(
+    pub fn record_prompt_receipt_delivered(
         &mut self,
         receipt_id: &str,
         outbox_id: Option<i64>,
@@ -610,7 +607,7 @@ impl StateStore {
     }
 }
 impl StateStore {
-    pub(crate) fn begin_prompt(&self, id: i64) -> Result<(), String> {
+    pub fn begin_prompt(&self, id: i64) -> Result<(), String> {
         let changed = self
             .connection
             .execute(
@@ -625,7 +622,7 @@ impl StateStore {
         }
     }
 
-    pub(crate) fn fail_prompt(&self, id: i64, error: &str) -> Result<(), String> {
+    pub fn fail_prompt(&self, id: i64, error: &str) -> Result<(), String> {
         self.connection
             .execute(
                 "UPDATE outbox SET state='failed', error=?2 WHERE id=?1",
@@ -635,7 +632,7 @@ impl StateStore {
             .map_err(|db_error| format!("fail queued prompt {id}: {db_error}"))
     }
 
-    pub(crate) fn mark_prompt_delivery_unknown(&self, id: i64, error: &str) -> Result<(), String> {
+    pub fn mark_prompt_delivery_unknown(&self, id: i64, error: &str) -> Result<(), String> {
         let changed = self
             .connection
             .execute(

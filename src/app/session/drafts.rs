@@ -96,8 +96,8 @@ impl FarcasterApp {
         if self.editable_draft_harness().is_none() {
             return;
         }
-        if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
-            .and_then(|store| store.save_preferred_harness(harness))
+        if let Err(error) =
+            crate::app::persistence::open().and_then(|store| store.save_preferred_harness(harness))
         {
             self.sessions.error = Some(error);
             self.notify_session_rail(cx);

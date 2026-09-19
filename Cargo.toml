@@ -50,6 +50,7 @@ farcaster-projects = { path = "crates/projects" }
 farcaster-repository = { path = "crates/repository" }
 farcaster-reviews = { path = "crates/reviews" }
 farcaster-sessions = { path = "crates/sessions" }
+farcaster-storage = { path = "crates/storage" }
 farcaster-utility = { path = "crates/utility" }
 futures = "0.3.32"
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["profiler"] }
@@ -61,10 +62,8 @@ notify = "7.0.0"
 nucleo-matcher = "0.3.1"
 path-clean = "1.0.1"
 rmcp = { version = "3.1.4", features = ["server", "transport-streamable-http-server"] }
-rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-sha2 = "0.10.9"
 sum_tree = { path = "third_party/zed-gpui-cc053a4/crates/sum_tree" }
 tempfile = "3.27.0"
 thiserror = "2.0.19"
@@ -83,6 +82,8 @@ uzers = { version = "0.12.2", default-features = false }
 
 [dev-dependencies]
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+sha2 = "0.10.9"
 
 [[bench]]
 name = "transcript"

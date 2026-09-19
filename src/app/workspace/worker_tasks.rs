@@ -69,7 +69,7 @@ impl WorkerProfileEditor {
                 }
             }
         }
-        crate::app::persistence::StateStore::open()?.save_worker_profiles(&profiles)?;
+        crate::app::persistence::open()?.save_worker_profiles(&profiles)?;
         self.saved = profiles.profiles;
         Ok(())
     }
@@ -276,7 +276,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn load_worker_profile_settings(&mut self) -> Result<(), String> {
         self.workspace.worker_profile_editor = WorkerProfileEditor::default();
-        let store = crate::app::persistence::StateStore::open()?;
+        let store = crate::app::persistence::open()?;
         let profiles = store.load_worker_profiles()?.profiles;
         self.workspace.worker_profile_editor = WorkerProfileEditor {
             saved: profiles.clone(),
@@ -289,8 +289,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn reload_worker_choices(&mut self, cx: &mut Context<Self>) {
-        match crate::app::persistence::StateStore::open()
-            .and_then(|store| store.load_configuration_catalogs())
+        match crate::app::persistence::open().and_then(|store| store.load_configuration_catalogs())
         {
             Ok(catalogs) => {
                 self.workspace.worker_profile_editor.catalogs = catalogs;

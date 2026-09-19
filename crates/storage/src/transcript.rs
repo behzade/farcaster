@@ -1,7 +1,7 @@
 use super::*;
 
 impl StateStore {
-    pub(crate) fn load_transcript_font_size_setting(
+    pub fn load_transcript_font_size_setting(
         &self,
         valid: &std::ops::RangeInclusive<f32>,
         default: f32,
@@ -22,7 +22,7 @@ impl StateStore {
             .map_err(|error| format!("load transcript font size: {error}"))
     }
 
-    pub(crate) fn save_transcript_font_size_setting(
+    pub fn save_transcript_font_size_setting(
         &self,
         size: f32,
         valid: &std::ops::RangeInclusive<f32>,
@@ -40,3 +40,7 @@ impl StateStore {
             .map_err(|error| format!("save transcript font size: {error}"))
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_tests.rs"]
+mod tests;

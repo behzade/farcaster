@@ -24,9 +24,12 @@ pub(super) fn create(
     let transcript_list = TranscriptListState::new();
     transcript_list.scroll_to_end();
     let transcript = cx.new(|_| TranscriptView::new(app.clone(), transcript_list.clone()));
-    match crate::app::infrastructure::persistence::StateStore::open()
-        .and_then(|store| store.load_transcript_font_size())
-    {
+    match crate::app::infrastructure::persistence::open().and_then(|store| {
+        store.load_transcript_font_size_setting(
+            &crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE,
+            f32::from(crate::app::ui::theme::THEME.type_scale.reading),
+        )
+    }) {
         Ok(size) => transcript.update(cx, |view, _| view.font_size = gpui::px(size)),
         Err(error) => {
             zlog::error!("{error}");

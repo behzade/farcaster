@@ -1,5 +1,4 @@
 mod app;
-mod infrastructure;
 #[cfg(target_os = "linux")]
 mod linux_graphics;
 
@@ -49,7 +48,7 @@ fn main() -> std::process::ExitCode {
         Ok(path) => path,
         Err(error) => return fail(error),
     };
-    let state_store = app::persistence::StateStore::open().ok();
+    let state_store = app::persistence::open().ok();
     let builtin_mcp_enabled = state_store
         .as_ref()
         .and_then(|store| store.load_builtin_mcp_enabled().ok())

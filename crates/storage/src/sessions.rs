@@ -1,7 +1,7 @@
 use super::*;
 
 impl StateStore {
-    pub(crate) fn session_access_mode(
+    pub fn session_access_mode(
         &self,
         session: &Path,
     ) -> Result<Option<crate::agents::HarnessAccessMode>, String> {
@@ -26,7 +26,7 @@ impl StateStore {
             .transpose()
     }
 
-    pub(crate) fn set_session_access_mode(
+    pub fn set_session_access_mode(
         &self,
         session: &Path,
         mode: crate::agents::HarnessAccessMode,
@@ -54,7 +54,7 @@ impl StateStore {
         }
     }
 
-    pub(crate) fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
+    pub fn cached_sessions(&self, query: &str) -> Result<Vec<SessionSummary>, String> {
         Ok(crate::sessions::filter_session_tree(
             Self::read_cached_sessions(&self.connection, None)?,
             query,
@@ -105,7 +105,7 @@ impl StateStore {
         Ok(sessions.into_iter().flatten().collect())
     }
 
-    pub(crate) fn update_session_metadata(
+    pub fn update_session_metadata(
         &mut self,
         update: &crate::agents::SessionMetadata,
     ) -> Result<SessionSummary, String> {
@@ -232,11 +232,11 @@ impl StateStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn replace_sessions(&mut self, sessions: &[SessionSummary]) -> Result<(), String> {
+    pub fn replace_sessions(&mut self, sessions: &[SessionSummary]) -> Result<(), String> {
         self.index_sessions(sessions, true)
     }
 
-    pub(crate) fn index_sessions(
+    pub fn index_sessions(
         &mut self,
         sessions: &[SessionSummary],
         prune_missing: bool,
@@ -308,7 +308,7 @@ impl StateStore {
             .map_err(|error| format!("commit session index: {error}"))
     }
 
-    pub(crate) fn has_queued_prompts_for(&self, paths: &[PathBuf]) -> Result<bool, String> {
+    pub fn has_queued_prompts_for(&self, paths: &[PathBuf]) -> Result<bool, String> {
         let mut missing = HashSet::new();
         for path in paths {
             let locator = crate::sessions::normalize_session_path(path);
@@ -355,7 +355,7 @@ impl StateStore {
         Ok(false)
     }
 
-    pub(crate) fn relocate_session_paths(
+    pub fn relocate_session_paths(
         &mut self,
         paths: &[(PathBuf, PathBuf)],
         target_project: &Path,
@@ -415,7 +415,7 @@ impl StateStore {
             .map_err(|error| format!("commit session path relocation: {error}"))
     }
 
-    pub(crate) fn delete_session_state(&mut self, paths: &[PathBuf]) -> Result<(), String> {
+    pub fn delete_session_state(&mut self, paths: &[PathBuf]) -> Result<(), String> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -456,7 +456,7 @@ impl StateStore {
             .map_err(|error| format!("commit session state deletion: {error}"))
     }
 
-    pub(crate) fn set_session_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
+    pub fn set_session_archived(&self, path: &Path, archived: bool) -> Result<(), String> {
         let locator = crate::sessions::normalize_session_path(path);
         let archived_at = archived.then_some(now_ms()).map(u64_to_i64);
         let updated = self

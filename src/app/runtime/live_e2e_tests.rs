@@ -40,7 +40,7 @@ use crate::{
         extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode},
     },
     app::{
-        infrastructure::persistence::{StateStore, state_path},
+        infrastructure::persistence::state_path,
         runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
     },
     conversation::TranscriptKind,
@@ -776,7 +776,7 @@ fn assert_isolated_state() -> Result<(), String> {
             state_path()?.display()
         ));
     }
-    StateStore::open()?;
+    crate::app::persistence::open()?;
     Ok(())
 }
 

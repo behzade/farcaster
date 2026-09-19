@@ -1,7 +1,7 @@
 use super::*;
 
 impl StateStore {
-    pub(crate) fn open_at(path: &Path) -> Result<Self, String> {
+    pub fn open_at(path: &Path) -> Result<Self, String> {
         let parent = path
             .parent()
             .ok_or_else(|| format!("state database has no parent: {}", path.display()))?;
@@ -79,7 +79,7 @@ impl StateStore {
         })
     }
 
-    pub(crate) fn import_legacy_pi_gpui_state(&mut self, path: &Path) -> Result<(), String> {
+    pub fn import_legacy_pi_gpui_state(&mut self, path: &Path) -> Result<(), String> {
         let imported = self
             .connection
             .query_row(

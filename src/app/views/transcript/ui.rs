@@ -15,7 +15,6 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn set_transcript_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
-        use crate::app::infrastructure::persistence::StateStore;
         use crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE;
 
         let size = size.clamp(
@@ -25,7 +24,9 @@ impl FarcasterApp {
         if gpui::px(size) == self.views.transcript.read(cx).font_size {
             return;
         }
-        match StateStore::open().and_then(|store| store.save_transcript_font_size(size)) {
+        match crate::app::persistence::open().and_then(|store| {
+            store.save_transcript_font_size_setting(size, &TRANSCRIPT_FONT_SIZE_RANGE)
+        }) {
             Ok(()) => {
                 self.views.transcript.update(cx, |transcript, cx| {
                     transcript.font_size = gpui::px(size);

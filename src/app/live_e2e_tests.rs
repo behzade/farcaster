@@ -19,9 +19,7 @@ use gpui::{
     VisualTestContext,
 };
 
-use super::{
-    FarcasterApp, infrastructure::persistence::StateStore, ui::theme::install_component_theme,
-};
+use super::{FarcasterApp, ui::theme::install_component_theme};
 use crate::{
     agents::{
         HarnessAccessMode,
@@ -769,7 +767,7 @@ fn with_live_app(
         .path()
         .canonicalize()
         .map_err(|error| format!("canonicalize isolated E2E project: {error}"))?;
-    StateStore::open()
+    crate::app::persistence::open()
         .and_then(|store| store.save_preferred_harness(config.harness))
         .map_err(|error| format!("save selected live harness in isolated state: {error}"))?;
     phase("state-store-seeded");

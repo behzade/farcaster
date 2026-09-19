@@ -3,7 +3,7 @@ use super::*;
 impl StateStore {
     /// Session provisioning is a caller-binding lifecycle operation, not an
     /// effect of a tool submission. Use the same scoped identity as families.
-    pub(crate) fn register_caller_session(
+    pub fn register_caller_session(
         &self,
         caller: &crate::agents::CallerContext,
     ) -> Result<i64, String> {
@@ -34,7 +34,7 @@ impl StateStore {
         Ok(id)
     }
 
-    pub(crate) fn register_execution(
+    pub fn register_execution(
         &self,
         execution: &crate::agents::ExecutionBinding,
     ) -> Result<(), String> {
@@ -52,7 +52,7 @@ impl StateStore {
             .map_err(|e| format!("register execution turn: {e}"))
     }
 
-    pub(crate) fn save_review(
+    pub fn save_review(
         &self,
         caller: &crate::agents::CallerContext,
         execution: &crate::agents::ExecutionBinding,

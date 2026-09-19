@@ -544,7 +544,7 @@ impl Supervisor {
         let clock = 0_u64;
         let last_touch = HashMap::from([(initial_key.clone(), clock)]);
         let mut configurations = HarnessConfigurationStore::default();
-        let catalog_state = StateStore::open().ok();
+        let catalog_state = crate::app::persistence::open().ok();
         let recovery = catalog_state
             .as_ref()
             .map(crate::app::runtime::recovery::InterruptedPromptRecovery::recover)
@@ -581,7 +581,7 @@ impl Supervisor {
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
-        if let Ok(state) = StateStore::open()
+        if let Ok(state) = crate::app::persistence::open()
             && let Ok(prompts) = agents::queued_prompts(&state)
         {
             for prompt in prompts {

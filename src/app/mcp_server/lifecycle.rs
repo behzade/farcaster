@@ -70,7 +70,7 @@ pub(crate) fn start(
 }
 
 pub(crate) fn set_enabled(enabled: bool) -> Result<(), String> {
-    let store = crate::app::persistence::StateStore::open()?;
+    let store = crate::app::persistence::open()?;
     let mut current = SERVER
         .lock()
         .map_err(|_| "MCP server state is unavailable")?;

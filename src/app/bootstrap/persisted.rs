@@ -40,17 +40,16 @@ pub(super) fn load(project: &Path) -> PersistedState {
         }
     };
     drop(session_order_timing);
-    let session_folders = match crate::app::persistence::StateStore::open()
-        .and_then(|store| store.load_session_folders())
-    {
-        Ok(folders) => folders,
-        Err(load_error) => {
-            error.get_or_insert(load_error);
-            Default::default()
-        }
-    };
+    let session_folders =
+        match crate::app::persistence::open().and_then(|store| store.load_session_folders()) {
+            Ok(folders) => folders,
+            Err(load_error) => {
+                error.get_or_insert(load_error);
+                Default::default()
+            }
+        };
 
-    let preferred_harness = match crate::app::infrastructure::persistence::StateStore::open()
+    let preferred_harness = match crate::app::persistence::open()
         .and_then(|store| store.load_preferred_harness(project))
     {
         Ok(harness) => harness,
@@ -104,12 +103,12 @@ pub(super) fn load(project: &Path) -> PersistedState {
     let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
     let proxy_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_proxy");
-    let saved_proxy = crate::app::infrastructure::persistence::StateStore::open()
+    let saved_proxy = crate::app::persistence::open()
         .ok()
         .and_then(|store| crate::access::load_proxy(&store).unwrap_or(None));
     drop(proxy_timing);
 
-    let expand_transcript_folders = crate::app::infrastructure::persistence::StateStore::open()
+    let expand_transcript_folders = crate::app::persistence::open()
         .and_then(|store| store.load_expand_transcript_folders())
         .unwrap_or_else(|load_error| {
             error.get_or_insert(load_error);

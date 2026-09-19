@@ -15,15 +15,47 @@ use tempfile::tempdir;
 use std::os::unix::fs::symlink;
 
 use crate::{
+    CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, StateStore,
+    WindowPlacement, WindowState,
     agents::ConfigurationCatalog,
-    app::infrastructure::persistence::{
-        CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, StateStore,
-        WindowPlacement, WindowState,
-    },
     projects::{self, DraftSession, Registry},
     protocol::{Model, PromptImage, PromptMode},
     sessions::{SessionSummary, UsageSummary},
 };
+
+#[allow(clippy::too_many_arguments)]
+fn session_from_cached(
+    id: String,
+    path: PathBuf,
+    project: PathBuf,
+    title: String,
+    first_user_message: String,
+    timestamp: String,
+    parent_session: Option<String>,
+    modified: SystemTime,
+    message_count: usize,
+    usage: UsageSummary,
+    archived: bool,
+    is_running: bool,
+    search: String,
+) -> SessionSummary {
+    SessionSummary::from_cached_for_harness(
+        id,
+        Backend::Pi,
+        path,
+        project,
+        title,
+        first_user_message,
+        timestamp,
+        parent_session,
+        modified,
+        message_count,
+        usage,
+        archived,
+        is_running,
+        search,
+    )
+}
 
 #[test]
 fn preferred_harness_survives_reopen_and_overrides_session_history()
@@ -538,7 +570,7 @@ fn legacy_pi_gpui_v7_state_import_restores_archives_once() -> Result<(), Box<dyn
     fs::write(&session_path, "{}")?;
     let project = project.canonicalize()?;
     let session_path = session_path.canonicalize()?;
-    let session = SessionSummary::from_cached(
+    let session = session_from_cached(
         "session-one".into(),
         session_path.clone(),
         project,
@@ -646,7 +678,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
             attachments: Vec::new(),
         })?;
         fs::write(&catalog_session_path, "{}")?;
-        store.replace_sessions(&[SessionSummary::from_cached(
+        store.replace_sessions(&[session_from_cached(
             "session-one".into(),
             catalog_session_path.canonicalize()?,
             project.canonicalize()?,
@@ -849,7 +881,7 @@ fn composer_session_targets_resolve_file_aliases() -> Result<(), Box<dyn std::er
     fs::create_dir(&project)?;
     fs::write(&session, "{}")?;
     symlink(&session, &alias)?;
-    let summary = SessionSummary::from_cached(
+    let summary = session_from_cached(
         "session".into(),
         session.canonicalize()?,
         project.canonicalize()?,
@@ -1005,7 +1037,7 @@ fn session_harness_survives_the_cache() -> Result<(), Box<dyn std::error::Error>
     let session_path = temp.path().join("session.jsonl");
     fs::create_dir(&project)?;
     fs::write(&session_path, "{}")?;
-    let mut session = SessionSummary::from_cached(
+    let mut session = session_from_cached(
         "session".into(),
         session_path,
         project,
@@ -1049,7 +1081,7 @@ fn imported_sessions_are_active_while_recent_even_without_running_status()
     .map(|(id, modified, is_running)| {
         let path = temp.path().join(format!("{id}.jsonl"));
         fs::write(&path, "{}")?;
-        Ok::<_, std::io::Error>(SessionSummary::from_cached(
+        Ok::<_, std::io::Error>(session_from_cached(
             id.into(),
             path,
             project.clone(),
@@ -1090,7 +1122,7 @@ fn import_classification_is_not_reapplied_when_a_session_finishes()
     fs::create_dir(&project)?;
     fs::write(&path, "{}")?;
     let summary = |is_running| {
-        SessionSummary::from_cached(
+        session_from_cached(
             "session".into(),
             path.clone(),
             project.clone(),
@@ -1164,7 +1196,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
             title: None,
         }],
     })?;
-    let summary = SessionSummary::from_cached(
+    let summary = session_from_cached(
         "pi-session".into(),
         session.canonicalize()?,
         project.canonicalize()?,
@@ -1235,7 +1267,7 @@ fn partial_session_index_updates_do_not_delete_omitted_rows()
         fs::write(path, "{}")?;
     }
     let summary = |id: &str, path: &std::path::Path| {
-        SessionSummary::from_cached(
+        session_from_cached(
             id.into(),
             path.canonicalize().expect("session path"),
             project.canonicalize().expect("project path"),
@@ -1471,7 +1503,7 @@ fn relocating_session_paths_preserves_application_identity_and_composer_state()
     let source = temp.path().join("source.jsonl");
     let target = temp.path().join("target.jsonl");
     fs::write(&source, "{}")?;
-    let mut session = SessionSummary::from_cached(
+    let mut session = session_from_cached(
         "pi-id".into(),
         source.clone(),
         source_project.clone(),
@@ -1530,7 +1562,7 @@ fn deleting_session_state_removes_the_family_and_preserves_other_sessions()
     let mut sessions = Vec::new();
     for path in [&root, &child, &other] {
         fs::write(path, "{}")?;
-        sessions.push(SessionSummary::from_cached(
+        sessions.push(session_from_cached(
             path.file_stem()
                 .expect("test operation should succeed")
                 .to_string_lossy()
@@ -1822,7 +1854,7 @@ fn worker_identity_binds_a_discovered_locator_without_creating_a_second_session(
 }
 
 fn persistence_summary(project: &std::path::Path, id: &str) -> SessionSummary {
-    SessionSummary::from_cached(
+    session_from_cached(
         id.into(),
         project.join(format!("{id}.jsonl")),
         project.to_path_buf(),
@@ -2062,7 +2094,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         StateStore::open_at(&database)?.load_worker_families()?,
         vec![persisted_link]
     );
-    let mut session = SessionSummary::from_cached(
+    let mut session = session_from_cached(
         link.child_session.clone(),
         PathBuf::from(&link.child_session),
         link.project.clone(),

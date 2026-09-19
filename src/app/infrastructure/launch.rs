@@ -7,7 +7,7 @@ use super::performance::StartupTiming;
 
 use crate::{
     app::FarcasterApp,
-    app::infrastructure::persistence::{StateStore, WindowPlacement, WindowState},
+    app::infrastructure::persistence::{WindowPlacement, WindowState},
     app::ui::theme::{THEME, install_component_theme},
     app::ui::{
         assets::AppAssets,
@@ -304,14 +304,18 @@ pub(crate) fn observe_window_placement<T: 'static>(
         let timer = cx.background_executor().timer(Duration::from_millis(200));
         let task = cx.background_spawn(async move {
             timer.await;
-            let _ = StateStore::open().and_then(|store| store.save_window_placement(&placement));
+            let _ = crate::app::persistence::open()
+                .and_then(|store| store.save_window_placement(&placement));
         });
         *pending.borrow_mut() = Some(task);
     })
 }
 
 fn restored_window(cx: &App) -> Option<(WindowBounds, Option<DisplayId>)> {
-    let placement = StateStore::open().ok()?.load_window_placement().ok()??;
+    let placement = crate::app::persistence::open()
+        .ok()?
+        .load_window_placement()
+        .ok()??;
     restore_window_placement(&placement, cx)
 }
 

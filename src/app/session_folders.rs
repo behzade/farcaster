@@ -1,6 +1,6 @@
 use gpui::{Context, Window};
 
-use super::{FarcasterApp, persistence::StateStore};
+use super::FarcasterApp;
 #[cfg(test)]
 pub(crate) use crate::sessions::SessionFolder;
 pub(crate) use crate::sessions::{FolderDestination, SessionFolders};
@@ -53,7 +53,7 @@ impl FarcasterApp {
         next: SessionFolders,
         cx: &mut Context<Self>,
     ) -> bool {
-        match StateStore::open().and_then(|store| store.save_session_folders(&next)) {
+        match crate::app::persistence::open().and_then(|store| store.save_session_folders(&next)) {
             Ok(()) => {
                 self.sessions.folders = next;
                 self.notify_session_rail(cx);

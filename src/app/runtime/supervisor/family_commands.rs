@@ -185,7 +185,7 @@ impl Supervisor {
                         "Wait for the session family to become idle before deleting it".to_owned(),
                     );
                 }
-                let mut state = StateStore::open()?;
+                let mut state = crate::app::persistence::open()?;
                 let paths = family_paths.iter().cloned().collect::<Vec<_>>();
                 if agents::has_queued_prompts_for(&state, &paths)? {
                     return Err(
@@ -302,7 +302,7 @@ impl Supervisor {
                         "Wait for the session family to become idle before moving it".to_owned(),
                     );
                 }
-                let mut state = StateStore::open()?;
+                let mut state = crate::app::persistence::open()?;
                 let paths = family_paths.iter().cloned().collect::<Vec<_>>();
                 if agents::has_queued_prompts_for(&state, &paths)? {
                     return Err(

@@ -1,7 +1,7 @@
 use super::*;
 
 impl StateStore {
-    pub(crate) fn allocate_app_session_id(&mut self, draft: &DraftSession) -> Result<i64, String> {
+    pub fn allocate_app_session_id(&mut self, draft: &DraftSession) -> Result<i64, String> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -13,7 +13,7 @@ impl StateStore {
         Ok(id)
     }
 
-    pub(crate) fn load_registry(&self) -> Result<Registry, String> {
+    pub fn load_registry(&self) -> Result<Registry, String> {
         let mut project_states = Vec::<(PathBuf, bool)>::new();
         let mut project_indexes = BTreeMap::<PathBuf, usize>::new();
         let mut statement = self
@@ -103,7 +103,7 @@ impl StateStore {
         })
     }
 
-    pub(crate) fn save_registry(&mut self, registry: &Registry) -> Result<(), String> {
+    pub fn save_registry(&mut self, registry: &Registry) -> Result<(), String> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)

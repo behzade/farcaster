@@ -1,28 +1,23 @@
-pub(crate) use crate::infrastructure::sqlite::*;
+pub(crate) use farcaster_storage::*;
 
 use std::path::PathBuf;
 
-#[path = "persistence/transcript.rs"]
-mod transcript;
-
-impl StateStore {
-    pub(crate) fn open() -> Result<Self, String> {
-        let _startup_timing =
-            crate::app::infrastructure::performance::StartupTiming::new("db.open_total");
-        let _timing = crate::app::infrastructure::performance::OperationTiming::new(
-            crate::app::infrastructure::performance::OperationKind::StateDatabase,
-            1,
-        );
-        let path = state_path()?;
-        let mut store = Self::open_at(&path)?;
-        if let Some(legacy) = legacy_pi_gpui_state_path()
-            && legacy != path
-            && legacy.is_file()
-        {
-            store.import_legacy_pi_gpui_state(&legacy)?;
-        }
-        Ok(store)
+pub(crate) fn open() -> Result<StateStore, String> {
+    let _startup_timing =
+        crate::app::infrastructure::performance::StartupTiming::new("db.open_total");
+    let _timing = crate::app::infrastructure::performance::OperationTiming::new(
+        crate::app::infrastructure::performance::OperationKind::StateDatabase,
+        1,
+    );
+    let path = state_path()?;
+    let mut store = StateStore::open_at(&path)?;
+    if let Some(legacy) = legacy_pi_gpui_state_path()
+        && legacy != path
+        && legacy.is_file()
+    {
+        store.import_legacy_pi_gpui_state(&legacy)?;
     }
+    Ok(store)
 }
 
 pub(crate) fn state_path() -> Result<PathBuf, String> {

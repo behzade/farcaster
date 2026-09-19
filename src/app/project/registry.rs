@@ -1,7 +1,7 @@
 use crate::agents::Backend;
 use std::path::PathBuf;
 
-use crate::{app::infrastructure::persistence::StateStore, projects};
+use crate::projects;
 
 pub(in crate::app) fn new_draft(
     project: PathBuf,
@@ -12,14 +12,14 @@ pub(in crate::app) fn new_draft(
         .unwrap_or_default();
     let id = format!("draft-{}-{}", elapsed.as_nanos(), std::process::id());
     let created_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
-    let mut store = StateStore::open()?;
+    let mut store = crate::app::persistence::open()?;
     let mut draft = projects::DraftSession::new(harness.to_owned(), id, 0, project, created_ms);
     draft.app_session_id = projects::allocate_session_id(&mut store, &draft)?;
     Ok(draft)
 }
 
 pub(in crate::app) fn load() -> Result<projects::Registry, String> {
-    let mut store = StateStore::open()?;
+    let mut store = crate::app::persistence::open()?;
     let registry = projects::load_registry(&store)?;
     if registry == projects::Registry::default() {
         let legacy_path = legacy_registry_path()?;
@@ -33,15 +33,15 @@ pub(in crate::app) fn load() -> Result<projects::Registry, String> {
 }
 
 pub(in crate::app) fn save(registry: &projects::Registry) -> Result<(), String> {
-    projects::save_registry(&mut StateStore::open()?, registry)
+    projects::save_registry(&mut crate::app::persistence::open()?, registry)
 }
 
 pub(in crate::app) fn load_app_session_order() -> Result<Vec<i64>, String> {
-    StateStore::open()?.load_app_session_order()
+    crate::app::persistence::open()?.load_app_session_order()
 }
 
 pub(in crate::app) fn save_app_session_order(order: &[i64]) -> Result<(), String> {
-    StateStore::open()?.save_app_session_order(order)
+    crate::app::persistence::open()?.save_app_session_order(order)
 }
 
 pub(crate) fn most_recent() -> Option<PathBuf> {

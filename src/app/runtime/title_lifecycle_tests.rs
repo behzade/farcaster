@@ -350,7 +350,7 @@ impl Scenario {
         fs::write(project.join("main.jsonl"), "").expect("write fixture session");
         let (mut owner, incoming_events) = owner_without_process(project.clone());
         owner.harness = harness.into();
-        owner.state = Some(StateStore::open().expect("open fixture store"));
+        owner.state = Some(crate::app::persistence::open().expect("open fixture store"));
         owner.process_command = AgentLaunchConfig {
             program: project.join("pi"),
             session_locator_root: Some(project.join("locators")),

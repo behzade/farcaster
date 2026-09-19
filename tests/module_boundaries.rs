@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-const DOMAIN_CRATES: &[&str] = &[
+const EXTRACTED_CRATES: &[&str] = &[
     "access",
     "agent-protocol",
     "agents",
@@ -10,14 +10,15 @@ const DOMAIN_CRATES: &[&str] = &[
     "repository",
     "reviews",
     "sessions",
+    "storage",
     "utility",
 ];
 
 #[test]
-fn each_domain_module_is_an_independent_crate() {
+fn each_extracted_module_is_an_independent_crate() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     assert!(!root.join("src/modules/mod.rs").exists());
-    for name in DOMAIN_CRATES {
+    for name in EXTRACTED_CRATES {
         let crate_root = root.join("crates").join(name);
         assert!(
             crate_root.join("Cargo.toml").is_file(),
