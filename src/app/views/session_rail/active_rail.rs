@@ -5,6 +5,7 @@ use gpui::{
     Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_component::scroll::Scrollbar;
 
 use super::{
     FarcasterApp, active_item_identity,
@@ -166,6 +167,7 @@ impl FarcasterApp {
             .map(|edit| edit.path.clone());
         let active_title_input = self.sessions.title_input.clone();
         let active_drop_target = self.sessions.drop_target;
+        let rail_scrollbar = session_list.clone();
         let active_list = list(session_list, move |index, _, _| {
             match active_rows.get(index) {
                 Some(FolderRow::Session(item)) => match item.as_ref() {
@@ -418,17 +420,19 @@ impl FarcasterApp {
                         },
                     )
                     .when(!archived_expanded, |lists| {
-                        lists.child(active_session_drop_target(
-                            div()
-                                .id("active-session-drop-area")
-                                .flex_1()
-                                .min_h_0()
-                                .overflow_y_hidden()
-                                .child(active_list),
-                            active_drop_list,
-                            last_active_row,
-                            active_drop_entity,
-                        ))
+                        lists
+                            .child(active_session_drop_target(
+                                div()
+                                    .id("active-session-drop-area")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_hidden()
+                                    .child(active_list),
+                                active_drop_list,
+                                last_active_row,
+                                active_drop_entity,
+                            ))
+                            .child(Scrollbar::vertical(&rail_scrollbar))
                     })
                     .when(archived_entry_count > 0, |lists| {
                         lists.child(archived_session_rail)
