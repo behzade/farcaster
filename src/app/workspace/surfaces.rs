@@ -1,7 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
-use gpui::{Context, FocusHandle, Focusable as _, Image, Window, actions};
+use gpui::{Context, FocusHandle, Focusable as _, Image, RenderImage, Window, actions};
 
+use super::covered_refresh::{CoveredRefresh, RefreshStep};
 use super::{AppSurface, FarcasterApp, ImagePreview, PostRenderFocus};
 actions!(farcaster, [CycleWorkspaceForward, CycleWorkspaceBackward]);
 
@@ -230,6 +231,80 @@ impl FarcasterApp {
             }
         }
         self.hide_native_workspace_surfaces(cx);
+    }
+
+    fn capture_workspace_surface_snapshot(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        match self.workspace.surface {
+            AppSurface::Editor => self
+                .workspace
+                .editor
+                .view
+                .as_ref()
+                .and_then(|editor| editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()),
+            AppSurface::Terminal => {
+                self.workspace.terminal.view.as_ref().and_then(|terminal| {
+                    terminal.update(cx, |terminal, _| terminal.snapshot()).ok()
+                })
+            }
+            AppSurface::Chat | AppSurface::Work => None,
+        }
+    }
+
+    /// Number of frames the covered native surface has drawn.
+    fn covered_surface_frame_count(&self, cx: &mut Context<Self>) -> u64 {
+        match self.workspace.surface {
+            AppSurface::Terminal => self
+                .workspace
+                .terminal
+                .view
+                .as_ref()
+                .map(|terminal| terminal.update(cx, |terminal, _| terminal.frame_count()))
+                .unwrap_or(0),
+            AppSurface::Editor | AppSurface::Chat | AppSurface::Work => 0,
+        }
+    }
+
+    /// Reads back the frame that stands in for a covered native surface, once
+    /// the surface has repainted behind it. The readback is retried until the
+    /// surface reports a new frame, so a covered terminal follows a theme
+    /// change immediately instead of after a fixed delay.
+    pub(in crate::app) fn refresh_covered_workspace_snapshot(&mut self, cx: &mut Context<Self>) {
+        if !self.workspace.native_surface_covered {
+            return;
+        }
+        let baseline = self.covered_surface_frame_count(cx);
+        self.workspace.native_surface_refresh.take();
+        self.workspace.native_surface_refresh = Some(cx.spawn(async move |weak, cx| {
+            let mut refresh = CoveredRefresh::new(baseline);
+            loop {
+                cx.background_executor()
+                    .timer(CoveredRefresh::poll_interval())
+                    .await;
+                let refreshed = weak.update(cx, |this, cx| {
+                    if !this.workspace.native_surface_covered {
+                        return true;
+                    }
+                    let frames = this.covered_surface_frame_count(cx);
+                    match refresh.observe(frames) {
+                        RefreshStep::Wait => false,
+                        RefreshStep::Capture => {
+                            if let Some(snapshot) = this.capture_workspace_surface_snapshot(cx) {
+                                this.workspace.native_surface_snapshot = Some(snapshot);
+                                cx.notify();
+                            }
+                            true
+                        }
+                    }
+                });
+                if refreshed.unwrap_or(true) {
+                    break;
+                }
+            }
+            let _ = weak.update(cx, |this, cx| this.set_terminal_hidden_rendering(false, cx));
+        }));
     }
 
     pub(in crate::app) fn restore_active_native_workspace_surface(
