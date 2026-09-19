@@ -24,6 +24,7 @@ pub(crate) struct PickerRow {
     pub(crate) label: String,
     pub(crate) detail: Option<String>,
     pub(crate) shortcut: Option<String>,
+    shortcut_keys: Vec<Keystroke>,
     removable_project: Option<std::path::PathBuf>,
     disabled: bool,
     search: String,
@@ -44,12 +45,22 @@ impl PickerRow {
             detail.as_deref().unwrap_or_default()
         )
         .to_lowercase();
+        let shortcut_keys = shortcut
+            .as_deref()
+            .map(|shortcut| {
+                shortcut
+                    .split_whitespace()
+                    .map(|key| Keystroke::parse(key).expect("static picker shortcut must parse"))
+                    .collect()
+            })
+            .unwrap_or_default();
         Self {
             id: id.into(),
             icon,
             label,
             detail,
             shortcut,
+            shortcut_keys,
             removable_project: None,
             disabled: false,
             search,
@@ -159,15 +170,11 @@ impl ListDelegate for PickerDelegate {
         _: &mut Window,
         _: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
-        let row = self.visible_rows.get(index.row)?.clone();
+        let row = self.visible_rows.get(index.row)?;
         Some(
             ListItem::new(("picker-row", index.row))
                 .disabled(row.disabled)
-                .h(if row.detail.is_some() {
-                    theme().controls.archived_preview_row
-                } else {
-                    theme().controls.utility_row
-                })
+                .h(theme().controls.utility_row)
                 .child(
                     div()
                         .w_full()
@@ -189,31 +196,30 @@ impl ListDelegate for PickerDelegate {
                                         .text_ellipsis()
                                         .child(row.label.clone()),
                                 )
-                                .children(row.detail.map(|detail| {
+                                .children(row.detail.as_deref().map(|detail| {
                                     div()
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()
                                         .text_size(theme().type_scale.caption)
                                         .text_color(theme().colors.subtle)
-                                        .child(detail)
+                                        .child(detail.to_owned())
                                 })),
                         )
-                        .children(row.shortcut.map(|shortcut| {
+                        .children((!row.shortcut_keys.is_empty()).then(|| {
                             div()
                                 .flex()
                                 .flex_none()
                                 .items_center()
                                 .gap(theme().space.xs)
-                                .children(shortcut.split_whitespace().map(|key| {
-                                    Kbd::new(
-                                        Keystroke::parse(key)
-                                            .expect("static picker shortcut must parse"),
-                                    )
-                                    .outline()
-                                }))
+                                .children(
+                                    row.shortcut_keys
+                                        .iter()
+                                        .map(|key| Kbd::new(key.clone()).outline()),
+                                )
                         }))
-                        .children(row.removable_project.map(|project| {
+                        .children(row.removable_project.as_ref().map(|project| {
+                            let project = project.clone();
                             icon_control(
                                 ("remove-picker-project", index.row),
                                 format!("Remove {}", row.label),
