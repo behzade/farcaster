@@ -7,11 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use farcaster_utility::persistent_vec;
 use gpui::{IntoElement as _, Render, TestApp, WeakEntity};
 use serde_json::{Value, json};
 
-#[path = "../src/modules/agents/contract/backend.rs"]
-mod backend;
 #[path = "../src/modules/reviews.rs"]
 mod reviews;
 
@@ -176,7 +175,7 @@ mod app {
 }
 
 mod agents {
-    pub(crate) use crate::backend::Backend;
+    pub(crate) use farcaster_contracts::Backend;
     mod tool {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -246,10 +245,8 @@ mod assets;
 pub(crate) mod attachment_cards;
 #[path = "../src/app/infrastructure/performance.rs"]
 mod performance;
-#[path = "../src/modules/utility/persistent_vec.rs"]
-mod persistent_vec;
 pub(crate) mod utility {
-    pub(crate) use crate::persistent_vec;
+    pub(crate) use farcaster_utility::persistent_vec;
 }
 #[path = "../src/modules/conversation.rs"]
 mod conversation;

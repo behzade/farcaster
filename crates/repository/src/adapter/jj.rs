@@ -1,0 +1,403 @@
+use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
+
+use super::super::{
+    ChangeKind, ChangeLayer, DiffResult, DiffTarget, JujutsuIdentity, RepositoryBackend,
+    RepositoryEdit, RepositoryEditReview, RepositoryError, RepositoryKind, SnapshotIdentity,
+    SnapshotToken, WorkingCopySnapshot, change, command_failed,
+    core::port::{CommandOutput, RepositoryOperations},
+    diff_result, require_complete_stdout,
+};
+
+pub(super) struct JujutsuOperations;
+
+impl RepositoryOperations for JujutsuOperations {
+    fn edit(
+        &self,
+        backend: &RepositoryBackend,
+        review: &RepositoryEditReview,
+        action: RepositoryEdit,
+        message: &str,
+    ) -> Result<(), RepositoryError> {
+        let mut args = ["--no-pager", "--color=never"].map(OsString::from).to_vec();
+        match action {
+            RepositoryEdit::Commit => args.extend(["commit", "-m", message].map(OsString::from)),
+            RepositoryEdit::Discard => args.push("restore".into()),
+        }
+        args.push("--".into());
+        for path in review.paths() {
+            args.push(literal_fileset(path)?.into());
+        }
+        let output = backend.run_sync(&args)?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(command_failed(backend.executable(), &output))
+        }
+    }
+
+    fn snapshot(
+        &self,
+        backend: &RepositoryBackend,
+    ) -> Result<WorkingCopySnapshot, RepositoryError> {
+        snapshot(backend)
+    }
+
+    fn load_diff(
+        &self,
+        backend: &RepositoryBackend,
+        target: DiffTarget,
+    ) -> Result<DiffResult, RepositoryError> {
+        load_diff(backend, target)
+    }
+
+    fn list_project_files(
+        &self,
+        backend: &RepositoryBackend,
+    ) -> Result<Vec<String>, RepositoryError> {
+        list_project_files(backend)
+    }
+}
+
+const OPERATION_TEMPLATE: &str = "id ++ \"\\n\"";
+const IDENTITY_TEMPLATE: &str = concat!(
+    "json(commit_id) ++ \"\\t\" ++ ",
+    "json(change_id) ++ \"\\t\" ++ ",
+    "json(description.first_line()) ++ \"\\t\" ++ ",
+    "json(conflict) ++ \"\\t\" ++ ",
+    "json(empty) ++ \"\\n\" ++ ",
+    "bookmarks.map(|bookmark| json(bookmark.name())).join(\"\\t\") ++ \"\\n\" ++ ",
+    "conflicted_files.map(|file| json(file.path())).join(\"\\t\") ++ \"\\n\""
+);
+const STATUS_TEMPLATE: &str = concat!(
+    "json(status) ++ \"\\t\" ++ ",
+    "json(source.path()) ++ \"\\t\" ++ ",
+    "json(target.path()) ++ \"\\t\" ++ ",
+    "json(source.conflict()) ++ \"\\t\" ++ ",
+    "json(target.conflict()) ++ \"\\n\""
+);
+
+pub fn snapshot(backend: &RepositoryBackend) -> Result<WorkingCopySnapshot, RepositoryError> {
+    let operation_id = current_operation(backend)?;
+    let identity_output = run_at_operation(
+        backend,
+        &operation_id,
+        &["log", "-r", "@", "--no-graph", "-T", IDENTITY_TEMPLATE],
+        false,
+    )?;
+    let status_output = run_at_operation(
+        backend,
+        &operation_id,
+        &["diff", "-r", "@", "-T", STATUS_TEMPLATE],
+        false,
+    )?;
+    let mut identity = parse_identity(&identity_output.stdout)?;
+    identity.operation_id.clone_from(&operation_id);
+    let token = SnapshotToken::Jujutsu(Arc::from(operation_id));
+    let mut parsed = parse_status(&status_output.stdout)?;
+    for path in &identity.conflicted_paths {
+        if !parsed.iter().any(|change| &change.relative_path == path) {
+            parsed.push(ParsedChange {
+                relative_path: path.clone(),
+                original_relative_path: None,
+                kind: ChangeKind::Conflict,
+            });
+        }
+    }
+    let project = backend.project_pathspec();
+    let changes = parsed
+        .into_iter()
+        .filter_map(|parsed| scope_change_to_project(parsed, &project))
+        .map(|parsed| {
+            change(
+                &backend.location,
+                token.clone(),
+                parsed.relative_path,
+                parsed.original_relative_path,
+                ChangeLayer::JujutsuWorkingCopy,
+                parsed.kind,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(WorkingCopySnapshot {
+        location: backend.location.clone(),
+        identity: SnapshotIdentity::Jujutsu(identity),
+        changes,
+        captured_at: SystemTime::now(),
+    })
+}
+
+pub fn list_project_files(backend: &RepositoryBackend) -> Result<Vec<String>, RepositoryError> {
+    let operation = current_operation(backend)?;
+    let output = run_at_operation(
+        backend,
+        &operation,
+        &["file", "list", "-T", "json(path) ++ \"\\n\""],
+        false,
+    )?;
+    let text =
+        std::str::from_utf8(&output.stdout).map_err(|_| invalid("file list is not UTF-8"))?;
+    let mut files = text
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(decode_json_string)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(PathBuf::from)
+        .filter_map(|path| backend.project_relative_path(&path))
+        .filter_map(|path| path.into_os_string().into_string().ok())
+        .collect::<Vec<_>>();
+    files.sort_unstable();
+    files.dedup();
+    Ok(files)
+}
+
+pub fn load_diff(
+    backend: &RepositoryBackend,
+    target: DiffTarget,
+) -> Result<DiffResult, RepositoryError> {
+    let SnapshotToken::Jujutsu(expected_operation) = &target.token else {
+        return Err(RepositoryError::TargetMismatch(
+            "Git snapshot token used with Jujutsu".to_owned(),
+        ));
+    };
+    if current_operation(backend)? != expected_operation.as_ref() {
+        return Err(RepositoryError::StaleSnapshot);
+    }
+    let fileset = diff_fileset(&target)?;
+    let arguments = vec![
+        OsString::from("--no-pager"),
+        OsString::from("--color=never"),
+        OsString::from("--at-operation"),
+        OsString::from(expected_operation.as_ref()),
+        OsString::from("diff"),
+        OsString::from("-r"),
+        OsString::from("@"),
+        OsString::from("--git"),
+        OsString::from("--"),
+        OsString::from(fileset),
+    ];
+    let output = backend.run_success(&arguments)?;
+    require_complete_stdout(backend.executable(), &output)?;
+    Ok(diff_result(
+        target,
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
+}
+
+fn current_operation(backend: &RepositoryBackend) -> Result<String, RepositoryError> {
+    let arguments = [
+        "--no-pager",
+        "--color=never",
+        "op",
+        "log",
+        "-n",
+        "1",
+        "--no-graph",
+        "-T",
+        OPERATION_TEMPLATE,
+    ]
+    .map(OsString::from);
+    let output = backend.run_success(&arguments)?;
+    require_complete_stdout(backend.executable(), &output)?;
+    let operation = std::str::from_utf8(&output.stdout)
+        .map_err(|_| invalid("operation id is not UTF-8"))?
+        .trim();
+    if operation.is_empty() || !operation.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(invalid("operation id is empty or malformed"));
+    }
+    Ok(operation.to_owned())
+}
+
+fn run_at_operation(
+    backend: &RepositoryBackend,
+    operation_id: &str,
+    command: &[&str],
+    project_scoped: bool,
+) -> Result<CommandOutput, RepositoryError> {
+    let mut arguments = vec![
+        OsString::from("--no-pager"),
+        OsString::from("--color=never"),
+        OsString::from("--at-operation"),
+        OsString::from(operation_id),
+    ];
+    arguments.extend(command.iter().map(OsString::from));
+    if project_scoped {
+        arguments.push(OsString::from("--"));
+        arguments.push(backend.project_pathspec().into_os_string());
+    }
+    let output = backend.run_success(&arguments)?;
+    require_complete_stdout(backend.executable(), &output)?;
+    Ok(output)
+}
+
+fn parse_identity(input: &[u8]) -> Result<JujutsuIdentity, RepositoryError> {
+    let text = std::str::from_utf8(input).map_err(|_| invalid("identity is not UTF-8"))?;
+    let mut lines = text.split('\n');
+    let fields = lines
+        .next()
+        .unwrap_or_default()
+        .split('\t')
+        .collect::<Vec<_>>();
+    if fields.len() != 5 {
+        return Err(invalid("identity record does not contain five fields"));
+    }
+    let bookmarks = decode_json_string_list(lines.next().unwrap_or_default())?;
+    let conflicted_paths = decode_json_string_list(lines.next().unwrap_or_default())?
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    Ok(JujutsuIdentity {
+        operation_id: String::new(),
+        commit_id: decode_json_string(fields[0])?,
+        change_id: decode_json_string(fields[1])?,
+        description: decode_json_string(fields[2])?,
+        bookmarks,
+        closest_bookmarks: Vec::new(),
+        ahead: 0,
+        conflicted_paths,
+        conflicted: parse_json_bool(fields[3])?,
+        empty: parse_json_bool(fields[4])?,
+    })
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ParsedChange {
+    relative_path: PathBuf,
+    original_relative_path: Option<PathBuf>,
+    kind: ChangeKind,
+}
+
+fn parse_status(input: &[u8]) -> Result<Vec<ParsedChange>, RepositoryError> {
+    let text = std::str::from_utf8(input).map_err(|_| invalid("status is not UTF-8"))?;
+    text.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != 5 {
+                return Err(invalid("status record does not contain five fields"));
+            }
+            let status = decode_json_string(fields[0])?;
+            let source = decode_optional_json_path(fields[1])?;
+            let target = decode_optional_json_path(fields[2])?;
+            let relative_path = target
+                .clone()
+                .or_else(|| source.clone())
+                .ok_or_else(|| invalid("status record has no source or target path"))?;
+            let conflicted = parse_json_bool(fields[3])? || parse_json_bool(fields[4])?;
+            let kind = if conflicted {
+                ChangeKind::Conflict
+            } else {
+                jj_kind(&status)
+            };
+            let original_relative_path =
+                if matches!(kind, ChangeKind::Renamed | ChangeKind::Copied) && source != target {
+                    source
+                } else {
+                    None
+                };
+            Ok(ParsedChange {
+                relative_path,
+                original_relative_path,
+                kind,
+            })
+        })
+        .collect()
+}
+
+fn scope_change_to_project(
+    mut change: ParsedChange,
+    project: &std::path::Path,
+) -> Option<ParsedChange> {
+    if project == std::path::Path::new(".") {
+        return Some(change);
+    }
+    let target_is_inside = change.relative_path.starts_with(project);
+    let source_is_inside = change
+        .original_relative_path
+        .as_deref()
+        .is_some_and(|path| path.starts_with(project));
+    match (change.kind.clone(), source_is_inside, target_is_inside) {
+        (ChangeKind::Renamed, true, false) => {
+            change.relative_path = change.original_relative_path.take()?;
+            change.kind = ChangeKind::Deleted;
+            Some(change)
+        }
+        (ChangeKind::Renamed | ChangeKind::Copied, false, true) => {
+            change.original_relative_path = None;
+            change.kind = ChangeKind::Added;
+            Some(change)
+        }
+        (ChangeKind::Copied, true, false) => None,
+        (ChangeKind::Renamed | ChangeKind::Copied, true, true) => Some(change),
+        (ChangeKind::Renamed | ChangeKind::Copied, false, false) => None,
+        (_, _, true) => Some(change),
+        (_, _, false) => None,
+    }
+}
+
+fn diff_fileset(target: &DiffTarget) -> Result<String, RepositoryError> {
+    let target_fileset = literal_fileset(&target.relative_path)?;
+    if let Some(source) = target.original_relative_path.as_deref() {
+        Ok(format!("{} | {target_fileset}", literal_fileset(source)?))
+    } else {
+        Ok(target_fileset)
+    }
+}
+
+fn literal_fileset(path: &std::path::Path) -> Result<String, RepositoryError> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| RepositoryError::InvalidPath(path.to_path_buf()))?;
+    Ok(format!("root-file:{}", encode_json_string(path)?))
+}
+
+fn encode_json_string(value: &str) -> Result<String, RepositoryError> {
+    serde_json::to_string(value).map_err(|error| invalid(format!("encode JSON string: {error}")))
+}
+
+fn decode_json_string_list(value: &str) -> Result<Vec<String>, RepositoryError> {
+    value
+        .split('\t')
+        .filter(|field| !field.is_empty())
+        .map(decode_json_string)
+        .collect()
+}
+
+fn decode_optional_json_path(value: &str) -> Result<Option<PathBuf>, RepositoryError> {
+    if value == "null" {
+        Ok(None)
+    } else {
+        decode_json_string(value).map(PathBuf::from).map(Some)
+    }
+}
+
+fn jj_kind(status: &str) -> ChangeKind {
+    match status {
+        "added" => ChangeKind::Added,
+        "modified" => ChangeKind::Modified,
+        "removed" => ChangeKind::Deleted,
+        "renamed" => ChangeKind::Renamed,
+        "copied" => ChangeKind::Copied,
+        "conflict" | "conflicted" => ChangeKind::Conflict,
+        other => ChangeKind::Unknown(other.to_owned()),
+    }
+}
+
+fn parse_json_bool(value: &str) -> Result<bool, RepositoryError> {
+    serde_json::from_str(value).map_err(|error| invalid(format!("decode JSON boolean: {error}")))
+}
+
+fn decode_json_string(value: &str) -> Result<String, RepositoryError> {
+    serde_json::from_str(value).map_err(|error| invalid(format!("decode JSON string: {error}")))
+}
+
+fn invalid(detail: impl Into<String>) -> RepositoryError {
+    RepositoryError::InvalidOutput {
+        backend: RepositoryKind::Jujutsu,
+        detail: detail.into(),
+    }
+}
+
+#[cfg(test)]
+#[path = "jj_tests.rs"]
+mod tests;

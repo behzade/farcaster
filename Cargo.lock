@@ -1900,7 +1900,12 @@ dependencies = [
  "base64 0.22.1",
  "blocking",
  "claude-sdk-types",
+ "farcaster-access",
  "farcaster-contracts",
+ "farcaster-projects",
+ "farcaster-repository",
+ "farcaster-sessions",
+ "farcaster-utility",
  "futures",
  "gpui",
  "gpui-base",
@@ -1932,10 +1937,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "farcaster-access"
+version = "0.1.0"
+dependencies = [
+ "url",
+]
+
+[[package]]
 name = "farcaster-contracts"
 version = "0.1.0"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "farcaster-projects"
+version = "0.1.0"
+dependencies = [
+ "farcaster-contracts",
+ "farcaster-sessions",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "farcaster-repository"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "notify",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "farcaster-sessions"
+version = "0.1.0"
+dependencies = [
+ "farcaster-contracts",
+ "path-clean",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
+name = "farcaster-utility"
+version = "0.1.0"
+dependencies = [
+ "sum_tree",
 ]
 
 [[package]]
