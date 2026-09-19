@@ -24,7 +24,7 @@ pub(super) const PROFILE: AcpProfile = AcpProfile {
 };
 
 pub(crate) fn descriptor() -> AgentBackendDescriptor {
-    use crate::agents::HarnessAccessMode::{Full, Sandboxed};
+    use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
     use CapabilitySupport::{Available, Unsupported};
 
     AgentBackendDescriptor {
@@ -51,7 +51,7 @@ pub(crate) fn descriptor() -> AgentBackendDescriptor {
                 queue: Available,
             },
             configuration: ConfigurationCapabilities {
-                access_modes: &[Sandboxed, Full],
+                access_modes: &[Sandboxed, Auto, Full],
                 model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,

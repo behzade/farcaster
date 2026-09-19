@@ -398,8 +398,10 @@ pub(in crate::modules::agents::adapter) fn configure_command(
             },
         ]);
     }
-    if access_mode == HarnessAccessMode::Full
-        && let Some(argument) = profile.force_argument
+    if matches!(
+        access_mode,
+        HarnessAccessMode::Auto | HarnessAccessMode::Full
+    ) && let Some(argument) = profile.force_argument
     {
         command.arg(argument);
     }

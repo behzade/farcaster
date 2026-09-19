@@ -114,8 +114,14 @@ pub(super) fn send(
     let profile = params.profile.as_deref().ok_or(
         "new children require a configured `profile`; omit profile only when reusing a child",
     )?;
-    let (assignment, child_access_mode) =
-        resolve_child(tasks, profile, &caller.project, caller.access_mode, route)?;
+    let requested_access_mode = delegated_access_mode(caller.backend, caller.access_mode);
+    let (assignment, child_access_mode) = resolve_child(
+        tasks,
+        profile,
+        &caller.project,
+        requested_access_mode,
+        route,
+    )?;
     let initial_message = params.message;
     let concurrent_message = crate::agents::PeerMessage {
         from: caller.worker_name.clone(),
@@ -146,6 +152,20 @@ pub(super) fn send(
         "pending": pending,
         "assignment": assignment,
     }))
+}
+
+fn delegated_access_mode(
+    parent_backend: crate::agents::Backend,
+    parent_access_mode: crate::agents::HarnessAccessMode,
+) -> crate::agents::HarnessAccessMode {
+    match (parent_backend, parent_access_mode) {
+        // Pi's mode describes parent containment, not how autonomous children
+        // should handle approvals.
+        (crate::agents::Backend::Pi, crate::agents::HarnessAccessMode::Sandboxed) => {
+            crate::agents::HarnessAccessMode::Auto
+        }
+        (_, access_mode) => access_mode,
+    }
 }
 
 fn resolve_child(

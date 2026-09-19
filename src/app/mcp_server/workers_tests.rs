@@ -832,6 +832,43 @@ fn auto_parent_prefers_an_auto_candidate_within_the_profile() {
 }
 
 #[test]
+fn sandboxed_pi_parent_prefers_an_auto_cursor_child() {
+    let mut profiles = crate::agents::WorkerProfiles::default();
+    profiles.profiles[0].models = vec![
+        crate::agents::WorkerExecution {
+            harness: Backend::OpenCode,
+            provider: "openai".into(),
+            model: "sandboxed".into(),
+            effort: None,
+        },
+        crate::agents::WorkerExecution {
+            harness: Backend::Cursor,
+            provider: "cursor-cli".into(),
+            model: "auto".into(),
+            effort: None,
+        },
+    ];
+    let profile_name = profiles.profiles[0].name.clone();
+    let requested = delegated_access_mode(Backend::Pi, crate::agents::HarnessAccessMode::Sandboxed);
+
+    let (assignment, mode) = resolve_child(
+        &profiles,
+        &profile_name,
+        std::path::Path::new("/project"),
+        requested,
+        |model, _, _| match model.harness {
+            Backend::OpenCode => Some(crate::agents::HarnessAccessMode::Sandboxed),
+            Backend::Cursor => Some(crate::agents::HarnessAccessMode::Auto),
+            _ => None,
+        },
+    )
+    .expect("Cursor Auto should be preferred for a sandboxed Pi parent");
+
+    assert_eq!(assignment.execution.harness, Backend::Cursor);
+    assert_eq!(mode, crate::agents::HarnessAccessMode::Auto);
+}
+
+#[test]
 fn auto_parent_degrades_to_sandboxed_when_no_auto_candidate_exists() {
     let mut profiles = crate::agents::WorkerProfiles::default();
     profiles.profiles[0].models = vec![crate::agents::WorkerExecution {

@@ -1049,6 +1049,10 @@ fn cursor_access_configures_sandbox_and_approvals() {
             vec!["--sandbox", "enabled", "acp"],
         ),
         (
+            HarnessAccessMode::Auto,
+            vec!["--sandbox", "enabled", "--force", "acp"],
+        ),
+        (
             HarnessAccessMode::Full,
             vec!["--sandbox", "disabled", "--force", "acp"],
         ),

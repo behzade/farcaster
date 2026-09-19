@@ -24,22 +24,20 @@ fn pi_startup_skips_unsupported_mode_query() {
 
 #[test]
 fn access_modes_require_both_backend_and_model_support() {
-    for backend in [
-        Backend::Cursor,
-        Backend::OpenCode,
-        Backend::Claude,
-        Backend::Antigravity,
-    ] {
+    for backend in [Backend::OpenCode, Backend::Claude, Backend::Antigravity] {
         assert_eq!(
             available_access_modes(backend, None, None),
             [Sandboxed, Full],
             "{backend}"
         );
     }
-    assert_eq!(
-        available_access_modes(Some(Backend::Codex), None, None),
-        [Sandboxed, Auto, Full]
-    );
+    for backend in [Backend::Codex, Backend::Cursor] {
+        assert_eq!(
+            available_access_modes(Some(backend), None, None),
+            [Sandboxed, Auto, Full],
+            "{backend}"
+        );
+    }
     assert!(available_access_modes(None, None, None).is_empty());
     assert_eq!(
         available_access_modes(Some(Backend::Pi), None, None),
