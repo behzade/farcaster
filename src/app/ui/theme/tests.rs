@@ -1,7 +1,7 @@
 use super::{
-    Appearance, ColorKey, FARSI_FONT_FAMILY, LengthKey, SyntaxKey, Theme, ThemeDefinition,
-    ThemeLibrary, UI_FONT_FAMILY, builtin::BUILT_IN_THEMES, color_hex, highlight, parse_hex, px,
-    ui_font,
+    Appearance, ColorKey, FARSI_FONT_FAMILY, LengthKey, MetricKey, SyntaxKey, Theme,
+    ThemeDefinition, ThemeLibrary, UI_FONT_FAMILY, builtin, builtin::BUILT_IN_THEMES, color_hex,
+    highlight, parse_hex, px, ui_font,
 };
 use crate::app::ui::file_icons;
 use gpui::Hsla;
@@ -96,6 +96,24 @@ fn a_palette_keeps_the_design_tokens_untouched() {
     assert_eq!(
         black.layout.session_rail,
         default_theme().layout.session_rail
+    );
+}
+
+#[test]
+fn control_rows_ignore_the_font_scale() {
+    let mut definition = builtin::default_definition().clone();
+    definition.lengths = vec![
+        (LengthKey::Metric(MetricKey::body), px(40.0)),
+        (LengthKey::Metric(MetricKey::caption), px(36.0)),
+    ];
+    let theme = Theme::from_definition(&definition);
+    let design = default_theme();
+    assert_eq!(theme.type_scale.body, px(40.0));
+    assert_eq!(theme.controls.utility_row, design.controls.utility_row);
+    assert_eq!(theme.controls.menu_row, design.controls.menu_row);
+    assert_eq!(
+        theme.controls.archived_preview_row,
+        design.controls.archived_preview_row
     );
 }
 

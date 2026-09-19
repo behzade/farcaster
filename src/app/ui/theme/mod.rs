@@ -224,6 +224,7 @@ pub(crate) struct ControlScale {
     pub icon_button: Pixels,
     pub utility_row: Pixels,
     pub archived_preview_row: Pixels,
+    pub menu_row: Pixels,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct Layout {
@@ -317,6 +318,7 @@ const STRUCTURE: Structure = Structure {
         icon_button: px(28.0),
         utility_row: px(44.0),
         archived_preview_row: px(32.0),
+        menu_row: px(30.0),
     },
     metrics: MetricScale {
         radius: px(0.0),
@@ -415,6 +417,7 @@ metric_keys!(
     controls.icon_button => "control-icon-button",
     controls.utility_row => "control-utility-row",
     controls.archived_preview_row => "control-archived-preview-row",
+    controls.menu_row => "control-menu-row",
     metrics.radius => "radius",
     metrics.border_width => "border-width",
     scrollbar.width => "scrollbar-width",
@@ -656,6 +659,7 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component.radius = theme.radius;
     component.radius_lg = theme.radius;
     component.shadow = true;
+    component.menu_item_height = theme.controls.menu_row;
     let component_colors = &mut component.colors;
     component_colors.background = colors.canvas.into();
     component_colors.foreground = colors.text.into();

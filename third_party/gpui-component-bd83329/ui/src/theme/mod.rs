@@ -45,6 +45,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_menu_item_height() -> Pixels {
+    px(30.)
+}
+
 /// The global theme configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Theme {
@@ -99,6 +103,10 @@ pub struct Theme {
     pub tile_radius: Pixels,
     /// The list settings.
     pub list: ListSettings,
+    /// Height of a dropdown/popup menu row. Fixed, so a menu row keeps the same
+    /// size when the font size changes.
+    #[serde(default = "default_menu_item_height")]
+    pub menu_item_height: Pixels,
 }
 
 impl Default for Theme {
@@ -457,6 +465,7 @@ impl From<&ThemeColor> for Theme {
             tile_shadow: true,
             tile_radius: px(0.),
             list: ListSettings::default(),
+            menu_item_height: default_menu_item_height(),
             colors: *colors,
             tokens: ThemeTokens::from(colors),
             light_theme: Rc::new(ThemeConfig::default()),
