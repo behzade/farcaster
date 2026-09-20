@@ -378,6 +378,10 @@ impl FarcasterApp {
         }
     }
 
+    fn archived_panel_bounds(&self) -> ResizeBounds {
+        archived_panel_bounds(self.archived_session_count(), self.views.rail_region_height)
+    }
+
     fn archived_session_count(&self) -> usize {
         session_rail_lists(
             &self.sessions.visible,
@@ -397,7 +401,7 @@ impl FarcasterApp {
         archived_panel_rows(
             self.views
                 .archived_panel
-                .height(archived_panel_bounds(self.archived_session_count())),
+                .height(self.archived_panel_bounds()),
         )
     }
 
@@ -411,7 +415,7 @@ impl FarcasterApp {
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let bounds = archived_panel_bounds(self.archived_session_count());
+        let bounds = self.archived_panel_bounds();
         self.views.archived_panel.begin_resize(bounds, pointer_y);
         self.notify_session_rail_shell(cx);
     }
@@ -424,7 +428,7 @@ impl FarcasterApp {
         if !self.views.archived_panel.is_resizing() {
             return;
         }
-        let bounds = archived_panel_bounds(self.archived_session_count());
+        let bounds = self.archived_panel_bounds();
         if self.views.archived_panel.update_resize(bounds, pointer_y) {
             self.notify_session_rail_shell(cx);
         }

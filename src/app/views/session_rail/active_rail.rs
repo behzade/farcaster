@@ -252,7 +252,7 @@ impl FarcasterApp {
         let archived_panel = Panel::new(
             "archived-panel",
             &archived_state,
-            archived_panel_bounds(archived_entry_count),
+            archived_panel_bounds(archived_entry_count, self.views.rail_region_height),
             "Archived",
         )
         .count(archived_entry_count)
@@ -399,33 +399,58 @@ impl FarcasterApp {
             })
             .child(
                 div()
-                    .id("session-list-scroll")
-                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .overflow_y_hidden()
-                    .on_mouse_up(gpui::MouseButton::Left, move |_, _, cx| {
-                        let _ = cancel_drop_entity
-                            .update(cx, |this, cx| this.clear_session_drop_target(cx));
+                    .on_children_prepainted({
+                        let measure_entity = entity.clone();
+                        move |bounds, _, cx| {
+                            let Some((first, last)) = bounds.first().zip(bounds.last()) else {
+                                return;
+                            };
+                            let height = last.origin.y + last.size.height - first.origin.y;
+                            let _ = measure_entity.update(cx, |this, cx| {
+                                if this.views.rail_region_height != Some(height) {
+                                    this.views.rail_region_height = Some(height);
+                                    cx.notify();
+                                }
+                            });
+                        }
                     })
-                    .on_mouse_up_out(gpui::MouseButton::Left, move |_, _, cx| {
-                        let _ = cancel_drop_out_entity
-                            .update(cx, |this, cx| this.clear_session_drop_target(cx));
-                    })
-                    .child(active_session_drop_target(
+                    .child(
                         div()
-                            .id("active-session-drop-area")
+                            .id("session-list-scroll")
+                            .relative()
                             .flex_1()
                             .min_h_0()
+                            .flex()
+                            .flex_col()
                             .overflow_y_hidden()
-                            .child(active_list),
-                        active_drop_list,
-                        last_active_row,
-                        active_drop_entity,
-                    ))
-                    .child(Scrollbar::vertical(&rail_scrollbar)),
+                            .on_mouse_up(gpui::MouseButton::Left, move |_, _, cx| {
+                                let _ = cancel_drop_entity
+                                    .update(cx, |this, cx| this.clear_session_drop_target(cx));
+                            })
+                            .on_mouse_up_out(gpui::MouseButton::Left, move |_, _, cx| {
+                                let _ = cancel_drop_out_entity
+                                    .update(cx, |this, cx| this.clear_session_drop_target(cx));
+                            })
+                            .child(active_session_drop_target(
+                                div()
+                                    .id("active-session-drop-area")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_hidden()
+                                    .child(active_list),
+                                active_drop_list,
+                                last_active_row,
+                                active_drop_entity,
+                            ))
+                            .child(Scrollbar::vertical(&rail_scrollbar)),
+                    )
+                    .when(archived_entry_count > 0, |region| {
+                        region.child(archived_panel)
+                    }),
             )
             .when(
                 active_entry_count == 0
@@ -442,7 +467,6 @@ impl FarcasterApp {
                     )
                 },
             )
-            .when(archived_entry_count > 0, |rail| rail.child(archived_panel))
             .when_some(self.render_rail_notices(entity.clone()), |rail, notices| {
                 rail.child(notices)
             })

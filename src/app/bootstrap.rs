@@ -303,6 +303,7 @@ impl FarcasterApp {
                 workgraph_inspector_issue: None,
                 notification_panel: Default::default(),
                 archived_panel: Default::default(),
+                rail_region_height: None,
             },
             overlays: views::AppOverlays {
                 view: Default::default(),

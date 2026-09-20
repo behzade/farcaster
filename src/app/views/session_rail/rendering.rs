@@ -21,11 +21,9 @@ use crate::{
     sessions::SessionSummary,
 };
 
-/// The archive opens showing this many rows, and its separator can be dragged
-/// open to at most the drawing limit below — past that it stops growing rather
-/// than swallowing the chats above it.
+/// The archive opens showing this much of itself; its separator can then be
+/// dragged anywhere, exactly like the notification panel's.
 pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
-pub(super) const ARCHIVED_PREVIEW_LIMIT: usize = 20;
 
 /// The rail's section headers — folders, and the panels that share the same
 /// shape — are exactly as tall as the disclosure control they lead with, so the
@@ -160,16 +158,23 @@ pub(super) fn archived_panel_rows(height: Pixels) -> usize {
     ((height - archived_panel_base()) / theme().controls.archived_preview_row).max(0.0) as usize
 }
 
-/// The archive panel's bounds. The header is the floor — minimized it is all
-/// that shows, exactly like the notification panel — the opening height is a
-/// short preview, and the ceiling is the most rows it will draw.
-pub(super) fn archived_panel_bounds(count: usize) -> ResizeBounds {
-    let available = count.clamp(1, ARCHIVED_PREVIEW_LIMIT);
+/// The archive panel's bounds. It drags like the notification panel — free
+/// pixels, no stepping — up to the room the rail has above the notification
+/// panel, minus the floor the folder list keeps, so a pull can never grow it to
+/// the top over the folders. Its floor is one whole chat and it opens on a short
+/// preview.
+pub(super) fn archived_panel_bounds(count: usize, region: Option<Pixels>) -> ResizeBounds {
+    let held = count.max(1);
+    let floor = archived_panel_height(1);
+    let ceiling = region.map_or(theme().layout.notice_panel_max, |region| {
+        (region - theme().layout.folders_min).max(floor)
+    });
+    let height = archived_panel_height(held.min(ARCHIVED_OPEN_ROWS));
     ResizeBounds {
-        height: archived_panel_height(available.min(ARCHIVED_OPEN_ROWS)),
-        min_height: archived_panel_height(1),
-        max_height: archived_panel_height(available),
-        row_height: Some(theme().controls.archived_preview_row),
+        height: height.clamp(floor, ceiling),
+        min_height: floor,
+        max_height: ceiling,
+        row_height: None,
     }
 }
 

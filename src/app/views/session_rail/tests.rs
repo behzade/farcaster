@@ -151,29 +151,38 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 }
 
 #[test]
-fn the_archive_panel_opens_at_five_rows_and_caps_at_its_drawing_limit() {
-    let bounds = archived_panel_bounds(100);
+fn the_archive_panel_opens_at_five_rows_and_stops_where_the_folders_begin() {
+    let region = theme().size(900.0);
+    let bounds = archived_panel_bounds(100, Some(region));
     let header = f32::from(theme().controls.icon_button);
     let row = f32::from(theme().controls.archived_preview_row);
     assert_eq!(f32::from(bounds.height), header + row * 5.0);
     assert_eq!(f32::from(bounds.min_height), header + row);
-    assert_eq!(f32::from(bounds.max_height), header + row * 20.0);
+    assert_eq!(bounds.max_height, region - theme().layout.folders_min);
+    assert_eq!(bounds.row_height, None);
 }
 
 #[test]
 fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
-    let bounds = archived_panel_bounds(100);
+    let region = theme().size(900.0);
+    let bounds = archived_panel_bounds(100, Some(region));
     assert_eq!(archived_panel_rows(bounds.min_height), 1);
     assert_eq!(archived_panel_rows(bounds.height), 5);
-    assert_eq!(archived_panel_rows(bounds.max_height), 20);
+    assert!(archived_panel_rows(bounds.max_height) > 5);
 }
 
 #[test]
 fn the_archive_panel_bounds_stay_valid_without_archived_chats() {
-    let bounds = archived_panel_bounds(0);
-    assert!(bounds.min_height <= bounds.max_height);
-    assert!(bounds.height >= bounds.min_height);
-    assert!(bounds.height <= bounds.max_height);
+    for region in [
+        None,
+        Some(theme().layout.folders_min),
+        Some(theme().size(600.0)),
+    ] {
+        let bounds = archived_panel_bounds(0, region);
+        assert!(bounds.min_height <= bounds.max_height);
+        assert!(bounds.height >= bounds.min_height);
+        assert!(bounds.height <= bounds.max_height);
+    }
 }
 
 #[test]
