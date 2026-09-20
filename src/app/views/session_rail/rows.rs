@@ -40,6 +40,7 @@ pub(super) struct SessionRowInput {
     pub(super) title_editor: Option<Entity<InputState>>,
     pub(super) subagents: usize,
     pub(super) nested: bool,
+    pub(super) project_badge: bool,
     pub(super) row_height: Pixels,
 }
 
@@ -54,6 +55,7 @@ impl SessionRowInput {
             title_editor: None,
             subagents: 0,
             nested: false,
+            project_badge: true,
             row_height: theme().layout.session_row_height,
         }
     }
@@ -94,6 +96,7 @@ impl RenderOnce for SessionRow {
                     title_editor,
                     subagents,
                     nested,
+                    project_badge,
                     row_height,
                 },
             entity,
@@ -160,9 +163,8 @@ impl RenderOnce for SessionRow {
             .items_stretch()
             .px(theme().space.sm)
             .when(nested, |row| row.pl(theme().space.md))
-            .py(theme().space.xs)
             .rounded(theme().radius)
-            .group(action_group)
+            .group(action_group.clone())
             .bg(if selected {
                 theme().colors.highlight
             } else {
@@ -252,7 +254,7 @@ impl RenderOnce for SessionRow {
                                 cancel_entity,
                             )),
                     )
-                    .when(!nested, |content| {
+                    .when(!nested && project_badge, |content| {
                         content.child(
                             div()
                                 .max_w(theme().size(120.0))
@@ -305,18 +307,24 @@ impl RenderOnce for SessionRow {
                                 ),
                         )
                     })
-                    .child(delete_action)
-                    .child(archive_action)
-                    .when_some(
-                        failure_indicator(session.app_session_id, &status_text),
-                        |content, indicator| content.child(indicator),
-                    )
-                    .child(session_row_metadata(
-                        session.harness,
-                        target_app_session_id,
-                        &status_text,
-                        age,
-                    )),
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(theme().space.xs)
+                            .child(archive_action)
+                            .when_some(
+                                session_status_icon(target_app_session_id, &status_text),
+                                |cluster, icon| cluster.child(icon),
+                            )
+                            .child(session_provider_slot(
+                                session.harness,
+                                action_group.clone(),
+                                delete_action,
+                            ))
+                            .child(session_row_age(age)),
+                    ),
             );
         let row = row.app_tooltip_element(move |_, _| session_tooltip_content(&hover_details));
         let context_menu =
@@ -374,6 +382,21 @@ fn session_archive_action(
     action_group: String,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
+    archive_action(id, is_archived, action_group, move |window, cx| {
+        let _ = entity.update(cx, |this, cx| {
+            this.request_session_archive(path.clone(), !is_archived, window, cx);
+        });
+    })
+}
+
+/// The archive control every chat row leads with, so a draft filed away before
+/// anything was sent behaves like a chat one did.
+pub(super) fn archive_action(
+    id: &str,
+    is_archived: bool,
+    action_group: String,
+    on_press: impl Fn(&mut Window, &mut App) + 'static,
+) -> AnyElement {
     let label = if is_archived { "Restore" } else { "Archive" };
     let icon = if is_archived {
         AppIcon::ArrowCounterClockwise
@@ -413,9 +436,7 @@ fn session_archive_action(
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            let _ = entity.update(cx, |this, cx| {
-                this.request_session_archive(path.clone(), !is_archived, window, cx);
-            });
+            on_press(window, cx);
         })
         .into_any_element()
 }
@@ -561,44 +582,61 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-pub(super) fn session_row_metadata(
+/// The provider icon and the row's delete affordance share one slot: the icon
+/// is what a chat shows at rest, and the delete replaces it while the row is
+/// hovered, so neither one moves the other controls.
+pub(super) fn session_provider_slot(
     harness: impl Into<Option<Backend>>,
-    app_session_id: i64,
-    status: &str,
-    age: String,
+    reveal_group: String,
+    delete_action: AnyElement,
 ) -> AnyElement {
     div()
+        .relative()
+        .w(theme().controls.icon_button)
+        .h(theme().controls.icon_button)
         .flex_none()
         .flex()
         .items_center()
-        .gap(theme().space.sm)
-        .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline))
-        .when(status != "Failed", |metadata| {
-            metadata.when_some(status_icon(app_session_id, status), |metadata, icon| {
-                metadata.child(div().flex_none().flex().items_center().child(icon))
-            })
-        })
+        .justify_center()
         .child(
             div()
-                .flex_none()
-                .whitespace_nowrap()
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.subtle)
-                .child(age),
+                .flex()
+                .items_center()
+                .justify_center()
+                .group_hover(reveal_group, |icon| icon.opacity(0.0))
+                .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline)),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(delete_action),
         )
         .into_any_element()
 }
 
-/// A failed chat reports itself immediately left of the provider icon, in the
-/// slot a reload action for the same chat will share.
-pub(super) fn failure_indicator(app_session_id: i64, status: &str) -> Option<AnyElement> {
-    if status != "Failed" {
-        return None;
-    }
-    status_icon(app_session_id, status)
+pub(super) fn session_row_age(age: String) -> AnyElement {
+    div()
+        .w(theme().layout.session_age_slot)
+        .flex_none()
+        .flex()
+        .justify_end()
+        .whitespace_nowrap()
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.subtle)
+        .child(age)
+        .into_any_element()
 }
 
-fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
+/// A chat reports its state immediately left of the provider icon, in the same
+/// slot a failed chat and any future reload action share.
+pub(super) fn session_status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
     let (icon, color) = status_visual(status)?;
     let tooltip = status.to_owned();
     let icon = app_icon(icon, AppIconSize::Inline).into_any_element();

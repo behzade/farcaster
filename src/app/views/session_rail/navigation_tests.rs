@@ -1,6 +1,13 @@
 use super::*;
 use crate::agents::Backend;
 
+fn archived_session(item: &ActiveSessionItem) -> &SessionSummary {
+    match item {
+        ActiveSessionItem::Session(item) => &item.session,
+        ActiveSessionItem::Draft(_) => panic!("expected an archived chat, found a draft"),
+    }
+}
+
 #[test]
 fn worker_shortcuts_wrap_through_parent_and_workers() {
     assert_eq!(worker_step(0, Some(0), 1), None);
@@ -113,12 +120,12 @@ fn first_archive_expansion_highlights_the_requested_row_before_runtime_confirmat
         })
         .collect::<Vec<_>>();
     let archive = session_rail_lists(&sessions, &[], None, &[]).archived;
-    let previous = &archive[INACTIVE_PREVIEW_LIMIT - 1].session;
-    let requested = &archive[INACTIVE_PREVIEW_LIMIT].session;
+    let previous = archived_session(&archive[0]);
+    let requested = archived_session(&archive[1]);
 
     // Expansion precedes confirmation; neither the previous selection nor an
     // older in-flight response may highlight the wrong row while loading.
-    for confirmed in [&previous.path, &archive[0].session.path] {
+    for confirmed in [&previous.path, &archived_session(&archive[0]).path] {
         let highlighted = selected_root(&sessions, Some(confirmed), Some(&requested.path));
         assert_eq!(
             highlighted.map(|session| session.app_session_id),

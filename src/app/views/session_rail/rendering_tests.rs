@@ -1,5 +1,5 @@
 use super::*;
-use gpui::{point, size};
+use gpui::{point, px, size};
 
 #[test]
 fn empty_space_below_last_row_targets_the_end() {

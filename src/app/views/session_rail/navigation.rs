@@ -2,9 +2,7 @@ use std::path::Path;
 
 use gpui::{Context, Window};
 
-use super::{
-    FarcasterApp, VisibleSessionTarget, rendering::INACTIVE_PREVIEW_LIMIT, session_rail_lists,
-};
+use super::{FarcasterApp, VisibleSessionTarget, groups::ActiveSessionItem, session_rail_lists};
 use crate::{
     app::{
         AppSurface,
@@ -153,14 +151,21 @@ impl FarcasterApp {
         let Some(selected) = selected else { return };
         let step = session_step(
             active.iter().map(VisibleSessionTarget::app_session_id),
-            archived.iter().map(|item| item.session.app_session_id),
+            archived.iter().map(ActiveSessionItem::app_session_id),
             selected,
             direction,
         );
         let (target, archived_index) = match step {
             Some(SessionStep::Active(index)) => (active[index].clone(), None),
             Some(SessionStep::Archived(index)) => (
-                VisibleSessionTarget::Persisted(archived[index].session.clone()),
+                match &archived[index] {
+                    ActiveSessionItem::Draft(draft) => {
+                        VisibleSessionTarget::Draft((*draft).clone())
+                    }
+                    ActiveSessionItem::Session(item) => {
+                        VisibleSessionTarget::Persisted(item.session.clone())
+                    }
+                },
                 Some(index),
             ),
             None => return,
@@ -183,7 +188,7 @@ impl FarcasterApp {
             ),
         }
         if let Some(index) = archived_index {
-            self.sessions.archived_expanded |= index >= INACTIVE_PREVIEW_LIMIT;
+            self.sessions.archived_expanded |= index >= self.archived_visible_rows();
             self.views.archived_session_rail.update(cx, |view, cx| {
                 view.reveal = Some(key);
                 cx.notify();

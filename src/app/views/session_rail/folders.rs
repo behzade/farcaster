@@ -11,16 +11,18 @@ use crate::app::{
     session_folders::SessionFolders,
     ui::{
         assets::AppIcon,
-        primitives::{AppIconSize, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon, button},
+        primitives::{
+            AppIconSize, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon, button,
+            disclosure_button, icon_control,
+        },
         theme::theme,
     },
 };
 use gpui::{
     Anchor, AnyElement, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div, px,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
 };
 use gpui_component::{
-    button::{Button, ButtonVariants as _},
     input::{Input, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
 };
@@ -78,7 +80,7 @@ pub(super) fn folder_rows(
 }
 
 pub(super) fn folder_header(
-    folder: Box<FolderHeader>,
+    folder: FolderHeader,
     editing: bool,
     input: Entity<InputState>,
     entity: WeakEntity<FarcasterApp>,
@@ -89,7 +91,7 @@ pub(super) fn folder_header(
         color,
         collapsed,
         project,
-    } = *folder;
+    } = folder;
     let drop_entity = entity.clone();
     let edit_entity = entity.clone();
     let new_entity = entity.clone();
@@ -104,7 +106,7 @@ pub(super) fn folder_header(
         .id(format!("session-folder-{id}"))
         .group("session-folder-header")
         .w_full()
-        .gap(theme().space.xs)
+        .pr(theme().space.sm)
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
         .on_click(move |_, _, cx| {
@@ -146,33 +148,16 @@ pub(super) fn folder_header(
         });
     });
     row = row
-        .child(
-            folder_control(Button::new(format!("folder-toggle-{id}")).ghost())
-                .accessibility_label(if collapsed {
-                    "Open folder"
-                } else {
-                    "Minimise folder"
-                })
-                .tooltip(if collapsed {
-                    "Open folder"
-                } else {
-                    "Minimise folder"
-                })
-                .text_color(theme().colors.muted)
-                .child(app_icon(
-                    if collapsed {
-                        AppIcon::CaretRight
-                    } else {
-                        AppIcon::CaretDown
-                    },
-                    AppIconSize::Control,
-                ))
-                .on_click(move |_, _, cx| {
-                    let _ = toggle_entity.update(cx, |this, cx| {
-                        this.set_folder_collapsed(id, !collapsed, cx);
-                    });
-                }),
-        )
+        .child(disclosure_button(
+            format!("folder-toggle-{id}"),
+            !collapsed,
+            "folder",
+            move |_, cx| {
+                let _ = toggle_entity.update(cx, |this, cx| {
+                    this.set_folder_collapsed(id, !collapsed, cx);
+                });
+            },
+        ))
         .child(
             div()
                 .flex_none()
@@ -198,18 +183,30 @@ pub(super) fn folder_header(
             }),
     );
     row = row.child(
-        folder_action(Button::new(format!("new-session-in-folder-{id}")).ghost())
-            .px(px(0.0))
-            .accessibility_label("New session in folder")
-            .tooltip("New session in folder")
-            .text_color(theme().colors.muted)
-            .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
-            .on_click(move |_, window, cx| {
-                let _ = new_entity.update(cx, |this, cx| {
-                    let project = project.clone().unwrap_or_else(|| this.project.path.clone());
-                    this.new_session_with_folder(project, Some(id), window, cx);
-                });
-            }),
+        div()
+            .w(theme().layout.session_age_slot)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(
+                icon_control(
+                    format!("new-session-in-folder-{id}"),
+                    "New session in folder",
+                )
+                .opacity(0.0)
+                .group_hover("session-folder-header", |style| style.opacity(1.0))
+                .focus(|style| style.opacity(1.0))
+                .text_color(theme().colors.muted)
+                .hover(|control| control.bg(theme().colors.highlight))
+                .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
+                .on_click(move |_, window, cx| {
+                    let _ = new_entity.update(cx, |this, cx| {
+                        let project = project.clone().unwrap_or_else(|| this.project.path.clone());
+                        this.new_session_with_folder(project, Some(id), window, cx);
+                    });
+                }),
+            ),
     );
     let header = ContextMenuTrigger::new(format!("folder-context-{id}"), row.into_any_element())
         .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, window, cx| {
@@ -235,17 +232,6 @@ pub(super) fn folder_header(
         })
         .mouse_button(MouseButton::Right);
     section.child(header).into_any_element()
-}
-
-fn folder_control(button: Button) -> Button {
-    button.size(theme().controls.icon_button).cursor_pointer()
-}
-
-fn folder_action(button: Button) -> Button {
-    folder_control(button)
-        .opacity(0.0)
-        .group_hover("session-folder-header", |style| style.opacity(1.0))
-        .focus(|style| style.opacity(1.0))
 }
 
 pub(super) fn folder_drop_target(

@@ -1,4 +1,8 @@
-use std::{cmp::Reverse, collections::HashMap, path::Path};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use crate::{
     app::ui::primitives::ReorderPosition,
@@ -32,6 +36,20 @@ impl ActiveSessionItem {
         }
     }
 
+    /// When the chat was last touched. A draft is born with the chat, so its
+    /// creation time is its recency until it is submitted.
+    fn recency_ms(&self) -> u64 {
+        match self {
+            Self::Draft(draft) => draft.created_ms,
+            Self::Session(item) => item
+                .session
+                .modified
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|age| age.as_millis().try_into().unwrap_or(u64::MAX))
+                .unwrap_or_default(),
+        }
+    }
+
     pub(super) fn project(&self) -> &Path {
         match self {
             Self::Draft(draft) => draft.project.as_path(),
@@ -43,7 +61,7 @@ impl ActiveSessionItem {
 #[derive(Clone, Debug, Default)]
 pub(super) struct SessionRailLists {
     pub(super) active: Vec<ActiveSessionItem>,
-    pub(super) archived: Vec<SessionRailItem>,
+    pub(super) archived: Vec<ActiveSessionItem>,
 }
 
 pub(super) fn session_rail_lists(
@@ -55,10 +73,26 @@ pub(super) fn session_rail_lists(
     let mut active = drafts
         .iter()
         .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
+        .filter(|draft| !draft.archived)
         .cloned()
         .map(ActiveSessionItem::Draft)
         .collect::<Vec<_>>();
-    let mut archived = Vec::new();
+    let archived_drafts = drafts
+        .iter()
+        .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
+        .filter(|draft| draft.archived)
+        .cloned()
+        .collect::<Vec<_>>();
+    // One row per chat: a draft that was submitted shadows the session it is
+    // writing into, exactly as it does in the active list.
+    let shadowed = archived_drafts
+        .iter()
+        .map(|draft| draft.app_session_id)
+        .collect::<HashSet<_>>();
+    let mut archived = archived_drafts
+        .into_iter()
+        .map(ActiveSessionItem::Draft)
+        .collect::<Vec<_>>();
 
     for session in root_sessions(sessions)
         .into_iter()
@@ -74,7 +108,11 @@ pub(super) fn session_rail_lists(
         };
         match item.kind {
             SessionRailKind::Project => active.push(ActiveSessionItem::Session(item)),
-            SessionRailKind::Archived => archived.push(item),
+            SessionRailKind::Archived => {
+                if !shadowed.contains(&item.session.app_session_id) {
+                    archived.push(ActiveSessionItem::Session(item));
+                }
+            }
         }
     }
 
@@ -89,8 +127,7 @@ pub(super) fn session_rail_lists(
         id > 0 && id == right.app_session_id()
     });
     apply_manual_order(&mut active, manual_order, ActiveSessionItem::app_session_id);
-    active.sort_by_key(active_kind_rank);
-    archived.sort_by_key(|item| Reverse((item.session.modified, item.session.app_session_id)));
+    archived.sort_by_key(|item| Reverse((item.recency_ms(), item.app_session_id())));
 
     SessionRailLists { active, archived }
 }

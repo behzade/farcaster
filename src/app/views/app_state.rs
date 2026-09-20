@@ -1,4 +1,4 @@
-use crate::app::{ui::primitives::PanelState, *};
+use crate::app::{ui::primitives::ResizeState, *};
 
 pub(in crate::app) struct AppViews {
     pub(in crate::app) session_rail: Entity<SessionRailView>,
@@ -10,7 +10,8 @@ pub(in crate::app) struct AppViews {
     pub(in crate::app) workgraph_detail: Entity<WorkGraphDetailView>,
     pub(in crate::app) workgraph_sidebar: Entity<WorkGraphSidebarView>,
     pub(in crate::app) workgraph_inspector_issue: Option<u64>,
-    pub(in crate::app) notification_panel: PanelState,
+    pub(in crate::app) notification_panel: ResizeState,
+    pub(in crate::app) archived_panel: ResizeState,
 }
 
 pub(in crate::app) struct AppOverlays {

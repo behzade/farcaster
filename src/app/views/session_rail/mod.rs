@@ -22,11 +22,12 @@ use self::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
         session_rail_lists,
     },
+    rendering::{archived_panel_bounds, archived_panel_rows},
 };
 use super::super::FarcasterApp;
 use crate::{
     app::session_folders::SessionFolders,
-    app::ui::primitives::{PanelBounds, ReorderPosition},
+    app::ui::primitives::{ReorderPosition, ResizeBounds},
     app::ui::theme::theme,
     sessions::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
@@ -37,10 +38,7 @@ pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
 pub(in crate::app) use rows::{project_label, status_visual};
 
 #[cfg(test)]
-use self::{
-    rendering::{ARCHIVED_LEADING_GAP, collapsed_inactive_rail_height, subagent_counts},
-    rows::session_accessible_label,
-};
+use self::{rendering::subagent_counts, rows::session_accessible_label};
 
 pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {
     px(width.clamp(
@@ -371,11 +369,70 @@ impl FarcasterApp {
         }
     }
 
-    fn notification_panel_bounds(&self) -> PanelBounds {
-        PanelBounds {
+    fn notification_panel_bounds(&self) -> ResizeBounds {
+        ResizeBounds {
             height: theme().layout.notice_panel,
             min_height: theme().layout.notice_panel_min,
             max_height: theme().layout.notice_panel_max,
+            row_height: None,
+        }
+    }
+
+    fn archived_session_count(&self) -> usize {
+        session_rail_lists(
+            &self.sessions.visible,
+            &self.sessions.drafts,
+            self.sessions.project_filter.as_deref(),
+            &self.sessions.order,
+        )
+        .archived
+        .len()
+    }
+    /// How many archived chats the archive is showing right now. Minimized it
+    /// shows none, so revealing any of them opens it.
+    fn archived_visible_rows(&self) -> usize {
+        if !self.sessions.archived_expanded {
+            return 0;
+        }
+        archived_panel_rows(
+            self.views
+                .archived_panel
+                .height(archived_panel_bounds(self.archived_session_count())),
+        )
+    }
+
+    pub(super) fn toggle_archive_panel(&mut self, cx: &mut gpui::Context<Self>) {
+        self.sessions.archived_expanded = !self.sessions.archived_expanded;
+        self.notify_session_rail(cx);
+    }
+
+    pub(super) fn begin_archived_panel_resize(
+        &mut self,
+        pointer_y: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let bounds = archived_panel_bounds(self.archived_session_count());
+        self.views.archived_panel.begin_resize(bounds, pointer_y);
+        self.notify_session_rail_shell(cx);
+    }
+
+    pub(super) fn update_archived_panel_resize(
+        &mut self,
+        pointer_y: Pixels,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        if !self.views.archived_panel.is_resizing() {
+            return;
+        }
+        let bounds = archived_panel_bounds(self.archived_session_count());
+        if self.views.archived_panel.update_resize(bounds, pointer_y) {
+            self.notify_session_rail_shell(cx);
+        }
+    }
+
+    pub(super) fn finish_archived_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.views.archived_panel.finish_resize() {
+            self.notify_session_rail_shell(cx);
         }
     }
 

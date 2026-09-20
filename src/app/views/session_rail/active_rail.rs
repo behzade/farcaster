@@ -11,10 +11,10 @@ use super::{
     FarcasterApp, active_item_identity,
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
-    folders::{FolderRow, folder_drop_target, folder_header, folder_rows},
+    folders::{FolderRow, folder_header, folder_rows},
     groups::{ActiveSessionItem, session_rail_lists},
     reconcile_list_rows,
-    rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
+    rendering::{active_session_drop_target, archived_panel_bounds, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
 };
 use crate::{
@@ -186,6 +186,7 @@ impl FarcasterApp {
                             DraftRowInput {
                                 selected,
                                 status,
+                                archived: false,
                                 drop_position,
                                 nested: nested_rows.get(index).copied().unwrap_or(false),
                             },
@@ -226,6 +227,7 @@ impl FarcasterApp {
                                     .copied()
                                     .unwrap_or(0),
                                 nested: nested_rows.get(index).copied().unwrap_or(false),
+                                project_badge: true,
                                 row_height: theme().layout.session_row_height,
                             },
                             active_row_entity.clone(),
@@ -234,7 +236,7 @@ impl FarcasterApp {
                     }
                 },
                 Some(FolderRow::Header(folder)) => folder_header(
-                    folder.clone(),
+                    (**folder).clone(),
                     editing_folder == Some(Some(folder.id)),
                     active_title_input.clone(),
                     active_row_entity.clone(),
@@ -243,16 +245,31 @@ impl FarcasterApp {
             }
         })
         .size_full();
-
-        let archived_expanded =
-            !session_drag_active && self.sessions.archived_expanded && archived_entry_count > 0;
-        let archived_session_rail_style =
-            inactive_rail_style(archived_expanded, archived_entry_count, true);
-        let archived_session_rail = self
-            .views
-            .archived_session_rail
-            .clone()
-            .cached(archived_session_rail_style);
+        let mut archived_state = self.views.archived_panel;
+        archived_state.set_collapsed(!self.sessions.archived_expanded || session_drag_active);
+        let archived_resize_entity = entity.clone();
+        let archived_toggle_entity = entity.clone();
+        let archived_panel = Panel::new(
+            "archived-panel",
+            &archived_state,
+            archived_panel_bounds(archived_entry_count),
+            "Archived",
+        )
+        .count(archived_entry_count)
+        .flush_body()
+        .on_toggle(move |_, cx| {
+            let _ = archived_toggle_entity.update(cx, |this, cx| this.toggle_archive_panel(cx));
+        })
+        .on_resize(move |event, _, cx| {
+            let _ = archived_resize_entity.update(cx, |this, cx| {
+                this.begin_archived_panel_resize(event.position.y, cx);
+            });
+        })
+        .children([div()
+            .flex_1()
+            .min_h_0()
+            .child(self.views.archived_session_rail.clone())
+            .into_any_element()]);
         let projects = self.available_projects();
         let project_filter_entity = entity.clone();
         let filter_label = self
@@ -323,6 +340,7 @@ impl FarcasterApp {
                                 ContextMenuTrigger::new(
                                     "project-filter-menu",
                                     div()
+                                        .id("project-filter-button")
                                         .h_full()
                                         .flex()
                                         .items_center()
@@ -396,47 +414,18 @@ impl FarcasterApp {
                         let _ = cancel_drop_out_entity
                             .update(cx, |this, cx| this.clear_session_drop_target(cx));
                     })
-                    .when(
-                        session_drag_active && !self.sessions.folders.folders.is_empty(),
-                        |lists| {
-                            let entity = entity.clone();
-                            lists.child(folder_drop_target(
-                                div()
-                                    .id("remove-session-folder")
-                                    .px(theme().size(12.0))
-                                    .h(theme().size(28.0))
-                                    .flex()
-                                    .items_center()
-                                    .text_size(theme().type_scale.caption)
-                                    .text_color(theme().colors.muted)
-                                    .child("Move to Active"),
-                                move |drag, _, cx| {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        this.assign_session_folder(drag.app_session_id, None, cx);
-                                        this.clear_session_drop_target(cx);
-                                    });
-                                },
-                            ))
-                        },
-                    )
-                    .when(!archived_expanded, |lists| {
-                        lists
-                            .child(active_session_drop_target(
-                                div()
-                                    .id("active-session-drop-area")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_hidden()
-                                    .child(active_list),
-                                active_drop_list,
-                                last_active_row,
-                                active_drop_entity,
-                            ))
-                            .child(Scrollbar::vertical(&rail_scrollbar))
-                    })
-                    .when(archived_entry_count > 0, |lists| {
-                        lists.child(archived_session_rail)
-                    }),
+                    .child(active_session_drop_target(
+                        div()
+                            .id("active-session-drop-area")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_hidden()
+                            .child(active_list),
+                        active_drop_list,
+                        last_active_row,
+                        active_drop_entity,
+                    ))
+                    .child(Scrollbar::vertical(&rail_scrollbar)),
             )
             .when(
                 active_entry_count == 0
@@ -453,6 +442,7 @@ impl FarcasterApp {
                     )
                 },
             )
+            .when(archived_entry_count > 0, |rail| rail.child(archived_panel))
             .when_some(self.render_rail_notices(entity.clone()), |rail, notices| {
                 rail.child(notices)
             })

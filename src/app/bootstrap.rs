@@ -302,6 +302,7 @@ impl FarcasterApp {
                 workgraph_sidebar: regions.workgraph_sidebar,
                 workgraph_inspector_issue: None,
                 notification_panel: Default::default(),
+                archived_panel: Default::default(),
             },
             overlays: views::AppOverlays {
                 view: Default::default(),

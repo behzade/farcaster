@@ -230,6 +230,7 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
         this.update_session_rail_resize(event.position.x, cx);
         this.update_run_panel_resize(event.position.x, cx);
         this.update_notification_panel_resize(event.position.y, cx);
+        this.update_archived_panel_resize(event.position.y, cx);
     }))
     .on_mouse_up(
         gpui::MouseButton::Left,
@@ -237,6 +238,7 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
             this.finish_session_rail_resize(cx);
             this.finish_run_panel_resize(cx);
             this.finish_notification_panel_resize(cx);
+            this.finish_archived_panel_resize(cx);
         }),
     )
     .on_mouse_up_out(
@@ -245,6 +247,7 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
             this.finish_session_rail_resize(cx);
             this.finish_run_panel_resize(cx);
             this.finish_notification_panel_resize(cx);
+            this.finish_archived_panel_resize(cx);
         }),
     )
 }

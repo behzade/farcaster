@@ -2,8 +2,8 @@ use crate::agents::Backend;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ARCHIVED_LEADING_GAP, ActiveSessionItem, SessionRailItem, SessionRailKind,
-    clamped_session_rail_width, collapsed_inactive_rail_height, first_unsubmitted_draft,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, archived_panel_bounds,
+    archived_panel_rows, clamped_session_rail_width, first_unsubmitted_draft,
     hover::session_tooltip_lines, minimal_row_splice, numbered_session_items,
     replacement_index_after_close, session_accessible_label, status_visual, subagent_counts,
 };
@@ -151,28 +151,29 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 }
 
 #[test]
-fn collapsed_archived_rail_includes_a_leading_gap() {
-    let without_gap = collapsed_inactive_rail_height(2, false);
-    let archived = collapsed_inactive_rail_height(2, true);
-    assert_eq!(
-        f32::from(without_gap),
-        f32::from(theme().controls.utility_row)
-            + f32::from(theme().controls.archived_preview_row) * 2.0
-    );
-    assert_eq!(
-        f32::from(archived) - f32::from(without_gap),
-        ARCHIVED_LEADING_GAP
-    );
+fn the_archive_panel_opens_at_five_rows_and_caps_at_its_drawing_limit() {
+    let bounds = archived_panel_bounds(100);
+    let header = f32::from(theme().controls.icon_button);
+    let row = f32::from(theme().controls.archived_preview_row);
+    assert_eq!(f32::from(bounds.height), header + row * 5.0);
+    assert_eq!(f32::from(bounds.min_height), header + row);
+    assert_eq!(f32::from(bounds.max_height), header + row * 20.0);
 }
 
 #[test]
-fn collapsed_archived_rail_previews_at_most_five_sessions() {
-    let height = collapsed_inactive_rail_height(10, false);
-    assert_eq!(
-        f32::from(height),
-        f32::from(theme().controls.utility_row)
-            + f32::from(theme().controls.archived_preview_row) * 5.0
-    );
+fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
+    let bounds = archived_panel_bounds(100);
+    assert_eq!(archived_panel_rows(bounds.min_height), 1);
+    assert_eq!(archived_panel_rows(bounds.height), 5);
+    assert_eq!(archived_panel_rows(bounds.max_height), 20);
+}
+
+#[test]
+fn the_archive_panel_bounds_stay_valid_without_archived_chats() {
+    let bounds = archived_panel_bounds(0);
+    assert!(bounds.min_height <= bounds.max_height);
+    assert!(bounds.height >= bounds.min_height);
+    assert!(bounds.height <= bounds.max_height);
 }
 
 #[test]

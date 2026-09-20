@@ -7,8 +7,15 @@ use std::{
 use super::*;
 use crate::sessions::UsageSummary;
 
+fn archived_session(item: &ActiveSessionItem) -> &SessionRailItem {
+    match item {
+        ActiveSessionItem::Session(item) => item,
+        ActiveSessionItem::Draft(_) => panic!("expected an archived chat, found a draft"),
+    }
+}
+
 #[test]
-fn drafts_stay_above_sessions() {
+fn drafts_and_sessions_share_one_order() {
     let alpha = PathBuf::from("/alpha");
     let beta = PathBuf::from("/beta");
     let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), alpha.clone());
@@ -26,12 +33,58 @@ fn drafts_stay_above_sessions() {
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>(),
-        [2, 3, 1]
+        [3, 2, 1]
     );
 }
 
 #[test]
-fn manual_order_cannot_move_a_session_above_a_draft() {
+fn a_chat_that_was_never_messaged_is_archived_like_any_other() {
+    let project = PathBuf::from("/project");
+    let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), project.clone());
+    draft.app_session_id = 2;
+    let mut archived = DraftSession::with_id(Some(Backend::Pi), "old".into(), project.clone());
+    archived.app_session_id = 1;
+    assert!(archived.set_archived(true));
+
+    let lists = session_rail_lists(&[], &[draft, archived], None, &[]);
+
+    assert_eq!(
+        lists
+            .active
+            .iter()
+            .map(ActiveSessionItem::app_session_id)
+            .collect::<Vec<_>>(),
+        [2]
+    );
+    assert_eq!(
+        lists
+            .archived
+            .iter()
+            .map(ActiveSessionItem::app_session_id)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+}
+
+#[test]
+fn an_archived_chat_shadows_the_session_it_writes_into() {
+    let project = PathBuf::from("/project");
+    let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), project.clone());
+    draft.app_session_id = 7;
+    draft.submitted = true;
+    assert!(draft.set_archived(true));
+    let mut session = session("live", 7, &project, true);
+    session.archived = true;
+
+    let lists = session_rail_lists(&[session], &[draft], None, &[]);
+
+    assert!(lists.active.is_empty());
+    assert_eq!(lists.archived.len(), 1);
+    assert!(matches!(lists.archived[0], ActiveSessionItem::Draft(_)));
+}
+
+#[test]
+fn manual_order_moves_a_session_above_a_draft() {
     let project = PathBuf::from("/project");
     let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), project.clone());
     draft.app_session_id = 2;
@@ -45,7 +98,7 @@ fn manual_order_cannot_move_a_session_above_a_draft() {
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>(),
-        [2, 1]
+        [1, 2]
     );
 }
 
@@ -124,7 +177,7 @@ fn project_filter_keeps_a_flat_subset() {
     assert_eq!(lists.active.len(), 1);
     assert_eq!(lists.active[0].app_session_id(), 3);
     assert_eq!(lists.archived.len(), 1);
-    assert_eq!(lists.archived[0].session.app_session_id, 1);
+    assert_eq!(lists.archived[0].app_session_id(), 1);
 }
 
 #[test]
@@ -141,7 +194,7 @@ fn archived_sessions_are_sorted_by_recency_not_imported_id() {
         lists
             .archived
             .iter()
-            .map(|item| item.session.id.as_str())
+            .map(|item| archived_session(item).session.id.as_str())
             .collect::<Vec<_>>(),
         ["recent", "old"]
     );

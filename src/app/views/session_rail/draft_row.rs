@@ -1,16 +1,19 @@
 use std::time::{Duration, UNIX_EPOCH};
 
 use gpui::{
-    App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _, Styled as _, WeakEntity,
-    Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, AppContext as _, CursorStyle, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, RenderOnce, Role, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 
 use super::{
     drag::DraggedSession,
     groups::SessionRailKind,
     hover::{draft_hover_details, session_tooltip_content},
-    rows::{project_badge, project_label, relative_age, session_row_metadata},
+    rows::{
+        archive_action, project_badge, project_label, relative_age, session_provider_slot,
+        session_row_age, session_status_icon,
+    },
 };
 use crate::{
     app::FarcasterApp,
@@ -19,9 +22,24 @@ use crate::{
     sessions::DraftSession,
 };
 
+fn archive_draft_action(
+    id: &str,
+    archived: bool,
+    action_group: String,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let draft_id = id.to_owned();
+    archive_action(id, archived, action_group, move |window, cx| {
+        let _ = entity.update(cx, |this, cx| {
+            this.request_draft_archive(draft_id.clone(), archived, window, cx);
+        });
+    })
+}
+
 pub(super) struct DraftRowInput {
     pub(super) selected: bool,
     pub(super) status: String,
+    pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) nested: bool,
 }
@@ -55,6 +73,7 @@ impl RenderOnce for DraftRow {
                 DraftRowInput {
                     selected,
                     status,
+                    archived,
                     drop_position,
                     nested,
                 },
@@ -67,6 +86,8 @@ impl RenderOnce for DraftRow {
         let discard_id = id.clone();
         let project = draft.project.clone();
         let discard_entity = entity.clone();
+        let archive_entity = entity.clone();
+        let archive_id = id.clone();
         let title = draft.title.as_deref().unwrap_or("New session").to_owned();
         let target_app_session_id = draft.app_session_id;
         let drag = DraggedSession {
@@ -103,7 +124,6 @@ impl RenderOnce for DraftRow {
                     .items_stretch()
                     .px(theme().space.sm)
                     .when(nested, |row| row.pl(theme().space.md))
-                    .py(theme().space.xs)
                     .rounded(theme().radius)
                     .group(action_group.clone())
                     .bg(if selected {
@@ -186,7 +206,11 @@ impl RenderOnce for DraftRow {
                                     } else {
                                         FontWeight::NORMAL
                                     })
-                                    .text_color(theme().colors.text)
+                                    .text_color(if archived && !selected {
+                                        theme().colors.muted
+                                    } else {
+                                        theme().colors.text
+                                    })
                                     .child(title),
                             )
                             .when(!nested, |row| {
@@ -198,24 +222,41 @@ impl RenderOnce for DraftRow {
                                 )
                             })
                             .child(
-                                DeleteButton::new(format!("discard-{discard_id}"), "Discard draft")
-                                    .reveal_on(action_group)
-                                    .on_delete(move |window, cx| {
-                                        let _ = discard_entity.update(cx, |this, cx| {
-                                            this.discard_draft(&discard_id, window, cx);
-                                        });
-                                    }),
-                            )
-                            .when_some(
-                                super::rows::failure_indicator(target_app_session_id, status),
-                                |row, indicator| row.child(indicator),
-                            )
-                            .child(session_row_metadata(
-                                draft.harness,
-                                target_app_session_id,
-                                if is_draft { "" } else { status },
-                                age,
-                            )),
+                                div()
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .gap(theme().space.xs)
+                                    .child(archive_draft_action(
+                                        &archive_id,
+                                        archived,
+                                        action_group.clone(),
+                                        archive_entity,
+                                    ))
+                                    .when_some(
+                                        session_status_icon(
+                                            target_app_session_id,
+                                            if is_draft { "" } else { status },
+                                        ),
+                                        |cluster, icon| cluster.child(icon),
+                                    )
+                                    .child(session_provider_slot(
+                                        draft.harness,
+                                        action_group.clone(),
+                                        DeleteButton::new(
+                                            format!("discard-{discard_id}"),
+                                            "Discard draft",
+                                        )
+                                        .reveal_on(action_group.clone())
+                                        .on_delete(move |window, cx| {
+                                            let _ = discard_entity.update(cx, |this, cx| {
+                                                this.discard_draft(&discard_id, window, cx);
+                                            });
+                                        })
+                                        .into_any_element(),
+                                    ))
+                                    .child(session_row_age(age)),
+                            ),
                     ),
             )
             .into_any_element()

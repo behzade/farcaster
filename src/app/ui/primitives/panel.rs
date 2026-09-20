@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement as _, Pixels, RenderOnce, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, MouseDownEvent,
+    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, div, prelude::FluentBuilder as _,
 };
 
 use gpui_component::scroll::ScrollableElement as _;
@@ -12,78 +12,31 @@ use crate::app::ui::{assets::AppIcon, theme::theme};
 
 use super::{
     icon::{AppIconSize, app_icon},
+    resize::{ResizeBounds, ResizeState, resize_handle},
     tooltip::AppTooltip as _,
 };
 
-#[derive(Clone, Copy)]
-pub(crate) struct PanelBounds {
-    pub height: Pixels,
-    pub min_height: Pixels,
-    pub max_height: Pixels,
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct PanelState {
-    height: Option<Pixels>,
-    collapsed: bool,
-    resize_start: Option<(Pixels, Pixels)>,
-}
-
-impl PanelState {
-    pub(crate) fn height(&self, bounds: PanelBounds) -> Pixels {
-        clamp(self.height.unwrap_or(bounds.height), bounds)
-    }
-
-    pub(crate) fn is_collapsed(&self) -> bool {
-        self.collapsed
-    }
-
-    pub(crate) fn set_collapsed(&mut self, collapsed: bool) {
-        self.collapsed = collapsed;
-    }
-
-    pub(crate) fn begin_resize(&mut self, bounds: PanelBounds, pointer_y: Pixels) {
-        self.resize_start = Some((pointer_y, self.height(bounds)));
-    }
-
-    pub(crate) fn update_resize(&mut self, bounds: PanelBounds, pointer_y: Pixels) -> bool {
-        let Some((start_y, start_height)) = self.resize_start else {
-            return false;
-        };
-        let height = clamp(start_height + start_y - pointer_y, bounds);
-        if Some(height) == self.height.map(|height| clamp(height, bounds)) {
-            return false;
-        }
-        self.height = Some(height);
-        true
-    }
-
-    pub(crate) fn finish_resize(&mut self) -> bool {
-        self.resize_start.take().is_some()
-    }
-}
-
-fn clamp(height: Pixels, bounds: PanelBounds) -> Pixels {
-    height.clamp(bounds.min_height, bounds.max_height)
-}
+type PanelToggle = Rc<dyn Fn(&mut Window, &mut App)>;
+type PanelResize = Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub(crate) struct Panel {
     id: SharedString,
-    state: PanelState,
-    bounds: PanelBounds,
+    state: ResizeState,
+    bounds: ResizeBounds,
     title: SharedString,
-    badge: Option<usize>,
-    on_toggle: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
-    on_resize: Option<Rc<dyn Fn(&MouseDownEvent, &mut Window, &mut App)>>,
+    badge: Option<SharedString>,
+    body_inset: bool,
+    on_toggle: Option<PanelToggle>,
+    on_resize: Option<PanelResize>,
     children: Vec<AnyElement>,
 }
 
 impl Panel {
     pub(crate) fn new(
         id: impl Into<SharedString>,
-        state: &PanelState,
-        bounds: PanelBounds,
+        state: &ResizeState,
+        bounds: ResizeBounds,
         title: impl Into<SharedString>,
     ) -> Self {
         Self {
@@ -92,14 +45,31 @@ impl Panel {
             bounds,
             title: title.into(),
             badge: None,
+            body_inset: true,
             on_toggle: None,
             on_resize: None,
             children: Vec::new(),
         }
     }
 
+    /// Content that carries its own padding — the archived chats, which are the
+    /// same rows as the active list — sits flush against the panel so it lines
+    /// up with the chats above it.
+    pub(crate) fn flush_body(mut self) -> Self {
+        self.body_inset = false;
+        self
+    }
+
+    /// The unseen counter, written `+N` because it keeps climbing while you look
+    /// away from the panel.
     pub(crate) fn badge(mut self, unseen: usize) -> Self {
-        self.badge = (unseen > 0).then_some(unseen);
+        self.badge = (unseen > 0).then(|| format!("+{unseen}").into());
+        self
+    }
+
+    /// A plain tally — the archived chats — which reads as a number, not a gain.
+    pub(crate) fn count(mut self, total: usize) -> Self {
+        self.badge = (total > 0).then(|| total.to_string().into());
         self
     }
 
@@ -134,6 +104,7 @@ impl RenderOnce for Panel {
             bounds,
             title,
             badge,
+            body_inset,
             on_toggle,
             on_resize,
             children,
@@ -152,7 +123,7 @@ impl RenderOnce for Panel {
             .flex()
             .items_center()
             .gap(theme().space.xs)
-            .px(theme().size(10.0))
+            .pr(theme().size(10.0))
             .border_t(theme().border)
             .border_color(theme().colors.border)
             .cursor_pointer()
@@ -167,8 +138,15 @@ impl RenderOnce for Panel {
             })
             .child(
                 div()
+                    .id(ElementId::Name(format!("{id}-toggle").into()))
+                    .w(theme().controls.icon_button)
+                    .h(theme().controls.icon_button)
                     .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
                     .text_color(theme().colors.muted)
+                    .hover(|arrow| arrow.bg(theme().colors.highlight))
                     .child(app_icon(
                         if collapsed {
                             AppIcon::CaretRight
@@ -188,7 +166,7 @@ impl RenderOnce for Panel {
                     .text_color(theme().colors.muted)
                     .child(title),
             )
-            .when_some(badge, |header, unseen| {
+            .when_some(badge, |header, badge| {
                 header.child(
                     div()
                         .flex_none()
@@ -201,28 +179,15 @@ impl RenderOnce for Panel {
                         .bg(theme().colors.highlight)
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.text)
-                        .child(format!("+{unseen}")),
+                        .child(badge),
                 )
             });
         div()
+            .relative()
             .flex_none()
             .flex()
             .flex_col()
             .when(!collapsed, |panel| panel.h(height))
-            .child(
-                div()
-                    .id(ElementId::Name(format!("{id}-resize").into()))
-                    .h(theme().size(5.0))
-                    .w_full()
-                    .flex_none()
-                    .cursor_row_resize()
-                    .on_mouse_down(MouseButton::Left, move |event, window, cx| {
-                        cx.stop_propagation();
-                        if let Some(on_resize) = on_resize.as_ref() {
-                            on_resize(event, window, cx);
-                        }
-                    }),
-            )
             .child(header)
             .when(!collapsed, |panel| {
                 panel.child(
@@ -233,11 +198,26 @@ impl RenderOnce for Panel {
                         .flex()
                         .flex_col()
                         .gap(theme().space.xs)
-                        .px(theme().size(10.0))
-                        .pb(theme().space.sm)
+                        .when(body_inset, |body| {
+                            body.px(theme().size(10.0)).pb(theme().space.sm)
+                        })
                         .children(children)
                         .overflow_y_scrollbar(),
                 )
+            })
+            // Drawn last and over the top of the header: a minimized panel is
+            // exactly its header, so it stands no taller than the highlight box
+            // behind its toggle and never offers to resize, while an open one
+            // keeps every pixel of its height for its rows.
+            .when(!collapsed, |panel| {
+                panel.child(resize_handle(
+                    ElementId::Name(format!("{id}-resize").into()),
+                    move |event, window, cx| {
+                        if let Some(on_resize) = on_resize.as_ref() {
+                            on_resize(event, window, cx);
+                        }
+                    },
+                ))
             })
     }
 }

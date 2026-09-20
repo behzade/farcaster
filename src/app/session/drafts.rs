@@ -344,6 +344,31 @@ impl FarcasterApp {
         !retain
     }
 
+    /// Filing a chat away is a property of the chat itself, so a chat that was
+    /// never messaged is archived and restored exactly like one that was. A
+    /// chat that already writes into a session takes the session with it.
+    pub(in crate::app) fn request_draft_archive(
+        &mut self,
+        id: String,
+        archived: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.sessions.drafts.iter().position(|draft| draft.id == id) else {
+            return;
+        };
+        if !self.sessions.drafts[index].set_archived(archived) {
+            return;
+        }
+        let session = self.sessions.drafts[index].session_path.clone();
+        self.save_project_registry();
+        if let Some(path) = session {
+            self.set_session_archived(path, archived, cx);
+        }
+        self.notify_session_rail(cx);
+        cx.notify();
+    }
+
     pub(in crate::app) fn begin_draft_submission(&mut self, target: &str, prompt: &str) {
         let Some(id) = draft_id(target) else {
             return;
