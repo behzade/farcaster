@@ -5,7 +5,10 @@ LOG_FILE ?= $(DATA_DIR)/logs/farcaster.log
 TAIL_ARGS ?= -n 50
 BUMP ?= patch
 DEP_GRAPH := Cargo.toml Cargo.lock
+INCREMENTAL_BUDGET ?= 3072
 INCREMENTAL_STAMP := $(CARGO_TARGET_DIR)/.incremental-stamp
+INCREMENTAL_DIR := $(CARGO_TARGET_DIR)/debug/incremental
+PRUNE = size=$$(du -sm "$(INCREMENTAL_DIR)" 2>/dev/null | cut -f1); if [ "$${size:-0}" -gt "$(INCREMENTAL_BUDGET)" ]; then echo "pruning the local incremental cache: $${size}MB of $(INCREMENTAL_BUDGET)MB"; cargo clean -p farcaster; fi
 CARGO_TARGETS := build run test e2e debug release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
 
 .SILENT:
@@ -19,13 +22,13 @@ $(INCREMENTAL_STAMP): $(DEP_GRAPH)
 	touch "$@"
 
 build:
-	cargo build
+	cargo build && $(PRUNE)
 run debug:
-	DEBUG=$(if $(filter debug,$@),true) cargo run -- "$(PROJECT)"
+	DEBUG=$(if $(filter debug,$@),true) cargo run -- "$(PROJECT)" && $(PRUNE)
 test:
-	cargo test
+	cargo test && $(PRUNE)
 e2e:
-	HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh
+	HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh && $(PRUNE)
 release release-debug:
 	DEBUG=$(if $(filter release-debug,$@),true) cargo run --release -- "$(PROJECT)"
 release-local:
@@ -42,9 +45,9 @@ logs:
 fmt:
 	cargo fmt
 clippy:
-	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-targets -- -D warnings && $(PRUNE)
 check:
-	cargo fmt --check && cargo test && cargo check && cargo clippy --all-targets -- -D warnings
+	cargo fmt --check && cargo test && cargo check && cargo clippy --all-targets -- -D warnings && $(PRUNE)
 check-flake:
 	nix flake check
 build-nix:
