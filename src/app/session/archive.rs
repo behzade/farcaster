@@ -5,9 +5,35 @@ use gpui::{Context, FocusHandle, Window};
 use super::FarcasterApp;
 use crate::{
     app::composer::sessions::session_target,
+    projects::DraftSession,
     runtime::RuntimeCommand,
     sessions::{SessionSummary, root_session_for_path},
 };
+
+/// Where a chat's archived state lives. A chat that has never been written to
+/// has no session file yet, so it keeps that state on its registry record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::app) enum ChatArchiveTarget {
+    Draft(String),
+    Session(PathBuf),
+}
+
+pub(in crate::app) fn chat_archive_target(
+    drafts: &[DraftSession],
+    sessions: &[SessionSummary],
+    app_session_id: i64,
+) -> Option<ChatArchiveTarget> {
+    if let Some(draft) = drafts
+        .iter()
+        .find(|draft| draft.app_session_id == app_session_id)
+    {
+        return Some(ChatArchiveTarget::Draft(draft.id.clone()));
+    }
+    sessions
+        .iter()
+        .find(|session| session.app_session_id == app_session_id)
+        .map(|session| ChatArchiveTarget::Session(session.path.clone()))
+}
 
 pub(in crate::app) struct PendingArchive {
     pub(in crate::app) focus: FocusHandle,
@@ -40,6 +66,31 @@ impl FarcasterApp {
         pending.focus.focus(window, cx);
         self.sessions.pending_archive = Some(pending);
         cx.notify();
+    }
+
+    /// File a chat away, or bring it back, by the identity the rail shows.
+    /// Every chat resolves: one that was written to a session takes the session
+    /// with it, and one that was not keeps its state on its own record.
+    pub(in crate::app) fn request_chat_archive(
+        &mut self,
+        app_session_id: i64,
+        archive: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match chat_archive_target(
+            &self.sessions.drafts,
+            &self.sessions.visible,
+            app_session_id,
+        ) {
+            Some(ChatArchiveTarget::Draft(id)) => {
+                self.request_draft_archive(id, archive, window, cx);
+            }
+            Some(ChatArchiveTarget::Session(path)) => {
+                self.request_session_archive(path, archive, window, cx);
+            }
+            None => {}
+        }
     }
 
     pub(in crate::app) fn request_session_archive_and_advance(

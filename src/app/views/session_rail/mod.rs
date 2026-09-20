@@ -571,17 +571,12 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         self.sessions.drop_target = None;
-        let Some(path) = drag.path.clone() else {
-            self.notify_session_rail(cx);
-            return;
-        };
-        match target_kind {
-            SessionRailKind::Project => self.set_session_active(path, cx),
-            SessionRailKind::Archived => {
-                self.notify_session_rail(cx);
-                self.request_session_archive(path, true, window, cx);
-            }
-        }
+        self.request_chat_archive(
+            drag.app_session_id,
+            target_kind == SessionRailKind::Archived,
+            window,
+            cx,
+        );
     }
 
     fn set_session_project_filter(

@@ -29,9 +29,9 @@ fn archive_draft_action(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let draft_id = id.to_owned();
-    archive_action(id, archived, action_group, move |window, cx| {
+    archive_action(id, archived, action_group, move |apply, window, cx| {
         let _ = entity.update(cx, |this, cx| {
-            this.request_draft_archive(draft_id.clone(), archived, window, cx);
+            this.request_draft_archive(draft_id.clone(), apply, window, cx);
         });
     })
 }
@@ -92,8 +92,11 @@ impl RenderOnce for DraftRow {
         let target_app_session_id = draft.app_session_id;
         let drag = DraggedSession {
             app_session_id: target_app_session_id,
-            path: draft.session_path.clone(),
-            kind: SessionRailKind::Project,
+            kind: if archived {
+                SessionRailKind::Archived
+            } else {
+                SessionRailKind::Project
+            },
             title: title.clone(),
             project: project_label(&draft.project),
         };

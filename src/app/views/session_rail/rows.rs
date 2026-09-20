@@ -116,7 +116,6 @@ impl RenderOnce for SessionRow {
         let target_app_session_id = session.app_session_id;
         let drag = DraggedSession {
             app_session_id: target_app_session_id,
-            path: Some(session.path.clone()),
             kind: item.kind,
             title: session.title.clone(),
             project: project_label(&session.project),
@@ -382,9 +381,9 @@ fn session_archive_action(
     action_group: String,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    archive_action(id, is_archived, action_group, move |window, cx| {
+    archive_action(id, is_archived, action_group, move |apply, window, cx| {
         let _ = entity.update(cx, |this, cx| {
-            this.request_session_archive(path.clone(), !is_archived, window, cx);
+            this.request_session_archive(path.clone(), apply, window, cx);
         });
     })
 }
@@ -395,9 +394,12 @@ pub(super) fn archive_action(
     id: &str,
     is_archived: bool,
     action_group: String,
-    on_press: impl Fn(&mut Window, &mut App) + 'static,
+    on_press: impl Fn(bool, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     let label = if is_archived { "Restore" } else { "Archive" };
+    // The control names the state it moves the chat to, so one place decides
+    // the toggle and no row can disagree with the label it shows.
+    let apply = !is_archived;
     let icon = if is_archived {
         AppIcon::ArrowCounterClockwise
     } else {
@@ -436,7 +438,7 @@ pub(super) fn archive_action(
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
-            on_press(window, cx);
+            on_press(apply, window, cx);
         })
         .into_any_element()
 }

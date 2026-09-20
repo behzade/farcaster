@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use gpui::{
     Context, FontWeight, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
 };
@@ -10,15 +8,16 @@ use crate::app::ui::theme::theme;
 #[derive(Clone)]
 pub(super) struct DraggedSession {
     pub(super) app_session_id: i64,
-    pub(super) path: Option<PathBuf>,
     pub(super) kind: SessionRailKind,
     pub(super) title: String,
     pub(super) project: String,
 }
 
 impl DraggedSession {
+    /// Every chat can be filed away and brought back, including one that has
+    /// not been written to a session yet, so this only needs an identity.
     pub(super) fn can_move_to(&self, kind: SessionRailKind) -> bool {
-        self.path.is_some() && self.kind != kind
+        self.app_session_id > 0 && self.kind != kind
     }
 
     pub(super) fn can_drop_on(&self, kind: SessionRailKind, target: i64) -> bool {

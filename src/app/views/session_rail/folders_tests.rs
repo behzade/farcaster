@@ -131,7 +131,6 @@ impl gpui::Render for FolderDropHarness {
         let received = self.received.clone();
         let drag = super::DraggedSession {
             app_session_id: 7,
-            path: Some("/session".into()),
             kind: super::SessionRailKind::Project,
             title: "Session".into(),
             project: "Project".into(),

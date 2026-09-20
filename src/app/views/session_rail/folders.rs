@@ -141,8 +141,11 @@ pub(super) fn folder_header(
             .into_any_element();
     }
 
-    row = folder_drop_target(row, move |drag, _, cx| {
+    row = folder_drop_target(row, move |drag, window, cx| {
         let _ = drop_entity.update(cx, |this, cx| {
+            if drag.kind == SessionRailKind::Archived {
+                this.request_chat_archive(drag.app_session_id, false, window, cx);
+            }
             this.assign_session_folder(drag.app_session_id, Some(id), cx);
             this.clear_session_drop_target(cx);
         });
@@ -240,9 +243,9 @@ pub(super) fn folder_drop_target(
 ) -> gpui::Stateful<gpui::Div> {
     row.w_full()
         .can_drop(|value, _, _| {
-            value.downcast_ref::<DraggedSession>().is_some_and(|drag| {
-                drag.app_session_id > 0 && drag.kind == SessionRailKind::Project
-            })
+            value
+                .downcast_ref::<DraggedSession>()
+                .is_some_and(|drag| drag.app_session_id > 0)
         })
         .drag_over::<DraggedSession>(|style, _, _, _| {
             style
