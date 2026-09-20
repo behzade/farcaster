@@ -12,9 +12,11 @@ PRUNE = size=$$(du -sm "$(INCREMENTAL_DIR)" 2>/dev/null | cut -f1); if [ "$${siz
 CARGO_TARGETS := build run test e2e debug release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
 
 .SILENT:
-.PHONY: $(CARGO_TARGETS) logs fmt check-flake clean prune-incremental build-nix
+.PHONY: $(CARGO_TARGETS) logs fmt check-flake clean prune-incremental libcxx build-nix
 
-$(CARGO_TARGETS): | $(INCREMENTAL_STAMP)
+$(CARGO_TARGETS): | $(INCREMENTAL_STAMP) libcxx
+libcxx:
+	printf 'int main(){}\n' | cc -x c++ - -o /dev/null -lc++ 2>/dev/null || (echo "libc++ is missing" >&2; exit 1)
 
 $(INCREMENTAL_STAMP): $(DEP_GRAPH)
 	mkdir -p "$(dir $@)"
