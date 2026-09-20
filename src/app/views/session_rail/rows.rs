@@ -25,7 +25,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{
         AppIconSize, AppTooltip as _, ContextMenuTrigger, DeleteButton, ReorderPosition,
-        ReorderTargetExt as _, app_icon,
+        ReorderTargetExt as _, app_icon, number_slot,
     },
     app::ui::theme::theme,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
@@ -622,16 +622,7 @@ pub(super) fn session_provider_slot(
 }
 
 pub(super) fn session_row_age(age: String) -> AnyElement {
-    div()
-        .w(theme().layout.session_age_slot)
-        .flex_none()
-        .flex()
-        .justify_end()
-        .whitespace_nowrap()
-        .text_size(theme().type_scale.caption)
-        .text_color(theme().colors.subtle)
-        .child(age)
-        .into_any_element()
+    number_slot(age, theme().layout.session_age_slot)
 }
 
 /// A chat reports its state immediately left of the provider icon, in the same

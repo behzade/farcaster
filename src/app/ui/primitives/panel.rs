@@ -13,6 +13,7 @@ use crate::app::ui::{assets::AppIcon, theme::theme};
 use super::{
     icon::{AppIconSize, app_icon},
     resize::{ResizeBounds, ResizeState, resize_handle},
+    slot::number_slot,
     tooltip::AppTooltip as _,
 };
 
@@ -167,20 +168,7 @@ impl RenderOnce for Panel {
                     .child(title),
             )
             .when_some(badge, |header, badge| {
-                header.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .min_w(theme().size(24.0))
-                        .px(theme().space.xs)
-                        .whitespace_nowrap()
-                        .bg(theme().colors.highlight)
-                        .text_size(theme().type_scale.caption)
-                        .text_color(theme().colors.text)
-                        .child(badge),
-                )
+                header.child(number_slot(badge, theme().layout.counter_slot))
             });
         div()
             .relative()

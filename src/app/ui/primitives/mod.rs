@@ -14,6 +14,7 @@ mod picker;
 mod reorder;
 mod resize;
 mod search;
+mod slot;
 mod textarea;
 mod tooltip;
 
@@ -36,5 +37,6 @@ pub(crate) use picker::{PickerDelegate, PickerRow};
 pub(crate) use reorder::{ReorderPosition, ReorderTargetExt};
 pub(crate) use resize::{ResizeBounds, ResizeState};
 pub(crate) use search::SearchField;
+pub(crate) use slot::number_slot;
 pub(crate) use tooltip::AppTooltip;
 pub(crate) use textarea::{create_submit_textarea, submit_textarea};
