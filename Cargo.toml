@@ -76,7 +76,6 @@ zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-uzers = { version = "0.12.2", default-features = false }
 
 [dev-dependencies]
 farcaster-mcp-server = { path = "crates/mcp-server", features = ["test-support"] }

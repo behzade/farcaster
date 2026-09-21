@@ -1930,7 +1930,6 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "uuid",
- "uzers",
  "workgraph",
  "zlog",
 ]
@@ -1980,6 +1979,7 @@ dependencies = [
  "tpt-logfmt-parse",
  "url",
  "uuid",
+ "uzers",
  "zlog",
 ]
 
