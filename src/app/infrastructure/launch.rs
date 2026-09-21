@@ -76,7 +76,7 @@ pub(crate) fn run(
 ) -> Result<(), LaunchError> {
     let launch_timing = StartupTiming::always("launch.until_window_open");
     #[cfg(target_os = "linux")]
-    install_linux_desktop_identity();
+    install_linux_icon();
 
     let trust_timing = StartupTiming::new("launch.project_trust");
     let startup_trust =
@@ -240,7 +240,7 @@ fn quit_after_start(cx: &mut App) {
 }
 
 #[cfg(target_os = "linux")]
-fn install_linux_desktop_identity() {
+fn install_linux_icon() {
     const APP_ID: &str = "io.github.behzade.farcaster";
     const ICON: &[u8] = include_bytes!("../../../assets/icons/app/icon_256x256.png");
 
@@ -248,52 +248,11 @@ fn install_linux_desktop_identity() {
         return;
     };
     let icon_dir = data_home.join("icons/hicolor/256x256/apps");
-    let applications_dir = data_home.join("applications");
-    if fs::create_dir_all(&icon_dir).is_err() || fs::create_dir_all(&applications_dir).is_err() {
-        return;
-    }
-    let icon = icon_dir.join(format!("{APP_ID}.png"));
-    if fs::write(&icon, ICON).is_err() {
+    if fs::create_dir_all(&icon_dir).is_err() {
         return;
     }
 
-    let executable = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_exe().ok());
-    let Some(executable) = executable else {
-        return;
-    };
-    let executable = desktop_exec_path(&executable.to_string_lossy());
-    let icon = icon.to_string_lossy();
-    let desktop_entry = format!(
-        "[Desktop Entry]\n\
-         Categories=Development;\n\
-         Comment=Native desktop client for coding agents\n\
-         Exec=\"{executable}\"\n\
-         Icon={icon}\n\
-         Name=Farcaster\n\
-         StartupWMClass={APP_ID}\n\
-         Terminal=false\n\
-         Type=Application\n"
-    );
-    let _ = fs::write(
-        applications_dir.join(format!("{APP_ID}.desktop")),
-        desktop_entry,
-    );
-}
-
-#[cfg(target_os = "linux")]
-fn desktop_exec_path(path: &str) -> String {
-    path.chars().fold(String::new(), |mut escaped, character| {
-        if matches!(character, '\\' | '"' | '`' | '$') {
-            escaped.push('\\');
-        }
-        if character == '%' {
-            escaped.push('%');
-        }
-        escaped.push(character);
-        escaped
-    })
+    let _ = fs::write(icon_dir.join(format!("{APP_ID}.png")), ICON);
 }
 
 pub(crate) fn observe_window_placement<T: 'static>(
