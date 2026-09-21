@@ -1,0 +1,27 @@
+# Generated for a specific release by scripts/package-arch-source.sh.
+pkgname=farcaster
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Native desktop client for coding agents'
+arch=('x86_64')
+url='https://github.com/behzade/farcaster'
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'fontconfig' 'freetype2' 'libx11' 'libxcb'
+         'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libglvnd'
+         'vulkan-icd-loader' 'libxml2' 'libc++>=21' 'git' 'ca-certificates')
+optdepends=('neovim: embedded editor')
+makedepends=('rust>=1.95' 'zig=0.16.0' 'clang' 'cmake' 'pkgconf')
+source=("$url/releases/download/v$pkgver/farcaster-$pkgver-source.tar.gz")
+sha256sums=('@SHA256@')
+options=('!lto' '!debug')
+
+build() {
+    cd "$srcdir/farcaster-$pkgver"
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$srcdir/target}"
+    cargo build --release --locked --bin farcaster
+}
+
+package() {
+    cd "$srcdir/farcaster-$pkgver"
+    sh scripts/install-linux.sh "${CARGO_TARGET_DIR:-$srcdir/target}/release/farcaster" "$pkgdir/usr"
+}

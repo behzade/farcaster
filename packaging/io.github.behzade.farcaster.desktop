@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Farcaster
+Comment=Native desktop client for coding agents
+Exec=farcaster %f
+Icon=io.github.behzade.farcaster
+Terminal=false
+Categories=Development;
+StartupWMClass=io.github.behzade.farcaster

@@ -36,7 +36,7 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            clang cmake desktop-file-utils libc++-21-dev libc++abi-21-dev \
+            clang cmake desktop-file-utils dpkg-dev libc++-21-dev libc++abi-21-dev \
             libasound2-dev libegl1-mesa-dev \
             libfontconfig1-dev libfreetype6-dev libfuse2 libvulkan-dev \
             libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev \
@@ -79,6 +79,11 @@ jobs:
           cp "$appimage" "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
           chmod 755 "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
 
+      - name: Package Debian binary and Arch source
+        run: |
+          bash scripts/package-deb.sh dist
+          bash scripts/package-arch-source.sh dist
+
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux-x86_64
@@ -89,6 +94,13 @@ jobs:
     name: AppImage release gate
     needs: linux
     uses: ./.github/workflows/appimage-startup.yml
+    with:
+      artifact: release-linux-x86_64
+
+  native-packages:
+    name: Native package release gates
+    needs: linux
+    uses: ./.github/workflows/native-packages.yml
     with:
       artifact: release-linux-x86_64
 
@@ -140,7 +152,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, linux-startup, macos]
+    needs: [linux, linux-startup, native-packages, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

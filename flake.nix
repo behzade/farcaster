@@ -4,7 +4,7 @@
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
   outputs =
-    { nixpkgs, ... }:
+    { self, nixpkgs, ... }:
     let
       systems = [
         "aarch64-darwin"
@@ -12,9 +12,43 @@
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      forLinuxSystems = nixpkgs.lib.genAttrs [
+        "aarch64-linux"
+        "x86_64-linux"
+      ];
       pkgsFor = system: import nixpkgs { inherit system; };
     in
     {
+      packages = forLinuxSystems (
+        system:
+        let
+          farcaster = (pkgsFor system).callPackage ./packaging/nix.nix { };
+        in
+        {
+          inherit farcaster;
+          default = farcaster;
+        }
+      );
+
+      apps = forLinuxSystems (system: {
+        default = {
+          type = "app";
+          program = "${self.packages.${system}.farcaster}/bin/farcaster";
+        };
+      });
+
+      checks = forLinuxSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        {
+          startup = pkgs.callPackage ./packaging/native-startup-test.nix {
+            farcaster = self.packages.${system}.farcaster;
+          };
+        }
+      );
+
       devShells = forAllSystems (
         system:
         let

@@ -9,7 +9,7 @@ let
   probe = pkgs.writeShellScriptBin "probe-farcaster-appimage" ''
     export FARCASTER_PROBE_APPIMAGE_RUNNER=${pkgs.appimage-run}/bin/appimage-run
     export FARCASTER_PROBE_HOST_WAYLAND=${pkgs.wayland}/lib/libwayland-client.so.0
-    exec ${pkgs.bash}/bin/bash ${../scripts/probe-appimage-startup.sh} \
+    exec ${pkgs.bash}/bin/bash ${../scripts}/probe-appimage-startup.sh \
       ${candidate} /tmp/probe-logs
   '';
 in

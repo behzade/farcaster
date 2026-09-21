@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 target_dir=${CARGO_TARGET_DIR:-"$root/target"}
 project=${PROJECT:-"$root"}
 action=${1:-bundle}
@@ -41,9 +41,35 @@ fi
 
 mkdir -p "$target_dir/release"
 # cargo-packager resolves file paths relative to its config in packaging/.
-target_dir=$(CDPATH= cd -- "$target_dir" && pwd)
+target_dir=$(CDPATH='' cd -- "$target_dir" && pwd)
 if [ "$platform" = "Linux" ]; then
-    CARGO_TARGET_DIR="$target_dir" cargo build --release --locked --bin farcaster
+    if [ "$formats" != pacman ]; then
+        CARGO_TARGET_DIR="$target_dir" cargo build --release --locked --bin farcaster
+    fi
+    # Native packages use the shared desktop layout and dependency-aware tooling.
+    # Keep AppImage's special launcher and library staging scoped to AppImage.
+    packager_formats=
+    previous_ifs=$IFS
+    IFS=,
+    for format in $formats; do
+        case "$format" in
+            deb)
+                CARGO_TARGET_DIR="$target_dir" bash scripts/package-deb.sh "$target_dir/release"
+                ;;
+            pacman)
+                arch_stage=$(mktemp -d "$target_dir/release/arch.XXXXXX")
+                bash scripts/package-arch-source.sh "$arch_stage"
+                (cd "$arch_stage" && makepkg --noconfirm)
+                cp "$arch_stage"/*.pkg.tar.zst "$target_dir/release/"
+                ;;
+            *) packager_formats="${packager_formats:+$packager_formats,}$format" ;;
+        esac
+    done
+    IFS=$previous_ifs
+    if [ -z "$packager_formats" ]; then
+        exit 0
+    fi
+    formats=$packager_formats
     launcher="$target_dir/release/io.github.behzade.farcaster"
     cat >"$launcher" <<'EOF'
 #!/bin/sh

@@ -1,0 +1,168 @@
+name: Native Linux packages
+
+on:
+  workflow_call:
+    inputs:
+      artifact:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  debian:
+    name: Install / ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'debian:13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: dist
+      - name: Install through apt and check the dependency closure
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./dist/*.deb
+          ldd /usr/lib/farcaster/farcaster | tee dependencies.log
+          if grep -q 'not found' dependencies.log; then exit 1; fi
+          test -f /usr/share/applications/io.github.behzade.farcaster.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/io.github.behzade.farcaster.png
+      - name: Install only desktop and diagnostic tools
+        run: |
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            weston wayland-utils libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers \
+            fonts-dejavu-core dbus binutils file xvfb desktop-file-utils
+          desktop-file-validate /usr/share/applications/io.github.behzade.farcaster.desktop
+          useradd --create-home tester
+          install -d -o tester -g tester /tmp/probe-logs
+      - name: Launch the installed package as a normal user
+        run: |
+          install -m755 scripts/probe-native-startup.sh /tmp/probe-native-startup.sh
+          install -m644 scripts/probe-wayland.sh /tmp/probe-wayland.sh
+          su - tester -c 'dbus-run-session -- bash /tmp/probe-native-startup.sh /usr/bin/farcaster /tmp/probe-logs'
+      - name: Verify removal
+        run: |
+          apt-get remove -y farcaster
+          test ! -e /usr/bin/farcaster
+          test ! -e /usr/lib/farcaster/farcaster
+          test ! -e /usr/share/applications/io.github.behzade.farcaster.desktop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-deb-${{ strategy.job-index }}-${{ github.run_attempt }}
+          path: /tmp/probe-logs
+          if-no-files-found: warn
+
+  arch-build:
+    name: Build / Arch Linux
+    runs-on: ubuntu-24.04
+    container: archlinux:base
+    timeout-minutes: 90
+    steps:
+      - name: Install build tools
+        run: |
+          pacman -Syu --noconfirm --needed base-devel rust zig clang cmake pkgconf git \
+            fontconfig freetype2 libx11 libxcb libxkbcommon libxkbcommon-x11 \
+            wayland libglvnd vulkan-icd-loader libxml2 libc++
+          useradd --create-home builder
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: dist
+      - name: Build the checksummed source with makepkg
+        run: |
+          install -d -o builder -g builder /tmp/farcaster-package
+          cp dist/PKGBUILD dist/*-source.tar.gz /tmp/farcaster-package/
+          chown -R builder:builder /tmp/farcaster-package
+          su - builder -c 'cd /tmp/farcaster-package && makepkg --noconfirm && makepkg --printsrcinfo > farcaster.SRCINFO'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-arch-x86_64
+          path: |
+            /tmp/farcaster-package/*.pkg.tar.zst
+            /tmp/farcaster-package/farcaster.SRCINFO
+          if-no-files-found: error
+
+  arch-install:
+    name: Install / Arch Linux
+    needs: arch-build
+    runs-on: ubuntu-24.04
+    container: archlinux:base
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-arch-x86_64
+          path: dist
+      - name: Install through pacman in a fresh container
+        run: |
+          pacman -Syu --noconfirm
+          pacman -U --noconfirm dist/*.pkg.tar.zst
+          ldd /usr/bin/farcaster | tee dependencies.log
+          if grep -q 'not found' dependencies.log; then exit 1; fi
+      - name: Install only desktop and diagnostic tools
+        run: |
+          pacman -S --noconfirm --needed weston wayland-utils mesa vulkan-swrast \
+            ttf-dejavu dbus binutils file xorg-server-xvfb desktop-file-utils
+          desktop-file-validate /usr/share/applications/io.github.behzade.farcaster.desktop
+          useradd --create-home tester
+          install -d -o tester -g tester /tmp/probe-logs
+      - name: Launch the installed package as a normal user
+        run: |
+          install -m755 scripts/probe-native-startup.sh /tmp/probe-native-startup.sh
+          install -m644 scripts/probe-wayland.sh /tmp/probe-wayland.sh
+          su - tester -c 'dbus-run-session -- bash /tmp/probe-native-startup.sh /usr/bin/farcaster /tmp/probe-logs'
+      - name: Verify removal
+        run: |
+          pacman -R --noconfirm farcaster
+          test ! -e /usr/bin/farcaster
+          test ! -e /usr/share/applications/io.github.behzade.farcaster.desktop
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-arch-${{ github.run_attempt }}
+          path: /tmp/probe-logs
+          if-no-files-found: warn
+
+  nix:
+    name: Build / Nix ${{ matrix.system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            system: x86_64-linux
+          - runner: ubuntu-24.04-arm
+            system: aarch64-linux
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          enable_kvm: ${{ matrix.system == 'x86_64-linux' }}
+      - name: Build the native package
+        run: nix build --print-build-logs .#packages.${{ matrix.system }}.default
+      - name: Launch in a clean NixOS VM
+        # GitHub's ARM runners do not provide the KVM needed by this VM test.
+        if: matrix.system == 'x86_64-linux'
+        run: |
+          test -r /dev/kvm && test -w /dev/kvm
+          nix build --print-build-logs .#checks.${{ matrix.system }}.startup.driver --out-link test-driver
+          mkdir -p artifacts/nixos
+          test-driver/bin/nixos-test-driver -o "$PWD/artifacts/nixos"
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.system == 'x86_64-linux'
+        with:
+          name: native-nixos-${{ github.run_attempt }}
+          path: artifacts/nixos
+          if-no-files-found: warn
