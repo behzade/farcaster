@@ -396,7 +396,9 @@ fn test_session() -> CodexWorkerSession {
         current_turn: None,
         abort_starting_turn: false,
         abort_cleanup: None,
-        abort_cleanup_response_timeout: ABORT_CLEANUP_RESPONSE_TIMEOUT,
+        abort_deadline: None,
+        abort_timeout: ABORT_TIMEOUT,
+        abort_failure: None,
         output: String::new(),
         reasoning_started: false,
         compacting: false,
@@ -555,6 +557,10 @@ fn abort_holds_settled_and_new_input_until_both_native_cleanups_are_accepted() {
         Some(WorkerEvent::Settled { output }) if output == "partial"
     ));
     assert!(session.abort_cleanup.is_none());
+    assert!(session.abort_deadline.is_none());
+    session
+        .send("next turn".into(), WorkerSendMode::Prompt)
+        .expect("successful cleanup permits new work");
 }
 
 #[test]
@@ -580,95 +586,82 @@ fn rejected_native_abort_cleanup_fails_instead_of_reporting_settled() {
 }
 
 #[test]
-fn withheld_initial_native_abort_cleanup_ack_fails_on_deadline() {
-    let (mut session, _sent) = writable_test_session();
-    session.current_turn = Some("turn-1".into());
-    session.abort().expect("abort active turn");
-    session
-        .abort_cleanup
-        .as_mut()
-        .expect("pending cleanup")
-        .initial_response_deadline = Some(std::time::Instant::now());
-
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Failed(error))
-            if error.contains("initial cleanup acknowledgement")
-                && error.contains("within 15 seconds")
-    ));
-    assert!(session.abort_cleanup.is_none());
-}
-
-#[test]
-fn withheld_post_completion_native_abort_cleanup_ack_never_reports_settled() {
-    let (mut session, _sent) = writable_test_session();
-    session.current_turn = Some("turn-1".into());
-    session.abort().expect("abort active turn");
-    session.queued_inbound.push_back(Ok(CodexInbound::Response {
-        id: CodexRequestId::Number(2),
-        result: json!({}),
-    }));
-    assert!(session.poll().is_none());
-    session
-        .queued_inbound
-        .push_back(Ok(CodexInbound::Notification {
-            method: "turn/completed".into(),
-            params: json!({"threadId":"thread-1","turn":{
-                "id":"turn-1","status":"interrupted"
-            }}),
-        }));
-    assert!(session.poll().is_none());
-    session
-        .abort_cleanup
-        .as_mut()
-        .expect("pending repeat cleanup")
-        .after_completion_response_deadline = Some(std::time::Instant::now());
-
-    assert!(matches!(
-        session.poll(),
-        Some(WorkerEvent::Failed(error))
-            if error.contains("post-completion cleanup acknowledgement")
-                && error.contains("within 15 seconds")
-    ));
-    assert!(session.abort_cleanup.is_none());
-    assert!(session.poll().is_none(), "timeout must not emit Settled");
-}
-
-#[test]
-fn native_abort_cleanup_deadline_wakes_an_idle_worker_loop() {
-    for active in [true, false] {
-        assert_native_cleanup_wakes_before_watchdog(active);
+fn abort_deadline_closes_transport_at_each_unfinished_cleanup_phase() {
+    // Withhold the initial ACK, turn completion, or post-completion ACK.
+    for completed_steps in 0..3 {
+        let (mut session, _sent) = writable_test_session();
+        session.current_turn = Some("turn-1".into());
+        session.abort().expect("abort active turn");
+        let deadline = session.abort_deadline;
+        if completed_steps >= 1 {
+            session.queued_inbound.push_back(Ok(CodexInbound::Response {
+                id: CodexRequestId::Number(2),
+                result: json!({}),
+            }));
+            assert!(session.poll().is_none());
+        }
+        if completed_steps == 2 {
+            session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+                method: "turn/completed".into(),
+                params: json!({"threadId":"thread-1","turn":{"id":"turn-1","status":"interrupted"}}),
+            }));
+            assert!(session.poll().is_none());
+        }
+        for _ in 0..5 {
+            session.abort().expect("repeat abort");
+            assert_eq!(session.abort_deadline, deadline);
+        }
+        session.abort_deadline = Some(std::time::Instant::now());
+        // Queued activity must not starve the deadline or leak after failure.
+        session.events.push_back(WorkerEvent::Started);
+        let Some(WorkerEvent::Failed(error)) = session.poll() else {
+            panic!("unfinished abort must fail");
+        };
+        assert!(error.contains("within 10 seconds"));
+        assert!(error.contains("send again to resume this session"));
+        assert!(session.writer.is_none());
+        assert!(session.child.try_wait().expect("child status").is_some());
+        assert!(
+            session
+                .send("unsafe reuse".into(), WorkerSendMode::Prompt)
+                .is_err()
+        );
+        assert!(session.apply_steering().is_err());
+        assert!(session.abort().is_err());
+        assert!(session.poll().is_none(), "timeout must not emit Settled");
     }
 }
 
-fn assert_native_cleanup_wakes_before_watchdog(active: bool) {
+#[test]
+fn whole_abort_deadline_wakes_while_turn_admission_is_missing() {
     let (mut session, _sent) = writable_test_session();
-    session.current_turn = active.then(|| "turn-1".into());
+    session
+        .send("work".into(), WorkerSendMode::Prompt)
+        .expect("start turn");
     session.wake = Some(std::thread::current());
-    session.abort_cleanup_response_timeout = std::time::Duration::from_millis(20);
-    session.abort().expect("abort active turn");
+    session.abort_timeout = std::time::Duration::from_millis(20);
+    session.abort().expect("abort before admission");
+    assert!(session.abort_starting_turn);
+    assert!(session.abort_cleanup.is_none());
+    let deadline = session.abort_deadline;
+    session.abort().expect("repeat abort before admission");
+    assert_eq!(session.abort_deadline, deadline);
 
-    let test_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let watchdog = std::time::Instant::now() + std::time::Duration::from_secs(1);
     let failure = loop {
-        std::thread::park_timeout(
-            test_deadline.saturating_duration_since(std::time::Instant::now()),
-        );
+        std::thread::park_timeout(watchdog.saturating_duration_since(std::time::Instant::now()));
         assert!(
-            std::time::Instant::now() < test_deadline,
-            "idle worker woke only at the test watchdog, not its cleanup deadline"
+            std::time::Instant::now() < watchdog,
+            "abort deadline must wake runtime"
         );
         if let Some(event) = session.poll() {
             break event;
         }
     };
-    assert!(matches!(
-        failure,
-        WorkerEvent::Failed(error) if error.contains(if active {
-            "initial cleanup acknowledgement"
-        } else {
-            "post-completion cleanup acknowledgement"
-        })
-    ));
+    assert!(
+        matches!(failure, WorkerEvent::Failed(error) if error.contains("waiting for turn admission"))
+    );
+    assert!(session.child.try_wait().expect("child status").is_some());
 }
 
 #[test]

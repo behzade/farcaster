@@ -138,7 +138,9 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             current_turn: None,
             abort_starting_turn: false,
             abort_cleanup: None,
-            abort_cleanup_response_timeout: ABORT_CLEANUP_RESPONSE_TIMEOUT,
+            abort_deadline: None,
+            abort_timeout: ABORT_TIMEOUT,
+            abort_failure: None,
             output: String::new(),
             reasoning_started: false,
             compacting: false,
@@ -295,7 +297,9 @@ pub fn spawn_main(
         current_turn: None,
         abort_starting_turn: false,
         abort_cleanup: None,
-        abort_cleanup_response_timeout: ABORT_CLEANUP_RESPONSE_TIMEOUT,
+        abort_deadline: None,
+        abort_timeout: ABORT_TIMEOUT,
+        abort_failure: None,
         output: String::new(),
         reasoning_started: false,
         compacting: false,
@@ -613,14 +617,12 @@ struct AbortCleanup {
     target_turn: String,
     watch_late_handoff: bool,
     initial_accepted: bool,
-    initial_response_deadline: Option<std::time::Instant>,
     target_completed: bool,
     completion: Option<WorkerEvent>,
     after_completion_accepted: bool,
-    after_completion_response_deadline: Option<std::time::Instant>,
 }
 
-const ABORT_CLEANUP_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const ABORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Clone)]
 struct NativeInputDelivery {
@@ -721,7 +723,11 @@ struct CodexWorkerSession {
     current_turn: Option<String>,
     abort_starting_turn: bool,
     abort_cleanup: Option<AbortCleanup>,
-    abort_cleanup_response_timeout: std::time::Duration,
+    // One deadline spans turn admission, cleanup, completion and late handoffs.
+    // Retargeting cleanup or pressing Escape again must not extend it.
+    abort_deadline: Option<std::time::Instant>,
+    abort_timeout: std::time::Duration,
+    abort_failure: Option<String>,
     output: String,
     reasoning_started: bool,
     compacting: bool,
@@ -815,6 +821,10 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn abort(&mut self) -> Result<(), String> {
+        if let Some(error) = &self.abort_failure {
+            return Err(error.clone());
+        }
+        self.arm_abort_deadline()?;
         if self.abort_cleanup.is_some() {
             return Ok(());
         }
@@ -876,6 +886,7 @@ impl WorkerSession for CodexWorkerSession {
             .values()
             .any(|request| matches!(request, PendingRequest::StartTurn))
         {
+            self.arm_abort_deadline()?;
             self.abort_starting_turn = true;
             Ok(())
         } else {
@@ -921,10 +932,13 @@ impl WorkerSession for CodexWorkerSession {
     }
 
     fn poll(&mut self) -> Option<WorkerEvent> {
-        if let Some(event) = self.events.pop_front() {
+        if self.abort_failure.is_some() {
+            return None;
+        }
+        if let Some(event) = self.poll_abort_timeout() {
             return Some(event);
         }
-        if let Some(event) = self.abort_cleanup_timeout() {
+        if let Some(event) = self.events.pop_front() {
             return Some(event);
         }
         if let Some(event) = self.release_abort_cleanup_if_ready() {
@@ -1810,6 +1824,9 @@ impl WorkerSession for CodexWorkerSession {
 
 impl CodexWorkerSession {
     fn ensure_abort_cleanup_finished(&self) -> Result<(), String> {
+        if let Some(error) = &self.abort_failure {
+            return Err(error.clone());
+        }
         if self.abort_cleanup.is_some() || self.abort_starting_turn {
             Err("Codex Abort cleanup is still pending".into())
         } else {
@@ -1818,6 +1835,7 @@ impl CodexWorkerSession {
     }
 
     fn begin_abort_cleanup(&mut self, turn_id: &str, interrupt: bool) -> Result<(), String> {
+        self.arm_abort_deadline()?;
         if self.abort_cleanup.is_some()
             && self
                 .abort_cleanup
@@ -1835,11 +1853,9 @@ impl CodexWorkerSession {
             target_turn: turn_id.to_owned(),
             watch_late_handoff,
             initial_accepted: false,
-            initial_response_deadline: None,
             target_completed: false,
             completion: None,
             after_completion_accepted: false,
-            after_completion_response_deadline: None,
         });
         let result = (|| {
             if interrupt {
@@ -1858,11 +1874,9 @@ impl CodexWorkerSession {
             target_turn: target_turn.to_owned(),
             watch_late_handoff: self.handoff.is_some(),
             initial_accepted: true,
-            initial_response_deadline: None,
             target_completed: true,
             completion: None,
             after_completion_accepted: false,
-            after_completion_response_deadline: None,
         });
         if let Err(error) =
             self.request_abort_cleanup(target_turn, AbortCleanupPhase::AfterCompletion)
@@ -1889,25 +1903,6 @@ impl CodexWorkerSession {
                 phase,
             },
         );
-        let deadline = std::time::Instant::now() + self.abort_cleanup_response_timeout;
-        let scheduled = if let Some(cleanup) = self
-            .abort_cleanup
-            .as_mut()
-            .filter(|cleanup| cleanup.target_turn == target_turn)
-        {
-            match phase {
-                AbortCleanupPhase::Initial => cleanup.initial_response_deadline = Some(deadline),
-                AbortCleanupPhase::AfterCompletion => {
-                    cleanup.after_completion_response_deadline = Some(deadline);
-                }
-            }
-            true
-        } else {
-            false
-        };
-        if scheduled {
-            self.schedule_abort_cleanup_wake(deadline)?;
-        }
         Ok(())
     }
 
@@ -1947,49 +1942,71 @@ impl CodexWorkerSession {
             return Ok(None);
         }
         match phase {
-            AbortCleanupPhase::Initial => {
-                cleanup.initial_accepted = true;
-                cleanup.initial_response_deadline = None;
-            }
-            AbortCleanupPhase::AfterCompletion => {
-                cleanup.after_completion_accepted = true;
-                cleanup.after_completion_response_deadline = None;
-            }
+            AbortCleanupPhase::Initial => cleanup.initial_accepted = true,
+            AbortCleanupPhase::AfterCompletion => cleanup.after_completion_accepted = true,
         }
         Ok(self.release_abort_cleanup_if_ready())
     }
 
-    fn abort_cleanup_timeout(&mut self) -> Option<WorkerEvent> {
-        let now = std::time::Instant::now();
-        let cleanup = self.abort_cleanup.as_ref()?;
-        let phase = if cleanup
-            .initial_response_deadline
-            .is_some_and(|deadline| now >= deadline)
-        {
-            AbortCleanupPhase::Initial
-        } else if cleanup
-            .after_completion_response_deadline
-            .is_some_and(|deadline| now >= deadline)
-        {
-            AbortCleanupPhase::AfterCompletion
-        } else {
+    fn poll_abort_timeout(&mut self) -> Option<WorkerEvent> {
+        if self.abort_cleanup.is_none() && !self.abort_starting_turn {
+            self.abort_deadline = None;
             return None;
+        }
+        if std::time::Instant::now() < self.abort_deadline? {
+            return None;
+        }
+        let waiting_for = if self.abort_starting_turn {
+            "turn admission"
+        } else if self
+            .abort_cleanup
+            .as_ref()
+            .is_some_and(|cleanup| !cleanup.target_completed)
+        {
+            "turn completion"
+        } else {
+            "terminal cleanup or cancelled handoff resolution"
         };
-        let target_turn = cleanup.target_turn.clone();
-        self.abort_cleanup = None;
-        Some(WorkerEvent::Failed(format!(
-            "Codex Abort cleanup for turn {target_turn} received no {} acknowledgement within {} seconds",
-            phase.description(),
-            self.abort_cleanup_response_timeout.as_secs_f64()
+        Some(self.fail_abort(format!(
+            "Codex Abort did not finish within {} seconds (waiting for {waiting_for})",
+            self.abort_timeout.as_secs_f64()
         )))
     }
 
-    fn schedule_abort_cleanup_wake(&self, deadline: std::time::Instant) -> Result<(), String> {
+    fn arm_abort_deadline(&mut self) -> Result<(), String> {
+        if self.abort_deadline.is_none() {
+            let deadline = std::time::Instant::now() + self.abort_timeout;
+            self.schedule_abort_wake(deadline)?;
+            self.abort_deadline = Some(deadline);
+        }
+        Ok(())
+    }
+
+    fn fail_abort(&mut self, error: String) -> WorkerEvent {
+        // Never unlock this transport after a timeout: late replies could still
+        // start work. Close it and use the normal failure/resume path instead.
+        let error = match self.close() {
+            Ok(()) => format!(
+                "{error}. The Codex connection was closed; send again to resume this session."
+            ),
+            Err(close_error) => {
+                format!("{error}. Closing the Codex connection failed: {close_error}")
+            }
+        };
+        self.abort_failure = Some(error.clone());
+        self.abort_deadline = None;
+        self.abort_cleanup = None;
+        self.abort_starting_turn = false;
+        self.events.clear();
+        WorkerEvent::Failed(error)
+    }
+
+    fn schedule_abort_wake(&self, deadline: std::time::Instant) -> Result<(), String> {
         let Some(wake) = self.wake.clone() else {
             return Ok(());
         };
         thread::Builder::new()
-            .name("codex-abort-cleanup-deadline".into())
+            .name("codex-abort-deadline".into())
             .spawn(move || {
                 while std::time::Instant::now() < deadline {
                     thread::park_timeout(
@@ -1999,7 +2016,7 @@ impl CodexWorkerSession {
                 wake.unpark();
             })
             .map(|_| ())
-            .map_err(|error| format!("schedule Codex Abort cleanup deadline: {error}"))
+            .map_err(|error| format!("schedule Codex Abort deadline: {error}"))
     }
 
     fn release_abort_cleanup_if_ready(&mut self) -> Option<WorkerEvent> {
@@ -2013,6 +2030,7 @@ impl CodexWorkerSession {
             return None;
         }
         let mut cleanup = self.abort_cleanup.take()?;
+        self.abort_deadline = None;
         cleanup.completion.take()
     }
 

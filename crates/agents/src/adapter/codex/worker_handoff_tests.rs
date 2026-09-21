@@ -86,6 +86,62 @@ fn reject(session: &mut CodexWorkerSession, batch: &Value) {
 }
 
 #[test]
+fn whole_abort_deadline_survives_late_turn_and_missing_handoff_delivery() {
+    let (mut session, mut sent, batch) = claimed_batch(false);
+    // Abort after sending the replacement turn but before it starts or delivers.
+    session.abort().expect("abort pending handoff");
+    let deadline = session.abort_deadline.expect("whole abort deadline");
+    reply(
+        &mut session,
+        &batch,
+        json!({"turn":{"id":"replacement","status":"inProgress"}}),
+    );
+    assert_eq!(
+        session.abort_deadline,
+        Some(deadline),
+        "late turn must not reset deadline"
+    );
+    let interrupt = request(&mut sent);
+    assert_eq!(interrupt["method"], "turn/interrupt");
+    let initial = request(&mut sent);
+    reply(&mut session, &initial, json!({}));
+    session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+        method: "turn/completed".into(),
+        params: json!({"threadId":"thread-1","turn":{"id":"replacement","status":"interrupted"}}),
+    }));
+    assert!(session.poll().is_none());
+    let after_completion = request(&mut sent);
+    reply(&mut session, &after_completion, json!({}));
+    let cleanup = session
+        .abort_cleanup
+        .as_ref()
+        .expect("waiting for handoff delivery");
+    assert!(
+        cleanup.initial_accepted && cleanup.target_completed && cleanup.after_completion_accepted
+    );
+    assert_eq!(session.abort_deadline, Some(deadline));
+    session
+        .abort()
+        .expect("repeat abort with cancelled handoff");
+    assert_eq!(session.abort_deadline, Some(deadline));
+    session.abort_deadline = Some(std::time::Instant::now());
+    assert!(
+        matches!(session.poll(), Some(WorkerEvent::Failed(error)) if error.contains("cancelled handoff resolution"))
+    );
+    assert!(session.child.try_wait().expect("child status").is_some());
+    assert!(
+        session.poll().is_none(),
+        "must not falsely settle or deliver the prompt"
+    );
+    assert!(
+        session
+            .send("new work".into(), WorkerSendMode::Prompt)
+            .is_err(),
+        "failed transport cannot be reused"
+    );
+}
+
+#[test]
 fn rejected_claimed_handoff_retries_exact_input_only_on_explicit_apply() {
     for active_turn in [false, true] {
         let (mut session, mut sent, batch) = claimed_batch(active_turn);
