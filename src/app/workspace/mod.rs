@@ -16,6 +16,7 @@ pub(in crate::app) mod runtime_picker;
 pub(in crate::app) mod send_to_chat;
 mod surfaces;
 mod terminal;
+pub(in crate::app) use terminal::Terminal;
 pub(in crate::app) mod worker_tasks;
 
 pub(crate) use surfaces::{CycleWorkspaceBackward, CycleWorkspaceForward};

@@ -51,7 +51,7 @@ use gpui::{
     RenderImage, Subscription, SystemNotification, Task, Window, actions,
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
-use gpui_libghostty::Terminal;
+use workspace::Terminal;
 use workspace::neovim::NvimEditor;
 
 use crate::{

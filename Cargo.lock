@@ -2749,18 +2749,16 @@ dependencies = [
 
 [[package]]
 name = "gpui-libghostty"
-version = "0.2.5"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09fe26b452d598896996576fb4613e1c73a047a78d0122efe927cad4fd9629de"
+checksum = "6f1f5f34ecf7b31b875ca447afa6f44f408499549ec657a47c1f2c105aab2809"
 dependencies = [
  "async-channel",
- "gpui",
  "image",
  "khronos-egl",
  "libc",
  "libloading",
  "raw-window-handle",
- "smallvec",
  "tempfile",
  "wayland-backend",
  "wayland-client",

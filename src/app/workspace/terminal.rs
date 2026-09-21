@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 
 use gpui::{Context, Window};
-use gpui_libghostty::{Terminal, TerminalConfiguration, TerminalOptions};
+use gpui_libghostty::{TerminalConfiguration, TerminalOptions};
 
 use super::{AppSurface, FarcasterApp};
+
+gpui_libghostty::bind_gpui!(gpui);
 
 impl FarcasterApp {
     pub(in crate::app) fn show_terminal_surface(

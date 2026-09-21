@@ -10,9 +10,10 @@ use std::{
 };
 
 use gpui::{App, Context, Entity, IntoElement, Render, RenderImage, Task, Window};
-use gpui_libghostty::{Terminal, TerminalOptions};
+use gpui_libghostty::TerminalOptions;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
+use super::Terminal;
 use crate::app::infrastructure::neovim_launch;
 
 static NEXT_TAB: AtomicU64 = AtomicU64::new(1);
