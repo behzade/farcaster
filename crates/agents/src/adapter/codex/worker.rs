@@ -224,7 +224,7 @@ pub fn spawn_main(
     );
     configure_codex_app_server(&mut prepared, command.access_mode);
     if farcaster_mcp::enabled() {
-        configure_farcaster_mcp(&mut prepared, caller_identity.token(), command.access_mode);
+        configure_farcaster_mcp(&mut prepared, caller_identity.token());
     }
     let mut child = prepared
         .stdin(Stdio::piped())
@@ -2501,11 +2501,7 @@ fn configure_codex_app_server(command: &mut std::process::Command, mode: crate::
     command.args(["app-server", "--stdio", "--enable", "mcp_2026_07_28"]);
 }
 
-fn configure_farcaster_mcp(
-    command: &mut std::process::Command,
-    caller_token: &str,
-    access_mode: crate::HarnessAccessMode,
-) {
+fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &str) {
     let url = serde_json::to_string(farcaster_mcp::URL).expect("static MCP URL encodes");
     let header =
         serde_json::to_string(farcaster_mcp::CALLER_HEADER).expect("static MCP header encodes");
@@ -2518,12 +2514,9 @@ fn configure_farcaster_mcp(
             "mcp_servers.farcaster.http_headers={{{header}={token}}}"
         ))
         .arg("-c")
-        .arg("mcp_servers.farcaster.required=true");
-    if access_mode == crate::HarnessAccessMode::Full {
-        command
-            .arg("-c")
-            .arg("mcp_servers.farcaster.default_tools_approval_mode=\"approve\"");
-    }
+        .arg("mcp_servers.farcaster.required=true")
+        .arg("-c")
+        .arg("mcp_servers.farcaster.default_tools_approval_mode=\"approve\"");
 }
 
 const STEER_CLIENT_ID_PREFIX: &str = "farcaster-steer-";

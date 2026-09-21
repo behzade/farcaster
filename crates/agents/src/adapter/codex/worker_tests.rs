@@ -1074,7 +1074,7 @@ fn codex_usage_separates_cached_tokens_from_reported_input() {
 fn native_startup_configures_required_farcaster_mcp() {
     let mut command = std::process::Command::new("codex");
     configure_codex_app_server(&mut command, crate::HarnessAccessMode::Full);
-    configure_farcaster_mcp(&mut command, "caller-1", crate::HarnessAccessMode::Full);
+    configure_farcaster_mcp(&mut command, "caller-1");
     let arguments = command
         .get_args()
         .map(|argument| argument.to_string_lossy().into_owned())
@@ -1101,16 +1101,6 @@ fn native_startup_configures_required_farcaster_mcp() {
         arguments
             .contains(&"mcp_servers.farcaster.default_tools_approval_mode=\"approve\"".to_owned())
     );
-    for access_mode in [
-        crate::HarnessAccessMode::Sandboxed,
-        crate::HarnessAccessMode::Auto,
-    ] {
-        let mut command = std::process::Command::new("codex");
-        configure_farcaster_mcp(&mut command, "caller-1", access_mode);
-        assert!(!command.get_args().any(|argument| {
-            argument == "mcp_servers.farcaster.default_tools_approval_mode=\"approve\""
-        }));
-    }
 }
 
 #[test]
