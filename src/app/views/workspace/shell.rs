@@ -7,7 +7,9 @@ use crate::app::{
     FarcasterApp,
     ui::{
         assets::AppIcon,
-        layout::{LayoutMode, shows_run_sheet_button, shows_session_sheet_button},
+        layout::{
+            LayoutMode, shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
+        },
         primitives::{AppIconSize, ButtonTone, app_icon, icon_button, icon_control, number_slot},
         theme::theme,
     },
@@ -21,6 +23,7 @@ impl FarcasterApp {
     ) -> impl IntoElement {
         let sessions = entity.clone();
         let work = entity.clone();
+        let panel_toggle = entity.clone();
         let notice_count = self.worker_notices.snapshot(&self.project.path).len();
         div()
             .flex_none()
@@ -57,6 +60,21 @@ impl FarcasterApp {
                     ButtonTone::Quiet,
                     move |window, cx| {
                         let _ = entity.update(cx, |this, cx| this.open_run_sheet(window, cx));
+                    },
+                ))
+            })
+            .when(shows_right_inline(mode), |controls| {
+                controls.child(icon_button(
+                    "toggle-run-panel",
+                    AppIcon::GitBranch,
+                    if self.workspace.run_panel_hidden {
+                        "Show source control"
+                    } else {
+                        "Hide source control"
+                    },
+                    ButtonTone::Quiet,
+                    move |_, cx| {
+                        let _ = panel_toggle.update(cx, |this, cx| this.toggle_run_panel(cx));
                     },
                 ))
             })

@@ -126,6 +126,16 @@ impl FarcasterApp {
             .into_any_element()
     }
 
+    pub(in crate::app) fn toggle_session_rail(&mut self, cx: &mut gpui::Context<Self>) {
+        self.workspace.session_rail_hidden = !self.workspace.session_rail_hidden;
+        cx.notify();
+    }
+
+    pub(in crate::app) fn toggle_run_panel(&mut self, cx: &mut gpui::Context<Self>) {
+        self.workspace.run_panel_hidden = !self.workspace.run_panel_hidden;
+        cx.notify();
+    }
+
     pub(super) fn render_inline_shell(
         &self,
         entity: WeakEntity<Self>,
@@ -137,62 +147,68 @@ impl FarcasterApp {
         div()
             .size_full()
             .flex()
-            .when(shows_left_inline(mode), |shell| {
-                let resize = entity.clone();
-                shell.child(
-                    div()
-                        .relative()
-                        .w(session_rail_width)
-                        .min_w(theme().layout.session_rail_min)
-                        .max_w(theme().layout.session_rail_max)
-                        .flex_none()
-                        .border_r(theme().border)
-                        .border_color(theme().colors.border)
-                        .child(
-                            self.views
-                                .session_rail
-                                .clone()
-                                .cached(gpui::StyleRefinement::default().size_full()),
-                        )
-                        .child(resize_handle("session-rail-resize", true, move |x, cx| {
-                            let _ = resize.update(cx, |this, cx| {
-                                this.begin_session_rail_resize(x, cx);
-                            });
-                        })),
-                )
-            })
-            .child(main)
-            .when(shows_right_inline(mode), |shell| {
-                let resize = entity;
-                shell.child(
-                    div()
-                        .relative()
-                        .w(run_panel_width)
-                        .min_w(theme().layout.run_panel_min)
-                        .max_w(theme().layout.run_panel_max)
-                        .flex_none()
-                        .border_l(theme().border)
-                        .border_color(theme().colors.border)
-                        .child(
-                            if self.views.workgraph_inspector_issue.is_some()
-                                && self.visible_review().is_none()
-                            {
-                                self.views.workgraph_detail.clone().into_any_element()
-                            } else {
+            .when(
+                shows_left_inline(mode) && !self.workspace.session_rail_hidden,
+                |shell| {
+                    let resize = entity.clone();
+                    shell.child(
+                        div()
+                            .relative()
+                            .w(session_rail_width)
+                            .min_w(theme().layout.session_rail_min)
+                            .max_w(theme().layout.session_rail_max)
+                            .flex_none()
+                            .border_r(theme().border)
+                            .border_color(theme().colors.border)
+                            .child(
                                 self.views
-                                    .run_panel
+                                    .session_rail
                                     .clone()
-                                    .cached(gpui::StyleRefinement::default().size_full())
-                                    .into_any_element()
-                            },
-                        )
-                        .child(resize_handle("run-panel-resize", false, move |x, cx| {
-                            let _ = resize.update(cx, |this, cx| {
-                                this.begin_run_panel_resize(x, cx);
-                            });
-                        })),
-                )
-            })
+                                    .cached(gpui::StyleRefinement::default().size_full()),
+                            )
+                            .child(resize_handle("session-rail-resize", true, move |x, cx| {
+                                let _ = resize.update(cx, |this, cx| {
+                                    this.begin_session_rail_resize(x, cx);
+                                });
+                            })),
+                    )
+                },
+            )
+            .child(main)
+            .when(
+                shows_right_inline(mode) && !self.workspace.run_panel_hidden,
+                |shell| {
+                    let resize = entity;
+                    shell.child(
+                        div()
+                            .relative()
+                            .w(run_panel_width)
+                            .min_w(theme().layout.run_panel_min)
+                            .max_w(theme().layout.run_panel_max)
+                            .flex_none()
+                            .border_l(theme().border)
+                            .border_color(theme().colors.border)
+                            .child(
+                                if self.views.workgraph_inspector_issue.is_some()
+                                    && self.visible_review().is_none()
+                                {
+                                    self.views.workgraph_detail.clone().into_any_element()
+                                } else {
+                                    self.views
+                                        .run_panel
+                                        .clone()
+                                        .cached(gpui::StyleRefinement::default().size_full())
+                                        .into_any_element()
+                                },
+                            )
+                            .child(resize_handle("run-panel-resize", false, move |x, cx| {
+                                let _ = resize.update(cx, |this, cx| {
+                                    this.begin_run_panel_resize(x, cx);
+                                });
+                            })),
+                    )
+                },
+            )
             .into_any_element()
     }
 }
