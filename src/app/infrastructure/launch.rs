@@ -177,7 +177,9 @@ pub(crate) fn run(
                 display_id,
                 titlebar: Some(TitlebarOptions {
                     title: Some("Farcaster".into()),
-                    ..TitlebarOptions::default()
+                    appears_transparent: cfg!(target_os = "macos"),
+                    traffic_light_position: cfg!(target_os = "macos")
+                        .then(|| point(px(12.0), px(12.0))),
                 }),
                 app_id: Some("io.github.behzade.farcaster".into()),
                 ..WindowOptions::default()

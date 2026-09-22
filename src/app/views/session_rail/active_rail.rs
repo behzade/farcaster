@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 
 use gpui::{
-    Anchor, AnyElement, InteractiveElement as _, IntoElement, ListState, ParentElement as _,
-    Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _,
+    Anchor, AnyElement, InteractiveElement as _, IntoElement, ListState, MouseButton,
+    ParentElement as _, Styled as _, WeakEntity, div, list, prelude::FluentBuilder as _,
 };
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::scroll::Scrollbar;
@@ -22,6 +22,7 @@ use crate::{
     app::ProjectPickerIntent,
     app::session::status::{resolved_session_status, roots_waiting_for_active_descendants},
     app::ui::assets::AppIcon,
+    app::ui::layout::TRAFFIC_LIGHT_INSET,
     app::ui::primitives::{
         AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, SearchField, app_icon,
         feedback, icon_button,
@@ -98,6 +99,7 @@ impl FarcasterApp {
         session_list_rows: &RefCell<Vec<String>>,
     ) -> impl IntoElement {
         let new_entity = entity.clone();
+        let rail_toggle_entity = entity.clone();
         let actions_entity = entity.clone();
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
@@ -294,15 +296,37 @@ impl FarcasterApp {
                     .pb(theme().size(10.0))
                     .child(
                         div()
-                            .h(theme().size(47.0))
+                            .h(theme().size(38.0))
                             .flex()
                             .items_center()
                             .justify_end()
+                            .when(cfg!(target_os = "macos"), |row| {
+                                row.pl(theme().size(TRAFFIC_LIGHT_INSET))
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .h_full()
+                                    .on_mouse_down(MouseButton::Left, |_, window, _| {
+                                        window.start_window_move()
+                                    }),
+                            )
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .gap(theme().space.xs)
+                                    .child(icon_button(
+                                        "hide-session-rail",
+                                        AppIcon::SidebarLeft,
+                                        "Hide sessions",
+                                        ButtonTone::Quiet,
+                                        move |_, cx| {
+                                            let _ = rail_toggle_entity.update(cx, |this, cx| {
+                                                this.toggle_session_rail(cx)
+                                            });
+                                        },
+                                    ))
                                     .child(icon_button(
                                         "session-actions",
                                         AppIcon::List,

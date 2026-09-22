@@ -44,6 +44,8 @@ pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     }
 }
 
+pub(crate) const TRAFFIC_LIGHT_INSET: f32 = 88.0;
+
 pub(crate) const fn shows_left_inline(mode: LayoutMode) -> bool {
     !matches!(mode, LayoutMode::Narrow)
 }
