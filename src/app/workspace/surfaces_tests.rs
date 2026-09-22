@@ -1,5 +1,52 @@
 use super::*;
 
+#[gpui::test]
+fn hovering_the_workspace_bar_obscures_the_native_surface(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::hovering_the_workspace_bar_obscures_the_native_surface"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(!app.native_surface_obscured(window, cx));
+                    app.set_workspace_bar_hovered(true, cx);
+                    assert!(app.native_surface_obscured(window, cx));
+                    app.set_workspace_bar_hovered(false, cx);
+                    assert!(!app.native_surface_obscured(window, cx));
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn focusing_a_native_surface_waits_until_the_bar_stops_obscuring_it(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::focusing_a_native_surface_waits_until_the_bar_stops_obscuring_it"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.set_surface(AppSurface::Terminal, cx);
+                    app.set_workspace_bar_hovered(true, cx);
+                    app.request_active_surface_focus(None);
+                    app.apply_post_render_focus(window, cx);
+                    assert!(app.overlays.post_render_focus.is_some());
+                    app.set_workspace_bar_hovered(false, cx);
+                    app.apply_post_render_focus(window, cx);
+                    assert!(app.overlays.post_render_focus.is_none());
+                });
+            });
+        },
+    );
+}
+
 #[test]
 fn arriving_requests_only_focus_when_replacing_the_composer_slot() {
     assert!(arriving_request_takes_focus(true));

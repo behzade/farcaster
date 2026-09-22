@@ -23,6 +23,7 @@ enum NativeSurfaceAction {
     None,
     Cover,
     Restore,
+    Hold,
 }
 
 fn native_surface_action(
@@ -32,6 +33,7 @@ fn native_surface_action(
 ) -> NativeSurfaceAction {
     match (covered, obscured, native_surface) {
         (false, true, true) => NativeSurfaceAction::Cover,
+        (true, true, _) => NativeSurfaceAction::Hold,
         (true, false, _) => NativeSurfaceAction::Restore,
         _ => NativeSurfaceAction::None,
     }
@@ -145,6 +147,7 @@ impl FarcasterApp {
             NativeSurfaceAction::Restore => {
                 self.restore_active_native_workspace_surface(window, cx);
             }
+            NativeSurfaceAction::Hold => self.hide_native_workspace_surfaces(cx),
             NativeSurfaceAction::None => {}
         }
         if let Some((generation, title)) = self.extensions.pending_title.take() {

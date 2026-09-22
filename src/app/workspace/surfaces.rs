@@ -263,7 +263,14 @@ impl FarcasterApp {
                 .as_ref()
                 .map(|terminal| terminal.update(cx, |terminal, _| terminal.frame_count()))
                 .unwrap_or(0),
-            AppSurface::Editor | AppSurface::Chat | AppSurface::Work => 0,
+            AppSurface::Editor => self
+                .workspace
+                .editor
+                .view
+                .as_ref()
+                .map(|editor| editor.update(cx, |editor, cx| editor.frame_count(cx)))
+                .unwrap_or(0),
+            AppSurface::Chat | AppSurface::Work => 0,
         }
     }
 
@@ -418,6 +425,7 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.close_worker_picker_for_surface_switch(window, cx);
+        self.workspace.bar_hovered = false;
         self.set_surface(surface, cx);
         if self.native_workspace_covered_by_overlay() {
             self.cover_native_workspace_surface(cx);
@@ -448,6 +456,15 @@ impl FarcasterApp {
             }
             PostRenderFocus::ActiveSurface(chat) => {
                 if self.native_workspace_covered_by_overlay() {
+                    return;
+                }
+                if self.native_surface_obscured(window, cx)
+                    && matches!(
+                        self.workspace.surface,
+                        AppSurface::Editor | AppSurface::Terminal
+                    )
+                {
+                    self.overlays.post_render_focus = Some(PostRenderFocus::ActiveSurface(chat));
                     return;
                 }
                 match self.workspace.surface {
@@ -510,9 +527,22 @@ impl FarcasterApp {
 
     pub(in crate::app) fn native_surface_obscured(&self, window: &Window, cx: &gpui::App) -> bool {
         self.native_workspace_covered_by_overlay()
+            || self.workspace.bar_hovered
             || gpui_base::GlobalState::is_in_deferred_context(cx)
             || gpui_component::Root::tooltip_overlay(window, cx)
                 .is_some_and(|overlay| overlay.read(cx).is_visible())
+    }
+
+    pub(in crate::app) fn set_workspace_bar_hovered(
+        &mut self,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.bar_hovered == hovered {
+            return;
+        }
+        self.workspace.bar_hovered = hovered;
+        cx.notify();
     }
 
     pub(in crate::app) fn watch_tooltip_overlay(
@@ -953,6 +983,63 @@ impl FarcasterApp {
             Err(error) => {
                 self.settings.network_proxy_error = Some(error);
             }
+        }
+        cx.notify();
+    }
+
+    pub(in crate::app) fn save_settings_text_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = self
+            .settings
+            .text_editor_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        let command = (!value.is_empty()).then_some(value);
+        self.set_settings_text_editor(command, window, cx);
+    }
+
+    pub(in crate::app) fn set_settings_text_editor(
+        &mut self,
+        command: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = match command {
+            Some(command) => match crate::editors::EditorCommand::parse(&command) {
+                Ok(command) => Some(command.command_line()),
+                Err(error) => {
+                    self.settings.text_editor_error = Some(error);
+                    cx.notify();
+                    return;
+                }
+            },
+            None => None,
+        };
+        let result =
+            crate::app::infrastructure::persistence::StateStore::open().and_then(|store| {
+                if store.load_text_editor()? == command {
+                    return Ok(false);
+                }
+                store.save_text_editor(command.as_deref())?;
+                Ok(true)
+            });
+        match result {
+            Ok(changed) => {
+                self.settings.text_editor_error = None;
+                self.settings.text_editor = command.clone();
+                self.settings.text_editor_input.update(cx, |input, cx| {
+                    input.set_value(command.clone().unwrap_or_default(), window, cx);
+                });
+                if changed {
+                    self.reset_editor_sessions(cx);
+                }
+            }
+            Err(error) => self.settings.text_editor_error = Some(error),
         }
         cx.notify();
     }
