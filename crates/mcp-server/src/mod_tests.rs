@@ -67,7 +67,9 @@ fn tool_schemas_follow_the_caller_role() {
 
 #[test]
 fn worker_task_schema_tracks_customization_and_empty_definitions() {
-    let mut tasks = crate::agents::WorkerProfiles::default();
+    let mut tasks: crate::agents::WorkerProfiles =
+        serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
+            .expect("configured profiles");
     tasks.profiles[0].name = "audit".into();
     tasks.profiles.truncate(1);
     let tools = tools_for_role(false, &tasks);
@@ -77,7 +79,7 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
         .expect("test operation should succeed");
     assert_eq!(
         send.input_schema["properties"]["profile"]["enum"],
-        serde_json::json!(["audit"])
+        serde_json::json!(["inherit", "audit"])
     );
     assert!(
         send.input_schema["properties"]["profile"]["description"]
@@ -106,8 +108,8 @@ fn worker_task_schema_tracks_customization_and_empty_definitions() {
             .iter()
             .find(|tool| tool.name == "worker_send")
             .expect("test operation should succeed")
-            .input_schema["properties"]["profile"],
-        serde_json::json!(false)
+            .input_schema["properties"]["profile"]["enum"],
+        serde_json::json!(["inherit"])
     );
 }
 

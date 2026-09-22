@@ -1,5 +1,4 @@
 use super::{WorkerExecution, WorkerProfile, WorkerProfiles};
-use crate::Backend;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -19,10 +18,6 @@ struct LegacyTask {
 
 pub(super) fn migrate(value: serde_json::Value) -> Result<WorkerProfiles, String> {
     let legacy: LegacyTasks = serde_json::from_value(value).map_err(|error| error.to_string())?;
-    // An empty list deliberately disables worker creation.
-    if legacy.tasks.is_empty() {
-        return Ok(WorkerProfiles { profiles: vec![] });
-    }
     let mut result = WorkerProfiles::default();
     let mut names = std::collections::BTreeSet::new();
     for task in legacy.tasks {
@@ -34,21 +29,16 @@ pub(super) fn migrate(value: serde_json::Value) -> Result<WorkerProfiles, String
                 task.name
             ));
         }
-        for (level, execution, old_model, old_effort) in [
-            ("specified", task.specified, "gpt-5.6-luna", "high"),
-            ("guided", task.guided, "gpt-5.6-sol", "medium"),
-            ("independent", task.independent, "gpt-6-astra", "medium"),
+        for (level, execution) in [
+            ("specified", task.specified),
+            ("guided", task.guided),
+            ("independent", task.independent),
         ] {
             execution.validate()?;
-            let old_default = execution.harness == Backend::Pi
-                && execution.provider == "openai-codex"
-                && execution.model == old_model
-                && execution.effort.as_deref() == Some(old_effort);
-            if old_default
-                || result
-                    .profiles
-                    .iter()
-                    .any(|profile| profile.models.contains(&execution))
+            if result
+                .profiles
+                .iter()
+                .any(|profile| profile.models.contains(&execution))
             {
                 continue;
             }

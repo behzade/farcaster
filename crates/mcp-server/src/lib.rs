@@ -306,10 +306,10 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
                     .map(|profile| format!("{}: {}", profile.name, profile.description))
                     .collect::<Vec<_>>()
                     .join("\n");
-                properties.insert("profile".into(), if tasks.profiles.is_empty() { serde_json::json!(false) } else { serde_json::json!({
-                    "type": "string", "enum": tasks.profiles.iter().map(|profile| profile.name.as_str()).collect::<Vec<_>>(),
-                    "description": format!("Worker profile; required on creation, omitted on reuse. The first available model in the profile's ordered list is selected. That model and effort stay fixed for the child's lifetime.\n{descriptions}")
-                }) });
+                properties.insert("profile".into(), serde_json::json!({
+                    "type": "string", "enum": std::iter::once("inherit").chain(tasks.profiles.iter().map(|profile| profile.name.as_str())).collect::<Vec<_>>(),
+                    "description": format!("Worker profile. Omit on creation or use inherit (Same as caller) to copy the caller's harness, provider, model, and effort. Custom profiles select the first available model in their ordered list. Selection stays fixed for the child's lifetime; omit on reuse to keep it.\n{descriptions}")
+                }));
             }
             schema.insert("required".into(), serde_json::json!(["to", "message"]));
             tool.description = Some(Cow::Borrowed(
@@ -324,7 +324,7 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
 #[tool_handler(
     name = "farcaster",
     version = "0.1.0",
-    instructions = "You are running inside Farcaster, a GUI app for multiple agent harnesses. Use Farcaster MCP by default to keep substantial work in a persistent task graph the user can inspect, coordinate with concurrent agents through workspace notices, and delegate independent work to predefined subagent profiles across harnesses for cost and visibility."
+    instructions = "You are running inside Farcaster, a GUI app for multiple agent harnesses. Use Farcaster MCP by default to keep substantial work in a persistent task graph the user can inspect, coordinate with concurrent agents through workspace notices, and delegate independent work to workers using inherit (Same as caller) or configured profiles across harnesses for cost and visibility."
 )]
 impl ServerHandler for FarcasterMcp {
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {

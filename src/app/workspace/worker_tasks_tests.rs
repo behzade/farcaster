@@ -1,9 +1,36 @@
 use super::*;
 use crate::agents::Backend;
 
+fn test_profile(name: &str) -> WorkerProfile {
+    WorkerProfile {
+        name: name.into(),
+        description: "Test profile.".into(),
+        models: vec![
+            WorkerExecution {
+                harness: Backend::Pi,
+                provider: "provider".into(),
+                model: "model".into(),
+                effort: None,
+            },
+            WorkerExecution {
+                harness: Backend::Codex,
+                provider: "other-provider".into(),
+                model: "other-model".into(),
+                effort: Some("high".into()),
+            },
+        ],
+    }
+}
+
 #[test]
 fn model_list_edits_preserve_order_and_keep_at_least_one_choice() {
-    let mut models = WorkerProfile::new("fast".into()).models;
+    let mut models = vec![
+        test_profile("first").models[0].clone(),
+        WorkerExecution {
+            model: "second".into(),
+            ..test_profile("second").models[0].clone()
+        },
+    ];
     let original = models.clone();
     assert_eq!(
         edit_models(&mut models, 1, WorkerModelEdit::MoveUp)
@@ -31,10 +58,10 @@ fn model_list_edits_preserve_order_and_keep_at_least_one_choice() {
 
 #[test]
 fn saving_one_route_preserves_other_routes_with_incomplete_edits() {
-    let profile = WorkerProfile::new("audit".into());
+    let profile = test_profile("audit");
     let mut editor = WorkerProfileEditor {
-        profiles: vec![profile.clone(), WorkerProfile::new("other".into())],
-        saved: vec![profile.clone(), WorkerProfile::new("other".into())],
+        profiles: vec![profile.clone(), test_profile("other")],
+        saved: vec![profile.clone(), test_profile("other")],
         ..Default::default()
     };
     editor.profiles[1].models[0].provider.clear();
@@ -62,7 +89,7 @@ fn saving_one_route_preserves_other_routes_with_incomplete_edits() {
 
 #[test]
 fn worker_route_changes_clear_only_downstream_choices() {
-    let mut route = WorkerProfile::new("read".into()).models[0].clone();
+    let mut route = test_profile("read").models[0].clone();
     let original = route.clone();
     apply_choice(
         &mut route,
@@ -98,11 +125,16 @@ fn worker_route_changes_clear_only_downstream_choices() {
 fn worker_task_edits_validate_before_mutating() {
     let mut editor = WorkerProfileEditor::default();
     assert!(editor.save_name(None, "bad name").is_err());
+    assert!(editor.save_name(None, "InHeRiT").is_err());
     assert!(editor.profiles.is_empty());
     editor
         .save_name(None, "audit")
         .expect("test operation should succeed");
+    assert!(editor.profiles[0].description.is_empty());
+    assert!(editor.profiles[0].models.is_empty());
     assert!(editor.save_name(None, "AUDIT").is_err());
+    assert!(editor.save_name(None, "other").is_err());
+    assert_eq!(editor.profiles.len(), 1);
     editor
         .save_name(Some(0), "review")
         .expect("test operation should succeed");
@@ -112,6 +144,11 @@ fn worker_task_edits_validate_before_mutating() {
         profile: 0,
         model: 0,
     };
+    assert_eq!(
+        edit_models(&mut editor.profiles[0].models, 0, WorkerModelEdit::Add)
+            .expect("an empty draft accepts its first model"),
+        0
+    );
     let original = editor.profiles[0].models[0].clone();
     assert!(
         editor
@@ -160,7 +197,7 @@ fn worker_catalogs_preserve_effort_order_and_project_scope() {
 
 #[test]
 fn worker_efforts_follow_the_selected_model_not_the_harness_alone() {
-    let route = WorkerProfile::new("read".into()).models[0].clone();
+    let route = test_profile("read").models[0].clone();
     let mut catalog = ConfigurationCatalog {
         models: vec![crate::protocol::Model {
             id: route.model.clone(),
@@ -185,4 +222,43 @@ fn worker_efforts_follow_the_selected_model_not_the_harness_alone() {
     );
     catalog.models[0].reasoning = false;
     assert!(model_efforts(&catalog, catalog.models.first()).is_empty());
+}
+
+#[test]
+fn first_complete_route_saves_new_profile_without_changing_existing_profiles() {
+    let existing = test_profile("existing");
+    let mut draft = WorkerProfile::new("custom".into());
+    draft.description = "Custom worker".into();
+    draft.models.push(test_profile("custom").models.remove(0));
+    let mut editor = WorkerProfileEditor {
+        profiles: vec![existing.clone(), draft.clone()],
+        saved: vec![existing.clone()],
+        ..Default::default()
+    };
+    let target = WorkerRouteTarget {
+        profile: 1,
+        model: 0,
+    };
+    assert_eq!(
+        editor.route_settings(target).expect("complete draft"),
+        vec![existing, draft]
+    );
+    editor.profiles[1].models[0].model.clear();
+    assert!(editor.route_settings(target).is_err());
+    assert_eq!(editor.saved.len(), 1);
+}
+
+#[test]
+fn stale_model_targets_return_errors_without_mutating_the_list() {
+    let original = test_profile("custom").models;
+    for edit in [
+        WorkerModelEdit::Add,
+        WorkerModelEdit::Remove,
+        WorkerModelEdit::MoveUp,
+        WorkerModelEdit::MoveDown,
+    ] {
+        let mut models = original.clone();
+        assert!(edit_models(&mut models, usize::MAX, edit).is_err());
+        assert_eq!(models, original);
+    }
 }

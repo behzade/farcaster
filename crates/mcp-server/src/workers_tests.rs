@@ -1,4 +1,9 @@
 use super::*;
+
+fn configured_profiles() -> crate::agents::WorkerProfiles {
+    serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
+        .expect("configured test profiles")
+}
 use crate::agents::Backend;
 use crate::agents::{CallerIdentity, CallerProfile};
 use crate::agents::{WorkerEvent, WorkerLaunch, WorkerSession, WorkerSessionFactory};
@@ -85,7 +90,7 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
             (model.harness == Backend::Codex).then_some(mode)
         })
     };
-    let mut tasks = crate::agents::WorkerProfiles::default();
+    let mut tasks = configured_profiles();
     // Cursor is preferred here, but only Codex is available to this pool.
     tasks.profiles[0].models.rotate_right(1);
     let params = |profile| SendParams {
@@ -247,7 +252,7 @@ fn worker_send_retry_reuses_a_pending_named_child_reservation() -> Result<(), St
     );
     parent.bind("pending-parent");
     let token = Some(parent.token().to_owned());
-    let profiles = crate::agents::WorkerProfiles::default();
+    let profiles = configured_profiles();
     let send = |message: &str, profile| {
         super::send(
             &pool,
@@ -444,7 +449,7 @@ fn restricted_parent_cannot_reuse_a_running_full_child_after_session_rebind() ->
             profile: None,
         },
         Some(restricted_parent.token().into()),
-        &crate::agents::WorkerProfiles::default(),
+        &configured_profiles(),
         |model, _, mode| (model.harness == Backend::Codex).then_some(mode),
     )
     .expect_err("restricted parent must not reuse a Full child");
@@ -492,7 +497,7 @@ fn restrictive_cross_backend_launch_errors_instead_of_using_auto() -> Result<(),
             profile: Some("oracle".into()),
         },
         Some(parent.token().into()),
-        &crate::agents::WorkerProfiles::default(),
+        &configured_profiles(),
         |model, _, mode| (model.harness == Backend::Pi).then_some(mode),
     )?;
     assert_eq!(result["pending"], true);
@@ -620,7 +625,7 @@ fn worker_send_resumes_a_named_child_after_idle_process_retirement() -> Result<(
     );
     parent.bind("/sessions/parent.jsonl");
     let token = Some(parent.token().to_owned());
-    let tasks = crate::agents::WorkerProfiles::default();
+    let tasks = configured_profiles();
 
     for index in 0..9 {
         let result = super::send(
@@ -734,7 +739,7 @@ fn wait_worker_idle(pool: &WorkerPool) -> Result<(), String> {
 
 #[test]
 fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
-    let profiles = crate::agents::WorkerProfiles::default();
+    let profiles = configured_profiles();
     let project = std::path::Path::new("/project");
     let backends = vec![Backend::Pi];
     let catalog = crate::storage::CachedConfigurationCatalog {
@@ -794,7 +799,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
 
 #[test]
 fn auto_parent_prefers_an_auto_candidate_within_the_profile() {
-    let mut profiles = crate::agents::WorkerProfiles::default();
+    let mut profiles = configured_profiles();
     profiles.profiles[0].models = vec![
         crate::agents::WorkerExecution {
             harness: Backend::OpenCode,
@@ -830,7 +835,7 @@ fn auto_parent_prefers_an_auto_candidate_within_the_profile() {
 
 #[test]
 fn sandboxed_pi_parent_prefers_an_auto_cursor_child() {
-    let mut profiles = crate::agents::WorkerProfiles::default();
+    let mut profiles = configured_profiles();
     profiles.profiles[0].models = vec![
         crate::agents::WorkerExecution {
             harness: Backend::OpenCode,
@@ -867,7 +872,7 @@ fn sandboxed_pi_parent_prefers_an_auto_cursor_child() {
 
 #[test]
 fn auto_parent_degrades_to_sandboxed_when_no_auto_candidate_exists() {
-    let mut profiles = crate::agents::WorkerProfiles::default();
+    let mut profiles = configured_profiles();
     profiles.profiles[0].models = vec![crate::agents::WorkerExecution {
         harness: Backend::OpenCode,
         provider: "openai".into(),
@@ -931,7 +936,7 @@ fn restricted_parent_never_routes_to_unsandboxed_pi() {
         "only a Full parent may route to an unsandboxed Pi child"
     );
 
-    let mut profiles = crate::agents::WorkerProfiles::default();
+    let mut profiles = configured_profiles();
     profiles.profiles[0].models = vec![pi];
     let profile_name = profiles.profiles[0].name.clone();
     assert!(
@@ -986,3 +991,6 @@ fn auto_parent_can_route_to_pi_when_its_sandbox_adapter_is_configured() {
         Some(crate::agents::HarnessAccessMode::Sandboxed)
     );
 }
+
+#[path = "workers_inherit_tests.rs"]
+mod inherit;

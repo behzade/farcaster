@@ -58,10 +58,17 @@ impl WorkerSession for ResumeSession {
 
 #[test]
 fn persisted_child_reuses_name_session_assignment_and_access_mode() -> Result<(), String> {
+    for profile in ["fast", "inherit"] {
+        assert_persisted_child_reuse(profile)?;
+    }
+    Ok(())
+}
+
+fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let assignment = crate::agents::WorkerAssignment {
-        profile: "fast".into(),
+        profile: profile.into(),
         execution: crate::agents::WorkerExecution {
             harness: Backend::Codex,
             provider: "openai".into(),
@@ -119,7 +126,8 @@ fn persisted_child_reuses_name_session_assignment_and_access_mode() -> Result<()
     )?;
 
     assert_eq!(result["created"], false);
-    assert_eq!(result["assignment"]["profile"], "fast");
+    assert_eq!(result["assignment"]["profile"], profile);
+    assert_eq!(result["assignment"]["execution"]["model"], "saved-model");
     let launch = resumed
         .recv_timeout(Duration::from_secs(1))
         .map_err(|_| "resumed worker did not launch")?;

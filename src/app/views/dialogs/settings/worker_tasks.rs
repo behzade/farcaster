@@ -39,7 +39,9 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                             div()
                                 .text_size(THEME.type_scale.body_small)
                                 .text_color(THEME.colors.muted)
-                                .child("Each profile uses the first available model in its list."),
+                                .child(
+                                    "Custom profiles use the first available model in their list.",
+                                ),
                         ),
                 )
                 .child(button(
@@ -67,12 +69,31 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
     let editor = &app.workspace.worker_profile_editor;
     let editing = editor.edit.is_some();
     let add = entity.clone();
+    let inherit = entity.clone();
     let mut rail = div()
         .flex()
         .flex_col()
         .gap(THEME.space.xs)
         .w(gpui::px(132.0))
-        .flex_none();
+        .flex_none()
+        .child(
+            button(
+                "worker-profile-inherit",
+                "Same as caller",
+                ButtonTone::Quiet,
+                !editing,
+                move |_, cx| {
+                    let _ = inherit.update(cx, |this, cx| {
+                        this.workspace.worker_profile_editor.inherit_selected = true;
+                        this.workspace.worker_profile_editor.error = None;
+                        cx.notify();
+                    });
+                },
+            )
+            .w_full()
+            .justify_start()
+            .toggled(editor.inherit_selected),
+        );
     for (index, profile) in editor.profiles.iter().enumerate() {
         let entity = entity.clone();
         rail = rail.child(
@@ -84,6 +105,7 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
                 move |_, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.workspace.worker_profile_editor.selected = index;
+                        this.workspace.worker_profile_editor.inherit_selected = false;
                         this.workspace.worker_profile_editor.selected_model = 0;
                         this.workspace.worker_profile_editor.error = None;
                         cx.notify();
@@ -92,7 +114,7 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
             )
             .w_full()
             .justify_start()
-            .toggled(index == editor.selected),
+            .toggled(!editor.inherit_selected && index == editor.selected),
         );
     }
     rail = rail.child(
@@ -100,7 +122,7 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
             "worker-profile-add",
             "+ Add profile",
             ButtonTone::Quiet,
-            !editing,
+            !editing && !editor.has_draft(),
             move |window, cx| {
                 let _ = add.update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
             },
@@ -123,6 +145,22 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .gap(THEME.space.sm);
     if let Some(edit @ WorkerProfileEdit::Name { .. }) = &editor.edit {
         detail = detail.child(edit_form(edit, entity.clone()));
+    } else if editor.inherit_selected {
+        detail = detail
+            .child(
+                div()
+                    .text_size(THEME.type_scale.body)
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child("Same as caller"),
+            )
+            .child(
+                div()
+                    .text_size(THEME.type_scale.body_small)
+                    .text_color(THEME.colors.muted)
+                    .child(
+                        "The worker tool calls this profile 'inherit'. It uses the caller's harness, provider, model, and effort and cannot be changed.",
+                    ),
+            );
     } else if let Some(profile) = editor.profiles.get(editor.selected) {
         let rename = entity.clone();
         let delete = entity.clone();
@@ -202,7 +240,31 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                     .toggled(index == editor.selected_model),
             );
         }
-        if let Some(model) = profile.models.get(editor.selected_model) {
+        if profile.models.is_empty() {
+            let add = entity.clone();
+            let target = WorkerRouteTarget {
+                profile: selected,
+                model: 0,
+            };
+            detail = detail
+                .child(
+                    div()
+                        .text_size(THEME.type_scale.body_small)
+                        .text_color(THEME.colors.muted)
+                        .child("Not saved yet. Add a model to finish this profile."),
+                )
+                .child(button(
+                    "worker-model-add-empty",
+                    "+ Add model",
+                    ButtonTone::Quiet,
+                    !editing,
+                    move |_, cx| {
+                        let _ = add.update(cx, |this, cx| {
+                            this.edit_worker_models(target, WorkerModelEdit::Add, cx)
+                        });
+                    },
+                ));
+        } else if let Some(model) = profile.models.get(editor.selected_model) {
             let target = WorkerRouteTarget {
                 profile: selected,
                 model: editor.selected_model,
@@ -256,7 +318,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
             if model.validate().is_err() {
                 detail = detail.child(div().text_size(THEME.type_scale.caption)
                     .text_color(THEME.colors.muted)
-                    .child("Not saved yet. Choose a provider and model; the previous route is still in use."));
+                    .child("Not saved yet. Choose a provider and model; saved settings are unchanged."));
             }
             if let Some(edit @ WorkerProfileEdit::Custom { target: edited, .. }) = &editor.edit
                 && *edited == target
@@ -269,9 +331,7 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
             div()
                 .py(THEME.space.md)
                 .text_color(THEME.colors.muted)
-                .child(
-                    "Add a profile to configure a worker. With no profiles, new workers cannot start.",
-                ),
+                .child("Add a custom profile, or use Same as caller."),
         );
     }
     if let Some(error) = &editor.error {

@@ -111,17 +111,42 @@ pub fn send(
 
     pool.allow_project(&caller.project)?;
     let name = to;
-    let profile = params.profile.as_deref().ok_or(
-        "new children require a configured `profile`; omit profile only when reusing a child",
-    )?;
+    let profile = params.profile.as_deref().unwrap_or("inherit");
     let requested_access_mode = delegated_access_mode(caller.backend, caller.access_mode);
-    let (assignment, child_access_mode) = resolve_child(
-        tasks,
-        profile,
-        &caller.project,
-        requested_access_mode,
-        route,
-    )?;
+    let (assignment, child_access_mode) = if profile == "inherit" {
+        let execution = crate::agents::WorkerExecution {
+            harness: caller.backend,
+            provider: caller
+                .provider
+                .clone()
+                .ok_or("cannot inherit: caller provider is unknown")?,
+            model: caller
+                .model
+                .clone()
+                .ok_or("cannot inherit: caller model is unknown")?,
+            effort: caller.effort.clone(),
+        };
+        execution
+            .validate()
+            .map_err(|error| format!("cannot inherit: {error}"))?;
+        let access_mode = route(&execution, &caller.project, requested_access_mode)
+            .ok_or("cannot inherit: caller model or harness is unavailable for worker creation")?;
+        (
+            crate::agents::WorkerAssignment {
+                profile: "inherit".into(),
+                execution,
+            },
+            access_mode,
+        )
+    } else {
+        resolve_child(
+            tasks,
+            profile,
+            &caller.project,
+            requested_access_mode,
+            route,
+        )?
+    };
     let initial_message = params.message;
     let concurrent_message = crate::agents::PeerMessage {
         from: caller.worker_name.clone(),

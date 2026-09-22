@@ -5,6 +5,7 @@ use crate::agents::{ConfigurationCatalog, WorkerExecution, WorkerProfile, Worker
 #[derive(Default)]
 pub(in crate::app) struct WorkerProfileEditor {
     pub(in crate::app) profiles: Vec<WorkerProfile>,
+    pub(in crate::app) inherit_selected: bool,
     pub(in crate::app) selected: usize,
     pub(in crate::app) selected_model: usize,
     pub(in crate::app) edit: Option<WorkerProfileEdit>,
@@ -50,6 +51,10 @@ pub(in crate::app) enum WorkerRouteChoice {
 }
 
 impl WorkerProfileEditor {
+    pub(in crate::app) fn has_draft(&self) -> bool {
+        self.profiles.len() != self.saved.len()
+    }
+
     fn persist(&mut self, profiles: Vec<WorkerProfile>) -> Result<(), String> {
         if !self.loaded {
             return Err(
@@ -80,25 +85,28 @@ impl WorkerProfileEditor {
     }
 
     fn route_settings(&self, target: WorkerRouteTarget) -> Result<Vec<WorkerProfile>, String> {
-        let route = self
+        let draft = self
             .profiles
             .get(target.profile)
-            .ok_or("Profile no longer exists")?
+            .ok_or("Profile no longer exists")?;
+        let route = draft
             .models
             .get(target.model)
-            .ok_or("Model no longer exists")?
-            .clone();
+            .ok_or("Model no longer exists")?;
         route
             .validate()
             .map_err(|_| "Choose a provider and model to save this route.".to_owned())?;
         let mut saved = self.saved.clone();
-        let profile = saved
-            .get_mut(target.profile)
-            .ok_or("Profile no longer exists")?;
-        *profile
-            .models
-            .get_mut(target.model)
-            .ok_or("Model no longer exists")? = route;
+        if let Some(profile) = saved.get_mut(target.profile) {
+            *profile
+                .models
+                .get_mut(target.model)
+                .ok_or("Model no longer exists")? = route.clone();
+        } else if target.profile == saved.len() {
+            saved.push(draft.clone());
+        } else {
+            return Err("Profile no longer exists".into());
+        }
         Ok(saved)
     }
 
@@ -155,6 +163,9 @@ impl WorkerProfileEditor {
                 "Use 1–48 letters, numbers, '-' or '_', starting with a letter or number.".into(),
             );
         }
+        if name.eq_ignore_ascii_case("inherit") {
+            return Err("'inherit' is reserved for Same as caller.".into());
+        }
         if self
             .profiles
             .iter()
@@ -162,6 +173,9 @@ impl WorkerProfileEditor {
             .any(|(index, other)| Some(index) != profile && other.name.eq_ignore_ascii_case(name))
         {
             return Err(format!("A profile named '{name}' already exists."));
+        }
+        if profile.is_none() && self.has_draft() {
+            return Err("Finish or delete the unsaved profile before adding another.".into());
         }
         if let Some(index) = profile {
             self.profiles
@@ -171,6 +185,7 @@ impl WorkerProfileEditor {
         } else {
             self.profiles.push(WorkerProfile::new(name.into()));
             self.selected = self.profiles.len() - 1;
+            self.inherit_selected = false;
             self.selected_model = 0;
         }
         Ok(())
@@ -182,6 +197,15 @@ fn edit_models(
     index: usize,
     edit: WorkerModelEdit,
 ) -> Result<usize, String> {
+    if models.is_empty() && matches!(edit, WorkerModelEdit::Add) {
+        models.push(WorkerExecution {
+            harness: Backend::Pi,
+            provider: String::new(),
+            model: String::new(),
+            effort: None,
+        });
+        return Ok(0);
+    }
     let model = models.get(index).ok_or("Model no longer exists")?;
     match edit {
         WorkerModelEdit::Add => {
@@ -253,19 +277,23 @@ impl FarcasterApp {
         let result = (|| {
             let mut profiles = editor.saved.clone();
             let mut current = editor.profiles.clone();
-            let saved = profiles
-                .get_mut(target.profile)
-                .ok_or("Profile no longer exists")?;
             let draft = current
                 .get_mut(target.profile)
                 .ok_or("Profile no longer exists")?;
             // Keep incomplete edits attached to their model as the list moves.
-            let selected = edit_models(&mut saved.models, target.model, edit)?;
-            edit_models(&mut draft.models, target.model, edit)?;
-            if matches!(edit, WorkerModelEdit::Add) {
-                draft.models[selected] = saved.models[selected].clone();
-            }
-            editor.persist(profiles)?;
+            let selected = if let Some(saved) = profiles.get_mut(target.profile) {
+                let selected = edit_models(&mut saved.models, target.model, edit)?;
+                edit_models(&mut draft.models, target.model, edit)?;
+                if matches!(edit, WorkerModelEdit::Add) {
+                    draft.models[selected] = saved.models[selected].clone();
+                }
+                editor.persist(profiles)?;
+                selected
+            } else if target.profile == profiles.len() {
+                edit_models(&mut draft.models, target.model, edit)?
+            } else {
+                return Err("Profile no longer exists".into());
+            };
             editor.profiles = current;
             editor.selected_model = selected;
             Ok::<(), String>(())
@@ -278,9 +306,11 @@ impl FarcasterApp {
         self.workspace.worker_profile_editor = WorkerProfileEditor::default();
         let store = crate::app::persistence::open()?;
         let profiles = store.load_worker_profiles()?.profiles;
+        let inherit_selected = profiles.is_empty();
         self.workspace.worker_profile_editor = WorkerProfileEditor {
             saved: profiles.clone(),
             profiles,
+            inherit_selected,
             catalogs: store.load_configuration_catalogs()?,
             loaded: true,
             ..WorkerProfileEditor::default()
@@ -436,28 +466,26 @@ impl FarcasterApp {
             }) => {
                 let (profile, name) = (*profile, input.read(cx).value().to_string());
                 let description = description.read(cx).value().trim().to_owned();
-                editor.save_name(profile, &name).and_then(|()| {
-                    let index = profile.unwrap_or(editor.selected);
-                    editor.profiles[index].description = description;
-                    let mut saved = editor.saved.clone();
-                    if let Some(index) = profile {
-                        saved[index].name = editor.profiles[index].name.clone();
-                        saved[index].description = editor.profiles[index].description.clone();
-                    } else {
-                        saved.push(
-                            editor
-                                .profiles
-                                .last()
-                                .expect("save_name added the new profile")
-                                .clone(),
-                        );
-                    }
-                    editor.persist(saved)?;
-                    if let Some(WorkerProfileEdit::Name { profile, .. }) = &mut editor.edit {
-                        *profile = Some(index);
-                    }
-                    Ok(())
-                })
+                if description.is_empty() || description.chars().any(char::is_control) {
+                    Err("Provide a short description without control characters.".into())
+                } else {
+                    editor.save_name(profile, &name).and_then(|()| {
+                        let index = profile.unwrap_or(editor.selected);
+                        editor.profiles[index].description = description;
+                        let mut saved = editor.saved.clone();
+                        if index < saved.len() {
+                            saved[index].name = editor.profiles[index].name.clone();
+                            saved[index].description = editor.profiles[index].description.clone();
+                            editor.persist(saved)?;
+                        } else if index != saved.len() {
+                            return Err("Profile no longer exists".into());
+                        }
+                        if let Some(WorkerProfileEdit::Name { profile, .. }) = &mut editor.edit {
+                            *profile = Some(index);
+                        }
+                        Ok(())
+                    })
+                }
             }
             Some(WorkerProfileEdit::Custom { target, inputs }) => {
                 let target = *target;
@@ -488,15 +516,18 @@ impl FarcasterApp {
         }
         if editor.selected < editor.profiles.len() {
             let mut saved = editor.saved.clone();
-            saved.remove(editor.selected);
-            if let Err(error) = editor.persist(saved) {
-                editor.error = Some(error);
-                cx.notify();
-                return;
+            if editor.selected < saved.len() {
+                saved.remove(editor.selected);
+                if let Err(error) = editor.persist(saved) {
+                    editor.error = Some(error);
+                    cx.notify();
+                    return;
+                }
             }
             editor.profiles.remove(editor.selected);
         }
         editor.selected = editor.selected.min(editor.profiles.len().saturating_sub(1));
+        editor.inherit_selected = editor.profiles.is_empty();
         editor.selected_model = 0;
         editor.error = None;
         cx.notify();

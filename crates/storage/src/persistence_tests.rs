@@ -2006,11 +2006,20 @@ fn concurrent_state_store_open_waits_for_schema_writers() -> Result<(), Box<dyn 
 }
 
 #[test]
+fn fresh_state_store_has_no_custom_worker_profiles() -> Result<(), String> {
+    let temp = tempdir().map_err(|error| error.to_string())?;
+    let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
+    assert!(store.load_worker_profiles()?.profiles.is_empty());
+    Ok(())
+}
+
+#[test]
 fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("settings.sqlite3");
     let store = StateStore::open_at(&database)?;
-    let mut tasks = store.load_worker_profiles()?;
+    let mut tasks = test_worker_profiles();
+    store.save_worker_profiles(&tasks)?;
     assert_eq!(tasks.profiles.len(), 4);
     tasks.profiles[0].name = "audit".into();
     tasks.profiles[0].description = "Review security-sensitive changes.".into();
@@ -2039,7 +2048,8 @@ fn settings_save_independently_and_reject_invalid_values() -> Result<(), String>
     let temp = tempdir().map_err(|error| error.to_string())?;
     let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
     store.save_network_proxy(Some("http://proxy.example:8080"))?;
-    let original = store.load_worker_profiles()?;
+    let original = test_worker_profiles();
+    store.save_worker_profiles(&original)?;
     let mut invalid = original.clone();
     invalid.profiles[0].models[0].provider.clear();
     assert!(store.save_worker_profiles(&invalid).is_err());
@@ -2064,6 +2074,11 @@ fn settings_save_independently_and_reject_invalid_values() -> Result<(), String>
     assert_eq!(store.load_network_proxy()?, None);
     assert_eq!(store.load_worker_profiles()?, valid);
     Ok(())
+}
+
+fn test_worker_profiles() -> crate::agents::WorkerProfiles {
+    serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
+        .expect("historical worker profiles")
 }
 
 #[test]

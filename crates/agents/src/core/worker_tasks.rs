@@ -45,33 +45,16 @@ impl WorkerProfile {
     pub fn new(name: String) -> Self {
         Self {
             name,
-            ..WorkerProfiles::default()
-                .profiles
-                .into_iter()
-                .find(|profile| profile.name == "fast")
-                .expect("bundled worker profiles must include fast")
+            description: String::new(),
+            models: Vec::new(),
         }
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkerProfiles {
     pub profiles: Vec<WorkerProfile>,
-}
-
-impl Default for WorkerProfiles {
-    fn default() -> Self {
-        let profiles: Self = toml::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/worker_profiles.toml"
-        )))
-        .expect("bundled worker profiles must be valid TOML");
-        profiles
-            .validate()
-            .expect("bundled worker profiles must be valid");
-        profiles
-    }
 }
 
 impl WorkerProfiles {
@@ -81,9 +64,32 @@ impl WorkerProfiles {
         } else {
             legacy::migrate(value)?
         };
+        profiles.migrate_reserved_profile_names();
         profiles.migrate_deprecated_cursor_model_ids();
         profiles.validate()?;
         Ok(profiles)
+    }
+
+    fn migrate_reserved_profile_names(&mut self) {
+        let mut names = self
+            .profiles
+            .iter()
+            .filter(|profile| !profile.name.eq_ignore_ascii_case("inherit"))
+            .map(|profile| profile.name.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>();
+        for profile in &mut self.profiles {
+            if !profile.name.eq_ignore_ascii_case("inherit") {
+                continue;
+            }
+            let mut candidate = "inherit_custom".to_owned();
+            let mut counter = 1;
+            while names.contains(&candidate) {
+                candidate = format!("inherit_custom_{counter}");
+                counter += 1;
+            }
+            names.insert(candidate.clone());
+            profile.name = candidate;
+        }
     }
 
     fn migrate_deprecated_cursor_model_ids(&mut self) {
@@ -108,6 +114,11 @@ impl WorkerProfiles {
         for profile in &self.profiles {
             if !super::super::valid_worker_name(&profile.name) {
                 return Err("profile names must be 1–48 ASCII letters, numbers, '-' or '_' and start with a letter or number".into());
+            }
+            if profile.name.eq_ignore_ascii_case("inherit") {
+                return Err(
+                    "'inherit' is reserved and cannot be used as a worker profile name".into(),
+                );
             }
             if !names.insert(profile.name.to_ascii_lowercase()) {
                 return Err(format!("duplicate worker profile: {}", profile.name));
