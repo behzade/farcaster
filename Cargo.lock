@@ -1965,6 +1965,7 @@ dependencies = [
  "farcaster-access",
  "farcaster-agent-protocol",
  "farcaster-contracts",
+ "farcaster-conversation",
  "farcaster-projects",
  "farcaster-sessions",
  "futures",

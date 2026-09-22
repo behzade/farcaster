@@ -44,6 +44,7 @@ done
         access_mode: HarnessAccessMode::Sandboxed,
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
     let profile = &super::super::super::antigravity::PROFILE;
     let (mut original, _, _) = spawn_session(&command, profile, project.path(), None, None, None)?;
@@ -162,6 +163,7 @@ done
         access_mode: HarnessAccessMode::Sandboxed,
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
     let factory = AcpWorkerFactory::new(command, super::super::super::antigravity::PROFILE.clone());
     let mut worker = factory.create(WorkerLaunch {
@@ -286,6 +288,7 @@ done
                 access_mode,
                 app_proxy: None,
                 session_locator_root: None,
+                prompt_boundary_url: None,
             };
             let (mut session, metadata, _) =
                 spawn_session(&command, profile, project.path(), None, None, None)
@@ -387,6 +390,7 @@ done
         access_mode: HarnessAccessMode::Sandboxed,
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
 
     let (session, _, _) = spawn_session(&command, &PROFILE, project.path(), None, None, None)
@@ -1127,6 +1131,7 @@ fn live_cursor_configuration_and_listing() {
         access_mode: HarnessAccessMode::Auto,
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
     let profile = &super::super::super::cursor::PROFILE;
     let (mut session, metadata, _) =
@@ -1296,6 +1301,7 @@ fn live_cursor_session_round_trip() {
         access_mode: HarnessAccessMode::Auto,
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
     let profile = &super::super::super::cursor::PROFILE;
     let (mut session, metadata, history) = spawn_session(
@@ -1400,7 +1406,7 @@ fn live_cursor_session_round_trip() {
 }
 
 #[test]
-fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
+fn acp_prompt_ack_uses_execution_evidence_and_rejects_unadmitted_errors() {
     let mut cases = ["end_turn", "max_tokens", "max_turn_requests", "refusal"]
         .into_iter()
         .map(|stop_reason| {
@@ -1424,8 +1430,20 @@ fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
         let mut session = inert_session();
         track_inert_submission(&mut session, "submission");
         assert!(session.poll_prompt_ack().is_none());
-        session.connection.restore_queued(VecDeque::from([reply]));
-        session.poll();
+        if accepted {
+            session
+                .connection
+                .restore_queued(VecDeque::from([agent_message_chunk("admitted"), reply]));
+            assert!(matches!(
+                session.poll(),
+                Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered { submission_id, .. }))
+                    if submission_id == "submission"
+            ));
+            assert!(matches!(session.poll(), Some(WorkerEvent::Activity(_))));
+        } else {
+            session.connection.restore_queued(VecDeque::from([reply]));
+        }
+        assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
         let (id, result) = session.poll_prompt_ack().expect("correlated reply");
         assert_eq!(id, "submission");
         assert_eq!(result.is_ok(), accepted);
@@ -1435,12 +1453,15 @@ fn acp_prompt_ack_waits_for_its_response_and_rejects_errors() {
 #[test]
 fn acp_terminal_response_without_evidence_is_unknown_not_rejected() {
     for result in [
+        json!({"stopReason":"end_turn"}),
         json!({"stopReason":"cancelled"}),
         json!({"stopReason":"not_an_acp_stop_reason"}),
         json!({}),
     ] {
-        let reports_invalid_response =
-            result.get("stopReason").and_then(Value::as_str) != Some("cancelled");
+        let reports_invalid_response = !matches!(
+            result.get("stopReason").and_then(Value::as_str),
+            Some("end_turn" | "cancelled")
+        );
         let mut session = inert_session();
         track_inert_submission(&mut session, "submission");
         session

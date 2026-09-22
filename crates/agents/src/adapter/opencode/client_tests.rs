@@ -117,7 +117,7 @@ fn native_vertical_slice_preserves_session_and_prompt_features() -> Result<(), S
     );
     assert_eq!(
         transport.requests[3].path,
-        "/api/session/session%2F1/interrupt?continue=false"
+        "/api/session/session%2F1/interrupt?resume=false"
     );
     assert!(transport.requests[3].body.is_none());
     assert_eq!(transport.requests[4].method, OpenCodeHttpMethod::Delete);
@@ -243,7 +243,7 @@ fn prompt_only_rejects_receipts_that_prove_no_admission() {
 }
 
 #[test]
-fn apply_steering_uses_continue_query_and_reports_idle() -> Result<(), String> {
+fn apply_steering_uses_resume_query_and_reports_idle() -> Result<(), String> {
     for interrupted in [true, false] {
         let transport =
             FakeTransport::with_responses([response(200, json!({"interrupted": interrupted}))]);
@@ -253,9 +253,31 @@ fn apply_steering_uses_continue_query_and_reports_idle() -> Result<(), String> {
         assert_eq!(requests[0].method, OpenCodeHttpMethod::Post);
         assert_eq!(
             requests[0].path,
-            "/api/session/session%2F1/interrupt?continue=true"
+            "/api/session/session%2F1/interrupt?resume=true"
         );
         assert!(requests[0].body.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn promoting_followup_patches_inbox_delivery_and_preserves_conflicts() -> Result<(), String> {
+    let transport = FakeTransport::with_responses([
+        response(204, Value::Null),
+        response(409, json!({"message":"already delivered"})),
+        response(404, json!({"message":"not found"})),
+    ]);
+    let mut client = OpenCodeClient::new(transport);
+    assert!(client.steer_inbox("session/1", "input/1")?);
+    assert!(!client.steer_inbox("session/1", "input/1")?);
+    assert!(client.steer_inbox("session/1", "missing").is_err());
+    for request in client.into_transport().requests {
+        assert_eq!(request.method, OpenCodeHttpMethod::Patch);
+        assert!(matches!(
+            request.path.as_str(),
+            "/api/session/session%2F1/inbox/input%2F1" | "/api/session/session%2F1/inbox/missing"
+        ));
+        assert_eq!(body(&request), json!({"delivery":"steer"}));
     }
     Ok(())
 }

@@ -12,6 +12,7 @@ use url::Url;
 use super::{client::OpenCodeClient, event::OpenCodeEventStream, transport::OpenCodeTcpTransport};
 
 pub struct OpenCodeServerProcess {
+    queue_plugin: Option<tempfile::TempDir>,
     child: Child,
     stdin: Option<ChildStdin>,
     transport: OpenCodeTcpTransport,
@@ -45,6 +46,7 @@ impl OpenCodeServerProcess {
             Err(error) => return attach_failed(child, Some(stdin), error),
         };
         Ok(Self {
+            queue_plugin: None,
             child,
             stdin: Some(stdin),
             transport,
@@ -53,6 +55,10 @@ impl OpenCodeServerProcess {
 
     pub fn client(&self) -> OpenCodeClient<OpenCodeTcpTransport> {
         OpenCodeClient::new(self.transport.clone())
+    }
+
+    pub fn keep_queue_plugin(&mut self, plugin: Option<tempfile::TempDir>) {
+        self.queue_plugin = plugin;
     }
 
     pub fn event_stream(&self) -> Result<OpenCodeEventStream, String> {

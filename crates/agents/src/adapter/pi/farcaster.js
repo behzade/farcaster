@@ -3,6 +3,20 @@ const protocolVersion = "2026-07-28";
 
 export default async function steering(pi) {
   registerSteering(pi);
+  const boundary = process.env.FARCASTER_PROMPT_BOUNDARY_URL;
+  if (boundary) {
+    // Pi awaits turn_end after all tools, before reading steering messages.
+    // The host releases this request after native steer admission, not delivery.
+    pi.on("turn_end", async (_event, ctx) => {
+      const response = await fetch(boundary, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({session_id: ctx.sessionManager.getSessionId()}),
+      });
+      if (!response.ok) throw new Error("Farcaster prompt boundary unavailable");
+      await response.json();
+    });
+  }
   const url = process.env.FARCASTER_MCP_URL;
   const token = process.env.FARCASTER_MCP_CALLER;
   const header = process.env.FARCASTER_MCP_HEADER || "farcaster-caller";

@@ -8,17 +8,20 @@ mod claude;
 mod codex;
 mod cursor;
 mod farcaster_mcp;
+mod handler;
 #[cfg(test)]
 mod live_basic_tests;
 #[cfg(test)]
 mod live_input_tests;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod live_tests;
 mod main_session;
 #[allow(dead_code)]
 mod opencode;
 mod pi;
 mod process_command;
+mod prompt_boundary;
+mod queued_session;
 mod session_storage;
 mod shell_environment;
 pub use session_storage::{
@@ -83,6 +86,10 @@ pub fn supports_steering(harness: impl Into<Option<Backend>>) -> bool {
         return false;
     };
     harness.descriptor().capabilities.turns.steer == super::contract::CapabilitySupport::Available
+}
+
+pub fn supports_individual_queue_cancellation(harness: impl Into<Option<Backend>>) -> bool {
+    harness.into().is_some()
 }
 
 pub fn supports_reasoning_effort(harness: impl Into<Option<Backend>>) -> bool {
@@ -329,6 +336,31 @@ pub fn spawn_session(
     config: &crate::AgentLaunchConfig,
     launch: crate::SessionLaunch,
 ) -> Result<Box<dyn crate::SessionTransport>, String> {
+    use queued_session::SteeringBoundary;
+    let policy = match launch.harness {
+        Backend::Pi | Backend::OpenCode => SteeringBoundary::Held,
+        Backend::Claude => SteeringBoundary::StopAfterBatch,
+        Backend::Codex => SteeringBoundary::Native,
+        Backend::Cursor | Backend::Antigravity => SteeringBoundary::Unsupported,
+    };
+    let hook = matches!(
+        policy,
+        SteeringBoundary::Held | SteeringBoundary::StopAfterBatch
+    )
+    .then(|| prompt_boundary::PromptBoundary::new(launch.wake.clone()))
+    .transpose()?;
+    let mut config = config.clone();
+    config.prompt_boundary_url = hook.as_ref().map(|hook| hook.url.clone());
+    let inner = spawn_native_session(&config, launch)?;
+    Ok(Box::new(queued_session::QueuedSession::new(
+        inner, policy, hook,
+    )))
+}
+
+fn spawn_native_session(
+    config: &crate::AgentLaunchConfig,
+    launch: crate::SessionLaunch,
+) -> Result<Box<dyn crate::SessionTransport>, String> {
     if launch.harness != Backend::Pi
         && let crate::SessionStart::Resume(path) | crate::SessionStart::Fork(path) = &launch.start
     {
@@ -480,7 +512,7 @@ pub fn external_session_identity(path: &std::path::Path) -> Option<(Backend, Str
         .map(|locator| (Backend::OpenCode, locator))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn delete_external_session(path: &std::path::Path) -> Option<Result<(), String>> {
     external_session_identity(path).map(|(harness, locator)| match harness {
         Backend::Codex => codex::delete_session(&locator),
@@ -516,7 +548,7 @@ pub fn annotate_history_message(harness: Backend, message: &mut serde_json::Valu
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn load_external_history(
     path: &std::path::Path,
     project: &std::path::Path,

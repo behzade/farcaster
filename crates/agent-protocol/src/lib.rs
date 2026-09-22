@@ -372,6 +372,16 @@ pub use response::{
 };
 
 pub trait SessionTransport {
+    fn clear_queue(&mut self) -> Result<(), String> {
+        Err("This harness cannot clear its queue".into())
+    }
+    /// Requests cancellation of exactly one pending input. Completion arrives as
+    /// a prompt_delivery activity with status cancelled, or a request error.
+    /// Queue owners may ignore stale requests for inputs they no longer own;
+    /// Ok alone is not evidence of cancellation. Only the receipt confirms it.
+    fn cancel_prompt(&mut self, _id: &str) -> Result<(), String> {
+        Err("This harness cannot cancel individual queued messages".into())
+    }
     fn sandbox_adapter(&self) -> Option<&str> {
         None
     }

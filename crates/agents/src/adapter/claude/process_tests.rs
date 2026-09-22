@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn shared_queue_hook_preserves_sandbox_and_waits_for_the_whole_tool_batch() {
+    let mut command = std::process::Command::new("claude");
+    configure_with_boundary(
+        &mut command,
+        HarnessAccessMode::Sandboxed,
+        "parent",
+        false,
+        None,
+        true,
+        Some("http://127.0.0.1:1234/session-secret"),
+    );
+    let args = command
+        .get_args()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let settings = args
+        .windows(2)
+        .find(|args| args[0] == "--settings")
+        .expect("settings");
+    let settings: Value = serde_json::from_str(&settings[1]).expect("valid settings");
+    assert_eq!(settings["sandbox"]["enabled"], true);
+    assert_eq!(settings["sandbox"]["failIfUnavailable"], true);
+    assert_eq!(
+        settings["hooks"]["PostToolBatch"][0]["hooks"][0]["type"],
+        "http"
+    );
+    assert_eq!(
+        settings["hooks"]["PostToolBatch"][0]["hooks"][0]["url"],
+        "http://127.0.0.1:1234/session-secret"
+    );
+    assert!(settings["hooks"].get("PostToolUse").is_none());
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg == "--allow-dangerously-skip-permissions")
+    );
+}
+
+#[test]
 fn real_partial_thinking_block_does_not_require_a_future_signature() {
     let frame = json!({"type":"stream_event","event":{"type":"content_block_start",
         "content_block":{"type":"thinking","thinking":""},"index":0},

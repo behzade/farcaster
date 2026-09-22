@@ -1042,7 +1042,13 @@ impl AcpWorkerSession {
             Some("cancelled") => self
                 .mark_current_prompt_unknown("ACP prompt stopped before delivery acknowledgement"),
             Some(stop_reason) if Self::prompt_stop_reason_is_receipt(stop_reason) => {
-                self.acknowledge_current_prompt_started()
+                if self.current_prompt_proven {
+                    self.acknowledge_current_prompt_started();
+                } else {
+                    self.mark_current_prompt_unknown(
+                        "ACP prompt stopped without model delivery evidence",
+                    );
+                }
             }
             invalid => {
                 let detail = invalid.map_or_else(

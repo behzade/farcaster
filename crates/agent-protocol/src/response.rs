@@ -81,6 +81,7 @@ pub enum SessionResponseErrorKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PromptOutcome {
+    Cancelled,
     Accepted,
     RejectedBeforeAcceptance,
     /// The request ended without a definitive receipt. Durable outbox recovery owns

@@ -14,6 +14,7 @@ impl AgentLaunchConfig {
             access_mode: crate::HarnessAccessMode::default(),
             app_proxy: None,
             session_locator_root: None,
+            prompt_boundary_url: None,
         }
     }
 
@@ -45,6 +46,10 @@ impl AgentLaunchConfig {
             command.env_clear().envs(environment);
         } else if let Some(proxy) = network.app_proxy {
             command.env("http_proxy", &proxy).env("https_proxy", proxy);
+        }
+        command.env_remove("FARCASTER_PROMPT_BOUNDARY_URL");
+        if let Some(url) = &self.prompt_boundary_url {
+            command.env("FARCASTER_PROMPT_BOUNDARY_URL", url);
         }
         Ok(command)
     }

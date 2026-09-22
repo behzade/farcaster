@@ -49,6 +49,7 @@ pub(super) struct Process {
     closing: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
 pub(super) fn configure(
     command: &mut std::process::Command,
     access: HarnessAccessMode,
@@ -56,6 +57,18 @@ pub(super) fn configure(
     resume: bool,
     caller: Option<&str>,
     persist: bool,
+) {
+    configure_with_boundary(command, access, session_id, resume, caller, persist, None);
+}
+
+fn configure_with_boundary(
+    command: &mut std::process::Command,
+    access: HarnessAccessMode,
+    session_id: &str,
+    resume: bool,
+    caller: Option<&str>,
+    persist: bool,
+    boundary: Option<&str>,
 ) {
     command.args([
         "-p",
@@ -76,13 +89,14 @@ pub(super) fn configure(
     ));
     command.arg(format!("--permission-mode={}", permission_mode(access)));
     let sandboxed = access != HarnessAccessMode::Full;
-    command.arg("--settings").arg(
-        json!({"sandbox": {
-            "enabled": sandboxed,
-            "failIfUnavailable": sandboxed,
-        }})
-        .to_string(),
-    );
+    let mut settings = json!({"sandbox": {
+        "enabled": sandboxed,
+        "failIfUnavailable": sandboxed,
+    }});
+    if let Some(url) = boundary {
+        settings["hooks"] = json!({"PostToolBatch": [{"hooks": [{"type":"http", "url":url}]}]});
+    }
+    command.arg("--settings").arg(settings.to_string());
     if access == HarnessAccessMode::Full {
         command.arg("--allow-dangerously-skip-permissions");
     }
@@ -119,13 +133,14 @@ impl Process {
         persist: bool,
     ) -> Result<Self, String> {
         let mut command = config.command(project)?;
-        configure(
+        configure_with_boundary(
             &mut command,
             config.access_mode,
             id,
             resume,
             caller,
             persist,
+            config.prompt_boundary_url.as_deref(),
         );
         let mut child = command
             .stdin(Stdio::piped())

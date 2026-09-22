@@ -188,6 +188,7 @@ pub fn spawn_main(
     String,
 > {
     let mut prepared = command.command(&launch.project)?;
+    let queue_plugin = configure_queue_hook(&mut prepared, command.prompt_boundary_url.as_deref())?;
     let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::core::CallerProfile {
@@ -212,7 +213,8 @@ pub fn spawn_main(
         .spawn()
         .map_err(|error| format!("start OpenCode main-session server: {error}"))?;
     child_stderr::capture(&mut child, "opencode-main-session")?;
-    let server = OpenCodeServerProcess::attach(child, "opencode", password)?;
+    let mut server = OpenCodeServerProcess::attach(child, "opencode", password)?;
+    server.keep_queue_plugin(queue_plugin);
     let mut client = server.client();
     let session = match &launch.start {
         crate::SessionStart::New => {
@@ -1593,7 +1595,15 @@ impl WorkerSession for OpenCodeWorkerSession {
         let native_ids = self
             .pending_deliveries
             .iter()
-            .filter(|(_, delivery)| delivery.mode == WorkerSendMode::Queue)
+            // Normal prompts also enter OpenCode's native queue. If Escape
+            // wins before delivery, resume only drains steers; promote the
+            // pending normal input too or its response never completes.
+            .filter(|(_, delivery)| {
+                matches!(
+                    delivery.mode,
+                    WorkerSendMode::Prompt | WorkerSendMode::Queue
+                )
+            })
             .map(|(id, _)| id.clone())
             .collect::<Vec<_>>();
         let (interrupted, errors) = promote_followups_and_interrupt(
@@ -2115,6 +2125,47 @@ fn configure_opencode_server(
         .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
         .args(["serve", "--stdio", "--print-logs"]);
     Ok(())
+}
+
+fn configure_queue_hook(
+    command: &mut std::process::Command,
+    url: Option<&str>,
+) -> Result<Option<tempfile::TempDir>, String> {
+    if url.is_none() {
+        return Ok(None);
+    }
+    let directory = tempfile::Builder::new()
+        .prefix("farcaster-opencode-queue-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"name":"farcaster-prompt-boundary","type":"module","exports":"./index.js"}"#,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        directory.path().join("index.js"),
+        include_str!("queue_hook.js"),
+    )
+    .map_err(|e| e.to_string())?;
+    // Append to the user's plugins rather than replacing them.
+    let existing = command
+        .get_envs()
+        .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
+        .and_then(|(_, value)| value)
+        .map(|value| value.to_string_lossy().into_owned());
+    let mut config: Value = existing
+        .map_or_else(|| Ok(json!({})), |value| serde_json::from_str(&value))
+        .map_err(|e| format!("Read OpenCode plugin configuration: {e}"))?;
+    if config.get("plugins").is_none() {
+        config["plugins"] = json!([]);
+    }
+    config["plugins"]
+        .as_array_mut()
+        .ok_or("OpenCode plugins must be an array")?
+        .push(directory.path().to_string_lossy().into_owned().into());
+    command.env("OPENCODE_CONFIG_CONTENT", config.to_string());
+    Ok(Some(directory))
 }
 
 fn configure_farcaster_mcp(

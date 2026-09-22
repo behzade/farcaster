@@ -147,7 +147,7 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
         let response = self.execute(
             OpenCodeHttpMethod::Post,
             format!(
-                "/api/session/{}/interrupt?continue={resume}",
+                "/api/session/{}/interrupt?resume={resume}",
                 path_segment(session_id)
             ),
             None,
@@ -397,13 +397,13 @@ impl<T: OpenCodeHttpTransport> OpenCodeClient<T> {
 
     pub fn steer_inbox(&mut self, session_id: &str, inbox_id: &str) -> Result<bool, String> {
         let response = self.execute(
-            OpenCodeHttpMethod::Post,
+            OpenCodeHttpMethod::Patch,
             format!(
-                "/api/session/{}/inbox/{}/steer",
+                "/api/session/{}/inbox/{}",
                 path_segment(session_id),
                 path_segment(inbox_id)
             ),
-            None,
+            Some(json!({"delivery": OpenCodeDelivery::Steer})),
         )?;
         if response.status == 409 {
             return Ok(false);

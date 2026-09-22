@@ -3,6 +3,34 @@ use crate::Backend;
 use serde_json::json;
 
 #[test]
+fn shared_queue_plugin_preserves_existing_plugins_and_configuration() {
+    let mut command = std::process::Command::new("opencode");
+    command.env(
+        "OPENCODE_CONFIG_CONTENT",
+        r#"{"plugins":["existing-plugin"],"permission":{"bash":"ask"}}"#,
+    );
+    let directory = configure_queue_hook(&mut command, Some("http://127.0.0.1:1234/secret"))
+        .expect("plugin")
+        .expect("enabled");
+    let config = command
+        .get_envs()
+        .find(|(key, _)| *key == "OPENCODE_CONFIG_CONTENT")
+        .and_then(|(_, value)| value)
+        .expect("config");
+    let config: Value = serde_json::from_str(&config.to_string_lossy()).expect("valid config");
+    assert_eq!(config["permission"]["bash"], "ask");
+    assert_eq!(config["plugins"][0], "existing-plugin");
+    assert_eq!(
+        config["plugins"][1],
+        directory.path().to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("index.js")).expect("plugin source"),
+        include_str!("queue_hook.js")
+    );
+}
+
+#[test]
 fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result<(), String> {
     use std::{
         io::{Read as _, Write as _},
@@ -735,9 +763,18 @@ fn promotion_failures_do_not_skip_later_followups_or_interrupt() {
     assert_eq!(interrupted, Some(true));
     assert_eq!(errors.len(), 1);
     let requests = client.into_transport().requests;
-    assert!(requests[0].path.ends_with("/inbox/first/steer"));
-    assert!(requests[1].path.ends_with("/inbox/second/steer"));
-    assert!(requests[2].path.ends_with("/interrupt?continue=true"));
+    assert_eq!(
+        requests[0].method,
+        super::super::contract::OpenCodeHttpMethod::Patch
+    );
+    assert!(requests[0].path.ends_with("/inbox/first"));
+    assert!(requests[1].path.ends_with("/inbox/second"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(requests[0].body.as_deref().expect("delivery body"))
+            .expect("JSON delivery"),
+        json!({"delivery":"steer"})
+    );
+    assert!(requests[2].path.ends_with("/interrupt?resume=true"));
 }
 
 #[test]
@@ -1246,12 +1283,12 @@ fn abort_reinterrupts_a_delivery_that_wins_the_cancel_race() -> Result<(), Strin
         .join()
         .map_err(|_| "abort fixture panicked".to_owned())??;
     let requests = requests.lock().map_err(|error| error.to_string())?;
-    assert!(requests[0].contains("interrupt?continue=false"));
+    assert!(requests[0].contains("interrupt?resume=false"));
     assert!(requests[1].starts_with("DELETE "));
     assert!(requests[1].contains("/inbox/msg_cancelled_first"));
     assert!(requests[2].starts_with("DELETE "));
     assert!(requests[2].contains("/inbox/msg_cancelled_second"));
-    assert!(requests[3].contains("interrupt?continue=false"));
+    assert!(requests[3].contains("interrupt?resume=false"));
     Ok(())
 }
 
@@ -1517,11 +1554,26 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
                     let response = r#"{"interrupted":true}"#;
                     write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len())
                         .map_err(|error| error.to_string())?;
+                    // Match the native server contract: acknowledging an
+                    // interrupt does not imply that it will resume.
+                    if request.starts_with("POST /api/session/session-1/interrupt?resume=true ") {
+                        for kind in ["session.execution.interrupted", "session.execution.started"] {
+                            fixture_event_sender
+                                .send(FixtureEvent::Data(
+                                    json!({"id":"handoff-event", "type":kind,
+                                        "data":{"sessionID":"session-1"}})
+                                    .to_string(),
+                                ))
+                                .map_err(|error| error.to_string())?;
+                        }
+                    }
                     return Ok(());
                 }
-                if request.starts_with("POST /api/session/session-1/inbox/")
-                    && request.contains("/steer ")
-                {
+                if request.starts_with("PATCH /api/session/session-1/inbox/") {
+                    let body = request.split_once("\r\n\r\n").map(|(_, body)| body)
+                        .ok_or("fixture inbox update has no body")?;
+                    let body: Value = serde_json::from_str(body).map_err(|error| error.to_string())?;
+                    assert_eq!(body, json!({"delivery":"steer"}));
                     let inbox_id = request
                         .lines()
                         .next()
@@ -1649,26 +1701,14 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
             json!({"sessionID":"session-1", "delta":"before "}),
         )))
         .map_err(|error| error.to_string())?;
+    // Normal and FollowUp must get their delivery from actual promotion
+    // requests above. Injecting Normal delivery here hid the stranded input.
     event_sender
         .send(FixtureEvent::Data(event(
-            "session.execution.interrupted",
-            json!({"sessionID":"session-1"}),
+            "session.inbox.delivered",
+            json!({"sessionID":"session-1", "inboxID":native(&steer)}),
         )))
         .map_err(|error| error.to_string())?;
-    event_sender
-        .send(FixtureEvent::Data(event(
-            "session.execution.started",
-            json!({"sessionID":"session-1"}),
-        )))
-        .map_err(|error| error.to_string())?;
-    for id in [&normal, &steer] {
-        event_sender
-            .send(FixtureEvent::Data(event(
-                "session.inbox.delivered",
-                json!({"sessionID":"session-1", "inboxID":native(id)}),
-            )))
-            .map_err(|error| error.to_string())?;
-    }
     event_sender
         .send(FixtureEvent::Data(event(
             "session.text.delta",
@@ -1855,17 +1895,22 @@ fn http_sse_prompt_and_escape_flow_preserves_exact_delivery_and_liveness() -> Re
         .filter_map(|request| request.lines().next())
         .filter(|request| !request.starts_with("GET /api/event "))
         .collect::<Vec<_>>();
-    assert!(relevant[3].starts_with(&format!(
-        "POST /api/session/session-1/inbox/{}/steer ",
-        native(&queue)
-    )));
-    assert!(relevant[4].contains("continue=true"));
-    assert!(relevant[6].contains("continue=false"));
-    assert!(relevant[7].starts_with(&format!(
+    let promoted = relevant[3..5].iter().copied().collect::<HashSet<_>>();
+    for id in [&normal, &queue] {
+        assert!(
+            promoted.contains(
+                format!("PATCH /api/session/session-1/inbox/{} HTTP/1.1", native(id)).as_str()
+            ),
+            "Escape must promote each still-undelivered native queue input"
+        );
+    }
+    assert!(relevant[5].contains("resume=true"));
+    assert!(relevant[7].contains("resume=false"));
+    assert!(relevant[8].starts_with(&format!(
         "DELETE /api/session/session-1/inbox/{} ",
         native(&cancelled)
     )));
-    assert!(relevant[8].starts_with("POST /api/session/session-1/prompt "));
+    assert!(relevant[9].starts_with("POST /api/session/session-1/prompt "));
     assert_eq!(
         requests
             .iter()

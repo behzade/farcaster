@@ -92,6 +92,8 @@ pub(super) struct WorkerSessionTransport {
     running: bool,
     steering: Vec<String>,
     follow_up: Vec<String>,
+    steering_ids: Vec<String>,
+    follow_up_ids: Vec<String>,
     assistant_message: AssistantMessage,
     observed_text: String,
     model: Option<(String, String)>,
@@ -168,6 +170,8 @@ impl WorkerSessionTransport {
             running: false,
             steering: Vec::new(),
             follow_up: Vec::new(),
+            steering_ids: Vec::new(),
+            follow_up_ids: Vec::new(),
             assistant_message: AssistantMessage::default(),
             observed_text: String::new(),
             model: selection.model,
@@ -229,7 +233,7 @@ impl WorkerSessionTransport {
                         delivery.defer_response_until_delivery && !delivery.delivered;
                 }
                 if let Some((mode, message)) = enqueue {
-                    self.enqueue_message(mode, message);
+                    self.enqueue_message(mode, message, id.clone());
                 }
                 if awaiting_delivery_proof {
                     // Admission is not delivery proof. Keep the pending prompt and
@@ -364,14 +368,22 @@ impl WorkerSessionTransport {
             "type": "queue_update",
             "steering": self.steering,
             "followUp": self.follow_up,
+            "steeringIds": self.steering_ids,
+            "followUpIds": self.follow_up_ids,
         })));
     }
 
-    fn enqueue_message(&mut self, mode: PromptMode, message: String) {
+    fn enqueue_message(&mut self, mode: PromptMode, message: String, id: String) {
         match mode {
             PromptMode::Normal => return,
-            PromptMode::Steer => self.steering.push(message),
-            PromptMode::FollowUp => self.follow_up.push(message),
+            PromptMode::Steer => {
+                self.steering.push(message);
+                self.steering_ids.push(id);
+            }
+            PromptMode::FollowUp => {
+                self.follow_up.push(message);
+                self.follow_up_ids.push(id);
+            }
         }
         self.enqueue_queue_update();
     }
@@ -406,10 +418,10 @@ impl WorkerSessionTransport {
                     delivery.message.clone(),
                 )
             });
-        if let Some((_, true, mode, text)) = &matched {
-            self.remove_queued_message(*mode, text);
+        if let Some((id, true, mode, text)) = &matched {
+            self.remove_queued_message(*mode, text, Some(id));
         } else if matched.is_none() && submission_id.is_none() {
-            self.remove_queued_message(delivery_mode, message);
+            self.remove_queued_message(delivery_mode, message, None);
         }
         self.prompt_deliveries
             .retain(|delivery| !(delivery.acknowledged && delivery.delivered));
@@ -418,14 +430,21 @@ impl WorkerSessionTransport {
             .or_else(|| submission_id.map(str::to_owned))
     }
 
-    fn remove_queued_message(&mut self, mode: PromptMode, message: &str) {
-        let queue = match mode {
+    fn remove_queued_message(&mut self, mode: PromptMode, message: &str, id: Option<&str>) {
+        let (queue, ids) = match mode {
             PromptMode::Normal => return,
-            PromptMode::Steer => &mut self.steering,
-            PromptMode::FollowUp => &mut self.follow_up,
+            PromptMode::Steer => (&mut self.steering, &mut self.steering_ids),
+            PromptMode::FollowUp => (&mut self.follow_up, &mut self.follow_up_ids),
         };
-        if let Some(index) = queue.iter().position(|queued| queued == message) {
+        let index = match id {
+            Some(id) => ids.iter().position(|queued| queued == id),
+            None => queue.iter().position(|queued| queued == message),
+        };
+        if let Some(index) = index {
             queue.remove(index);
+            if index < ids.len() {
+                ids.remove(index);
+            }
             self.enqueue_queue_update();
         }
     }
@@ -444,6 +463,8 @@ impl WorkerSessionTransport {
         }
         self.steering.clear();
         self.follow_up.clear();
+        self.steering_ids.clear();
+        self.follow_up_ids.clear();
         self.enqueue_queue_update();
     }
 
