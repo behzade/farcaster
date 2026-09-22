@@ -10,7 +10,6 @@ mod process;
 mod projection;
 mod prompt_receipts;
 mod prompts;
-pub(in crate::app) mod recovery;
 mod session_controls;
 mod session_identity;
 mod session_loop;
@@ -119,7 +118,6 @@ struct RuntimeOwner {
     pending_prompt_target: Option<String>,
     pending_prompt_item: Option<Arc<TranscriptItem>>,
     pending_outbox_id: Option<i64>,
-    pending_prompt_delivery_unknown: bool,
     pending_prompt_delivery_tracked: bool,
     retired_prompts: HashMap<String, prompt_receipts::RetiredPrompt>,
     title_generation: SessionTitleGeneration,
@@ -151,6 +149,13 @@ struct PendingQueuedPrompt {
     session: Option<PathBuf>,
     delivery_tracked: bool,
     result_emitted: bool,
+    harness: crate::agents::Backend,
+    project: PathBuf,
+    mode: crate::protocol::PromptMode,
+    message: String,
+    display_message: Option<String>,
+    invocation: Option<String>,
+    images: Vec<crate::protocol::PromptImage>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

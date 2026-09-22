@@ -40,7 +40,6 @@ pub(super) fn run(
         pending_prompt_target: None,
         pending_prompt_item: None,
         pending_outbox_id: None,
-        pending_prompt_delivery_unknown: false,
         pending_prompt_delivery_tracked: false,
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: Some(0),

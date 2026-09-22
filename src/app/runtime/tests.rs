@@ -100,6 +100,7 @@ pub(super) fn owner_without_process(
                 access_mode: HarnessAccessMode::Sandboxed,
                 app_proxy: None,
                 session_locator_root: None,
+                prompt_boundary_url: None,
             },
             process: None,
             snapshot: RuntimeSnapshot {
@@ -120,7 +121,6 @@ pub(super) fn owner_without_process(
             pending_prompt_target: None,
             pending_prompt_item: None,
             pending_outbox_id: None,
-            pending_prompt_delivery_unknown: false,
             pending_prompt_delivery_tracked: false,
             title_generation: SessionTitleGeneration::default(),
             transcript_changed_from: None,
@@ -1198,13 +1198,9 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
     assert!(owner.deferred_prompt.is_none());
     assert!(owner.pending_prompt_item.is_none());
     assert!(!owner.snapshot.conversation.running);
-    assert!(
-        owner
-            .state
-            .as_ref()
-            .expect("state")
-            .queued_prompts()?
-            .is_empty()
+    assert_eq!(
+        owner.state.as_ref().expect("state").queued_prompts()?.len(),
+        1
     );
     assert!(events.try_iter().any(|event| matches!(
         event,
@@ -1998,6 +1994,7 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
         access_mode: HarnessAccessMode::default(),
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
     preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -2122,7 +2119,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
 }
 
 #[test]
-fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::error::Error>> {
+fn failed_start_keeps_the_deferred_prompt_pending() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui-state.sqlite3");
     let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
@@ -2132,6 +2129,7 @@ fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::er
         access_mode: HarnessAccessMode::default(),
         app_proxy: None,
         session_locator_root: None,
+        prompt_boundary_url: None,
     };
     owner.state = Some(StateStore::open_at(&database)?);
 
@@ -2143,23 +2141,19 @@ fn failed_start_marks_the_deferred_prompt_failed() -> Result<(), Box<dyn std::er
         false,
     );
 
-    assert!(
-        owner
-            .state
-            .as_ref()
-            .expect("state")
-            .queued_prompts()?
-            .is_empty()
+    assert_eq!(
+        owner.state.as_ref().expect("state").queued_prompts()?.len(),
+        1
     );
     assert!(owner.pending_outbox_id.is_none());
     let connection = rusqlite::Connection::open(database)?;
     let (state, error) = connection.query_row(
         "SELECT state, error FROM outbox ORDER BY id DESC LIMIT 1",
         [],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
     )?;
-    assert_eq!(state, "failed");
-    assert!(error.contains("definitely/missing"));
+    assert_eq!(state, "pending");
+    assert!(error.is_none());
     Ok(())
 }
 
@@ -2234,7 +2228,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     let script = temp.path().join("fake-pi.sh");
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
         .map_err(|error| error.to_string())?;
-    let process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
+    let process_command = AgentLaunchConfig::test_script(&script, vec!["history-resume".into()]);
     let process = crate::agents::spawn_session(
         &process_command,
         SessionLaunch {
@@ -2246,6 +2240,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         },
     )?;
     let (mut owner, event_rx) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(StateStore::open_at(&temp.path().join("state.sqlite3"))?);
     let old_path = PathBuf::from("/old");
     let new_path = PathBuf::from("/new");
     let old_project = temp.path().to_path_buf();
@@ -2427,7 +2422,6 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         pending_prompt_target: Some(format!("session:{}", active_path.display())),
         pending_prompt_item: None,
         pending_outbox_id: None,
-        pending_prompt_delivery_unknown: false,
         pending_prompt_delivery_tracked: false,
         title_generation: SessionTitleGeneration::default(),
         transcript_changed_from: None,

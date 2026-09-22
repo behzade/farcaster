@@ -6,10 +6,29 @@ pub(super) struct RetiredPrompt {
     target: String,
     pub(super) session: Option<PathBuf>,
     delivery_tracked: bool,
+    submission_id: Option<String>,
     pub(super) delivered: bool,
 }
 
 impl RuntimeOwner {
+    pub(super) fn retire_pending_prompt(&mut self) {
+        if let Some(id) = self.pending_prompt_id.clone()
+            && let Some(target) = self.pending_prompt_target.clone()
+        {
+            self.retired_prompts.insert(
+                id,
+                RetiredPrompt {
+                    outbox_id: self.pending_outbox_id,
+                    target,
+                    session: self.active_session.clone(),
+                    delivery_tracked: self.pending_prompt_delivery_tracked,
+                    submission_id: self.pending_submission_id.clone(),
+                    delivered: self.pending_prompt_result_emitted,
+                },
+            );
+        }
+    }
+
     pub(super) fn apply_cancelled_prompt(&mut self, event: &Value) -> bool {
         if event.get("type").and_then(Value::as_str) != Some("prompt_delivery")
             || event.get("status").and_then(Value::as_str) != Some("cancelled")
@@ -164,8 +183,10 @@ impl RuntimeOwner {
                     &target,
                     crate::agents::PromptOutcome::Accepted,
                 );
-                self.pending_prompt_result_emitted = true;
             }
+            // Recovered rows need the same delivery completion even when no
+            // live composer submission exists to receive a result.
+            self.pending_prompt_result_emitted = true;
             // Delivery completes the submission even when its admission reply
             // arrived earlier. A later duplicate reply no longer owns this slot.
             if saved {
@@ -188,8 +209,8 @@ impl RuntimeOwner {
         }
     }
 
-    /// A late receipt belongs to the old outbox row, never a new submission to
-    /// the same target. It must not emit a composer result for that target.
+    /// A late receipt belongs to the old outbox row and exact composer submission,
+    /// never a newer submission to the same target.
     pub(super) fn reconcile_retired_prompt(&mut self, id: &str, delivered: bool) -> bool {
         let Some(retired) = self.retired_prompts.get(id).cloned() else {
             return false;
@@ -197,15 +218,24 @@ impl RuntimeOwner {
         let result = (|| {
             if let Some(store) = self.state.as_mut() {
                 if let Some(outbox_id) = retired.outbox_id {
-                    store.complete_prompt_with_receipt(
-                        outbox_id,
-                        &retired.target,
-                        retired.session.as_deref(),
-                        id,
-                        retired.delivery_tracked,
-                    )?;
-                }
-                if delivered && !retired.delivered {
+                    if delivered {
+                        store.complete_delivered_prompt(
+                            outbox_id,
+                            &retired.target,
+                            retired.session.as_deref(),
+                            id,
+                            retired.delivery_tracked,
+                        )?;
+                    } else {
+                        store.record_prompt_acceptance(
+                            outbox_id,
+                            &retired.target,
+                            retired.session.as_deref(),
+                            id,
+                            retired.delivery_tracked,
+                        )?;
+                    }
+                } else if delivered && !retired.delivered {
                     store.record_prompt_receipt_delivered(id, None)?;
                 }
             }
@@ -225,8 +255,21 @@ impl RuntimeOwner {
                 self.publish();
             }
         }
+        if delivered
+            && !retired.delivered
+            && let Some(submission_id) = &retired.submission_id
+        {
+            let _ = self.event_tx.send(RuntimeEvent::PromptResult {
+                submission_id: Some(submission_id.clone()),
+                target: retired.target.clone(),
+                outcome: crate::agents::PromptOutcome::Accepted,
+                session: retired.session.clone(),
+            });
+        }
         if let Some(retired) = self.retired_prompts.get_mut(id) {
-            retired.outbox_id = None;
+            if delivered {
+                retired.outbox_id = None;
+            }
             retired.delivered |= delivered;
         }
         true

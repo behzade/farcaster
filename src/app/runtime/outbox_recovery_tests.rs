@@ -1,8 +1,6 @@
 use crate::agents::Backend;
 use std::{cell::RefCell, rc::Rc};
 
-use sha2::{Digest as _, Sha256};
-
 use super::*;
 use crate::app::runtime::tests::owner_without_process;
 
@@ -19,29 +17,24 @@ impl SessionTransport for Recorder {
     fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
         Ok(())
     }
-
     fn poll(&mut self) -> Option<SessionEvent> {
         None
     }
-
     fn close(&mut self) -> Result<(), String> {
         Ok(())
     }
 }
 
-fn empty_session_value() -> Value {
-    json!({
+fn empty_session() -> SessionState {
+    serde_json::from_value(json!({
         "sessionId": "replay-session",
         "isStreaming": false,
         "isCompacting": false,
         "autoCompactionEnabled": true,
         "messageCount": 0,
         "pendingMessageCount": 0
-    })
-}
-
-fn empty_session() -> SessionState {
-    serde_json::from_value(empty_session_value()).expect("session fixture")
+    }))
+    .expect("session fixture")
 }
 
 fn prompt_response(id: &str, mode: PromptMode, success: bool) -> crate::agents::SessionResponse {
@@ -59,6 +52,18 @@ fn prompt_response(id: &str, mode: PromptMode, success: bool) -> crate::agents::
     }
 }
 
+fn delivered(id: &str, message: &str) -> SessionEvent {
+    SessionEvent::Activity(
+        json!({
+            "type":"prompt_delivery",
+            "submissionId":id,
+            "status":"delivered",
+            "message":{"role":"user", "content":[{"type":"text", "text":message}]},
+        })
+        .into(),
+    )
+}
+
 fn sent_messages(sent: &Rc<RefCell<Vec<SessionCommand>>>) -> Vec<String> {
     sent.borrow()
         .iter()
@@ -69,43 +74,34 @@ fn sent_messages(sent: &Rc<RefCell<Vec<SessionCommand>>>) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn startup_held_follow_up_stays_in_queue_until_native_delivery() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let (mut owner, _) = owner_without_process(temp.path().into());
+fn outbox_rows(database: &std::path::Path) -> Result<Vec<(String, String)>, String> {
+    let connection = rusqlite::Connection::open(database).map_err(|error| error.to_string())?;
+    connection
+        .prepare("SELECT message, state FROM outbox ORDER BY id")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+fn ready_owner(
+    root: &std::path::Path,
+    database: &std::path::Path,
+) -> Result<(RuntimeOwner, Rc<RefCell<Vec<SessionCommand>>>), String> {
+    let (mut owner, _) = owner_without_process(root.into());
     let sent = Rc::new(RefCell::new(Vec::new()));
     owner.process = Some(Box::new(Recorder(sent.clone())));
-    owner.state = Some(StateStore::open_at(&database)?);
-    owner.harness = Some(Backend::Claude);
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.snapshot.selected_session = owner.active_session.clone();
+    owner.state = Some(StateStore::open_at(database)?);
+    owner.active_session = Some(root.join("session.jsonl"));
     owner.snapshot.session = Some(empty_session());
-
-    owner.send_prompt_for_submission(
-        "startup-follow-up".into(),
-        "session:startup".into(),
-        PromptMode::FollowUp,
-        "queued during startup".into(),
-        Vec::new(),
-        false,
-    );
-    assert!(owner.deferred_prompt.is_some());
-    assert!(owner.snapshot.conversation.items.is_empty());
-
     owner.startup_state_loaded = true;
     owner.startup_history_loaded = true;
-    owner.maybe_send_deferred_prompt();
-    assert_eq!(sent_messages(&sent), ["queued during startup"]);
-    assert!(
-        owner.snapshot.conversation.items.is_empty(),
-        "queued startup input must not become an optimistic user row"
-    );
-    Ok(())
+    Ok((owner, sent))
 }
 
 #[test]
-fn direct_recovered_steer_and_follow_up_never_create_optimistic_users() -> Result<(), String> {
+fn recovered_steer_and_follow_up_stay_out_of_the_transcript_until_delivery() -> Result<(), String> {
     for mode in [PromptMode::Steer, PromptMode::FollowUp] {
         let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
         let database = temp.path().join("state.sqlite3");
@@ -120,35 +116,25 @@ fn direct_recovered_steer_and_follow_up_never_create_optimistic_users() -> Resul
             &[],
         )?;
         let prompt = store.queued_prompts()?.remove(0);
-        let (mut owner, _) = owner_without_process(temp.path().into());
-        let sent = Rc::new(RefCell::new(Vec::new()));
-        owner.process = Some(Box::new(Recorder(sent.clone())));
-        owner.state = Some(store);
+        let (mut owner, _) = ready_owner(temp.path(), &database)?;
         owner.harness = Some(Backend::Claude);
-        owner.active_session = Some(temp.path().join("session.jsonl"));
-        owner.snapshot.session = Some(empty_session());
-        owner.startup_state_loaded = true;
-        owner.startup_history_loaded = true;
+        owner.state = Some(store);
 
         owner.deliver_queued(prompt);
 
-        assert_eq!(sent_messages(&sent), ["saved queued input"]);
-        assert!(
-            owner.snapshot.conversation.items.is_empty(),
-            "{mode:?} recovery must remain queue presentation only"
-        );
+        assert!(owner.snapshot.conversation.items.is_empty(), "{mode:?}");
     }
     Ok(())
 }
 
 #[test]
-fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), String> {
+fn abort_cancels_only_local_queue_work() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
     for message in ["active task", "next task", "last task"] {
         store.enqueue_prompt(
-            "draft:abort-replay",
+            "draft:abort",
             Backend::Pi,
             temp.path(),
             None,
@@ -158,6 +144,7 @@ fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), St
         )?;
     }
     let recovered = store.queued_prompts()?;
+    let active_id = recovered[0].id;
     let unrelated_id = store.enqueue_prompt(
         "draft:unrelated",
         Backend::Pi,
@@ -167,14 +154,8 @@ fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), St
         "unrelated task",
         &[],
     )?;
-    let (mut owner, _) = owner_without_process(temp.path().to_path_buf());
-    let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
     owner.state = Some(store);
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
     for prompt in recovered {
         owner.deliver_queued(prompt);
     }
@@ -182,22 +163,29 @@ fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), St
     assert_eq!(sent_messages(&sent), ["active task"]);
 
     owner.apply_command(RuntimeCommand::Abort);
+    owner.apply_response(crate::agents::SessionResponse::prompt_delivery_unknown(
+        "request-1".into(),
+        PromptMode::Normal,
+        "abort ended before a model receipt".into(),
+    ));
+    owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_start"}).into()));
     owner.apply_process_item(SessionEvent::Activity(
         json!({"type":"agent_settled"}).into(),
     ));
-    owner.maybe_send_deferred_prompt();
-    assert_eq!(
-        sent_messages(&sent),
-        ["active task"],
-        "Abort must not dispatch the next recovered task"
+    assert!(
+        !owner.normal_prompt_in_flight,
+        "settlement releases normal dispatch"
     );
     assert!(
-        sent.borrow()
-            .iter()
-            .any(|command| matches!(command, SessionCommand::Abort))
+        !owner.active_snapshot().conversation.running,
+        "settlement ends the turn"
     );
-    assert!(owner.queued_prompts.is_empty());
+    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.pending_prompt_target.is_none());
+    owner.maybe_send_deferred_prompt();
+    assert_eq!(sent_messages(&sent), ["active task"]);
     drop(owner);
+
     let reopened = StateStore::open_at(&database)?;
     assert_eq!(
         reopened
@@ -205,94 +193,27 @@ fn abort_cancels_all_recovered_prompts_without_replaying_them() -> Result<(), St
             .iter()
             .map(|prompt| prompt.id)
             .collect::<Vec<_>>(),
-        [unrelated_id],
-        "cancelled work must not return on restart"
+        [active_id, unrelated_id]
     );
-    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
-    let rows = connection
-        .prepare("SELECT message, state FROM outbox ORDER BY id")
-        .map_err(|error| error.to_string())?
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
     assert_eq!(
-        rows,
+        outbox_rows(&database)?,
         [
-            ("next task".into(), "failed".into()),
-            ("last task".into(), "failed".into()),
-            ("unrelated task".into(), "queued".into())
-        ],
-        "keep cancelled payloads, but remove them from automatic delivery"
+            ("active task".into(), "pending".into()),
+            ("next task".into(), "cancelled".into()),
+            ("last task".into(), "cancelled".into()),
+            ("unrelated task".into(), "pending".into()),
+        ]
     );
     Ok(())
 }
 
 #[test]
-fn abort_reports_failed_durable_cancellation_and_still_stops_this_run() -> Result<(), String> {
+fn abort_cancels_a_not_yet_dispatched_prompt_durably() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
-    let store = StateStore::open_at(&database)?;
-    store.enqueue_prompt(
-        "draft:failed-cancel",
-        Backend::Pi,
-        temp.path(),
-        None,
-        PromptMode::Normal,
-        "must not start this run",
-        &[],
-    )?;
-    let connection = rusqlite::Connection::open(&database).map_err(|e| e.to_string())?;
-    connection
-        .execute_batch(
-            "CREATE TRIGGER reject_cancellation BEFORE UPDATE OF state ON outbox
-         WHEN NEW.state='failed' BEGIN SELECT RAISE(FAIL, 'storage failure fixture'); END;",
-        )
-        .map_err(|e| e.to_string())?;
-    let (mut owner, _) = owner_without_process(temp.path().into());
-    let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
-    owner.queued_prompts.extend(store.queued_prompts()?);
-    owner.state = Some(store);
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.apply_command(RuntimeCommand::Abort);
-    owner.maybe_send_deferred_prompt();
-    assert!(sent_messages(&sent).is_empty());
-    assert!(owner.queued_prompts.is_empty());
-    assert!(
-        owner
-            .active_snapshot()
-            .conversation
-            .items
-            .iter()
-            .any(|item| {
-                item.text.contains("They may return after restart")
-                    && item.text.contains("storage failure fixture")
-            }),
-        "a persistence failure must show the restart risk"
-    );
-    drop(owner);
-    let reopened = StateStore::open_at(&database)?;
-    assert_eq!(
-        reopened.queued_prompts()?.len(),
-        1,
-        "failed storage cannot be claimed as durable cancellation"
-    );
-    Ok(())
-}
-
-#[test]
-fn abort_cancels_a_prompt_deferred_for_startup() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let store = StateStore::open_at(&database)?;
-    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
-    let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
-    owner.state = Some(store);
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+    owner.startup_state_loaded = false;
+    owner.startup_history_loaded = false;
 
     owner.send_prompt(
         "draft:startup".into(),
@@ -302,15 +223,10 @@ fn abort_cancels_a_prompt_deferred_for_startup() -> Result<(), String> {
         false,
     );
     assert!(owner.deferred_prompt.is_some());
-    assert!(owner.pending_prompt_item.is_some());
-    assert!(owner.active_snapshot().conversation.running);
-
     owner.apply_command(RuntimeCommand::Abort);
 
     assert!(owner.deferred_prompt.is_none());
     assert!(owner.pending_prompt_item.is_none());
-    assert!(owner.pending_prompt_target.is_none());
-    assert!(!owner.active_snapshot().conversation.running);
     assert!(
         owner
             .state
@@ -319,32 +235,16 @@ fn abort_cancels_a_prompt_deferred_for_startup() -> Result<(), String> {
             .queued_prompts()?
             .is_empty()
     );
-    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
-    let outbox_state = connection
-        .query_row("SELECT state FROM outbox", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(|error| error.to_string())?;
-    assert_eq!(outbox_state, "failed");
-    assert!(matches!(sent.borrow().as_slice(), [SessionCommand::Abort]));
-    assert!(events.try_iter().any(|event| matches!(
-        event,
-        RuntimeEvent::PromptResult {
-            target,
-            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-            ..
-        } if target == "draft:startup"
-    )));
-
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.maybe_send_deferred_prompt();
+    assert_eq!(
+        outbox_rows(&database)?,
+        [("cancel before ready".into(), "cancelled".into())]
+    );
     assert!(matches!(sent.borrow().as_slice(), [SessionCommand::Abort]));
     Ok(())
 }
 
 #[test]
-fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> Result<(), String> {
+fn startup_replays_normal_prompts_in_order_after_delivery_and_settlement() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
@@ -355,7 +255,7 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
         temp.path(),
         None,
         PromptMode::Normal,
-        "first survives restart",
+        "first",
         &[],
     )?;
     let second = store.enqueue_prompt(
@@ -364,7 +264,7 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
         temp.path(),
         None,
         PromptMode::Normal,
-        "second survives restart",
+        "second",
         &[],
     )?;
     let third = store.enqueue_prompt(
@@ -373,23 +273,19 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
         temp.path(),
         None,
         PromptMode::Normal,
-        "third survives restart",
+        "third",
         &[],
     )?;
     let prompts = store.queued_prompts()?;
-    assert_eq!(
-        prompts.iter().map(|prompt| prompt.id).collect::<Vec<_>>(),
-        [first, second, third]
-    );
-
-    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
-    let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
     owner.state = Some(store);
     for prompt in prompts {
         owner.deliver_queued(prompt);
     }
+    owner.maybe_send_deferred_prompt();
+    assert_eq!(sent_messages(&sent), ["first"]);
 
+    owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
     assert_eq!(
         owner
             .state
@@ -400,20 +296,9 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
             .map(|prompt| prompt.id)
             .collect::<Vec<_>>(),
         [first, second, third],
-        "shutdown before startup must leave every prompt durable and queued"
+        "admission leaves every row pending"
     );
-
-    owner.active_session = Some(temp.path().join("replay-session"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.maybe_send_deferred_prompt();
-
-    assert_eq!(
-        sent_messages(&sent),
-        ["first survives restart"],
-        "the first normal prompt starts after startup, while the next remains durable"
-    );
+    owner.apply_process_item(delivered("request-1", "first"));
     assert_eq!(
         owner
             .state
@@ -425,115 +310,51 @@ fn startup_replays_same_target_prompts_in_order_after_each_acknowledgement() -> 
             .collect::<Vec<_>>(),
         [second, third]
     );
-
-    owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
-    owner.maybe_send_deferred_prompt();
-
-    assert_eq!(
-        sent_messages(&sent),
-        ["first survives restart"],
-        "an RPC acknowledgement does not start a second normal prompt before the turn settles"
-    );
-
     owner.apply_response(crate::agents::SessionResponse::success(
         Some("request-2".into()),
         crate::agents::SessionResponsePayload::LoadState(Box::new(empty_session())),
     ));
-    assert!(
-        owner.snapshot.conversation.running,
-        "an idle state response must not hide a normal prompt awaiting its terminal event"
-    );
-    owner.maybe_send_deferred_prompt();
-    assert_eq!(
-        sent_messages(&sent),
-        ["first survives restart"],
-        "a stale idle state response cannot start a second normal prompt before the turn starts"
-    );
-
+    owner.apply_process_item(SessionEvent::Activity(json!({"type":"agent_start"}).into()));
     owner.apply_process_item(SessionEvent::Activity(
-        json!({"type": "agent_start"}).into(),
+        json!({"type":"agent_settled"}).into(),
     ));
-    owner.maybe_send_deferred_prompt();
-    assert_eq!(
-        sent_messages(&sent),
-        ["first survives restart"],
-        "a late start event still keeps the next normal prompt queued"
-    );
-
-    owner.apply_process_item(SessionEvent::Activity(
-        json!({"type": "agent_settled"}).into(),
-    ));
-    owner.maybe_send_deferred_prompt();
-    assert_eq!(
-        sent_messages(&sent),
-        ["first survives restart", "second survives restart"],
-        "odd state-poll pumps cannot rotate the next two queued normal prompts"
-    );
-    assert_eq!(
-        owner
-            .queued_prompts
-            .iter()
-            .map(|prompt| prompt.message.as_str())
-            .collect::<Vec<_>>(),
-        ["third survives restart"]
-    );
+    assert_eq!(sent_messages(&sent), ["first", "second"]);
+    assert_eq!(owner.queued_prompts.len(), 1);
     Ok(())
 }
 
 #[test]
-fn rejected_replay_prompt_does_not_starve_later_prompts() -> Result<(), String> {
+fn operational_rejection_rolls_back_the_transcript_but_retains_pending_work() -> Result<(), String>
+{
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
-    let store = StateStore::open_at(&database)?;
-    let target = "draft:replay";
-    store.enqueue_prompt(
-        target,
-        Backend::Pi,
-        temp.path(),
-        None,
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+    owner.send_prompt(
+        "draft:retry".into(),
         PromptMode::Normal,
-        "first is rejected",
-        &[],
-    )?;
-    store.enqueue_prompt(
-        target,
-        Backend::Pi,
-        temp.path(),
-        None,
-        PromptMode::Normal,
-        "second is still delivered",
-        &[],
-    )?;
-    let prompts = store.queued_prompts()?;
-    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
-    let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
-    owner.state = Some(store);
-    owner.active_session = Some(temp.path().join("replay-session"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    for prompt in prompts {
-        owner.deliver_queued(prompt);
-    }
-    owner.maybe_send_deferred_prompt();
-    assert_eq!(sent_messages(&sent), ["first is rejected"]);
-
+        "retry this input".into(),
+        Vec::new(),
+        false,
+    );
     owner.apply_response(prompt_response("request-1", PromptMode::Normal, false));
 
-    assert_eq!(
-        sent_messages(&sent),
-        ["first is rejected", "second is still delivered"],
-        "a rejected row becomes failed without resending it or blocking the next row"
-    );
+    assert_eq!(sent_messages(&sent), ["retry this input"]);
     assert!(
         owner
             .state
             .as_ref()
             .expect("state")
             .queued_prompts()?
-            .is_empty(),
-        "the second row started and the rejected row did not return to queued"
+            .iter()
+            .any(|prompt| prompt.message == "retry this input")
+    );
+    assert!(
+        owner
+            .snapshot
+            .conversation
+            .items
+            .iter()
+            .all(|item| { item.kind != crate::conversation::TranscriptKind::User })
     );
     Ok(())
 }
@@ -542,29 +363,20 @@ fn rejected_replay_prompt_does_not_starve_later_prompts() -> Result<(), String> 
 fn normal_replay_waits_for_compaction_retry_or_pending_input() -> Result<(), String> {
     for blocker in ["compacting", "retrying", "pending input"] {
         let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-        let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+        let database = temp.path().join("state.sqlite3");
+        let store = StateStore::open_at(&database)?;
         store.enqueue_prompt(
             "draft:replay",
             Backend::Pi,
             temp.path(),
             None,
             PromptMode::Normal,
-            "wait until the session is available",
+            "wait until available",
             &[],
         )?;
-        let prompt = store
-            .queued_prompts()?
-            .into_iter()
-            .next()
-            .expect("queued prompt");
-        let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
-        let sent = Rc::new(RefCell::new(Vec::new()));
-        owner.process = Some(Box::new(Recorder(sent.clone())));
+        let prompt = store.queued_prompts()?.remove(0);
+        let (mut owner, sent) = ready_owner(temp.path(), &database)?;
         owner.state = Some(store);
-        owner.active_session = Some(temp.path().join("replay-session"));
-        owner.snapshot.session = Some(empty_session());
-        owner.startup_state_loaded = true;
-        owner.startup_history_loaded = true;
         match blocker {
             "compacting" => Arc::make_mut(&mut owner.snapshot.conversation).compacting = true,
             "retrying" => Arc::make_mut(&mut owner.snapshot.conversation).retrying = true,
@@ -574,92 +386,61 @@ fn normal_replay_waits_for_compaction_retry_or_pending_input() -> Result<(), Str
                     title: "Continue?".into(),
                     placeholder: None,
                     timeout: None,
-                });
+                })
             }
             _ => unreachable!(),
         }
-
         owner.deliver_queued(prompt);
         owner.maybe_send_deferred_prompt();
         assert!(sent_messages(&sent).is_empty(), "{blocker}");
-
         let conversation = Arc::make_mut(&mut owner.snapshot.conversation);
         conversation.compacting = false;
         conversation.retrying = false;
         owner.snapshot.pending_question = None;
         owner.maybe_send_deferred_prompt();
-        assert_eq!(
-            sent_messages(&sent),
-            ["wait until the session is available"]
-        );
+        assert_eq!(sent_messages(&sent), ["wait until available"]);
     }
     Ok(())
 }
 
 #[test]
-fn unrelated_acknowledgement_does_not_complete_the_outbox_row() -> Result<(), String> {
+fn only_native_delivery_acknowledges_the_matching_outbox_row() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
-    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
-    owner.state = Some(StateStore::open_at(&database)?);
-    owner.process = Some(Box::new(Recorder::default()));
-    owner.active_session = Some(temp.path().join("replay-session"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
     owner.send_prompt(
         "draft:ack".into(),
         PromptMode::Normal,
-        "keep this row until the backend accepts it".into(),
+        "model receipt required".into(),
         Vec::new(),
         false,
     );
-    let request_id = owner.pending_prompt_id.clone().expect("prompt request");
-    owner.apply_process_item(SessionEvent::Response(prompt_response(
-        "unrelated-request",
-        PromptMode::Normal,
-        true,
-    )));
-
-    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
-    let rows = connection
-        .query_row("SELECT COUNT(*) FROM outbox", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .map_err(|error| error.to_string())?;
-    assert_eq!(rows, 1, "an unrelated response must not delete a prompt");
-    owner.apply_process_item(SessionEvent::Response(prompt_response(
-        &request_id,
-        PromptMode::Normal,
-        true,
-    )));
-    let rows: i64 = connection
-        .query_row("SELECT COUNT(*) FROM outbox", [], |row| row.get(0))
-        .map_err(|error| error.to_string())?;
+    let id = owner.pending_prompt_id.clone().expect("request id");
+    owner.apply_response(prompt_response("unrelated", PromptMode::Normal, true));
+    owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
     assert_eq!(
-        rows, 0,
-        "the matching native acknowledgement completes the prompt"
+        outbox_rows(&database)?,
+        [("model receipt required".into(), "pending".into())]
+    );
+
+    owner.apply_process_item(delivered(&id, "model receipt required"));
+    assert_eq!(
+        outbox_rows(&database)?,
+        [("model receipt required".into(), "acked".into())]
     );
     Ok(())
 }
 
 #[test]
-fn delivery_unknown_releases_the_request_and_late_acceptance_preserves_its_payload()
--> Result<(), String> {
+fn delivery_receipt_acks_prompt_and_persists_its_presentation() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
-    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
-    owner.state = Some(StateStore::open_at(&database)?);
-    owner.process = Some(Box::new(Recorder::default()));
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
+    let session = temp.path().join("session.jsonl");
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
+    owner.active_session = Some(session.clone());
     let image = crate::protocol::PromptImage::new("aGVsbG8=".into(), "image/png".into());
-
     owner.send_prompt_with_presentation(
-        "draft:unknown".into(),
+        "draft:presentation".into(),
         PromptMode::Normal,
         "resolved prompt".into(),
         Some("$review".into()),
@@ -667,85 +448,23 @@ fn delivery_unknown_releases_the_request_and_late_acceptance_preserves_its_paylo
         vec![image],
         false,
     );
-    let request_id = owner.pending_prompt_id.clone().expect("prompt request id");
-    assert_eq!(request_id, "request-1");
-    owner.apply_response(crate::agents::SessionResponse::prompt_delivery_unknown(
-        request_id.clone(),
-        PromptMode::Normal,
-        "socket closed after write".into(),
-    ));
+    let id = owner.pending_prompt_id.clone().expect("request id");
+    owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
+    let store = owner.state.as_ref().expect("state");
+    assert_eq!(store.queued_prompts()?.len(), 1);
+    assert!(store.accepted_prompt_history(&session)?.is_empty());
+    assert!(store.prompt_presentations(&session)?.is_empty());
 
-    let user = owner
-        .snapshot
-        .conversation
-        .items
-        .iter()
-        .find(|item| item.kind == crate::conversation::TranscriptKind::User)
-        .ok_or("unknown prompt was removed")?;
-    assert_eq!(user.text, "$review");
-    assert_eq!(user.label, "Delivery unknown");
-    assert_eq!(user.images.len(), 1);
-    assert!(owner.pending_prompt_id.is_none());
-    assert!(owner.pending_prompt_target.is_none());
-    assert!(!owner.normal_prompt_in_flight);
-
-    let reopened = StateStore::open_at(&database)?;
-    let unknown = reopened.unknown_prompts()?;
-    assert_eq!(unknown.len(), 1);
-    assert_eq!(unknown[0].message, "resolved prompt");
-    assert_eq!(unknown[0].display_message.as_deref(), Some("$review"));
-    assert_eq!(unknown[0].invocation.as_deref(), Some("review"));
-    assert_eq!(unknown[0].images.len(), 1);
-
-    owner.apply_response(prompt_response(&request_id, PromptMode::Normal, true));
-    assert!(owner.pending_prompt_id.is_none());
-    assert!(owner.pending_prompt_target.is_none());
+    owner.apply_process_item(delivered(&id, "resolved prompt"));
+    let store = owner.state.as_ref().expect("state");
+    assert!(store.queued_prompts()?.is_empty());
     assert_eq!(
-        owner
-            .snapshot
-            .conversation
-            .items
-            .iter()
-            .filter(|item| { item.kind == crate::conversation::TranscriptKind::User })
-            .count(),
-        1
+        outbox_rows(&database)?,
+        [("resolved prompt".into(), "acked".into())]
     );
-    let outcomes = events
-        .try_iter()
-        .filter_map(|event| match event {
-            RuntimeEvent::PromptResult { outcome, .. } => Some(outcome),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    assert!(store.accepted_prompt_history(&session)?.is_empty());
     assert_eq!(
-        outcomes,
-        [crate::agents::PromptOutcome::DeliveryUnknown],
-        "a late old receipt must not resolve a newer composer submission"
-    );
-    let accepted = owner
-        .state
-        .as_ref()
-        .expect("state")
-        .accepted_prompt_history(&temp.path().join("session.jsonl"))?;
-    assert_eq!(accepted.len(), 1);
-    assert_eq!(accepted[0]["submissionId"], request_id);
-    assert_eq!(accepted[0]["deliveryStatus"], "accepted");
-    owner.apply_process_item(SessionEvent::Activity(
-        json!({
-            "type":"prompt_delivery",
-            "submissionId":request_id,
-            "status":"delivered",
-            "message":{"role":"user", "content":[{"type":"text", "text":"resolved prompt"}]},
-        })
-        .into(),
-    ));
-    drop(owner);
-    let reopened = StateStore::open_at(&database)?;
-    assert!(reopened.unknown_prompts()?.is_empty());
-    let accepted = reopened.accepted_prompt_history(&temp.path().join("session.jsonl"))?;
-    assert!(accepted.is_empty());
-    assert_eq!(
-        reopened.prompt_presentations(&temp.path().join("session.jsonl"))?,
+        store.prompt_presentations(&session)?,
         [crate::agents::PromptPresentation {
             resolved_message: "resolved prompt".into(),
             display_message: "$review".into(),
@@ -756,387 +475,104 @@ fn delivery_unknown_releases_the_request_and_late_acceptance_preserves_its_paylo
 }
 
 #[test]
-fn fatal_transport_failure_after_dispatch_is_delivery_unknown_not_rejected() -> Result<(), String> {
+fn process_failure_after_dispatch_keeps_the_outbox_pending_for_retry() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
-    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
-    owner.state = Some(StateStore::open_at(&database)?);
-    owner.process = Some(Box::new(Recorder::default()));
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
     owner.send_prompt(
         "draft:fatal".into(),
         PromptMode::Normal,
-        "retain after uncertain write".into(),
+        "retain after crash".into(),
         Vec::new(),
         false,
     );
-    assert_eq!(owner.pending_prompt_id.as_deref(), Some("request-1"));
     owner.apply_process_item(SessionEvent::Failure(
         "transport disconnected after dispatch".into(),
     ));
 
-    let user = owner
-        .snapshot
-        .conversation
-        .items
-        .iter()
-        .find(|item| item.kind == crate::conversation::TranscriptKind::User)
-        .ok_or("fatal transport failure rolled back the prompt")?;
-    assert_eq!(user.text, "retain after uncertain write");
-    assert_eq!(user.label, "Delivery unknown");
-    assert!(events.try_iter().any(|event| matches!(
-        event,
-        RuntimeEvent::PromptResult {
-            outcome: crate::agents::PromptOutcome::DeliveryUnknown,
-            ..
-        }
-    )));
-    drop(owner);
-    let reopened = StateStore::open_at(&database)?;
-    let unknown = reopened.unknown_prompts()?;
-    assert_eq!(unknown.len(), 1);
-    assert_eq!(unknown[0].message, "retain after uncertain write");
-    assert!(reopened.queued_prompts()?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn retired_unknown_receipts_never_resolve_a_new_submission() -> Result<(), String> {
-    const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-    const GIF: &str = "R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
-    for mode in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
-        for navigate in [false, true] {
-            // Mode/navigation context keeps matrix failures attributable.
-            let scene = format!("{mode:?} navigate={navigate}");
-            let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-            let database = temp.path().join("state.sqlite3");
-            let first_session = temp.path().join("first.jsonl");
-            let second_session = if navigate {
-                temp.path().join("second.jsonl")
-            } else {
-                first_session.clone()
-            };
-            let (mut owner, events) = owner_without_process(temp.path().into());
-            let sent = Rc::new(RefCell::new(Vec::new()));
-            owner.process = Some(Box::new(Recorder(sent.clone())));
-            owner.state = Some(StateStore::open_at(&database)?);
-            owner.active_session = Some(first_session.clone());
-            owner.snapshot.selected_session = Some(first_session.clone());
-            owner.snapshot.session = Some(empty_session());
-            owner.startup_state_loaded = true;
-            owner.startup_history_loaded = true;
-            if mode != PromptMode::Normal {
-                conversation_mut(&mut owner.snapshot).running = true;
-            }
-            let target = format!("session:{}", first_session.display());
-            owner.send_prompt(
-                target,
-                mode,
-                "same text".into(),
-                vec![crate::protocol::PromptImage::new(
-                    PNG.into(),
-                    "image/png".into(),
-                )],
-                true,
-            );
-            let old_id = owner.pending_prompt_id.clone().expect("first request");
-            owner.apply_process_item(SessionEvent::Activity(json!({
-                "type":"prompt_delivery", "submissionId":old_id, "status":"unknown",
-                "message":{"role":"user", "queued":mode != PromptMode::Normal,
-                    "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
-            }).into()));
-            owner.apply_process_item(SessionEvent::Response(
-                crate::agents::SessionResponse::prompt_delivery_unknown(
-                    old_id.clone(),
-                    mode,
-                    "cancelled without a receipt".into(),
-                ),
-            ));
-            assert!(owner.pending_prompt_id.is_none(), "{scene}");
-            assert!(owner.pending_prompt_target.is_none(), "{scene}");
-            assert!(!owner.normal_prompt_in_flight, "{scene}");
-            assert!(
-                owner.process.is_some() && owner.snapshot.connected,
-                "{scene}"
-            );
-            assert_eq!(
-                StateStore::open_at(&database)?.unknown_prompts()?.len(),
-                1,
-                "unknown prompt persistence ({scene})"
-            );
-            owner.apply_process_item(SessionEvent::Activity(
-                json!({"type":"agent_settled"}).into(),
-            ));
-            if navigate {
-                owner.active_session = Some(second_session.clone());
-                owner.snapshot.selected_session = Some(second_session.clone());
-                owner.snapshot.conversation = Arc::default();
-            }
-            let target = format!("session:{}", second_session.display());
-            owner.send_prompt(
-                target,
-                PromptMode::Normal,
-                "same text".into(),
-                vec![crate::protocol::PromptImage::new(
-                    GIF.into(),
-                    "image/gif".into(),
-                )],
-                false,
-            );
-            let new_id = owner
-                .pending_prompt_id
-                .clone()
-                .unwrap_or_else(|| panic!("new request must not be blocked ({scene})"));
-            assert_ne!(old_id, new_id, "{scene}");
-            let new_outbox = owner.pending_outbox_id.expect("new durable row");
-            let rows_before = owner.snapshot.conversation.items.len();
-            let new_image = owner
-                .snapshot
-                .conversation
-                .items
-                .iter()
-                .filter(|item| item.kind == TranscriptKind::User)
-                .last()
-                .expect("last queued prompt")
-                .images[0]
-                .clone();
-            for _ in 0..2 {
-                owner.apply_process_item(SessionEvent::Activity(json!({
-                    "type":"prompt_delivery", "submissionId":old_id, "status":"accepted",
-                    "message":{"role":"user", "queued":mode != PromptMode::Normal,
-                        "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
-                }).into()));
-                owner.apply_process_item(SessionEvent::Response(prompt_response(
-                    &old_id, mode, true,
-                )));
-                owner.apply_process_item(SessionEvent::Activity(json!({
-                    "type":"prompt_delivery", "submissionId":old_id, "status":"delivered",
-                    "message":{"role":"user", "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
-                }).into()));
-                owner.apply_process_item(SessionEvent::Response(prompt_response(
-                    &old_id, mode, false,
-                )));
-            }
-            assert_eq!(
-                owner.pending_prompt_id.as_deref(),
-                Some(new_id.as_str()),
-                "{scene}"
-            );
-            assert_eq!(owner.pending_outbox_id, Some(new_outbox), "{scene}");
-            // A same-session queued receipt admits its old row. A normal row
-            // was already optimistic, while navigation must not project any
-            // old row into the new session. No branch may consume the new row.
-            let admits_old_row = !navigate && mode != PromptMode::Normal;
-            assert_eq!(
-                owner.snapshot.conversation.items.len(),
-                rows_before + usize::from(admits_old_row),
-                "receipt projection ({scene})"
-            );
-            let user_images = owner
-                .snapshot
-                .conversation
-                .items
-                .iter()
-                .filter(|item| item.kind == TranscriptKind::User)
-                .map(|item| item.images[0].clone())
-                .collect::<Vec<_>>();
-            assert_eq!(user_images.len(), if navigate { 1 } else { 2 }, "{scene}");
-            assert!(
-                user_images
-                    .iter()
-                    .any(|image| Arc::ptr_eq(image, &new_image))
-            );
-            if !navigate {
-                assert!(
-                    user_images
-                        .iter()
-                        .any(|image| !Arc::ptr_eq(image, &new_image))
-                );
-            }
-            let outcomes = events
-                .try_iter()
-                .filter_map(|event| match event {
-                    RuntimeEvent::PromptResult { outcome, .. } => Some(outcome),
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                outcomes,
-                [crate::agents::PromptOutcome::DeliveryUnknown],
-                "late old receipt must stay retired ({scene})"
-            );
-            assert_eq!(
-                sent_messages(&sent),
-                ["same text", "same text"],
-                "both submissions must dispatch ({scene})"
-            );
-            // Backend history need not carry app receipt IDs. Replacing it
-            // clears the delivered row's ledger; an old event must still not
-            // append its payload again or bind the new optimistic row.
-            Arc::make_mut(&mut owner.snapshot.conversation).replace_history(&[
-                json!({"role":"user", "content":[{"type":"text", "text":"saved historical turn"}]}),
-            ]);
-            let history_rows = owner.snapshot.conversation.items.len();
-            for status in ["accepted", "delivered", "unknown", "rejected"] {
-                owner.apply_process_item(SessionEvent::Activity(json!({
-                    "type":"prompt_delivery", "submissionId":old_id, "status":status,
-                    "message":{"role":"user", "content":[{"type":"text", "text":"same text"}, {"type":"image", "data":PNG, "mimeType":"image/png"}]}
-                }).into()));
-            }
-            assert_eq!(
-                owner.snapshot.conversation.items.len(),
-                history_rows,
-                "old events must not re-append payloads ({scene})"
-            );
-            assert_eq!(
-                owner.pending_prompt_id.as_deref(),
-                Some(new_id.as_str()),
-                "{scene}"
-            );
-            assert_eq!(owner.pending_outbox_id, Some(new_outbox), "{scene}");
-            owner.apply_process_item(SessionEvent::Response(prompt_response(
-                &new_id,
-                PromptMode::Normal,
-                true,
-            )));
-            drop(owner);
-            let reopened = StateStore::open_at(&database)?;
-            assert!(
-                reopened.unknown_prompts()?.is_empty(),
-                "acknowledged work must not stay unknown ({scene})"
-            );
-            assert!(
-                reopened.queued_prompts()?.is_empty(),
-                "acknowledged work must not replay ({scene})"
-            );
-            let saved = reopened.accepted_prompt_history(&second_session)?;
-            assert_eq!(saved.len(), 1, "{scene}");
-            assert_eq!(saved[0]["submissionId"], new_id, "{scene}");
-            assert_eq!(saved[0]["content"][1]["data"], GIF, "{scene}");
-            let connection =
-                rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
-            let (accepted_rows, delivered_rows, attachment, mime_type): (i64, i64, String, String) =
-                connection
-                    .query_row(
-                        "SELECT
-                        SUM(json_extract(body,'$.type')='accepted_prompt'),
-                        SUM(json_extract(body,'$.type')='prompt_delivery_receipt'),
-                        MAX(CASE WHEN json_extract(body,'$.type')='accepted_prompt'
-                            THEN json_extract(body,'$.images[0].attachment') END),
-                        MAX(CASE WHEN json_extract(body,'$.type')='accepted_prompt'
-                            THEN json_extract(body,'$.images[0].mimeType') END)
-                       FROM session_events
-                      WHERE json_extract(body,'$.submissionId')=?1",
-                        [&old_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                    )
-                    .map_err(|error| error.to_string())?;
-            assert_eq!(
-                (accepted_rows, delivered_rows),
-                (1, 1),
-                "old receipt ledger expectation ({scene})"
-            );
-            let png_bytes =
-                crate::protocol::PromptImage::new(PNG.into(), "image/png".into()).bytes()?;
-            assert_eq!(attachment, format!("{:x}", Sha256::digest(png_bytes)));
-            assert_eq!(mime_type, "image/png");
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn failed_unknown_write_keeps_the_original_sending_row_recoverable() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let (mut owner, _) = owner_without_process(temp.path().into());
-    let sent = Rc::new(RefCell::new(Vec::new()));
-    owner.process = Some(Box::new(Recorder(sent.clone())));
-    owner.state = Some(StateStore::open_at(&database)?);
-    owner.active_session = Some(temp.path().join("session.jsonl"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.send_prompt(
-        "draft:old".into(),
-        PromptMode::Normal,
-        "recover old payload".into(),
-        Vec::new(),
-        false,
-    );
-    let old_id = owner.pending_prompt_id.clone().expect("request");
-    let old_outbox = owner.pending_outbox_id.expect("saved before dispatch");
-    let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
-    connection.execute_batch("CREATE TRIGGER reject_unknown BEFORE UPDATE OF state ON outbox WHEN NEW.state='unknown' BEGIN SELECT RAISE(FAIL, 'unknown storage fixture'); END;")
-        .map_err(|error| error.to_string())?;
-    owner.apply_process_item(SessionEvent::Response(
-        crate::agents::SessionResponse::prompt_delivery_unknown(
-            old_id.clone(),
-            PromptMode::Normal,
-            "receipt lost".into(),
-        ),
-    ));
-    assert!(owner.pending_prompt_id.is_none());
-    assert_eq!(owner.retired_prompts[&old_id].outbox_id, Some(old_outbox));
     assert!(
         owner
             .snapshot
             .conversation
             .items
             .iter()
-            .any(|item| item.label == "Delivery state not saved"
-                && item.text.contains("unknown storage fixture"))
+            .all(|item| { item.kind != crate::conversation::TranscriptKind::User })
     );
-    let state: String = connection
-        .query_row(
-            "SELECT state FROM outbox WHERE id=?1",
-            [old_outbox],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
+    drop(owner);
     assert_eq!(
-        state, "sending",
-        "failed update must retain the durable pre-dispatch record"
+        outbox_rows(&database)?,
+        [("retain after crash".into(), "pending".into())]
     );
+    Ok(())
+}
+
+#[test]
+fn late_receipt_never_acknowledges_a_new_same_text_submission() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
+    owner.send_prompt(
+        "draft:old".into(),
+        PromptMode::Normal,
+        "same text".into(),
+        Vec::new(),
+        false,
+    );
+    let old_id = owner.pending_prompt_id.clone().expect("old request");
+    let old_outbox = owner.pending_outbox_id.expect("old outbox");
+    owner.apply_response(crate::agents::SessionResponse::prompt_delivery_unknown(
+        old_id.clone(),
+        PromptMode::Normal,
+        "transport stopped before the model receipt".into(),
+    ));
+    assert_eq!(owner.retired_prompts[&old_id].outbox_id, Some(old_outbox));
     owner.apply_process_item(SessionEvent::Activity(
         json!({"type":"agent_settled"}).into(),
     ));
     owner.send_prompt(
         "draft:new".into(),
         PromptMode::Normal,
-        "new payload".into(),
+        "same text".into(),
         Vec::new(),
         false,
     );
     let new_id = owner.pending_prompt_id.clone().expect("new request");
-    owner.apply_process_item(SessionEvent::Response(prompt_response(
-        &new_id,
-        PromptMode::Normal,
-        true,
-    )));
-    assert_eq!(sent_messages(&sent), ["recover old payload", "new payload"]);
-    drop(owner);
-    connection
-        .execute_batch("DROP TRIGGER reject_unknown;")
-        .map_err(|error| error.to_string())?;
-    let reopened = StateStore::open_at(&database)?;
-    let recovered = reopened.recover_interrupted_prompts()?;
-    assert_eq!(recovered.len(), 1);
-    assert_eq!(recovered[0].id, old_outbox);
-    assert_eq!(recovered[0].message, "recover old payload");
-    assert!(
-        reopened.queued_prompts()?.is_empty(),
-        "unknown work must never replay"
+    let new_outbox = owner.pending_outbox_id.expect("new outbox");
+
+    owner.apply_response(prompt_response(&old_id, PromptMode::Normal, true));
+    assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
+    assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+    owner.apply_process_item(delivered(&old_id, "same text"));
+    assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
+    assert_eq!(owner.pending_outbox_id, Some(new_outbox));
+    assert_eq!(
+        outbox_rows(&database)?,
+        [
+            ("same text".into(), "acked".into()),
+            ("same text".into(), "pending".into()),
+        ]
+    );
+    owner.apply_process_item(delivered(&old_id, "same text"));
+    assert_eq!(
+        outbox_rows(&database)?,
+        [
+            ("same text".into(), "acked".into()),
+            ("same text".into(), "pending".into()),
+        ]
+    );
+    owner.apply_process_item(delivered(&new_id, "same text"));
+    assert_eq!(
+        outbox_rows(&database)?,
+        [
+            ("same text".into(), "acked".into()),
+            ("same text".into(), "acked".into()),
+        ]
     );
     Ok(())
 }
 
 #[test]
-fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
+fn pending_prompt_is_not_safe_to_delete() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
@@ -1147,78 +583,43 @@ fn sending_prompt_is_not_treated_as_safe_to_delete() -> Result<(), String> {
         temp.path(),
         Some(&path),
         PromptMode::Normal,
-        "do not delete an unresolved prompt",
+        "do not delete unresolved work",
         &[],
     )?;
     store.begin_prompt(id)?;
-
-    assert!(
-        store.has_queued_prompts_for(&[path])?,
-        "a sending row can still lack a native outcome and must guard deletion or moves"
-    );
+    assert!(store.has_queued_prompts_for(&[path])?);
     Ok(())
 }
 
 #[test]
-fn failed_acknowledgement_commit_keeps_accepted_prompt_visible_and_recovers_unknown()
--> Result<(), String> {
+fn failed_delivery_record_keeps_the_original_pending_row_retryable() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
-    let store = StateStore::open_at(&database)?;
-    store.enqueue_prompt(
-        "draft:ack",
-        Backend::Pi,
-        temp.path(),
-        None,
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
+    owner.send_prompt(
+        "draft:atomic".into(),
         PromptMode::Normal,
-        "keep me",
-        &[],
-    )?;
-    let prompt = store.queued_prompts()?.remove(0);
+        "retry after storage failure".into(),
+        Vec::new(),
+        false,
+    );
+    let id = owner.pending_prompt_id.clone().expect("request id");
+    owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
     let connection = rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
     connection
         .execute_batch(
-            "CREATE TRIGGER reject_ack BEFORE INSERT ON session_events
-        BEGIN SELECT RAISE(ABORT, 'ack storage failed'); END;",
+            "CREATE TRIGGER reject_delivery_receipt BEFORE INSERT ON session_events
+         WHEN json_extract(NEW.body, '$.type')='prompt_delivery_receipt'
+         BEGIN SELECT RAISE(ABORT, 'delivery storage fixture'); END;",
         )
         .map_err(|error| error.to_string())?;
-    let (mut owner, events) = owner_without_process(temp.path().to_owned());
-    owner.process = Some(Box::new(Recorder::default()));
-    owner.state = Some(store);
-    owner.active_session = Some(temp.path().join("resumed-session"));
-    owner.snapshot.session = Some(empty_session());
-    owner.startup_state_loaded = true;
-    owner.startup_history_loaded = true;
-    owner.deliver_queued(prompt);
-    owner.apply_response(prompt_response("request-1", PromptMode::Normal, true));
-    assert!(owner.snapshot.conversation.items.iter().any(|item| {
-        item.kind == crate::conversation::TranscriptKind::User && item.text == "keep me"
-    }));
-    let (message, state): (String, String) = connection
-        .query_row("SELECT message, state FROM outbox", [], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .map_err(|error| error.to_string())?;
-    assert_eq!(message, "keep me");
-    assert_eq!(state, "unknown");
-    let results = events
-        .try_iter()
-        .filter_map(|event| match event {
-            RuntimeEvent::PromptResult { outcome, .. } => Some(outcome),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(results, [crate::agents::PromptOutcome::Accepted]);
+
+    owner.apply_process_item(delivered(&id, "retry after storage failure"));
     drop(owner);
-    let reopened = StateStore::open_at(&database)?;
-    let recovered = reopened.recover_interrupted_prompts()?;
-    assert_eq!(recovered.len(), 1);
-    assert_eq!(recovered[0].message, "keep me");
-    let state = connection
-        .query_row("SELECT state FROM outbox", [], |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(|error| error.to_string())?;
-    assert_eq!(state, "unknown");
+    assert_eq!(
+        outbox_rows(&database)?,
+        [("retry after storage failure".into(), "pending".into())]
+    );
+    assert_eq!(StateStore::open_at(&database)?.queued_prompts()?.len(), 1);
     Ok(())
 }

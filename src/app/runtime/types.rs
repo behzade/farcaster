@@ -29,6 +29,15 @@ pub(crate) enum RuntimeCommand {
         catalog: crate::agents::ConfigurationCatalog,
     },
     Abort,
+    CancelQueued {
+        target: String,
+        id: String,
+    },
+    ClearQueue,
+    DismissReceipt {
+        session: PathBuf,
+        id: String,
+    },
     ApplySteering,
     StopSessionFamily {
         path: PathBuf,

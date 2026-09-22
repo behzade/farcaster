@@ -445,7 +445,6 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     assert_eq!(reset_delivery, (0, 1, 0, 1));
     let reopened =
         crate::app::persistence::StateStore::open_at(&temp.path().join("state.sqlite3"))?;
-    assert!(reopened.unknown_prompts()?.is_empty());
     assert!(reopened.queued_prompts()?.is_empty());
     let hardened: (i64, i64, i64, i64) = connection
         .query_row(

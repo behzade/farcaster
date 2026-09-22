@@ -121,7 +121,6 @@ impl RuntimeOwner {
         self.pending_submission_id = None;
         self.pending_prompt_result_emitted = false;
         self.pending_prompt_item = None;
-        self.pending_prompt_delivery_unknown = false;
         self.pending_prompt_delivery_tracked = false;
         self.normal_prompt_in_flight = false;
         self.invalidate_auto_title_generation();
@@ -320,6 +319,9 @@ impl RuntimeOwner {
             }
             SessionEvent::Interaction(request) => self.apply_interaction(request),
             SessionEvent::Activity(event) => {
+                if self.apply_cancelled_prompt(event.value()) {
+                    return SnapshotChange::Immediate;
+                }
                 if let Some(change) = self.apply_retired_prompt_delivery(event.value()) {
                     return change;
                 }
@@ -462,27 +464,11 @@ impl RuntimeOwner {
         self.complete_current_delivered_prompt();
         self.fail_pending_queued_prompts(&details);
         let prompt_was_delivered = self.pending_prompt_result_emitted;
-        let delivery_unknown_was_reported = self.pending_prompt_delivery_unknown;
-        let prompt_delivery_unknown = !prompt_was_delivered
-            && (delivery_unknown_was_reported || self.pending_prompt_id.is_some());
-        if prompt_delivery_unknown {
-            if !delivery_unknown_was_reported {
-                self.mark_outbox_delivery_unknown(&details);
-            }
+        // A process failure cannot prove that an undelivered prompt was
+        // rejected. Leave its durable outbox row pending for a later retry.
+        if !prompt_was_delivered {
             self.pending_outbox_id = None;
-            if let (Some(id), Some(item)) = (
-                self.pending_prompt_id.as_deref().map(str::to_owned),
-                self.pending_prompt_item.take(),
-            ) {
-                conversation_mut(self.active_snapshot_mut()).bind_submitted_prompt(&id, &item);
-                conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
-                    &id,
-                    &serde_json::Value::Null,
-                    "unknown",
-                );
-            }
-        } else if !prompt_was_delivered {
-            self.mark_outbox_failed(&details);
+            self.rollback_pending_prompt();
         }
         self.pending_prompt_id = None;
         self.normal_prompt_in_flight = false;
@@ -492,31 +478,11 @@ impl RuntimeOwner {
         self.process_command.access_mode = self
             .access_mode_changes
             .take_requested_mode(self.process_command.access_mode);
-        if !prompt_delivery_unknown && !prompt_was_delivered {
-            self.rollback_pending_prompt();
-        }
-        if let Some(target) = self.pending_prompt_target.take() {
-            if prompt_was_delivered {
-                // Native delivery is stronger than a missing acknowledgement.
-            } else if prompt_delivery_unknown {
-                if !delivery_unknown_was_reported {
-                    self.emit_prompt_result(
-                        self.pending_submission_id.as_deref(),
-                        &target,
-                        crate::agents::PromptOutcome::DeliveryUnknown,
-                    );
-                }
-            } else {
-                self.emit_prompt_result(
-                    self.pending_submission_id.as_deref(),
-                    &target,
-                    crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-                );
-            }
-        }
+        // Keep an unacknowledged submission out of the transcript and out of
+        // the error stream. The pending outbox row is the retry record.
+        self.pending_prompt_target = None;
         self.pending_submission_id = None;
         self.pending_prompt_result_emitted = false;
-        self.pending_prompt_delivery_unknown = false;
         self.pending_prompt_delivery_tracked = false;
         if preserve_history {
             let label = format!("Couldn’t start {}", self.backend_name());
@@ -557,6 +523,19 @@ impl RuntimeOwner {
         conversation_mut(self.active_snapshot_mut()).flush_live_projection();
         let active_snapshot = self.active_snapshot();
         let mut snapshot = self.snapshot.clone();
+        if !self.queued_prompts.is_empty() {
+            // These rows still belong to the runtime, before transport dispatch
+            // (including durable recovered input). Do not persist this overlay
+            // on the native queue snapshot after ownership changes.
+            conversation_mut(&mut snapshot)
+                .queue
+                .cancellable_ids
+                .extend(
+                    self.queued_prompts
+                        .iter()
+                        .filter_map(|prompt| prompt.submission_id.clone()),
+                );
+        }
         snapshot.harness.clone_from(&self.harness);
         snapshot.live_session = self
             .active_session

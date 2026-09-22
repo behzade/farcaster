@@ -5,6 +5,49 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
+fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<(), String> {
+    use crate::app::runtime::tests::owner_without_process;
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut state = StateStore::open_at(&database)?;
+    let id = state.enqueue_prompt(
+        "draft:cancel",
+        Backend::Codex,
+        temp.path(),
+        None,
+        PromptMode::FollowUp,
+        "stale",
+        &[],
+    )?;
+    state.record_prompt_acceptance(id, "draft:cancel", Some(&session), "stale-id", true)?;
+    let (mut owner, _) = owner_without_process(temp.path().into());
+    owner.state = Some(state);
+    owner.snapshot.selected_session = Some(session.clone());
+    owner.snapshot.history_preview = true;
+    let mut history = vec![];
+    annotate_history_presentations(owner.state.as_ref(), &session, &mut history);
+    conversation_mut(&mut owner.snapshot).replace_history(&history);
+    assert_eq!(owner.snapshot.conversation.pending_receipts().len(), 1);
+    owner.apply_command(RuntimeCommand::DismissReceipt {
+        session: temp.path().join("wrong"),
+        id: "stale-id".into(),
+    });
+    assert_eq!(owner.snapshot.conversation.pending_receipts().len(), 1);
+    owner.apply_command(RuntimeCommand::DismissReceipt {
+        session: session.clone(),
+        id: "stale-id".into(),
+    });
+    assert!(owner.snapshot.conversation.pending_receipts().is_empty());
+    drop(owner);
+    let state = StateStore::open_at(&database)?;
+    let mut history = vec![];
+    annotate_history_presentations(Some(&state), &session, &mut history);
+    assert!(history.is_empty());
+    Ok(())
+}
+
+#[test]
 fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
 -> Result<(), Box<dyn std::error::Error>> {
     use crate::protocol::PromptMode;
@@ -24,7 +67,7 @@ fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
             submission_id,
             &[],
         )?;
-        store.complete_prompt_with_receipt(
+        store.record_prompt_acceptance(
             outbox_id,
             "draft:reconcile",
             Some(&session),
@@ -87,18 +130,18 @@ fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
         "",
         std::slice::from_ref(&image),
     )?;
-    store.complete_prompt(id, "draft:image", Some(&session))?;
-    store.complete_prompt(id, "draft:image", Some(&session))?;
+    store.record_prompt_acceptance(id, "draft:image", Some(&session), "image-receipt", false)?;
+    store.record_prompt_acceptance(id, "draft:image", Some(&session), "image-receipt", false)?;
     drop(store);
 
     let store = StateStore::open_at(&database)?;
-    // Retain a receipt without silently resending an interrupted prompt.
-    assert!(store.queued_prompts()?.is_empty());
+    // Admission retains the image payload and remains retryable after restart.
+    assert_eq!(store.queued_prompts()?.len(), 1);
     let mut messages = Vec::new();
     annotate_history_presentations(Some(&store), &session, &mut messages);
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0]["role"], "user");
-    assert_eq!(messages[0]["submissionId"], format!("outbox:{id}"));
+    assert_eq!(messages[0]["submissionId"], "image-receipt");
     assert_eq!(messages[0]["deliveryStatus"], "accepted");
     assert_eq!(
         messages[0]["content"][1],
@@ -151,14 +194,8 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
             "image/png".into(),
         )],
     )?;
-    store.complete_prompt_with_receipt(
-        first,
-        "draft:first",
-        Some(&session),
-        "receipt:first",
-        false,
-    )?;
-    store.complete_prompt_with_receipt(
+    store.record_prompt_acceptance(first, "draft:first", Some(&session), "receipt:first", false)?;
+    store.record_prompt_acceptance(
         second,
         "draft:second",
         Some(&session),
@@ -175,7 +212,7 @@ fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_hist
         &[],
     )?;
     store.record_prompt_receipt_delivered("receipt:delivered", Some(delivered))?;
-    store.complete_prompt_with_receipt(
+    store.record_prompt_acceptance(
         delivered,
         "draft:delivered",
         Some(&session),
@@ -232,7 +269,7 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
             "same text",
             &[PromptImage::new(ONE_PIXEL_PNG.into(), "image/png".into())],
         )?;
-        store.complete_prompt_with_receipt(row, "draft:pending", Some(&session), id, tracked)?;
+        store.record_prompt_acceptance(row, "draft:pending", Some(&session), id, tracked)?;
     }
     drop(store);
     let store = StateStore::open_at(&database)?;
@@ -262,9 +299,10 @@ fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
         conversation.queue.steering.is_empty() && conversation.queue.follow_up.is_empty(),
         "saved receipts are presentation, not executable input"
     );
-    assert!(
-        store.queued_prompts()?.is_empty(),
-        "native acceptance forbids automatic replay"
+    assert_eq!(
+        store.queued_prompts()?.len(),
+        2,
+        "admission is not delivery"
     );
     for receipt in &history[1..] {
         assert_eq!(receipt["content"][1]["data"], ONE_PIXEL_PNG);
@@ -307,7 +345,7 @@ fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing()
             text,
             &[],
         )?;
-        store.complete_prompt_with_receipt(row, "draft:pi", Some(&session), id, false)?;
+        store.record_prompt_acceptance(row, "draft:pi", Some(&session), id, false)?;
     }
     drop(store);
     let store = StateStore::open_at(&database)?;
@@ -361,13 +399,14 @@ fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
             "same text",
             std::slice::from_ref(&image),
         )?;
-        store.complete_prompt_with_receipt(row, "draft:queue", Some(&session), id, true)?;
+        store.record_prompt_acceptance(row, "draft:queue", Some(&session), id, true)?;
     }
     drop(store);
     let store = StateStore::open_at(&database)?;
-    assert!(
-        store.queued_prompts()?.is_empty(),
-        "accepted input must never replay"
+    assert_eq!(
+        store.queued_prompts()?.len(),
+        2,
+        "admission is not delivery"
     );
     let receipts = store.accepted_prompt_history(&session)?;
     assert_eq!(receipts.len(), 2);

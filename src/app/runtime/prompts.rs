@@ -48,7 +48,7 @@ impl RuntimeOwner {
         &mut self,
         submission_id: String,
         target: String,
-        mode: PromptMode,
+        mut mode: PromptMode,
         message: String,
         display_message: Option<String>,
         invocation: Option<String>,
@@ -75,12 +75,10 @@ impl RuntimeOwner {
             || self.pending_prompt_target.is_some()
             || self.deferred_prompt.is_some();
         if queue_behind_pending && mode == PromptMode::Normal {
-            self.reject_prompt(
-                &submission_id,
-                &target,
-                "Another message is still being sent".into(),
-            );
-            return;
+            // A normal submission that arrives while another input is in
+            // flight is the next follow-up. It is still a valid outbox row;
+            // never turn this scheduling fact into a user-facing error.
+            mode = PromptMode::FollowUp;
         }
         let was_running = self.active_snapshot().conversation.running;
         if (mode == PromptMode::Normal && self.normal_prompt_in_flight)
@@ -137,8 +135,8 @@ impl RuntimeOwner {
                         self.process.as_mut().expect("checked process").send(
                             SessionCommand::Prompt {
                                 mode,
-                                message,
-                                images,
+                                message: message.clone(),
+                                images: images.clone(),
                             },
                         )
                     });
@@ -156,14 +154,34 @@ impl RuntimeOwner {
                                     .as_ref()
                                     .is_some_and(|process| process.tracks_prompt_delivery(mode)),
                                 result_emitted: false,
+                                harness,
+                                project: self.project.clone(),
+                                mode,
+                                message: message.clone(),
+                                display_message: display_message.clone(),
+                                invocation: invocation.clone(),
+                                images: images.clone(),
                             },
                         );
                     }
                     Err(error) => {
-                        if let Some(state) = &self.state {
-                            let _ = agents::fail_prompt(state, outbox_id, &error);
+                        if is_user_actionable_prompt_error(&error) {
+                            self.reject_prompt(&submission_id, &target, error);
+                        } else {
+                            self.queued_prompts.push_back(QueuedPrompt {
+                                id: outbox_id,
+                                submission_id: Some(submission_id),
+                                target,
+                                harness,
+                                project: self.project.clone(),
+                                session: self.active_session.clone(),
+                                mode,
+                                message,
+                                display_message,
+                                invocation,
+                                images,
+                            });
                         }
-                        self.reject_prompt(&submission_id, &target, error);
                     }
                 }
                 return;
@@ -378,7 +396,7 @@ impl RuntimeOwner {
                 .session
                 .as_ref()
                 .is_some_and(|state| state.is_streaming);
-            self.mark_outbox_failed(error);
+            self.release_pending_outbox();
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();
             conversation_mut(self.active_snapshot_mut()).running = was_running;
@@ -438,9 +456,16 @@ impl RuntimeOwner {
                 }
             }
             None => {
-                let error = format!("{} is not connected", self.backend_name());
-                self.mark_outbox_failed(&error);
-                self.fail(format!("Cannot send prompt: {error}"));
+                // The durable outbox owns retry. A process that is not ready
+                // is not a user-facing prompt failure.
+                self.release_pending_outbox();
+                self.pending_prompt_id = None;
+                self.pending_prompt_result_emitted = false;
+                self.pending_prompt_delivery_tracked = false;
+                self.normal_prompt_in_flight = false;
+                if self.parked_snapshot.is_none() {
+                    self.publish();
+                }
             }
         }
     }
@@ -476,8 +501,8 @@ impl RuntimeOwner {
         self.reject_prompt(&submission_id, target, message);
     }
 
-    pub(super) fn rollback_failed_prompt(&mut self, error: &str) {
-        self.mark_outbox_failed(error);
+    pub(super) fn rollback_failed_prompt(&mut self, _error: &str) {
+        self.release_pending_outbox();
         self.rollback_pending_prompt();
         let running = self
             .active_snapshot()
@@ -569,19 +594,45 @@ impl RuntimeOwner {
     }
 
     pub(super) fn cancel_deferred_prompt(&mut self) {
-        if self.deferred_prompt.take().is_none() {
+        let Some(prompt) = self.deferred_prompt.as_ref() else {
+            return;
+        };
+        if let Some(outbox_id) = prompt.outbox_id
+            && let Some(state) = &self.state
+            && let Err(error) = state.cancel_queued_prompts(&[outbox_id])
+        {
+            zlog::error!("Save deferred prompt cancellation: {error}");
             return;
         }
+        self.deferred_prompt = None;
         self.rollback_failed_prompt("Prompt cancelled before delivery");
         if let Some(target) = self.pending_prompt_target.take() {
             self.emit_prompt_result(
                 self.pending_submission_id.as_deref(),
                 &target,
-                PromptOutcome::RejectedBeforeAcceptance,
+                PromptOutcome::Cancelled,
             );
         }
         self.pending_submission_id = None;
         self.snapshot.status = "Stopped".into();
         self.publish();
     }
+}
+
+fn is_user_actionable_prompt_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "auth",
+        "unauthorized",
+        "forbidden",
+        "permission",
+        "access",
+        "credential",
+        "configuration",
+        "configured",
+        "config",
+        "api key",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }

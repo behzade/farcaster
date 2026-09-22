@@ -240,12 +240,19 @@ impl RuntimeOwner {
             // outbox recovery path can retry it. Only errors that ask the user
             // to fix auth, access, or configuration become visible below.
             if let Err(error) = &response.result
-                && error.kind == crate::agents::SessionResponseErrorKind::RejectedBeforeAcceptance
-                && !is_user_actionable_prompt_error(&error.message)
+                && !prompt_was_delivered
+                && (error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown
+                    || (error.kind
+                        == crate::agents::SessionResponseErrorKind::RejectedBeforeAcceptance
+                        && !is_user_actionable_prompt_error(&error.message)))
             {
+                if error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown {
+                    self.retire_pending_prompt();
+                }
                 self.normal_prompt_in_flight = false;
+                self.rollback_pending_prompt();
+                self.release_pending_outbox();
                 self.pending_prompt_id = None;
-                self.pending_prompt_item = None;
                 self.pending_prompt_target = None;
                 self.pending_submission_id = None;
                 self.pending_prompt_result_emitted = false;
