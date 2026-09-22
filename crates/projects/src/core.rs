@@ -1,6 +1,6 @@
 mod persistence;
 
-pub use persistence::{ProjectStore, allocate_session_id, load_registry, save_registry};
+pub use persistence::{ProjectStore, load_projects, save_projects};
 
 use std::path::{Path, PathBuf};
 

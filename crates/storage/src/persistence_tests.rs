@@ -18,9 +18,9 @@ use crate::{
     CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, StateStore,
     WindowPlacement, WindowState,
     agents::ConfigurationCatalog,
-    projects::{self, DraftSession, Registry},
+    projects::{self, Registry},
     protocol::{Model, PromptImage, PromptMode},
-    sessions::{SessionSummary, UsageSummary},
+    sessions::{DraftSession, SessionSummary, UsageSummary},
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -1151,7 +1151,7 @@ fn import_classification_is_not_reapplied_when_a_session_finishes()
 }
 
 #[test]
-fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error>> {
+fn draft_harness_survives_project_saves() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
     fs::create_dir(&project)?;
@@ -1159,17 +1159,17 @@ fn draft_harness_survives_the_registry() -> Result<(), Box<dyn std::error::Error
     assert!(draft.change_harness(Some(Backend::OpenCode)));
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
 
-    projects::save_registry(
+    crate::sessions::save_draft(&mut store, &draft)?;
+    projects::save_projects(
         &mut store,
-        &Registry {
+        &projects::ProjectList {
             projects: vec![project],
             excluded_projects: Vec::new(),
-            drafts: vec![draft],
         },
     )?;
 
     assert_eq!(
-        projects::load_registry(&store)?.drafts[0].harness,
+        crate::sessions::load_drafts(&store)?[0].harness,
         Some(Backend::OpenCode)
     );
     Ok(())
@@ -1255,9 +1255,15 @@ fn prompt_completion_persists_draft_session_association_atomically()
     assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);
     assert_eq!(store.load_composer_sessions()?.len(), 1);
     assert_eq!(store.load_composer_sessions()?[0].text, "newer text");
-    let registry = store.load_registry()?;
-    assert_eq!(registry.drafts[0].app_session_id, 1);
-    store.save_registry(&registry)?;
+    assert_eq!(store.load_drafts()?[0].app_session_id, 1);
+    let projects = store.load_project_list()?;
+    store.save_project_list(&projects)?;
+    assert_eq!(store.load_drafts()?.len(), 1);
+
+    store.remove_draft("pending")?;
+    assert!(store.load_drafts()?.is_empty());
+    assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);
+    assert_eq!(store.load_composer_sessions()?[0].text, "newer text");
 
     store.replace_sessions(&[summary])?;
     assert_eq!(store.cached_sessions("")?[0].app_session_id, 1);

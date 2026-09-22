@@ -14,7 +14,6 @@ async-channel = "2.5.0"
 farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-agents = { path = "../agents" }
 farcaster-conversation = { path = "../conversation" }
-farcaster-projects = { path = "../projects" }
 farcaster-reviews = { path = "../reviews" }
 farcaster-sessions = { path = "../sessions" }
 farcaster-storage = { path = "../storage" }

@@ -19,7 +19,7 @@ use crate::{
         AppIconSize, ReorderPosition, ReorderTargetExt as _, app_icon, icon_control,
     },
     app::ui::theme::THEME,
-    projects::DraftSession,
+    sessions::DraftSession,
 };
 
 pub(super) struct DraftRowInput {

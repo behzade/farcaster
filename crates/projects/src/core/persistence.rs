@@ -1,22 +1,14 @@
-use super::super::contract::{DraftSession, Registry};
+use super::super::contract::ProjectList;
 
 pub trait ProjectStore {
-    fn allocate_session_id(&mut self, draft: &DraftSession) -> Result<i64, String>;
-    fn load_registry(&self) -> Result<Registry, String>;
-    fn save_registry(&mut self, registry: &Registry) -> Result<(), String>;
+    fn load_projects(&self) -> Result<ProjectList, String>;
+    fn save_projects(&mut self, projects: &ProjectList) -> Result<(), String>;
 }
 
-pub fn allocate_session_id(
-    store: &mut impl ProjectStore,
-    draft: &DraftSession,
-) -> Result<i64, String> {
-    store.allocate_session_id(draft)
+pub fn load_projects(store: &impl ProjectStore) -> Result<ProjectList, String> {
+    store.load_projects()
 }
 
-pub fn load_registry(store: &impl ProjectStore) -> Result<Registry, String> {
-    store.load_registry()
-}
-
-pub fn save_registry(store: &mut impl ProjectStore, registry: &Registry) -> Result<(), String> {
-    store.save_registry(registry)
+pub fn save_projects(store: &mut impl ProjectStore, projects: &ProjectList) -> Result<(), String> {
+    store.save_projects(projects)
 }

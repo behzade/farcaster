@@ -75,7 +75,7 @@ impl RuntimeHandle {
 
     pub fn spawn(
         project: PathBuf,
-        draft: crate::projects::DraftSession,
+        draft: crate::sessions::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
         command: AgentLaunchConfig,
         host: Arc<dyn RuntimeHost>,
@@ -92,7 +92,7 @@ impl RuntimeHandle {
     ) -> Self {
         Self::spawn_with_configuration_refresh(
             project.clone(),
-            crate::projects::DraftSession::with_id(Some(Backend::Pi), draft_id, project),
+            crate::sessions::DraftSession::with_id(Some(Backend::Pi), draft_id, project),
             initial_session,
             process_command,
             crate::test_support::host(),
@@ -102,7 +102,7 @@ impl RuntimeHandle {
 
     fn spawn_with_configuration_refresh(
         project: PathBuf,
-        draft: crate::projects::DraftSession,
+        draft: crate::sessions::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
         host: Arc<dyn RuntimeHost>,
@@ -455,7 +455,7 @@ struct Supervisor {
 
 fn run_supervisor(
     project: PathBuf,
-    draft: crate::projects::DraftSession,
+    draft: crate::sessions::DraftSession,
     initial_session: Option<crate::sessions::SessionTarget>,
     process_command: AgentLaunchConfig,
     host: Arc<dyn RuntimeHost>,
@@ -479,7 +479,7 @@ fn run_supervisor(
 impl Supervisor {
     fn new(
         project: PathBuf,
-        draft: crate::projects::DraftSession,
+        draft: crate::sessions::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
         host: Arc<dyn RuntimeHost>,
@@ -639,7 +639,7 @@ impl Supervisor {
 }
 
 pub(super) fn initial_draft_command(
-    draft: crate::projects::DraftSession,
+    draft: crate::sessions::DraftSession,
     session: Option<crate::sessions::SessionTarget>,
 ) -> RuntimeCommand {
     let project = draft.project;

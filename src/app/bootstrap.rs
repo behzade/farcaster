@@ -26,7 +26,6 @@ impl FarcasterApp {
         let runtime = RuntimeHandle::spawn(
             project.clone(),
             persisted
-                .registry
                 .drafts
                 .iter()
                 .find(|draft| draft.id == persisted.selected_draft)
@@ -61,17 +60,17 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) -> Self {
         let draft_id = format!("offline-test-{}", uuid::Uuid::new_v4().simple());
-        let draft = projects::DraftSession::with_id(
+        let draft = sessions::DraftSession::with_id(
             Some(crate::agents::Backend::Pi),
             draft_id.clone(),
             project.clone(),
         );
         let persisted = persisted::PersistedState {
-            registry: projects::Registry {
+            projects: projects::ProjectList {
                 projects: vec![project.clone()],
-                drafts: vec![draft],
                 ..Default::default()
             },
+            drafts: vec![draft],
             error: None,
             session_order: Vec::new(),
             session_folders: Default::default(),
@@ -145,8 +144,8 @@ impl FarcasterApp {
             runtime_generation: 0,
             project: project::ProjectState {
                 path: project.clone(),
-                registered: persisted.registry.projects,
-                excluded: persisted.registry.excluded_projects,
+                registered: persisted.projects.projects,
+                excluded: persisted.projects.excluded_projects,
                 repository,
                 trust_error: None,
                 trust_project: None,
@@ -160,7 +159,7 @@ impl FarcasterApp {
                 folders: persisted.session_folders,
                 editing_folder: None,
                 drop_target: None,
-                drafts: persisted.registry.drafts,
+                drafts: persisted.drafts,
                 draft_session_ids: persisted.draft_session_ids,
                 selected_draft: Some(persisted.selected_draft),
                 preferred_harness: persisted.preferred_harness,

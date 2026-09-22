@@ -1,6 +1,25 @@
 use std::path::{Path, PathBuf};
 
 use super::super::contract::SessionSummary;
+use super::super::draft::DraftSession;
+
+pub trait DraftStore {
+    fn load_drafts(&self) -> Result<Vec<DraftSession>, String>;
+    fn save_draft(&mut self, draft: &DraftSession) -> Result<i64, String>;
+    fn remove_draft(&mut self, id: &str) -> Result<(), String>;
+}
+
+pub fn load_drafts(store: &impl DraftStore) -> Result<Vec<DraftSession>, String> {
+    store.load_drafts()
+}
+
+pub fn save_draft(store: &mut impl DraftStore, draft: &DraftSession) -> Result<i64, String> {
+    store.save_draft(draft)
+}
+
+pub fn remove_draft(store: &mut impl DraftStore, id: &str) -> Result<(), String> {
+    store.remove_draft(id)
+}
 
 pub trait SessionStore {
     fn cached(&self, query: &str) -> Result<Vec<SessionSummary>, String>;

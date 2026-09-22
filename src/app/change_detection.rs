@@ -72,7 +72,7 @@ pub(in crate::app) fn inactive_session_catalog_changed(
 }
 
 pub(in crate::app) fn session_event_affects_active_rail(
-    drafts: &[projects::DraftSession],
+    drafts: &[sessions::DraftSession],
     submitted_drafts: &HashMap<String, Option<PathBuf>>,
     sessions: &[SessionSummary],
     target: &str,

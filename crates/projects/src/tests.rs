@@ -2,6 +2,7 @@ use farcaster_contracts::Backend;
 use tempfile::tempdir;
 
 use super::*;
+use farcaster_sessions::DraftSession;
 
 #[test]
 fn registry_round_trips_unique_existing_projects() -> Result<(), Box<dyn std::error::Error>> {
@@ -146,24 +147,6 @@ fn removing_a_project_only_changes_registered_matches() {
 }
 
 #[test]
-fn only_unsubmitted_drafts_can_change_project() {
-    let mut draft = DraftSession::new(
-        Some(Backend::Pi),
-        "draft".into(),
-        1,
-        PathBuf::from("/first"),
-        1,
-    );
-    assert!(draft.change_project(PathBuf::from("/second")));
-    assert_eq!(draft.project, PathBuf::from("/second"));
-    assert!(!draft.change_project(PathBuf::from("/second")));
-
-    draft.submitted = true;
-    assert!(!draft.change_project(PathBuf::from("/third")));
-    assert_eq!(draft.project, PathBuf::from("/second"));
-}
-
-#[test]
 fn old_registry_drafts_decode_as_unsubmitted() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -183,35 +166,4 @@ fn old_registry_drafts_decode_as_unsubmitted() -> Result<(), Box<dyn std::error:
     assert!(!registry.drafts[0].submitted);
     assert_eq!(registry.drafts[0].session_path, None);
     Ok(())
-}
-
-#[test]
-fn drafts_without_a_backend_do_not_decode_as_pi() {
-    let draft = serde_json::json!({"id": "missing", "project": "/project", "created_ms": 3});
-    assert!(serde_json::from_value::<DraftSession>(draft).is_err());
-}
-
-#[test]
-fn draft_backend_serialization_preserves_empty_and_legacy_names() {
-    for (name, expected) in [
-        ("", None),
-        ("pi", Some(Backend::Pi)),
-        ("opencode2", Some(Backend::OpenCode)),
-    ] {
-        let draft: DraftSession = serde_json::from_value(serde_json::json!({
-            "id": "draft", "harness": name, "project": "/project", "created_ms": 1
-        }))
-        .expect("decode fixture draft");
-        assert_eq!(draft.harness, expected);
-        assert_eq!(
-            serde_json::to_value(draft).expect("encode draft")["harness"],
-            expected.map(Backend::as_str).unwrap_or("")
-        );
-    }
-    assert!(
-        serde_json::from_value::<DraftSession>(serde_json::json!({
-            "id": "draft", "harness": "unknown", "project": "/project", "created_ms": 1
-        }))
-        .is_err()
-    );
 }

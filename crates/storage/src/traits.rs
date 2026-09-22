@@ -85,17 +85,27 @@ impl crate::sessions::SessionStore for StateStore {
     }
 }
 
-impl crate::projects::ProjectStore for StateStore {
-    fn allocate_session_id(&mut self, draft: &DraftSession) -> Result<i64, String> {
+impl crate::sessions::DraftStore for StateStore {
+    fn load_drafts(&self) -> Result<Vec<DraftSession>, String> {
+        StateStore::load_drafts(self)
+    }
+
+    fn save_draft(&mut self, draft: &DraftSession) -> Result<i64, String> {
         self.allocate_app_session_id(draft)
     }
 
-    fn load_registry(&self) -> Result<Registry, String> {
-        StateStore::load_registry(self)
+    fn remove_draft(&mut self, id: &str) -> Result<(), String> {
+        StateStore::remove_draft(self, id)
+    }
+}
+
+impl crate::projects::ProjectStore for StateStore {
+    fn load_projects(&self) -> Result<crate::projects::ProjectList, String> {
+        self.load_project_list()
     }
 
-    fn save_registry(&mut self, registry: &Registry) -> Result<(), String> {
-        StateStore::save_registry(self, registry)
+    fn save_projects(&mut self, projects: &crate::projects::ProjectList) -> Result<(), String> {
+        self.save_project_list(projects)
     }
 }
 

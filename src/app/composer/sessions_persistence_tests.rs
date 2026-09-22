@@ -5,7 +5,7 @@ use crate::agents::Backend;
 fn bound_draft_aliases_preserve_write_and_delete_order() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let mut store = StateStore::open_at(&temp.path().join("gui.sqlite3"))?;
-    let mut draft = crate::projects::DraftSession::new(
+    let mut draft = crate::sessions::DraftSession::new(
         Some(Backend::Pi),
         "draft".into(),
         0,

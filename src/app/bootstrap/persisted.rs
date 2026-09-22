@@ -2,7 +2,8 @@ use super::*;
 use crate::agents::Backend;
 
 pub(super) struct PersistedState {
-    pub(super) registry: projects::Registry,
+    pub(super) projects: projects::ProjectList,
+    pub(super) drafts: Vec<sessions::DraftSession>,
     pub(super) error: Option<String>,
     pub(super) session_order: Vec<i64>,
     pub(super) session_folders: crate::app::session_folders::SessionFolders,
@@ -18,15 +19,15 @@ pub(super) struct PersistedState {
 pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedState {
     let registry_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_registry");
-    let (mut registry, mut error) = match project_registry::load() {
-        Ok(registry) => (registry, None),
-        Err(error) => (projects::Registry::default(), Some(error)),
+    let (mut projects, mut error) = match project_registry::load() {
+        Ok(projects) => (projects, None),
+        Err(error) => (projects::ProjectList::default(), Some(error)),
     };
     drop(registry_timing);
 
     projects::select(
-        &mut registry.projects,
-        &registry.excluded_projects,
+        &mut projects.projects,
+        &projects.excluded_projects,
         project.to_path_buf(),
     );
 
@@ -58,14 +59,21 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             None
         }
     };
+    let mut drafts =
+        match crate::app::persistence::open().and_then(|store| sessions::load_drafts(&*store)) {
+            Ok(drafts) => drafts,
+            Err(load_error) => {
+                error.get_or_insert(load_error);
+                Vec::new()
+            }
+        };
     let draft_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
-    let initial_draft = match project_registry::new_draft(project.to_path_buf(), preferred_harness)
-    {
+    let initial_draft = match session::draft_store::new(project.to_path_buf(), preferred_harness) {
         Ok(draft) => draft,
         Err(load_error) => {
             error.get_or_insert(load_error);
-            projects::DraftSession::with_id(
+            sessions::DraftSession::with_id(
                 preferred_harness,
                 format!("untracked-draft-{}", std::process::id()),
                 project.to_path_buf(),
@@ -75,10 +83,8 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
     drop(draft_timing);
 
     let selected_draft = initial_draft.id.clone();
-    // Registry saves delete omitted drafts, making their composer saves no-ops.
-    registry.drafts.push(initial_draft);
-    let draft_session_ids = registry
-        .drafts
+    drafts.push(initial_draft);
+    let draft_session_ids = drafts
         .iter()
         .map(|draft| (draft.id.clone(), draft.app_session_id))
         .collect::<HashMap<_, _>>();
@@ -86,7 +92,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
     let save_registry_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.save_registry");
     if error.is_none()
-        && let Err(save_error) = project_registry::save(&registry)
+        && let Err(save_error) = project_registry::save(&projects)
     {
         error = Some(save_error);
     }
@@ -100,7 +106,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         error = composer_error;
     }
 
-    let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
+    let submitted_drafts = sessions::submitted_draft_associations(&drafts);
     let expand_transcript_folders = crate::app::persistence::open()
         .and_then(|store| store.load_expand_transcript_folders())
         .unwrap_or_else(|load_error| {
@@ -109,7 +115,8 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         });
 
     PersistedState {
-        registry,
+        projects,
+        drafts,
         error,
         session_order,
         session_folders,

@@ -13,6 +13,7 @@ pub use catalog::{
 pub use metrics::{CatalogMetrics, count_cache_hit, count_parse, count_scan, take_catalog_metrics};
 pub use path::{normalize_lexical, normalize_session_path};
 pub use persistence::{
-    SessionStore, cached as cached_sessions, delete as delete_state, index as index_sessions,
-    relocate as relocate_state, set_archived,
+    DraftStore, SessionStore, cached as cached_sessions, delete as delete_state,
+    index as index_sessions, load_drafts, relocate as relocate_state, remove_draft, save_draft,
+    set_archived,
 };

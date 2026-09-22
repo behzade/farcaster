@@ -534,7 +534,7 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
     std::fs::create_dir(&project).map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let mut store = StateStore::open_at(&database)?;
-    let draft = crate::projects::DraftSession::new(
+    let draft = crate::sessions::DraftSession::new(
         Some(Backend::Pi),
         "saved-work".into(),
         0,
@@ -571,8 +571,8 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
 
     std::fs::rename(&project, &offline).map_err(|error| error.to_string())?;
     let mut store = StateStore::open_at(&database)?;
-    let registry = store.load_registry()?;
-    store.save_registry(&registry)?;
+    let projects = store.load_project_list()?;
+    store.save_project_list(&projects)?;
     drop(store);
     std::fs::rename(&offline, &project).map_err(|error| error.to_string())?;
 
@@ -587,9 +587,7 @@ fn unavailable_project_round_trip_preserves_draft_composer_and_outbox() -> Resul
     assert_eq!(store.queued_prompts()?, before_queue);
 
     // Explicitly deleting the draft must still remove its dependent state.
-    let mut deleted = restored;
-    deleted.drafts.clear();
-    store.save_registry(&deleted)?;
+    store.remove_draft("saved-work")?;
     drop(store);
     let reopened = StateStore::open_at(&database)?;
     assert!(reopened.load_registry()?.drafts.is_empty());

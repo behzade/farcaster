@@ -7,7 +7,7 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) folders: session_folders::SessionFolders,
     pub(in crate::app) editing_folder: Option<session_folders::FolderEdit>,
     pub(in crate::app) drop_target: Option<(i64, ui::primitives::ReorderPosition)>,
-    pub(in crate::app) drafts: Vec<projects::DraftSession>,
+    pub(in crate::app) drafts: Vec<sessions::DraftSession>,
     pub(in crate::app) draft_session_ids: HashMap<String, i64>,
     pub(in crate::app) selected_draft: Option<String>,
     pub(in crate::app) preferred_harness: Option<Backend>,

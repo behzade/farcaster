@@ -447,7 +447,9 @@ impl FarcasterApp {
             {
                 self.sessions.selected_draft = None;
             }
-            self.save_project_registry();
+            for id in &deleted_draft_ids {
+                self.remove_session_draft(id);
+            }
         }
         self.activity
             .system_notification_targets
@@ -462,7 +464,7 @@ impl FarcasterApp {
         }
         if selected_was_deleted && generation >= self.runtime_generation {
             let current_target = self.composer.sessions.current_target().to_owned();
-            let (next_target, next_draft) = match project_registry::new_draft(
+            let (next_target, next_draft) = match session::draft_store::new(
                 self.project.path.clone(),
                 self.sessions.preferred_harness,
             ) {
@@ -488,7 +490,6 @@ impl FarcasterApp {
                     .draft_session_ids
                     .insert(draft.id.clone(), draft.app_session_id);
                 self.sessions.drafts.push(draft.clone());
-                self.save_project_registry();
                 self.send(
                     RuntimeCommand::NewSession {
                         id: draft.id,
@@ -514,6 +515,7 @@ impl FarcasterApp {
         paths: Arc<HashMap<PathBuf, PathBuf>>,
         cx: &mut Context<Self>,
     ) {
+        let mut changed_drafts = Vec::new();
         for (source, target) in paths.iter() {
             if let Some(mut identity) = self.runtime.session_targets.remove(source) {
                 identity.path = target.clone();
@@ -556,6 +558,7 @@ impl FarcasterApp {
                 if draft.session_path.as_deref() == Some(source.as_path()) {
                     draft.session_path = Some(target.clone());
                     draft.project = target_project.clone();
+                    changed_drafts.push(draft.id.clone());
                 }
             }
             for session_path in self.sessions.submitted_drafts.values_mut().flatten() {
@@ -563,6 +566,9 @@ impl FarcasterApp {
                     *session_path = target.clone();
                 }
             }
+        }
+        for id in changed_drafts {
+            self.save_session_draft(&id);
         }
         for (session, project) in self.activity.system_notification_targets.values_mut() {
             if let Some(target) = paths.get(session) {

@@ -29,7 +29,7 @@ use super::super::FarcasterApp;
 use crate::{
     app::ui::primitives::ReorderPosition,
     app::ui::theme::THEME,
-    projects::DraftSession,
+    sessions::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
 };
 

@@ -1,6 +1,7 @@
 pub mod activity;
 mod contract;
 mod core;
+mod draft;
 mod folders;
 
 pub use contract::{
@@ -11,11 +12,16 @@ pub use contract::{
 #[cfg(test)]
 pub use core::descendant_sessions;
 pub use core::{
-    CatalogMetrics, SessionRootIndex, SessionStore, archived_root_family_for_path, cached_sessions,
-    count_cache_hit, count_parse, count_scan, delete_state, descendant_sessions_for_root,
-    document_is_live, filter_session_tree, index_sessions, is_subagent_path, normalize_lexical,
-    normalize_session_path, relocate_state, root_session_for_path, root_sessions,
-    session_family_for_path, set_archived, take_catalog_metrics,
+    CatalogMetrics, DraftStore, SessionRootIndex, SessionStore, archived_root_family_for_path,
+    cached_sessions, count_cache_hit, count_parse, count_scan, delete_state,
+    descendant_sessions_for_root, document_is_live, filter_session_tree, index_sessions,
+    is_subagent_path, load_drafts, normalize_lexical, normalize_session_path, relocate_state,
+    remove_draft, root_session_for_path, root_sessions, save_draft, session_family_for_path,
+    set_archived, take_catalog_metrics,
+};
+pub use draft::{
+    DraftSession, establish_submission, fill_session_association, reconciliation_candidates,
+    submitted_draft_associations, sync_materialized_draft, update_persisted_submission,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use folders::SessionFolder;

@@ -205,7 +205,7 @@ fn status_events_invalidate_only_visible_active_rows() {
         session_summary("active", None, false),
         session_summary("archived", None, true),
     ];
-    let drafts = [projects::DraftSession::with_id(
+    let drafts = [sessions::DraftSession::with_id(
         Some(Backend::Pi),
         "draft".into(),
         PathBuf::from("/project"),

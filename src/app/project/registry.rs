@@ -1,39 +1,26 @@
-use crate::agents::Backend;
 use std::path::PathBuf;
 
 use crate::projects;
 
-pub(in crate::app) fn new_draft(
-    project: PathBuf,
-    harness: Option<Backend>,
-) -> Result<projects::DraftSession, String> {
-    let elapsed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let id = format!("draft-{}-{}", elapsed.as_nanos(), std::process::id());
-    let created_ms = elapsed.as_millis().try_into().unwrap_or(u64::MAX);
+pub(in crate::app) fn load() -> Result<projects::ProjectList, String> {
     let mut store = crate::app::persistence::open()?;
-    let mut draft = projects::DraftSession::new(harness.to_owned(), id, 0, project, created_ms);
-    draft.app_session_id = projects::allocate_session_id(&mut *store, &draft)?;
-    Ok(draft)
-}
-
-pub(in crate::app) fn load() -> Result<projects::Registry, String> {
-    let mut store = crate::app::persistence::open()?;
-    let registry = projects::load_registry(&*store)?;
-    if registry == projects::Registry::default() {
+    let projects = projects::load_projects(&*store)?;
+    if projects == projects::ProjectList::default() && store.load_drafts()?.is_empty() {
         let legacy_path = legacy_registry_path()?;
         if legacy_path.exists() {
             let legacy = projects::load_legacy(&legacy_path)?;
-            projects::save_registry(&mut *store, &legacy)?;
-            return Ok(legacy);
+            store.save_registry(&legacy)?;
+            return Ok(projects::ProjectList {
+                projects: legacy.projects,
+                excluded_projects: legacy.excluded_projects,
+            });
         }
     }
-    Ok(registry)
+    Ok(projects)
 }
 
-pub(in crate::app) fn save(registry: &projects::Registry) -> Result<(), String> {
-    projects::save_registry(&mut *crate::app::persistence::open()?, registry)
+pub(in crate::app) fn save(projects: &projects::ProjectList) -> Result<(), String> {
+    projects::save_projects(&mut *crate::app::persistence::open()?, projects)
 }
 
 pub(in crate::app) fn load_app_session_order() -> Result<Vec<i64>, String> {

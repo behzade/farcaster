@@ -2,8 +2,7 @@ use std::{cmp::Reverse, collections::HashMap, path::Path};
 
 use crate::{
     app::ui::primitives::ReorderPosition,
-    projects::DraftSession,
-    sessions::{SessionSummary, root_sessions},
+    sessions::{DraftSession, SessionSummary, root_sessions},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

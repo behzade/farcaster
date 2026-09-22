@@ -72,16 +72,16 @@ fn empty_startup_draft_stays_deleted_after_late_composer_save()
     let mut store = StateStore::open_at(&database)?;
     let draft = DraftSession::with_id(Some(Backend::Pi), "startup".into(), project.clone());
     let id = store.allocate_app_session_id(&draft)?;
-    let mut registry = store.load_registry()?;
+    let mut drafts = store.load_drafts()?;
     assert!(sync_materialized_draft(
-        &mut registry.drafts,
+        &mut drafts,
         "startup",
         id,
         &project,
         Some(Backend::Pi),
         false,
     ));
-    store.save_registry(&registry)?;
+    store.remove_draft("startup")?;
     // A queued composer write must not recreate the draft after quit removes it.
     store.save_composer_session(&ComposerRecord {
         target: draft_target("startup"),
@@ -90,7 +90,7 @@ fn empty_startup_draft_stays_deleted_after_late_composer_save()
     drop(store);
 
     let reopened = StateStore::open_at(&database)?;
-    assert!(reopened.load_registry()?.drafts.is_empty());
+    assert!(reopened.load_drafts()?.is_empty());
     assert!(reopened.load_composer_sessions()?.is_empty());
     Ok(())
 }

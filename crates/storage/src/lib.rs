@@ -23,13 +23,15 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     agents::{PromptPresentation, QueuedPrompt},
-    projects::{DraftSession, Registry},
+    projects::Registry,
     protocol::{PromptImage, PromptMode},
-    sessions::{SessionSummary, UsageSummary},
+    sessions::{DraftSession, SessionSummary, UsageSummary},
 };
 
 mod backend;
 mod composer;
+#[path = "drafts.rs"]
+mod draft_storage;
 mod identity;
 mod images;
 mod migrate_legacy;
@@ -52,6 +54,7 @@ mod settings;
 mod traits;
 mod transcript;
 
+use draft_storage::{remove_draft_row, save_draft};
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
 const SCHEMA_VERSION: i64 = 20;

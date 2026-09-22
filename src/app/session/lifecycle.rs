@@ -249,16 +249,16 @@ impl FarcasterApp {
             return;
         }
         self.reset_run_panel_scroll(cx);
-        let draft =
-            match project_registry::new_draft(project.clone(), self.sessions.preferred_harness) {
-                Ok(draft) => draft,
-                Err(error) => {
-                    self.sessions.error = Some(error);
-                    self.notify_session_rail(cx);
-                    cx.notify();
-                    return;
-                }
-            };
+        let draft = match super::draft_store::new(project.clone(), self.sessions.preferred_harness)
+        {
+            Ok(draft) => draft,
+            Err(error) => {
+                self.sessions.error = Some(error);
+                self.notify_session_rail(cx);
+                cx.notify();
+                return;
+            }
+        };
         let draft_key = draft_target(&draft.id);
         self.switch_composer_target(draft_key.clone(), window, cx);
         self.sessions.selected_draft = Some(draft.id.clone());
@@ -269,7 +269,6 @@ impl FarcasterApp {
         if let Some(folder) = folder {
             self.assign_session_folder(draft.app_session_id, Some(folder), cx);
         }
-        self.save_project_registry();
         self.send_project_command(
             &project,
             RuntimeCommand::NewSession {
@@ -438,7 +437,7 @@ impl FarcasterApp {
             let current = self.composer.sessions.current_target().to_owned();
             let _ = self.composer.sessions.discard_and_switch(&target, current);
         }
-        self.save_project_registry();
+        self.remove_session_draft(id);
         self.notify_session_rail(cx);
         self.notify_composer(cx);
         self.notify_run_panel(cx);

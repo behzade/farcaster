@@ -461,7 +461,7 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
 #[test]
 fn persisted_submitted_draft_selects_its_session() {
     let project = PathBuf::from("/project");
-    let draft = crate::projects::DraftSession::with_id(
+    let draft = crate::sessions::DraftSession::with_id(
         Some(Backend::Codex),
         "draft".into(),
         project.clone(),

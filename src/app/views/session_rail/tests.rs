@@ -10,8 +10,7 @@ use super::{
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::theme::THEME,
-    projects::DraftSession,
-    sessions::{SessionSummary, UsageSummary},
+    sessions::{DraftSession, SessionSummary, UsageSummary},
 };
 
 #[test]

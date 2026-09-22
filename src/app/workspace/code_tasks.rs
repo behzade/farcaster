@@ -5,7 +5,6 @@ use gpui::{Context, Task, Window};
 use crate::app::{
     FarcasterApp,
     composer::{sessions::draft_target, submissions::PendingSubmission},
-    project_registry,
 };
 use crate::runtime::{RuntimeCommand, TaskSettings};
 
@@ -127,18 +126,8 @@ impl FarcasterApp {
         }) {
             return;
         }
-        let draft = project_registry::new_draft(settings.project.clone(), settings.harness)
-            .and_then(|draft| {
-                let mut registry = crate::projects::Registry {
-                    projects: self.project.registered.clone(),
-                    excluded_projects: self.project.excluded.clone(),
-                    drafts: self.sessions.drafts.clone(),
-                };
-                registry.drafts.insert(0, draft.clone());
-                project_registry::save(&registry)?;
-                self.sessions.drafts = registry.drafts;
-                Ok(draft)
-            });
+        let draft =
+            super::super::session::draft_store::new(settings.project.clone(), settings.harness);
         let draft = match draft {
             Ok(draft) => draft,
             Err(error) => {
@@ -146,6 +135,7 @@ impl FarcasterApp {
                 return;
             }
         };
+        self.sessions.drafts.insert(0, draft.clone());
         let target = draft_target(&draft.id);
         self.sessions
             .draft_session_ids

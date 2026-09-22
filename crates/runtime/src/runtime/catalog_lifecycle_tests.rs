@@ -147,7 +147,7 @@ impl Harness {
         // Unlike RuntimeHandle::spawn_with, do not disable catalog discovery.
         let runtime = RuntimeHandle::spawn_with_configuration_refresh(
             project.clone(),
-            crate::projects::DraftSession::with_id(
+            crate::sessions::DraftSession::with_id(
                 Some(Backend::Pi),
                 "initial".into(),
                 project.clone(),
