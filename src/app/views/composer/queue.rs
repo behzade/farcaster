@@ -1,14 +1,29 @@
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Styled as _, div, prelude::FluentBuilder as _,
+    AnyElement, IntoElement as _, ParentElement as _, Styled as _, div,
+    prelude::FluentBuilder as _, px,
 };
 
+use crate::app::{
+    FarcasterApp,
+    runtime::RuntimeCommand,
+    ui::primitives::{ButtonTone, button, icon_button},
+};
 use crate::{
     agents::PeerMessage,
     app::ui::theme::THEME,
     conversation::{PendingReceipt, QueueState},
     protocol::PromptMode,
 };
+use gpui::WeakEntity;
+use gpui_component::IconName;
+
+#[derive(Clone)]
+pub(super) struct QueuedMessage<'a> {
+    pub text: &'a String,
+    pub id: Option<&'a String>,
+    pub cancellable: bool,
+    pub dismiss: bool,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum QueuedMessageKind {
@@ -18,28 +33,48 @@ pub(super) enum QueuedMessageKind {
 }
 
 impl QueuedMessageKind {
-    pub(super) fn label(self) -> &'static str {
+    fn border_color(self) -> gpui::Rgba {
         match self {
-            Self::Peer => "Worker messages",
-            Self::Steer => "Steer next",
-            Self::FollowUp => "Follow-ups",
+            Self::Peer => THEME.colors.border,
+            Self::Steer => THEME.colors.accent.opacity(0.45),
+            Self::FollowUp => THEME.colors.subtle.opacity(0.45),
         }
     }
 }
 
-pub(super) fn queued_message_groups(queue: &QueueState) -> Vec<(QueuedMessageKind, Vec<&String>)> {
+pub(super) fn queued_message_groups(
+    queue: &QueueState,
+) -> Vec<(QueuedMessageKind, Vec<QueuedMessage<'_>>)> {
     let mut peers = Vec::new();
     let mut steering = Vec::new();
     let mut follow_up = Vec::new();
-    for message in &queue.steering {
-        if PeerMessage::from_prompt(message).is_some() {
+    for (index, text) in queue.steering.iter().enumerate() {
+        let message = QueuedMessage {
+            text,
+            id: queue.steering_ids.get(index),
+            cancellable: queue
+                .steering_ids
+                .get(index)
+                .is_some_and(|id| queue.can_cancel(id)),
+            dismiss: false,
+        };
+        if PeerMessage::from_prompt(text).is_some() {
             peers.push(message);
         } else {
             steering.push(message);
         }
     }
-    for message in &queue.follow_up {
-        if PeerMessage::from_prompt(message).is_some() {
+    for (index, text) in queue.follow_up.iter().enumerate() {
+        let message = QueuedMessage {
+            text,
+            id: queue.follow_up_ids.get(index),
+            cancellable: queue
+                .follow_up_ids
+                .get(index)
+                .is_some_and(|id| queue.can_cancel(id)),
+            dismiss: false,
+        };
+        if PeerMessage::from_prompt(text).is_some() {
             peers.push(message);
         } else {
             follow_up.push(message);
@@ -62,7 +97,7 @@ pub(super) fn queued_message_preview(message: &str) -> String {
     );
     let message = message.trim();
     if message.is_empty() {
-        return "Queued message".to_owned();
+        return "Message".to_owned();
     }
     match message.split_once(['\r', '\n']) {
         Some((first, _)) => format!("{}…", first.trim_end()),
@@ -72,8 +107,12 @@ pub(super) fn queued_message_preview(message: &str) -> String {
 
 fn queued_message_group(
     kind: QueuedMessageKind,
-    messages: &[&String],
+    messages: &[QueuedMessage<'_>],
     separated: bool,
+    target: &str,
+    session: Option<&std::path::Path>,
+    entity: WeakEntity<FarcasterApp>,
+    individual: bool,
 ) -> AnyElement {
     div()
         .when(separated, |group| {
@@ -81,38 +120,84 @@ fn queued_message_group(
                 .border_t(THEME.border)
                 .border_color(THEME.colors.border)
         })
-        .child(
-            div()
-                .px(THEME.space.sm)
-                .py(THEME.space.xs)
-                .bg(match kind {
-                    QueuedMessageKind::Peer | QueuedMessageKind::Steer => THEME.colors.selection,
-                    QueuedMessageKind::FollowUp => THEME.colors.hover,
-                })
-                .text_size(THEME.type_scale.caption)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(match kind {
-                    QueuedMessageKind::Peer | QueuedMessageKind::Steer => THEME.colors.accent,
-                    QueuedMessageKind::FollowUp => THEME.colors.subtle,
-                })
-                .child(kind.label()),
-        )
         .children(messages.iter().map(|message| {
             div()
-                .line_clamp(1)
+                .flex()
+                .items_center()
+                .gap(THEME.space.xs)
                 .border_t(THEME.border)
-                .border_color(THEME.colors.border)
+                .border_color(kind.border_color())
+                .border_l(px(2.0))
                 .px(THEME.space.sm)
                 .py(THEME.space.xs)
                 .text_size(THEME.type_scale.body)
                 .text_color(THEME.colors.text)
-                .child(queued_message_preview(message))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .line_clamp(1)
+                        .child(queued_message_preview(message.text)),
+                )
+                .when_some(
+                    message.id.filter(|_| {
+                        individual && message.cancellable && (!message.dismiss || session.is_some())
+                    }),
+                    |row, id| {
+                        let id = id.clone();
+                        let target = target.to_owned();
+                        let entity = entity.clone();
+                        let dismiss = message.dismiss;
+                        let session = session.map(std::path::Path::to_path_buf);
+                        row.child(icon_button(
+                            gpui::SharedString::from(format!(
+                                "{}-{id}",
+                                if dismiss {
+                                    "dismiss-pending"
+                                } else {
+                                    "cancel-queue"
+                                }
+                            )),
+                            IconName::Close,
+                            "Remove pending message",
+                            ButtonTone::Quiet,
+                            move |_, cx| {
+                                let _ = entity.update(cx, |app, cx| {
+                                    let command = if dismiss {
+                                        session.clone().map(|session| {
+                                            RuntimeCommand::DismissReceipt {
+                                                session,
+                                                id: id.clone(),
+                                            }
+                                        })
+                                    } else {
+                                        Some(RuntimeCommand::CancelQueued {
+                                            target: target.clone(),
+                                            id: id.clone(),
+                                        })
+                                    };
+                                    if let Some(command) = command {
+                                        app.send(command, cx);
+                                    }
+                                });
+                            },
+                        ))
+                    },
+                )
         }))
         .into_any_element()
 }
 
-pub(super) fn render(queue: &QueueState) -> Option<AnyElement> {
-    let groups = queued_message_groups(queue);
+pub(super) fn render(
+    queue: &QueueState,
+    receipts: &[PendingReceipt],
+    target: &str,
+    session: Option<&std::path::Path>,
+    entity: WeakEntity<FarcasterApp>,
+    individual: bool,
+    history_preview: bool,
+) -> Option<AnyElement> {
+    let groups = pending_message_groups(queue, receipts, history_preview);
     if groups.is_empty() {
         return None;
     }
@@ -124,82 +209,78 @@ pub(super) fn render(queue: &QueueState) -> Option<AnyElement> {
             .rounded(THEME.radius)
             .overflow_hidden()
             .bg(THEME.colors.surface)
+            .when(!individual, |queue| {
+                let entity = entity.clone();
+                queue.child(div().flex().justify_end().child(button(
+                    "clear-prompt-queue",
+                    "Clear pending",
+                    ButtonTone::Quiet,
+                    true,
+                    move |_, cx| {
+                        let _ =
+                            entity.update(cx, |app, cx| app.send(RuntimeCommand::ClearQueue, cx));
+                    },
+                )))
+            })
             .children(
                 groups
                     .into_iter()
                     .enumerate()
                     .map(|(index, (kind, messages))| {
-                        queued_message_group(kind, &messages, index > 0)
+                        queued_message_group(
+                            kind,
+                            &messages,
+                            index > 0,
+                            target,
+                            session,
+                            entity.clone(),
+                            individual,
+                        )
                     }),
             )
             .into_any_element(),
     )
 }
 
-pub(super) fn pending_receipt_label(receipt: &PendingReceipt) -> String {
-    let mode = match receipt.mode {
-        Some(PromptMode::Steer) => "Steer",
-        Some(PromptMode::FollowUp) => "Follow-up",
-        Some(PromptMode::Normal) | None => "Message",
-    };
-    let status = if receipt.unknown {
-        "Delivery unknown"
-    } else {
-        "Awaiting delivery"
-    };
-    match receipt.images.len() {
-        0 => format!("{mode} · {status}"),
-        1 => format!("{mode} · {status} · 1 image"),
-        count => format!("{mode} · {status} · {count} images"),
+pub(super) fn pending_message_groups<'a>(
+    queue: &'a QueueState,
+    receipts: &'a [PendingReceipt],
+    history_preview: bool,
+) -> Vec<(QueuedMessageKind, Vec<QueuedMessage<'a>>)> {
+    let mut groups = queued_message_groups(queue);
+    // Live submissions already come from the queue/composer projection. Receipt
+    // history restores rows only when viewing a saved session, not a second copy
+    // of each live submission.
+    if !history_preview {
+        return groups;
     }
-}
-
-pub(super) fn render_pending_receipts(receipts: &[PendingReceipt]) -> Option<AnyElement> {
-    if receipts.is_empty() {
-        return None;
+    for receipt in receipts {
+        if groups.iter().any(|(_, messages)| {
+            messages
+                .iter()
+                .any(|message| message.id == Some(&receipt.id))
+        }) {
+            continue;
+        }
+        let kind = if receipt.mode == Some(PromptMode::Steer) {
+            QueuedMessageKind::Steer
+        } else {
+            QueuedMessageKind::FollowUp
+        };
+        let index = groups
+            .iter()
+            .position(|(candidate, _)| *candidate == kind)
+            .unwrap_or_else(|| {
+                groups.push((kind, Vec::new()));
+                groups.len() - 1
+            });
+        let messages = &mut groups[index].1;
+        messages.push(QueuedMessage {
+            text: &receipt.text,
+            id: Some(&receipt.id),
+            cancellable: true,
+            dismiss: true,
+        });
     }
-    Some(
-        div()
-            .mb(THEME.space.sm)
-            .border(THEME.border)
-            .border_color(THEME.colors.border)
-            .rounded(THEME.radius)
-            .overflow_hidden()
-            .bg(THEME.colors.surface)
-            .child(
-                div()
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .bg(THEME.colors.hover)
-                    .text_size(THEME.type_scale.caption)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(THEME.colors.subtle)
-                    .child("Saved pending messages"),
-            )
-            .children(receipts.iter().map(|receipt| {
-                div()
-                    .id(gpui::SharedString::from(format!(
-                        "pending-receipt-{}",
-                        receipt.id
-                    )))
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .child(
-                        div()
-                            .line_clamp(1)
-                            .text_size(THEME.type_scale.body)
-                            .text_color(THEME.colors.text)
-                            .child(queued_message_preview(&receipt.text)),
-                    )
-                    .child(
-                        div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
-                            .child(pending_receipt_label(receipt)),
-                    )
-            }))
-            .into_any_element(),
-    )
+    groups
 }

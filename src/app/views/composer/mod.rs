@@ -25,9 +25,7 @@ use dialogs::{
     choice_copy, dialog_copy, dialog_number_selection, numbered_dialog_choice, plain_text_html,
 };
 #[cfg(test)]
-use queue::{
-    QueuedMessageKind, pending_receipt_label, queued_message_groups, queued_message_preview,
-};
+use queue::{QueuedMessageKind, queued_message_groups, queued_message_preview};
 
 impl FarcasterApp {
     #[allow(clippy::too_many_arguments)]
@@ -85,11 +83,7 @@ impl FarcasterApp {
             &self.composer.pending_submissions,
             self.composer.sessions.current_target(),
         );
-        let restored_receipts = if self.snapshot.history_preview {
-            self.snapshot.conversation.pending_receipts()
-        } else {
-            Vec::new()
-        };
+        let restored_receipts = self.snapshot.conversation.pending_receipts();
         let mention_query = file_mentions::query_at_cursor(
             &self.composer.input.read(cx).value(),
             self.composer.input.read(cx).cursor(),
@@ -142,12 +136,19 @@ impl FarcasterApp {
                     .flex_col()
                     .p(THEME.space.sm)
                     .when_some(widgets_above, |composer, widgets| composer.child(widgets))
-                    .when_some(queue::render(&visible_queue), |composer, queue| {
-                        composer.child(queue)
-                    })
                     .when_some(
-                        queue::render_pending_receipts(&restored_receipts),
-                        |composer, receipts| composer.child(receipts),
+                        queue::render(
+                            &visible_queue,
+                            &restored_receipts,
+                            self.composer.sessions.current_target(),
+                            self.snapshot.selected_session.as_deref(),
+                            entity.clone(),
+                            crate::agents::supports_individual_queue_cancellation(
+                                self.active_harness(),
+                            ),
+                            self.snapshot.history_preview,
+                        ),
+                        |composer, queue| composer.child(queue),
                     )
                     .when_some(
                         attachments::render(self, entity.clone()),
