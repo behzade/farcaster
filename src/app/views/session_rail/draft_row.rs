@@ -17,7 +17,10 @@ use super::{
 };
 use crate::{
     app::FarcasterApp,
-    app::ui::primitives::{AppTooltip as _, DeleteButton, ReorderPosition, ReorderTargetExt as _},
+    app::ui::primitives::{
+        AppTooltip as _, DeleteButton, IndicatorEdge, ReorderPosition, ReorderTargetExt as _,
+        line_indicator,
+    },
     app::ui::theme::theme,
     sessions::DraftSession,
 };
@@ -136,15 +139,10 @@ impl RenderOnce for DraftRow {
                     })
                     .hover(|row| row.bg(theme().colors.highlight))
                     .when(selected, |row| {
-                        row.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .top_0()
-                                .bottom_0()
-                                .w(theme().size(2.0))
-                                .bg(theme().colors.indicator),
-                        )
+                        row.child(line_indicator(
+                            IndicatorEdge::Leading,
+                            theme().colors.indicator,
+                        ))
                     })
                     .focus(|row| {
                         row.border(theme().border)

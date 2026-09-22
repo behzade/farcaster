@@ -24,8 +24,8 @@ use super::{
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{
-        AppIconSize, AppTooltip as _, ContextMenuTrigger, DeleteButton, ReorderPosition,
-        ReorderTargetExt as _, app_icon, number_slot,
+        AppIconSize, AppTooltip as _, ContextMenuTrigger, DeleteButton, IndicatorEdge,
+        ReorderPosition, ReorderTargetExt as _, app_icon, line_indicator, number_slot,
     },
     app::ui::theme::theme,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
@@ -171,15 +171,10 @@ impl RenderOnce for SessionRow {
             })
             .hover(|row| row.bg(theme().colors.highlight))
             .when(selected || color.is_some(), |row| {
-                row.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top_0()
-                        .bottom_0()
-                        .w(theme().size(2.0))
-                        .bg(color.unwrap_or(theme().colors.indicator)),
-                )
+                row.child(line_indicator(
+                    IndicatorEdge::Leading,
+                    color.unwrap_or(theme().colors.indicator),
+                ))
             })
             .focus(|row| row.border(theme().border).border_color(theme().colors.indicator))
             .cursor(CursorStyle::PointingHand)
