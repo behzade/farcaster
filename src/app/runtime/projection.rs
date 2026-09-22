@@ -97,10 +97,15 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
                 .filter(|tokens| *tokens > 0)
         });
     let Some(tokens) = tokens else { return false };
-    let Some(context_window) = stats
+    let current_window = stats
         .pointer("/contextUsage/contextWindow")
         .and_then(Value::as_u64)
+        .filter(|window| *window > 0);
+    let Some(context_window) = event
+        .get("contextWindow")
+        .and_then(Value::as_u64)
         .filter(|window| *window > 0)
+        .or(current_window)
     else {
         return false;
     };
@@ -109,6 +114,7 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
         .pointer("/contextUsage/tokens")
         .and_then(Value::as_u64)
         == Some(tokens)
+        && current_window == Some(context_window)
         && stats
             .pointer("/contextUsage/percent")
             .and_then(Value::as_f64)
@@ -117,6 +123,7 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
         return false;
     }
     stats["contextUsage"]["tokens"] = tokens.into();
+    stats["contextUsage"]["contextWindow"] = context_window.into();
     stats["contextUsage"]["percent"] = percent.into();
     true
 }

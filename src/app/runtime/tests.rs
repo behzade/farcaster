@@ -691,6 +691,36 @@ fn streaming_usage_updates_context_before_agent_settles() {
 }
 
 #[test]
+fn usage_event_updates_context_window_before_settle() {
+    let mut stats = json!({"contextUsage": {"tokens": 0, "contextWindow": 0, "percent": 0.0}});
+    let usage = json!({
+        "type": "turn_end",
+        "contextWindow": 272_000,
+        "usage": {"totalTokens": 68_000}
+    });
+    assert!(update_context_from_event(&mut stats, &usage));
+    assert_eq!(
+        stats["contextUsage"],
+        json!({
+            "tokens": 68_000, "contextWindow": 272_000, "percent": 25.0
+        })
+    );
+    assert!(!update_context_from_event(&mut stats, &usage));
+
+    assert!(update_context_from_event(
+        &mut stats,
+        &json!({"type": "turn_end", "contextWindow": 544_000, "usage": {"totalTokens": 68_000}}),
+    ));
+    assert_eq!(stats["contextUsage"]["contextWindow"], 544_000);
+    assert_eq!(stats["contextUsage"]["percent"], 12.5);
+
+    assert!(!update_context_from_event(
+        &mut stats,
+        &json!({"type": "turn_end", "contextWindow": 0, "usage": {"totalTokens": 68_000}}),
+    ));
+}
+
+#[test]
 fn completed_message_usage_updates_context_when_streaming_usage_is_unavailable() {
     let mut stats = json!({
         "contextUsage": {"tokens": 40, "contextWindow": 200, "percent": 20.0}
