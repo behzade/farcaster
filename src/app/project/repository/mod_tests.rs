@@ -128,6 +128,24 @@ fn switching_projects_reuses_the_working_copy_that_was_observed_for_them() {
 }
 
 #[test]
+fn a_scan_with_nothing_to_show_is_never_remembered() {
+    assert!(
+        RepositoryObservation::from_scan(BackendPreference::Auto, Ok(None)).is_none(),
+        "a project without a working copy has nothing to show ahead of a switch"
+    );
+    assert!(
+        RepositoryObservation::from_scan(
+            BackendPreference::Auto,
+            Err(RepositoryError::BackendUnavailable {
+                kind: crate::repository::RepositoryKind::Git,
+                project: PathBuf::from("/project"),
+            }),
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn a_cached_working_copy_is_only_reused_by_the_backend_that_produced_it() {
     let mut cache = ObservationCache::default();
     let project = PathBuf::from("/project");
