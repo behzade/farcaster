@@ -878,6 +878,40 @@ fn inert_session() -> AcpWorkerSession {
 }
 
 #[cfg(unix)]
+#[test]
+fn acp_caller_tracks_selected_model_on_attach_and_configuration_change() {
+    let registry = crate::CallerRegistry::default();
+    let identity = registry.issue(
+        std::path::Path::new("/project"),
+        crate::CallerProfile {
+            backend: crate::Backend::Cursor,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    identity.bind("one");
+    let token = identity.token().to_owned();
+    let mut session = inert_session();
+    session.profile = super::super::super::cursor::PROFILE;
+    session.config_ids.selected_model = Some("first".into());
+    let mut session = session.with_identity(identity);
+    let caller = registry.resolve(&token).expect("caller");
+    assert_eq!(caller.provider.as_deref(), Some("cursor-cli"));
+    assert_eq!(caller.model.as_deref(), Some("first"));
+
+    session.refresh_configuration(&json!({"configOptions":[
+        {"id":"model","category":"model","currentValue":"second","options":[
+            {"value":"first"},{"value":"second"}
+        ]}
+    ]}));
+    let caller = registry.resolve(&token).expect("caller");
+    assert_eq!(caller.provider.as_deref(), Some("cursor-cli"));
+    assert_eq!(caller.model.as_deref(), Some("second"));
+}
+
+#[cfg(unix)]
 fn track_inert_submission(session: &mut AcpWorkerSession, id: &str) {
     session.current_inputs.push(PendingPrompt {
         mode: WorkerSendMode::Prompt,

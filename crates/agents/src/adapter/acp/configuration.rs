@@ -124,14 +124,15 @@ pub(super) fn metadata(
         ids.selected_service_tier = metadata.service_tier.clone();
         ids.service_tiers = metadata.service_tiers.clone();
     }
-    if catalog.is_empty() {
-        return (metadata, ids);
-    }
     let current_model = current_options
         .iter()
         .find(|option| option.get("id").and_then(Value::as_str) == ids.model.as_deref())
         .and_then(|option| option.get("currentValue"))
         .and_then(Value::as_str);
+    if catalog.is_empty() {
+        ids.selected_model = current_model.map(str::to_owned);
+        return (metadata, ids);
+    }
     let current: HashMap<_, _> = current_options
         .iter()
         .filter_map(|option| {
