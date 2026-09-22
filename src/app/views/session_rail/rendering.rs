@@ -6,7 +6,7 @@ use gpui::{
 };
 
 use super::{
-    FarcasterApp,
+    FarcasterApp, RailPanel,
     drag::DraggedSession,
     groups::{SessionRailItem, SessionRailKind},
 };
@@ -21,13 +21,8 @@ use crate::{
     sessions::SessionSummary,
 };
 
-/// The archive opens showing this much of itself; its separator can then be
-/// dragged anywhere, exactly like the notification panel's.
 pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
 
-/// The rail's section headers — folders, and the panels that share the same
-/// shape — are exactly as tall as the disclosure control they lead with, so the
-/// arrow never carries empty box space above or below it.
 pub(super) fn session_section_header() -> Div {
     div()
         .w_full()
@@ -142,36 +137,29 @@ pub(super) fn inactive_session_badge(
     );
     (status != "Done").then_some(status)
 }
-/// The archive's body is flush, so a row is whole as soon as its own height
-/// fits under the panel header.
-fn archived_panel_base() -> Pixels {
-    theme().controls.icon_button
-}
 
-/// The height the archive needs to show exactly this many rows.
 pub(super) fn archived_panel_height(rows: usize) -> Pixels {
-    archived_panel_base() + theme().controls.archived_preview_row * rows as f32
+    theme().controls.icon_button + theme().controls.archived_preview_row * rows as f32
 }
 
-pub(super) fn archived_panel_slot(count: usize, collapsed: bool) -> PanelSlot {
+pub(super) fn rail_panel_slot(panel: RailPanel, archived: usize, collapsed: bool) -> PanelSlot {
     if collapsed {
         return PanelSlot::new(theme().controls.icon_button, theme().controls.icon_button);
     }
-    PanelSlot::new(
-        archived_panel_height(1),
-        archived_panel_height(count.clamp(1, ARCHIVED_OPEN_ROWS)),
-    )
-}
-
-pub(super) fn notification_panel_slot(collapsed: bool) -> PanelSlot {
-    if collapsed {
-        return PanelSlot::new(theme().controls.icon_button, theme().controls.icon_button);
+    match panel {
+        RailPanel::Archived => PanelSlot::new(
+            archived_panel_height(1),
+            archived_panel_height(archived.clamp(1, ARCHIVED_OPEN_ROWS)),
+        ),
+        RailPanel::Notifications => {
+            PanelSlot::new(theme().layout.notice_panel_min, theme().layout.notice_panel)
+        }
     }
-    PanelSlot::new(theme().layout.notice_panel_min, theme().layout.notice_panel)
 }
 
 pub(super) fn archived_panel_rows(height: Pixels) -> usize {
-    ((height - archived_panel_base()) / theme().controls.archived_preview_row).max(0.0) as usize
+    ((height - theme().controls.icon_button) / theme().controls.archived_preview_row).max(0.0)
+        as usize
 }
 
 #[cfg(test)]

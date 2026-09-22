@@ -141,8 +141,7 @@ impl FarcasterApp {
     pub(in crate::app) fn finish_resizes(&mut self, cx: &mut gpui::Context<Self>) {
         self.finish_session_rail_resize(cx);
         self.finish_run_panel_resize(cx);
-        self.finish_notification_panel_resize(cx);
-        self.finish_archived_panel_resize(cx);
+        self.finish_rail_panel_resize(cx);
     }
 
     pub(in crate::app) fn save_panel_layout(&self) {

@@ -1,6 +1,6 @@
 use gpui::{Context, InteractiveElement as _};
 
-use super::super::FarcasterApp;
+use super::super::{FarcasterApp, session_rail::RailPanel};
 use crate::app::ui::keyboard::{ClipboardCopyAlias, ClipboardPasteAlias, CopySelection};
 use crate::app::workspace::{CycleWorkspaceBackward, CycleWorkspaceForward};
 use crate::app::{
@@ -132,7 +132,9 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &NextSession, window, cx| {
         this.switch_relative_session(1, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| this.toggle_archive_panel(cx)))
+    .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
+        this.toggle_rail_panel(RailPanel::Archived, cx)
+    }))
     .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
         let value = this.composer.input.read(cx).value().trim().to_owned();
         if !value.is_empty() || this.has_composer_attachments() {
@@ -227,8 +229,7 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
         if event.dragging() {
             this.update_session_rail_resize(event.position.x, cx);
             this.update_run_panel_resize(event.position.x, cx);
-            this.update_notification_panel_resize(event.position.y, cx);
-            this.update_archived_panel_resize(event.position.y, cx);
+            this.update_rail_panel_resize(event.position.y, cx);
         } else {
             this.finish_resizes(cx);
         }

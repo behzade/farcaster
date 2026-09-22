@@ -41,8 +41,6 @@ pub(crate) use reorder::{ReorderPosition, ReorderTargetExt};
 pub(crate) use resize::{ResizeBounds, ResizeState};
 pub(crate) use search::SearchField;
 pub(crate) use slot::number_slot;
-pub(crate) use stack::{
-    PanelSlot, PanelStack, panel_bounds, panel_heights, panel_max, panel_resized, panel_space,
-};
+pub(crate) use stack::{PanelSlot, panel_bounds, panel_resized, panel_room, panel_space};
 pub(crate) use tooltip::AppTooltip;
 pub(crate) use textarea::{create_submit_textarea, submit_textarea};

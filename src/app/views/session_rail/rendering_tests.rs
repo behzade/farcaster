@@ -6,10 +6,9 @@ fn the_archive_resizes_freely_up_to_the_room_the_stack_measured() {
     let row = theme().controls.archived_preview_row;
     let room = px(472.0);
     let mut state = crate::app::ui::primitives::ResizeState::default();
-    let bounds = panel_bounds(Some(room), archived_panel_slot(3, false));
+    let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 3, false));
     assert_eq!(bounds.max_height, room);
     assert_eq!(bounds.min_height, archived_panel_height(1));
-    assert_eq!(bounds.row_height, None, "a drag is not stepped");
     assert_eq!(state.height(bounds), archived_panel_height(3));
     state.begin_resize(bounds, px(1000.0));
     state.update_resize(bounds, px(1000.0) - row / 2.0);
@@ -35,25 +34,20 @@ fn the_archive_resizes_freely_up_to_the_room_the_stack_measured() {
         archived_panel_height(1),
         "the floor is one whole chat"
     );
-    assert_eq!(
-        panel_bounds(None, archived_panel_slot(3, false)).max_height,
-        theme().layout.notice_panel_max,
-        "a rail that has not been measured yet has no ceiling to apply"
-    );
 }
 
 #[test]
 fn a_minimized_panel_is_only_its_header() {
     let header = theme().controls.icon_button;
-    let archived = archived_panel_slot(3, true);
-    let notifications = notification_panel_slot(true);
+    let archived = rail_panel_slot(RailPanel::Archived, 3, true);
+    let notifications = rail_panel_slot(RailPanel::Notifications, 0, true);
     assert_eq!(archived.floor, header);
     assert_eq!(archived.preferred, header);
-    assert_eq!(panel_bounds(Some(px(472.0)), archived).height, header);
+    assert_eq!(panel_bounds(px(472.0), archived).height, header);
     assert_eq!(notifications.floor, header);
-    assert_eq!(panel_bounds(Some(px(300.0)), notifications).height, header);
+    assert_eq!(panel_bounds(px(300.0), notifications).height, header);
     assert!(
-        notification_panel_slot(false).floor > header,
+        rail_panel_slot(RailPanel::Notifications, 0, false).floor > header,
         "an open panel asks for more than its header"
     );
     assert!(

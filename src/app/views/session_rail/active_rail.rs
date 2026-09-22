@@ -8,7 +8,7 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::scroll::Scrollbar;
 
 use super::{
-    FarcasterApp, active_item_identity,
+    FarcasterApp, RailPanel, active_item_identity,
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, folder_rows},
@@ -24,8 +24,8 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::layout::TRAFFIC_LIGHT_INSET,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, PanelStack, SearchField,
-        app_icon, feedback, icon_button, panel_space,
+        AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, SearchField, app_icon,
+        feedback, icon_button, panel_space,
     },
     app::ui::theme::theme,
     sessions::root_session_for_path,
@@ -54,9 +54,32 @@ impl FarcasterApp {
         )
     }
 
-    fn render_notification_panel(&self, entity: WeakEntity<Self>) -> AnyElement {
+    fn render_rail_panel(
+        &self,
+        panel: RailPanel,
+        collapsed: bool,
+        entity: &WeakEntity<Self>,
+        children: impl IntoIterator<Item = AnyElement>,
+    ) -> Panel {
+        let (id, title) = panel.labels();
+        let mut state = self.panel_state(panel);
+        state.set_collapsed(collapsed);
         let toggle_entity = entity.clone();
-        let resize_entity = entity;
+        let resize_entity = entity.clone();
+        Panel::new(id, &state, self.panel_bounds(panel, collapsed), title)
+            .on_toggle(move |_, cx| {
+                let _ = toggle_entity.update(cx, |this, cx| this.toggle_rail_panel(panel, cx));
+            })
+            .on_resize(move |event, _, cx| {
+                let _ = resize_entity.update(cx, |this, cx| {
+                    this.begin_rail_panel_resize(panel, event.position.y, cx)
+                });
+            })
+            .children(children)
+    }
+
+    fn render_notification_panel(&self, entity: WeakEntity<Self>) -> AnyElement {
+        let collapsed = self.panel_state(RailPanel::Notifications).is_collapsed();
         let notifications = self
             .extensions
             .active
@@ -72,23 +95,9 @@ impl FarcasterApp {
                 )
             })
             .collect::<Vec<_>>();
-        Panel::new(
-            "notification-panel",
-            &self.views.notification_panel,
-            self.notification_panel_bounds(),
-            "Notifications",
-        )
-        .badge(self.extensions.active.unseen_notifications())
-        .on_toggle(move |_, cx| {
-            let _ = toggle_entity.update(cx, |this, cx| this.toggle_notification_panel(cx));
-        })
-        .on_resize(move |event, _, cx| {
-            let _ = resize_entity.update(cx, |this, cx| {
-                this.begin_notification_panel_resize(event.position.y, cx);
-            });
-        })
-        .children(notifications)
-        .into_any_element()
+        self.render_rail_panel(RailPanel::Notifications, collapsed, &entity, notifications)
+            .badge(self.extensions.active.unseen_notifications())
+            .into_any_element()
     }
 
     pub(in crate::app::views) fn render_sessions(
@@ -247,32 +256,19 @@ impl FarcasterApp {
             }
         })
         .size_full();
-        let mut archived_state = self.views.archived_panel;
-        let archived_collapsed = !self.sessions.archived_expanded || session_drag_active;
-        archived_state.set_collapsed(archived_collapsed);
-        let archived_resize_entity = entity.clone();
-        let archived_toggle_entity = entity.clone();
-        let archived_panel = Panel::new(
-            "archived-panel",
-            &archived_state,
-            self.archived_panel_bounds_for(archived_collapsed),
-            "Archived",
-        )
-        .count(archived_entry_count)
-        .flush_body()
-        .on_toggle(move |_, cx| {
-            let _ = archived_toggle_entity.update(cx, |this, cx| this.toggle_archive_panel(cx));
-        })
-        .on_resize(move |event, _, cx| {
-            let _ = archived_resize_entity.update(cx, |this, cx| {
-                this.begin_archived_panel_resize(event.position.y, cx);
-            });
-        })
-        .children([div()
-            .flex_1()
-            .min_h_0()
-            .child(self.views.archived_session_rail.clone())
-            .into_any_element()]);
+        let archived_panel = self
+            .render_rail_panel(
+                RailPanel::Archived,
+                !self.sessions.archived_expanded || session_drag_active,
+                &entity,
+                [div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.views.archived_session_rail.clone())
+                    .into_any_element()],
+            )
+            .count(archived_entry_count)
+            .flush_body();
         let projects = self.available_projects();
         let project_filter_entity = entity.clone();
         let filter_label = self
@@ -435,8 +431,12 @@ impl FarcasterApp {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
             })
             .child(
-                PanelStack::new("session-rail-stack")
-                    .surface(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(
                         div()
                             .id("session-list-scroll")
                             .relative()

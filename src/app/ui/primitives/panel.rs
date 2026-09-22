@@ -53,22 +53,16 @@ impl Panel {
         }
     }
 
-    /// Content that carries its own padding — the archived chats, which are the
-    /// same rows as the active list — sits flush against the panel so it lines
-    /// up with the chats above it.
     pub(crate) fn flush_body(mut self) -> Self {
         self.body_inset = false;
         self
     }
 
-    /// The unseen counter, written `+N` because it keeps climbing while you look
-    /// away from the panel.
     pub(crate) fn badge(mut self, unseen: usize) -> Self {
         self.badge = (unseen > 0).then(|| format!("+{unseen}").into());
         self
     }
 
-    /// A plain tally — the archived chats — which reads as a number, not a gain.
     pub(crate) fn count(mut self, total: usize) -> Self {
         self.badge = (total > 0).then(|| total.to_string().into());
         self
@@ -193,10 +187,6 @@ impl RenderOnce for Panel {
                         .overflow_y_scrollbar(),
                 )
             })
-            // Drawn last and over the top of the header: a minimized panel is
-            // exactly its header, so it stands no taller than the highlight box
-            // behind its toggle and never offers to resize, while an open one
-            // keeps every pixel of its height for its rows.
             .when(!collapsed, |panel| {
                 panel.child(resize_handle(
                     ElementId::Name(format!("{id}-resize").into()),
@@ -209,7 +199,6 @@ impl RenderOnce for Panel {
             })
     }
 }
-
 #[cfg(test)]
 #[path = "panel_tests.rs"]
 mod tests;

@@ -22,14 +22,14 @@ use self::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
         session_rail_lists,
     },
-    rendering::{archived_panel_rows, archived_panel_slot, notification_panel_slot},
+    rendering::{archived_panel_rows, rail_panel_slot},
 };
 use super::super::FarcasterApp;
 use crate::{
     app::session_folders::SessionFolders,
     app::ui::primitives::{
-        PanelSlot, ReorderPosition, ResizeBounds, panel_bounds, panel_heights, panel_max,
-        panel_resized,
+        PanelSlot, ReorderPosition, ResizeBounds, ResizeState, panel_bounds, panel_resized,
+        panel_room,
     },
     app::ui::theme::theme,
     sessions::DraftSession,
@@ -42,6 +42,21 @@ pub(in crate::app) use rows::{project_label, status_visual};
 
 #[cfg(test)]
 use self::{rendering::subagent_counts, rows::session_accessible_label};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RailPanel {
+    Archived,
+    Notifications,
+}
+
+impl RailPanel {
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Archived => ("archived-panel", "Archived"),
+            Self::Notifications => ("notification-panel", "Notifications"),
+        }
+    }
+}
 
 pub(super) fn clamped_session_rail_width(width: f32) -> Pixels {
     px(width.clamp(
@@ -134,9 +149,6 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
     })
 }
 
-/// The chats a session number can reach, in rail order. Numbers run from 1 to
-/// 10 so `0` reaches the tenth chat, and a folder with fewer chats simply has
-/// fewer reachable numbers.
 fn numbered_session_items<'a>(
     items: &'a [ActiveSessionItem],
     folders: &SessionFolders,
@@ -161,8 +173,6 @@ fn numbered_session_items<'a>(
 }
 
 impl FarcasterApp {
-    /// Selects the chat a session number points at. Numbers above nine arrive as
-    /// `0`, which addresses the tenth chat.
     pub(in crate::app) fn switch_to_session_number(
         &mut self,
         number: usize,
@@ -191,8 +201,6 @@ impl FarcasterApp {
             .collect()
     }
 
-    /// The folder holding the chat that is open right now, when there is one.
-    /// Without it the numbers address every folder's chats in rail order.
     fn current_folder_id(&self) -> Option<u64> {
         let selected = self.selected_app_session_id()?;
         let items = self.visible_active_items();
@@ -372,27 +380,50 @@ impl FarcasterApp {
         }
     }
 
-    fn rail_panels(&self) -> Vec<(PanelSlot, Pixels)> {
-        let count = self.archived_session_count();
-        let mut panels = Vec::new();
-        if count > 0 {
-            let slot = archived_panel_slot(count, !self.sessions.archived_expanded);
-            panels.push((slot, self.views.archived_panel.height_or(slot.preferred)));
+    pub(super) fn rail_panels(&self) -> Vec<RailPanel> {
+        (self.archived_session_count() > 0)
+            .then_some(RailPanel::Archived)
+            .into_iter()
+            .chain([RailPanel::Notifications])
+            .collect()
+    }
+
+    fn panel_state(&self, panel: RailPanel) -> ResizeState {
+        match panel {
+            RailPanel::Archived => self.views.archived_panel,
+            RailPanel::Notifications => self.views.notification_panel,
         }
-        let slot = notification_panel_slot(self.views.notification_panel.is_collapsed());
-        panels.push((
-            slot,
-            self.views.notification_panel.height_or(slot.preferred),
-        ));
-        panels
     }
 
-    fn rail_panel_sizes(panels: &[(PanelSlot, Pixels)]) -> Vec<Pixels> {
-        panels.iter().map(|(_, size)| *size).collect()
+    fn panel_state_mut(&mut self, panel: RailPanel) -> &mut ResizeState {
+        match panel {
+            RailPanel::Archived => &mut self.views.archived_panel,
+            RailPanel::Notifications => &mut self.views.notification_panel,
+        }
     }
 
-    fn rail_panel_floors(panels: &[(PanelSlot, Pixels)]) -> Vec<Pixels> {
-        panels.iter().map(|(slot, _)| slot.floor).collect()
+    fn panel_collapsed(&self, panel: RailPanel) -> bool {
+        match panel {
+            RailPanel::Archived => !self.sessions.archived_expanded,
+            RailPanel::Notifications => self.views.notification_panel.is_collapsed(),
+        }
+    }
+
+    fn panel_slot(&self, panel: RailPanel, collapsed: bool) -> PanelSlot {
+        rail_panel_slot(panel, self.archived_session_count(), collapsed)
+    }
+
+    fn rail_panel_sizes(&self) -> (Vec<Pixels>, Vec<Pixels>) {
+        self.rail_panels()
+            .into_iter()
+            .map(|panel| {
+                let slot = self.panel_slot(panel, self.panel_collapsed(panel));
+                (
+                    self.panel_state(panel).height_or(slot.preferred),
+                    slot.floor,
+                )
+            })
+            .unzip()
     }
 
     fn panel_budget(&self) -> Pixels {
@@ -401,45 +432,19 @@ impl FarcasterApp {
             .unwrap_or_else(|| theme().layout.notice_panel_max)
     }
 
-    fn notification_panel_bounds(&self) -> ResizeBounds {
-        let panels = self.rail_panels();
-        let index = panels.len() - 1;
-        panel_bounds(Some(self.panel_room(&panels, index)), panels[index].0)
-    }
-
-    fn archived_panel_bounds(&self) -> ResizeBounds {
-        self.archived_panel_bounds_for(!self.sessions.archived_expanded)
-    }
-
-    fn archived_panel_bounds_for(&self, collapsed: bool) -> ResizeBounds {
-        let slot = archived_panel_slot(self.archived_session_count(), collapsed);
-        let panels = self.rail_panels();
-        panel_bounds(
-            Some(if collapsed {
-                slot.floor
-            } else {
-                self.panel_room(&panels, 0)
-            }),
-            slot,
-        )
-    }
-
-    fn panel_room(&self, panels: &[(PanelSlot, Pixels)], index: usize) -> Pixels {
-        let sizes = Self::rail_panel_sizes(panels);
-        let floors = Self::rail_panel_floors(panels);
-        let budget = self.panel_budget();
-        if self.panel_is_resizing(index, panels.len()) {
-            return panel_max(&sizes, &floors, budget, index);
+    fn rail_panel_index(&self, panel: RailPanel) -> usize {
+        match panel {
+            RailPanel::Archived => 0,
+            RailPanel::Notifications => self.rail_panels().len() - 1,
         }
-        panel_heights(&sizes, &floors, budget)[index]
     }
 
-    fn panel_is_resizing(&self, index: usize, count: usize) -> bool {
-        if index == count - 1 {
-            self.views.notification_panel.is_resizing()
-        } else {
-            self.views.archived_panel.is_resizing()
-        }
+    pub(super) fn panel_bounds(&self, panel: RailPanel, collapsed: bool) -> ResizeBounds {
+        let (sizes, floors) = self.rail_panel_sizes();
+        let index = self.rail_panel_index(panel);
+        let resizing = self.panel_state(panel).is_resizing();
+        let room = panel_room(&sizes, &floors, self.panel_budget(), index, resizing);
+        panel_bounds(room, self.panel_slot(panel, collapsed))
     }
 
     fn archived_session_count(&self) -> usize {
@@ -452,117 +457,80 @@ impl FarcasterApp {
         .archived
         .len()
     }
-    /// How many archived chats the archive is showing right now. Minimized it
-    /// shows none, so revealing any of them opens it.
     fn archived_visible_rows(&self) -> usize {
         if !self.sessions.archived_expanded {
             return 0;
         }
         archived_panel_rows(
-            self.views
-                .archived_panel
-                .height(self.archived_panel_bounds()),
+            self.panel_state(RailPanel::Archived)
+                .height(self.panel_bounds(RailPanel::Archived, false)),
         )
     }
 
-    pub(super) fn toggle_archive_panel(&mut self, cx: &mut gpui::Context<Self>) {
-        self.sessions.archived_expanded = !self.sessions.archived_expanded;
+    pub(super) fn toggle_rail_panel(&mut self, panel: RailPanel, cx: &mut gpui::Context<Self>) {
+        match panel {
+            RailPanel::Archived => {
+                self.sessions.archived_expanded = !self.sessions.archived_expanded;
+            }
+            RailPanel::Notifications => {
+                let collapsed = self.views.notification_panel.is_collapsed();
+                self.views.notification_panel.set_collapsed(!collapsed);
+                if collapsed {
+                    self.extensions.active.mark_notifications_seen();
+                }
+            }
+        }
         self.save_panel_layout();
         self.notify_session_rail(cx);
     }
 
-    pub(super) fn begin_archived_panel_resize(
+    pub(super) fn begin_rail_panel_resize(
         &mut self,
+        panel: RailPanel,
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        let bounds = self.archived_panel_bounds();
-        self.views.archived_panel.begin_resize(bounds, pointer_y);
+        let bounds = self.panel_bounds(panel, false);
+        self.panel_state_mut(panel).begin_resize(bounds, pointer_y);
         self.notify_session_rail_shell(cx);
     }
 
-    pub(super) fn update_archived_panel_resize(
+    pub(super) fn update_rail_panel_resize(
         &mut self,
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
-        if !self.views.archived_panel.is_resizing() {
-            return;
-        }
-        let bounds = self.archived_panel_bounds();
-        if self.views.archived_panel.update_resize(bounds, pointer_y) {
+        let (mut sizes, floors) = self.rail_panel_sizes();
+        for panel in self.rail_panels() {
+            if !self.panel_state(panel).is_resizing() {
+                continue;
+            }
+            let index = self.rail_panel_index(panel);
+            let bounds = self.panel_bounds(panel, false);
+            sizes[index] = self.panel_state(panel).height(bounds);
+            if !self.panel_state_mut(panel).update_resize(bounds, pointer_y) {
+                continue;
+            }
+            let after = self.panel_state(panel).height(bounds);
+            for (panel, height) in self.rail_panels().into_iter().zip(panel_resized(
+                &sizes,
+                &floors,
+                self.panel_budget(),
+                index,
+                after,
+            )) {
+                self.panel_state_mut(panel).set_height(height);
+            }
             self.notify_session_rail_shell(cx);
         }
     }
 
-    pub(super) fn finish_archived_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.views.archived_panel.finish_resize() {
-            self.save_panel_layout();
-            self.notify_session_rail_shell(cx);
-        }
-    }
-
-    pub(super) fn toggle_notification_panel(&mut self, cx: &mut gpui::Context<Self>) {
-        let collapsed = self.views.notification_panel.is_collapsed();
-        self.views.notification_panel.set_collapsed(!collapsed);
-        if collapsed {
-            self.extensions.active.mark_notifications_seen();
-        }
-        self.save_panel_layout();
-        self.notify_session_rail_shell(cx);
-    }
-
-    pub(super) fn begin_notification_panel_resize(
-        &mut self,
-        pointer_y: Pixels,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        let bounds = self.notification_panel_bounds();
-        self.views
-            .notification_panel
-            .begin_resize(bounds, pointer_y);
-        self.notify_session_rail_shell(cx);
-    }
-
-    pub(super) fn update_notification_panel_resize(
-        &mut self,
-        pointer_y: Pixels,
-        cx: &mut gpui::Context<Self>,
-    ) {
-        if !self.views.notification_panel.is_resizing() {
-            return;
-        }
-        let bounds = self.notification_panel_bounds();
-        let before = self.views.notification_panel.height(bounds);
-        if !self
-            .views
-            .notification_panel
-            .update_resize(bounds, pointer_y)
-        {
-            return;
-        }
-        let panels = self.rail_panels();
-        let index = panels.len() - 1;
-        let mut sizes = Self::rail_panel_sizes(&panels);
-        sizes[index] = before;
-        let laid_out = panel_resized(
-            &sizes,
-            &Self::rail_panel_floors(&panels),
-            self.panel_budget(),
-            index,
-            self.views.notification_panel.height(bounds),
-        );
-        if index > 0 {
-            self.views.archived_panel.set_height(laid_out[0]);
-        }
-        self.views.notification_panel.set_height(laid_out[index]);
-        self.notify_session_rail_shell(cx);
-    }
-
-    pub(super) fn finish_notification_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
-        if self.views.notification_panel.finish_resize() {
-            self.save_panel_layout();
-            self.notify_session_rail_shell(cx);
+    pub(super) fn finish_rail_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
+        for panel in self.rail_panels() {
+            if self.panel_state_mut(panel).finish_resize() {
+                self.save_panel_layout();
+                self.notify_session_rail_shell(cx);
+            }
         }
     }
 

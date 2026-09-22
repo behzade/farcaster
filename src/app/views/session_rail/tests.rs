@@ -1,10 +1,11 @@
 use crate::agents::Backend;
+use gpui::px;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, SessionRailItem, SessionRailKind, archived_panel_rows,
+    ActiveSessionItem, RailPanel, SessionRailItem, SessionRailKind, archived_panel_rows,
     clamped_session_rail_width, first_unsubmitted_draft, hover::session_tooltip_lines,
-    minimal_row_splice, numbered_session_items, rendering::archived_panel_slot,
+    minimal_row_splice, numbered_session_items, rendering::rail_panel_slot,
     replacement_index_after_close, session_accessible_label, status_visual, subagent_counts,
 };
 use crate::{
@@ -154,18 +155,20 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 #[test]
 fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
     let room = theme().size(700.0);
-    let bounds = panel_bounds(Some(room), archived_panel_slot(100, false));
+    let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 100, false));
     let header = f32::from(theme().controls.icon_button);
     let row = f32::from(theme().controls.archived_preview_row);
     assert_eq!(f32::from(bounds.height), header + row * 5.0);
     assert_eq!(f32::from(bounds.min_height), header + row);
     assert_eq!(bounds.max_height, room);
-    assert_eq!(bounds.row_height, None);
 }
 
 #[test]
 fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
-    let bounds = panel_bounds(Some(theme().size(700.0)), archived_panel_slot(100, false));
+    let bounds = panel_bounds(
+        theme().size(700.0),
+        rail_panel_slot(RailPanel::Archived, 100, false),
+    );
     assert_eq!(archived_panel_rows(bounds.min_height), 1);
     assert_eq!(archived_panel_rows(bounds.height), 5);
     assert!(archived_panel_rows(bounds.max_height) > 5);
@@ -173,13 +176,9 @@ fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
 
 #[test]
 fn the_archive_panel_bounds_stay_valid_without_archived_chats() {
-    for room in [
-        None,
-        Some(theme().layout.folders_min),
-        Some(theme().size(600.0)),
-    ] {
+    for room in [px(0.0), theme().layout.folders_min, theme().size(600.0)] {
         for collapsed in [false, true] {
-            let bounds = panel_bounds(room, archived_panel_slot(0, collapsed));
+            let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 0, collapsed));
             assert!(bounds.min_height <= bounds.max_height);
             assert!(bounds.height >= bounds.min_height);
             assert!(bounds.height <= bounds.max_height);

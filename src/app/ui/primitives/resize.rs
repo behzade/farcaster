@@ -10,9 +10,6 @@ pub(crate) struct ResizeBounds {
     pub height: Pixels,
     pub min_height: Pixels,
     pub max_height: Pixels,
-    /// Surfaces built from fixed-height rows hand back whole rows, so a drag
-    /// never leaves a part-drawn row — or empty space under the last one.
-    pub row_height: Option<Pixels>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -44,7 +41,9 @@ impl ResizeState {
     }
 
     pub(crate) fn height(&self, bounds: ResizeBounds) -> Pixels {
-        clamp(self.height.unwrap_or(bounds.height), bounds)
+        self.height
+            .unwrap_or(bounds.height)
+            .clamp(bounds.min_height, bounds.max_height)
     }
 
     pub(crate) fn is_collapsed(&self) -> bool {
@@ -67,8 +66,12 @@ impl ResizeState {
         let Some((start_y, start_height)) = self.resize_start else {
             return false;
         };
-        let height = clamp(start_height + start_y - pointer_y, bounds);
-        if Some(height) == self.height.map(|height| clamp(height, bounds)) {
+        let height =
+            (start_height + start_y - pointer_y).clamp(bounds.min_height, bounds.max_height);
+        let current = self
+            .height
+            .map(|height| height.clamp(bounds.min_height, bounds.max_height));
+        if Some(height) == current {
             return false;
         }
         self.height = Some(height);
@@ -80,19 +83,6 @@ impl ResizeState {
     }
 }
 
-fn clamp(height: Pixels, bounds: ResizeBounds) -> Pixels {
-    let height = height.clamp(bounds.min_height, bounds.max_height);
-    bounds.row_height.map_or(height, |row| {
-        let rows = ((height - bounds.min_height) / row).round();
-        (bounds.min_height + row * rows).clamp(bounds.min_height, bounds.max_height)
-    })
-}
-
-/// The one draggable separator in the app. Every surface that can be sized by
-/// hand — the notification history, the archive — shares this strip, so the grab
-/// area, its cursor and the way a drag starts never drift apart. It lies on the
-/// top edge of a panel and takes no layout height, so the surface is only ever
-/// its header plus its content.
 pub(crate) fn resize_handle(
     id: impl Into<ElementId>,
     on_start: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
