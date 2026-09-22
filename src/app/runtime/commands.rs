@@ -1,6 +1,60 @@
 use super::*;
 
 impl RuntimeOwner {
+    fn clear_prompt_queue(&mut self) -> Result<(), String> {
+        self.process
+            .as_mut()
+            .ok_or("No live queue is connected")?
+            .clear_queue()?;
+        let local = self
+            .queued_prompts
+            .iter()
+            .filter_map(|prompt| Some((prompt.submission_id.clone()?, prompt.target.clone())))
+            .collect::<Vec<_>>();
+        self.cancel_recovered_prompts();
+        for (id, target) in local {
+            self.emit_prompt_result(Some(&id), &target, agents::PromptOutcome::Cancelled);
+        }
+        // Only the queue owner knows which inputs it has already claimed.
+        // Persist its exact cancellation events; never mark every in-flight
+        // prompt cancelled merely because the pending queue was cleared.
+        Ok(())
+    }
+
+    fn cancel_queued_prompt(&mut self, target: &str, id: &str) -> Result<(), String> {
+        if let Some(index) = self.queued_prompts.iter().position(|prompt| {
+            prompt.target == target && prompt.submission_id.as_deref() == Some(id)
+        }) {
+            let prompt = &self.queued_prompts[index];
+            self.state
+                .as_ref()
+                .ok_or("State unavailable")?
+                .cancel_queued_prompts(&[prompt.id])?;
+            self.queued_prompts.remove(index);
+            self.emit_prompt_result(Some(id), target, agents::PromptOutcome::Cancelled);
+            return Ok(());
+        }
+        let request_id = self
+            .pending_queued_prompts
+            .iter()
+            .find_map(|(request_id, prompt)| {
+                (prompt.target == target && (request_id == id || prompt.submission_id == id))
+                    .then(|| request_id.clone())
+            })
+            .or_else(|| {
+                (self.pending_prompt_target.as_deref() == Some(target)
+                    && (self.pending_prompt_id.as_deref() == Some(id)
+                        || self.pending_submission_id.as_deref() == Some(id)))
+                .then(|| self.pending_prompt_id.clone())
+                .flatten()
+            });
+        if let (Some(request_id), Some(process)) = (request_id, self.process.as_mut()) {
+            // The shared queue owns cancellation and resolves stale clicks.
+            process.cancel_prompt(&request_id)?;
+        }
+        Ok(())
+    }
+
     fn cancel_recovered_prompts(&mut self) {
         if self.queued_prompts.is_empty() {
             return;
@@ -19,19 +73,43 @@ impl RuntimeOwner {
         // missing durability explicit: we cannot promise safety after restart.
         self.queued_prompts.clear();
         if let Err(error) = result {
-            let message = format!(
-                "Stopped pending messages for this run, but could not save their cancellation. \
-                 They may return after restart. Resolve the storage error before restarting: {error}"
-            );
-            conversation_mut(self.active_snapshot_mut())
-                .push_local_error("Queue cancellation was not saved", message.clone());
-            self.notify_attention("Queue cancellation was not saved", Some(&message));
-            self.publish();
+            zlog::error!("Could not persist queue cancellation: {error}");
         }
     }
 
     pub(super) fn apply_command(&mut self, runtime_command: RuntimeCommand) {
         match runtime_command {
+            RuntimeCommand::ClearQueue => {
+                if let Err(error) = self.clear_prompt_queue() {
+                    zlog::error!("Could not clear queue: {error}");
+                }
+                self.publish();
+            }
+            RuntimeCommand::CancelQueued { target, id } => {
+                if let Err(error) = self.cancel_queued_prompt(&target, &id) {
+                    zlog::error!("Could not cancel queued prompt: {error}");
+                }
+                self.publish();
+            }
+            RuntimeCommand::DismissReceipt { session, id } => {
+                if self.snapshot.selected_session.as_ref() != Some(&session)
+                    || !self.snapshot.history_preview
+                {
+                    return;
+                }
+                let result = self
+                    .state
+                    .as_ref()
+                    .ok_or_else(|| "State unavailable".to_owned())
+                    .and_then(|state| state.dismiss_prompt_receipt(&session, &id));
+                match result {
+                    Ok(()) => conversation_mut(&mut self.snapshot).dismiss_pending_receipt(&id),
+                    Err(error) => {
+                        zlog::error!("Could not dismiss prompt receipt: {error}");
+                    }
+                }
+                self.publish();
+            }
             RuntimeCommand::SendToSession {
                 submission_id,
                 target,

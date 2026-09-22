@@ -10,6 +10,62 @@ pub(super) struct RetiredPrompt {
 }
 
 impl RuntimeOwner {
+    pub(super) fn apply_cancelled_prompt(&mut self, event: &Value) -> bool {
+        if event.get("type").and_then(Value::as_str) != Some("prompt_delivery")
+            || event.get("status").and_then(Value::as_str) != Some("cancelled")
+        {
+            return false;
+        }
+        let Some(id) = event.get("submissionId").and_then(Value::as_str) else {
+            return false;
+        };
+        let pending = self.pending_queued_prompts.remove(id);
+        let retired = self.retired_prompts.remove(id);
+        let current = self.pending_prompt_id.as_deref() == Some(id);
+        let saved = (|| {
+            let state = self.state.as_ref().ok_or("State unavailable")?;
+            if let Some(outbox_id) = pending
+                .as_ref()
+                .map(|prompt| prompt.outbox_id)
+                .or_else(|| retired.as_ref().and_then(|prompt| prompt.outbox_id))
+                .or_else(|| current.then_some(self.pending_outbox_id).flatten())
+            {
+                state.cancel_queued_prompts(&[outbox_id])?;
+            }
+            if let Some(session) = self.active_session.as_deref() {
+                state.dismiss_prompt_receipt(session, id)?;
+            }
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = saved {
+            zlog::error!("Queue cancellation was not saved: {error}");
+        }
+        if let Some(pending) = pending {
+            self.emit_prompt_result(
+                Some(&pending.submission_id),
+                &pending.target,
+                agents::PromptOutcome::Cancelled,
+            );
+        }
+        if current {
+            if let Some(target) = self.pending_prompt_target.take() {
+                self.emit_prompt_result(
+                    self.pending_submission_id.as_deref(),
+                    &target,
+                    agents::PromptOutcome::Cancelled,
+                );
+            }
+            self.pending_prompt_id = None;
+            self.pending_outbox_id = None;
+            self.pending_submission_id = None;
+            self.pending_prompt_result_emitted = false;
+            self.pending_prompt_delivery_tracked = false;
+            self.rollback_pending_prompt();
+        }
+        conversation_mut(self.active_snapshot_mut()).dismiss_pending_receipt(id);
+        true
+    }
+
     pub(super) fn apply_retired_prompt_delivery(
         &mut self,
         event: &Value,
@@ -23,16 +79,19 @@ impl RuntimeOwner {
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if matches!(status, "accepted" | "delivered") {
-            self.reconcile_retired_prompt(receipt_id, status == "delivered");
+        if status == "delivered" {
+            self.reconcile_retired_prompt(receipt_id, true);
             if retired.session == self.active_session && !retired.delivered {
                 let mut message = event.get("message").cloned().unwrap_or_default();
                 if !message.is_object() {
                     message = json!({});
                 }
                 message["queued"] = true.into();
-                conversation_mut(self.active_snapshot_mut())
-                    .record_prompt_delivery(receipt_id, &message, status);
+                conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
+                    receipt_id,
+                    &message,
+                    "delivered",
+                );
                 return Some(SnapshotChange::Immediate);
             }
         }
@@ -107,6 +166,14 @@ impl RuntimeOwner {
                 );
                 self.pending_prompt_result_emitted = true;
             }
+            // Delivery completes the submission even when its admission reply
+            // arrived earlier. A later duplicate reply no longer owns this slot.
+            if saved {
+                self.apply_response(crate::agents::SessionResponse::success(
+                    Some(receipt_id.to_owned()),
+                    crate::agents::SessionResponsePayload::Prompt(PromptMode::Normal),
+                ));
+            }
         } else if let Some(pending) = queued
             && !pending.result_emitted
         {
@@ -119,39 +186,6 @@ impl RuntimeOwner {
                 pending.result_emitted = true;
             }
         }
-    }
-
-    pub(super) fn retire_queued_unknown_prompt(
-        &mut self,
-        id: &str,
-        pending: &super::PendingQueuedPrompt,
-    ) {
-        self.retired_prompts.insert(
-            id.to_owned(),
-            RetiredPrompt {
-                outbox_id: Some(pending.outbox_id),
-                target: pending.target.clone(),
-                session: pending.session.clone(),
-                delivery_tracked: pending.delivery_tracked,
-                delivered: false,
-            },
-        );
-    }
-
-    pub(super) fn retire_unknown_prompt(&mut self, id: &str) {
-        self.retired_prompts
-            .entry(id.to_owned())
-            .or_insert(RetiredPrompt {
-                outbox_id: self.pending_outbox_id.take(),
-                target: self.pending_prompt_target.clone().unwrap_or_default(),
-                session: self.active_session.clone(),
-                delivery_tracked: self.pending_prompt_delivery_tracked,
-                delivered: false,
-            });
-        self.pending_prompt_id = None;
-        self.pending_prompt_delivery_unknown = false;
-        self.pending_prompt_delivery_tracked = false;
-        self.normal_prompt_in_flight = false;
     }
 
     /// A late receipt belongs to the old outbox row, never a new submission to
@@ -198,16 +232,13 @@ impl RuntimeOwner {
         true
     }
 
-    pub(super) fn mark_outbox_failed(&mut self, error: &str) {
-        if let Some(id) = self.pending_outbox_id.take()
-            && let Some(state) = &self.state
-            && let Err(database_error) = agents::fail_prompt(state, id, error)
-        {
-            zlog::error!("Failed to mark queued prompt {id} as failed: {database_error}");
-        }
+    pub(super) fn release_pending_outbox(&mut self) {
+        // The durable row stays pending. Runtime ownership ends here; the next
+        // dispatch or restart can retry it.
+        self.pending_outbox_id = None;
     }
 
-    pub(super) fn fail_pending_queued_prompts(&mut self, error: &str) {
+    pub(super) fn fail_pending_queued_prompts(&mut self, _error: &str) {
         let pending = std::mem::take(&mut self.pending_queued_prompts);
         for (receipt_id, queued) in pending {
             if queued.result_emitted {
@@ -227,20 +258,21 @@ impl RuntimeOwner {
                 }
                 continue;
             }
-            if let Some(state) = &self.state
-                && let Err(database_error) =
-                    agents::mark_prompt_delivery_unknown(state, queued.outbox_id, error)
-            {
-                zlog::error!(
-                    "Mark pending queued prompt {} unknown: {database_error}",
-                    queued.outbox_id
-                );
-            }
-            self.emit_prompt_result(
-                Some(&queued.submission_id),
-                &queued.target,
-                crate::agents::PromptOutcome::DeliveryUnknown,
-            );
+            // A reset before model admission is not a user-visible failure.
+            // Keep the durable row pending and let the next process retry it.
+            self.queued_prompts.push_back(crate::agents::QueuedPrompt {
+                id: queued.outbox_id,
+                submission_id: Some(queued.submission_id),
+                target: queued.target,
+                harness: queued.harness,
+                project: queued.project,
+                session: queued.session,
+                mode: queued.mode,
+                message: queued.message,
+                display_message: queued.display_message,
+                invocation: queued.invocation,
+                images: queued.images,
+            });
         }
     }
 
@@ -272,19 +304,6 @@ impl RuntimeOwner {
             Err(error) => {
                 zlog::error!("Save proven prompt delivery {outbox_id}: {error}");
             }
-        }
-    }
-
-    pub(super) fn mark_outbox_delivery_unknown(&mut self, error: &str) {
-        if let Some(id) = self.pending_outbox_id
-            && let Some(state) = &self.state
-            && let Err(database_error) = agents::mark_prompt_delivery_unknown(state, id, error)
-        {
-            zlog::error!("Failed to mark queued prompt {id} delivery unknown: {database_error}");
-            conversation_mut(self.active_snapshot_mut()).push_local_error(
-                "Delivery state not saved",
-                format!("{database_error}. The saved sending record remains recoverable; do not resend it automatically."),
-            );
         }
     }
 }

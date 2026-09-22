@@ -16,6 +16,7 @@ const HARNESSES: [&str; 6] = [
 
 struct HeldAcks {
     commands: Rc<RefCell<Vec<SessionCommand>>>,
+    cancelled: Rc<RefCell<Vec<String>>>,
     next_id: usize,
 }
 
@@ -23,12 +24,17 @@ impl HeldAcks {
     fn new() -> Self {
         Self {
             commands: Rc::new(RefCell::new(Vec::new())),
+            cancelled: Rc::new(RefCell::new(Vec::new())),
             next_id: 0,
         }
     }
 }
 
 impl crate::agents::SessionTransport for HeldAcks {
+    fn cancel_prompt(&mut self, id: &str) -> Result<(), String> {
+        self.cancelled.borrow_mut().push(id.to_owned());
+        Ok(())
+    }
     fn send(&mut self, command: SessionCommand) -> Result<String, String> {
         self.commands.borrow_mut().push(command);
         self.next_id += 1;
@@ -103,6 +109,179 @@ fn empty_session_json() -> serde_json::Value {
 
 fn empty_session() -> crate::protocol::SessionState {
     serde_json::from_value(empty_session_json()).expect("test operation should succeed")
+}
+
+#[test]
+fn normal_receipt_after_steering_settles_releases_the_next_send() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let (mut owner, events, commands) = held_acks_runtime(temp.path())?;
+    owner.harness = Some(Backend::OpenCode);
+    conversation_mut(&mut owner.snapshot).running = false;
+    let submit = |id: &str, mode, message: &str| RuntimeCommand::Prompt {
+        submission_id: id.into(),
+        target: "session:held".into(),
+        mode,
+        message: message.into(),
+        display_message: None,
+        invocation: None,
+        images: Vec::new(),
+        allow_while_running: false,
+    };
+    owner.apply_command(submit("normal", PromptMode::Normal, "original"));
+    let normal = owner
+        .pending_prompt_id
+        .clone()
+        .expect("normal was dispatched");
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({
+            "type":"prompt_delivery", "submissionId":normal, "status":"accepted"
+        })
+        .into(),
+    ));
+    owner.apply_command(submit("steer", PromptMode::Steer, "steer"));
+    let steer = owner
+        .pending_queued_prompts
+        .keys()
+        .next()
+        .expect("steer was dispatched")
+        .clone();
+    owner.apply_command(RuntimeCommand::ApplySteering);
+
+    // Settlement alone cannot acknowledge Normal. The native Escape E2E
+    // requires its delivery too; delay that receipt here to check that the
+    // runtime releases the send guard even if settlement arrives first.
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({
+            "type":"prompt_delivery", "submissionId":steer, "status":"delivered"
+        })
+        .into(),
+    ));
+    owner.apply_process_item(SessionEvent::Response(SessionResponse::success(
+        Some(steer),
+        SessionResponsePayload::Prompt(PromptMode::Steer),
+    )));
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({"type":"agent_settled"}).into(),
+    ));
+    assert!(!owner.snapshot.conversation.running);
+    assert_eq!(owner.pending_prompt_id.as_deref(), Some(normal.as_str()));
+    assert!(owner.pending_queued_prompts.is_empty());
+    owner.apply_process_item(SessionEvent::Activity(
+        json!({
+            "type":"prompt_delivery", "submissionId":normal, "status":"delivered"
+        })
+        .into(),
+    ));
+    owner.apply_process_item(SessionEvent::Response(SessionResponse::success(
+        Some(normal),
+        SessionResponsePayload::Prompt(PromptMode::Normal),
+    )));
+    assert!(owner.pending_prompt_id.is_none());
+    assert!(owner.pending_prompt_target.is_none());
+    events.try_iter().for_each(drop);
+
+    owner.apply_command(submit("next", PromptMode::Normal, "next input"));
+    let rejected = events.try_iter().any(|event| {
+        matches!(event,
+            RuntimeEvent::PromptResult {
+                submission_id: Some(id),
+                outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance, ..
+            } if id == "next"
+        )
+    });
+    assert!(
+        !rejected,
+        "the delivered normal input must no longer block the next send"
+    );
+    let saved: i64 = rusqlite::Connection::open(temp.path().join("state.sqlite3"))
+        .map_err(|error| error.to_string())?
+        .query_row(
+            "SELECT COUNT(*) FROM outbox WHERE message='next input'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        saved, 1,
+        "the next input must remain durably owned, not disappear"
+    );
+    assert!(
+        commands
+            .borrow()
+            .iter()
+            .any(|command| matches!(command, SessionCommand::ApplySteering))
+    );
+    Ok(())
+}
+
+#[test]
+fn admission_before_delivery_retains_the_outbox_and_composer_identity() -> Result<(), String> {
+    for mode in [PromptMode::Normal, PromptMode::Steer, PromptMode::FollowUp] {
+        let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let (mut owner, _, _) = held_acks_runtime(temp.path())?;
+        conversation_mut(&mut owner.snapshot).running = false;
+        owner.send_prompt_for_submission(
+            "composer-id".into(),
+            "session:held".into(),
+            mode,
+            "same".into(),
+            vec![],
+            false,
+        );
+        let id = owner.pending_prompt_id.clone().expect("sent");
+        let response =
+            SessionResponse::success(Some(id.clone()), SessionResponsePayload::Prompt(mode));
+        owner.apply_response(response.clone());
+        assert_eq!(owner.pending_prompt_id.as_deref(), Some(id.as_str()));
+        assert!(!owner.pending_prompt_result_emitted);
+        assert_eq!(owner.state.as_ref().unwrap().queued_prompts()?.len(), 1);
+        owner.apply_process_item(SessionEvent::Activity(
+            json!({
+                "type":"prompt_delivery", "submissionId":id, "status":"delivered",
+                "message":{"role":"user", "content":"same", "queued":mode != PromptMode::Normal}
+            })
+            .into(),
+        ));
+        owner.apply_response(response);
+        assert!(owner.state.as_ref().unwrap().queued_prompts()?.is_empty());
+        assert!(owner.pending_prompt_id.is_none());
+        assert!(owner.snapshot.conversation.pending_receipts().is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn live_cancel_routes_composer_and_native_ids_to_the_shared_owner() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let (mut owner, _, _) = held_acks_runtime(temp.path())?;
+    let transport = HeldAcks::new();
+    let cancelled = transport.cancelled.clone();
+    owner.process = Some(Box::new(transport));
+    owner.send_prompt_for_submission(
+        "composer-id".into(),
+        "session:held".into(),
+        PromptMode::Steer,
+        "same".into(),
+        vec![],
+        false,
+    );
+    for id in ["composer-id", "held-1"] {
+        owner.apply_command(RuntimeCommand::CancelQueued {
+            target: "session:held".into(),
+            id: id.into(),
+        });
+    }
+    owner.apply_command(RuntimeCommand::CancelQueued {
+        target: "another-session".into(),
+        id: "held-1".into(),
+    });
+    assert_eq!(*cancelled.borrow(), ["held-1", "held-1"]);
+    assert_eq!(
+        owner.state.as_ref().unwrap().queued_prompts()?.len(),
+        1,
+        "only the owner's cancelled event can change durable state"
+    );
+    Ok(())
 }
 
 #[test]
@@ -251,11 +430,11 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     let reset_delivery: (i64, i64, i64, i64) = connection
         .query_row(
             "SELECT
-                (SELECT COUNT(*) FROM outbox WHERE message='then follow'),
+                (SELECT COUNT(*) FROM outbox WHERE message='then follow' AND state='pending'),
                 (SELECT COUNT(*) FROM session_events
                   WHERE json_extract(body,'$.type')='accepted_prompt'
                     AND json_extract(body,'$.submissionId')='held-2'),
-                (SELECT COUNT(*) FROM outbox WHERE message='steer now'),
+                (SELECT COUNT(*) FROM outbox WHERE message='steer now' AND state='pending'),
                 (SELECT COUNT(*) FROM session_events
                   WHERE json_extract(body,'$.type')='accepted_prompt'
                     AND json_extract(body,'$.submissionId')='held-1')",
@@ -271,7 +450,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
     let hardened: (i64, i64, i64, i64) = connection
         .query_row(
             "SELECT
-                (SELECT COUNT(*) FROM outbox WHERE message='then later'),
+                (SELECT COUNT(*) FROM outbox WHERE message='then later' AND state='pending'),
                 (SELECT COUNT(*) FROM session_events
                   WHERE json_extract(body,'$.type')='accepted_prompt'
                     AND json_extract(body,'$.submissionId')='held-3'),
@@ -297,7 +476,7 @@ fn command_entry_sends_all_unacknowledged_inputs_before_first_escape() -> Result
 
 /// A transport that fails after a known delivery must keep the accepted
 /// outcome for the composer and leave the durable row in the recoverable
-/// `sending` state (the delivery receipt cannot be persisted because the
+/// `pending` state (the delivery receipt cannot be persisted because the
 /// injected trigger fails).
 #[test]
 fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_row()
@@ -340,8 +519,7 @@ fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_r
     assert_eq!(outcomes, [crate::agents::PromptOutcome::Accepted]);
     let reopened =
         crate::app::persistence::StateStore::open_at(&failure_temp.path().join("state.sqlite3"))?;
-    assert!(reopened.unknown_prompts()?.is_empty());
-    assert!(reopened.queued_prompts()?.is_empty());
+    assert_eq!(reopened.queued_prompts()?.len(), 1);
     let state: String = cleanup_connection
         .query_row(
             "SELECT state FROM outbox WHERE message='delivered before failure'",
@@ -349,7 +527,10 @@ fn transport_failure_after_delivery_keeps_the_accepted_outcome_and_recoverable_r
             |row| row.get(0),
         )
         .map_err(|error| error.to_string())?;
-    assert_eq!(state, "sending", "known delivery must remain recoverable");
+    assert_eq!(
+        state, "pending",
+        "unpersisted delivery must remain retryable"
+    );
     Ok(())
 }
 
@@ -440,17 +621,9 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
                 Ok((row.get(0)?, row.get(1)?))
             })
             .map_err(|e| e.to_string())?;
-        assert_eq!(rejected, ("bad input".into(), "failed".into()));
+        assert_eq!(rejected, ("bad input".into(), "pending".into()));
         let reopened = crate::app::persistence::StateStore::open_at(&database)?;
-        assert!(reopened.queued_prompts()?.is_empty());
-        let sending: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM outbox WHERE state='sending'",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(|error| error.to_string())?;
-        assert_eq!(sending, 0, "no Sending blocker remains");
+        assert_eq!(reopened.queued_prompts()?.len(), 1);
         assert!(events.try_iter().any(|event| matches!(
             event,
             RuntimeEvent::PromptResult {
@@ -479,6 +652,18 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
         owner.apply_response(SessionResponse::success(
             Some("accepted".into()),
             SessionResponsePayload::Prompt(next_mode),
+        ));
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, RuntimeEvent::PromptResult { .. }))
+        );
+        owner.apply_process_item(SessionEvent::Activity(
+            json!({
+                "type":"prompt_delivery", "submissionId":"accepted", "status":"delivered",
+                "message":{"role":"user", "content":"valid input", "queued":running}
+            })
+            .into(),
         ));
         assert!(events.try_iter().any(|event| matches!(
             event,

@@ -587,11 +587,11 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
                     )
                 })?;
             sessions.track(&target);
+            let session_path = target.path.clone();
             wait_for_gate_started(&runtime, &mut trace, &project, &gate_message, TURN_TIMEOUT)?;
 
-            // Send both runtime commands while the real turn remains held. This
-            // layer has no local composer queue; native queue snapshots can only
-            // appear after the adapter responds, so UI timing is tested above it.
+            // The shared queue must publish both rows while the real tool stays
+            // held, without waiting for native admission or delivery.
             let target = bound_target(&target);
             trace.phase("submit steer while actual shell remains held")?;
             runtime.send(prompt_with_mode(
@@ -607,7 +607,21 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
                 follow_up_message.clone(),
                 follow_up_image.clone(),
             ))?;
-            trace.phase("check the last observed snapshot before native delivery")?;
+            wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
+                trace.snapshot.as_ref().is_some_and(|snapshot| {
+                    let queue = &snapshot.conversation.queue;
+                    queue
+                        .follow_up
+                        .iter()
+                        .any(|message| message == &follow_up_message)
+                        && queue
+                            .steering
+                            .iter()
+                            .chain(queue.follow_up.iter())
+                            .any(|message| message == &steer_message)
+                })
+            })?;
+            trace.phase("check shared queue snapshot before native delivery")?;
             let snapshot = trace.snapshot.as_ref().ok_or_else(|| {
                 format!(
                     "runtime omitted the pre-delivery snapshot: {}",
@@ -675,6 +689,16 @@ fn live_e2e_runtime_accepted_steer_and_follow_up_queue_until_delivery() -> Resul
             wait_for(&runtime, &mut trace, TURN_TIMEOUT, |trace| {
                 trace.accepted_count(&target) == 2
             })?;
+            let pending_outbox = pending_outbox_messages(
+                &session_path,
+                &[steer_message.as_str(), follow_up_message.as_str()],
+            )?;
+            if !pending_outbox.is_empty() {
+                return Err(format!(
+                    "model consumed queued inputs but their outbox rows remain pending: {pending_outbox:?}; {}",
+                    trace.summary()
+                ));
+            }
             let snapshot = trace.snapshot.as_ref().ok_or_else(|| {
                 format!(
                     "runtime omitted the post-delivery snapshot: {}",
@@ -808,6 +832,7 @@ fn live_config(harness: Backend) -> Result<AgentLaunchConfig, String> {
         access_mode: live_access_mode_for_harness(harness)?,
         app_proxy: None,
         session_locator_root: Some(isolated_locator_root()?),
+        prompt_boundary_url: None,
     })
 }
 
@@ -979,6 +1004,20 @@ fn require_user_rows(
                 .collect::<Vec<_>>()
         ))
     }
+}
+
+fn pending_outbox_messages(session: &Path, expected: &[&str]) -> Result<Vec<String>, String> {
+    let database = crate::app::infrastructure::persistence::state_path()?;
+    let store = crate::app::persistence::StateStore::open_at(&database)?;
+    Ok(store
+        .queued_prompts()?
+        .into_iter()
+        .filter(|prompt| {
+            prompt.session.as_deref() == Some(session)
+                && expected.iter().any(|message| *message == prompt.message)
+        })
+        .map(|prompt| format!("{:?}:{}", prompt.mode, prompt.message))
+        .collect())
 }
 
 fn row_matches_prompt_image(
