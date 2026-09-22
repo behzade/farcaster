@@ -352,7 +352,7 @@ const STRUCTURE: Structure = Structure {
         status_row_height: px(24.0),
         session_age_slot: px(30.0),
         counter_slot: px(18.0),
-        folders_min: px(96.0),
+        folders_min: px(128.0),
         notice_panel: px(160.0),
         notice_panel_min: px(76.0),
         notice_panel_max: px(2000.0),
