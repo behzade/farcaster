@@ -128,12 +128,37 @@ impl FarcasterApp {
 
     pub(in crate::app) fn toggle_session_rail(&mut self, cx: &mut gpui::Context<Self>) {
         self.workspace.session_rail_hidden = !self.workspace.session_rail_hidden;
+        self.save_panel_layout();
         cx.notify();
     }
 
     pub(in crate::app) fn toggle_run_panel(&mut self, cx: &mut gpui::Context<Self>) {
         self.workspace.run_panel_hidden = !self.workspace.run_panel_hidden;
+        self.save_panel_layout();
         cx.notify();
+    }
+
+    pub(in crate::app) fn finish_resizes(&mut self, cx: &mut gpui::Context<Self>) {
+        self.finish_session_rail_resize(cx);
+        self.finish_run_panel_resize(cx);
+        self.finish_notification_panel_resize(cx);
+        self.finish_archived_panel_resize(cx);
+    }
+
+    pub(in crate::app) fn save_panel_layout(&self) {
+        let layout = crate::app::infrastructure::persistence::PanelLayout {
+            session_rail_hidden: self.workspace.session_rail_hidden,
+            run_panel_hidden: self.workspace.run_panel_hidden,
+            notifications_collapsed: self.views.notification_panel.is_collapsed(),
+            notifications_height: self.views.notification_panel.stored_height(),
+            archived_expanded: self.sessions.archived_expanded,
+            archived_height: self.views.archived_panel.stored_height(),
+        };
+        if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
+            .and_then(|store| store.save_panel_layout(&layout))
+        {
+            zlog::warn!("Save panel layout: {error}");
+        }
     }
 
     pub(super) fn render_inline_shell(

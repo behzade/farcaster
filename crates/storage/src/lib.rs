@@ -130,6 +130,16 @@ pub enum WindowState {
     Fullscreen,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct PanelLayout {
+    pub session_rail_hidden: bool,
+    pub run_panel_hidden: bool,
+    pub notifications_collapsed: bool,
+    pub notifications_height: Option<f32>,
+    pub archived_expanded: bool,
+    pub archived_height: Option<f32>,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CachedConfigurationCatalog {
     pub harness: Backend,

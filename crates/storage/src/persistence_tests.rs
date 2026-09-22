@@ -18,6 +18,7 @@ use crate::{
     CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, StateStore,
     WindowPlacement, WindowState,
     agents::ConfigurationCatalog,
+    PanelLayout,
     projects::{self, Registry},
     protocol::{Model, PromptImage, PromptMode},
     sessions::{DraftSession, SessionImport, SessionSummary, UsageSummary},
@@ -438,6 +439,35 @@ fn theme_settings_round_trip_and_start_empty() -> Result<(), Box<dyn std::error:
     let restored = crate::app::ui::theme::ThemeLibrary::from_css(&css, selected.as_deref())?;
     assert_eq!(restored.selected_name(), "Paper");
     assert_eq!(restored.user_themes().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn panel_layout_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("gui.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(store.load_panel_layout()?, None);
+
+    let layout = PanelLayout {
+        session_rail_hidden: true,
+        run_panel_hidden: true,
+        notifications_collapsed: true,
+        notifications_height: Some(240.0),
+        archived_expanded: true,
+        archived_height: Some(160.0),
+    };
+    store.save_panel_layout(&layout)?;
+    assert_eq!(
+        StateStore::open_at(&database)?.load_panel_layout()?,
+        Some(layout)
+    );
+
+    store.save_panel_layout(&PanelLayout::default())?;
+    assert_eq!(
+        StateStore::open_at(&database)?.load_panel_layout()?,
+        Some(PanelLayout::default())
+    );
     Ok(())
 }
 

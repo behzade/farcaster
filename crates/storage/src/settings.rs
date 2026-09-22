@@ -627,7 +627,22 @@ fn validate_repository_backend_preferences(
 }
 
 impl StateStore {
-    pub fn load_theme_css(&self) -> Result<Option<String>, String> {
+    pub(crate) fn load_panel_layout(&self) -> Result<Option<PanelLayout>, String> {
+        self.load_meta_value("panel_layout", "panel layout")?
+            .map(|value| {
+                serde_json::from_str(&value)
+                    .map_err(|error| format!("decode panel layout: {error}"))
+            })
+            .transpose()
+    }
+
+    pub(crate) fn save_panel_layout(&self, layout: &PanelLayout) -> Result<(), String> {
+        let json = serde_json::to_string(layout)
+            .map_err(|error| format!("encode panel layout: {error}"))?;
+        self.save_meta_value("panel_layout", &json, "panel layout")
+    }
+
+    pub(crate) fn load_theme_css(&self) -> Result<Option<String>, String> {
         self.load_meta_value("theme_css", "themes")
     }
 

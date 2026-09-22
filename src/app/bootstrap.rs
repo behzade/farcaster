@@ -87,6 +87,7 @@ impl FarcasterApp {
             editor_choice: Default::default(),
             theme_css: None,
             active_theme: None,
+            panel_layout: Default::default(),
         };
         Self::from_bootstrap_state(
             project,
@@ -186,7 +187,7 @@ impl FarcasterApp {
                 pending_move: None,
                 import: None,
                 import_generation: 0,
-                archived_expanded: false,
+                archived_expanded: persisted.panel_layout.archived_expanded,
                 _title_subscription: subscriptions.session_title,
             },
             activity: session::ActivityState {
@@ -250,8 +251,8 @@ impl FarcasterApp {
                 native_surface_covered: false,
                 tooltip_watch: None,
                 bar_hovered: false,
-                session_rail_hidden: false,
-                run_panel_hidden: false,
+                session_rail_hidden: persisted.panel_layout.session_rail_hidden,
+                run_panel_hidden: persisted.panel_layout.run_panel_hidden,
                 surface: AppSurface::Chat,
                 session_surfaces: HashMap::new(),
                 worker_profile_editor: workspace::worker_tasks::WorkerProfileEditor::default(),
@@ -304,9 +305,15 @@ impl FarcasterApp {
                 workgraph_detail: regions.workgraph_detail,
                 workgraph_sidebar: regions.workgraph_sidebar,
                 workgraph_inspector_issue: None,
-                notification_panel: Default::default(),
-                archived_panel: Default::default(),
-                rail_region_height: None,
+                notification_panel: ui::primitives::ResizeState::restored(
+                    persisted.panel_layout.notifications_height,
+                    persisted.panel_layout.notifications_collapsed,
+                ),
+                archived_panel: ui::primitives::ResizeState::restored(
+                    persisted.panel_layout.archived_height,
+                    !persisted.panel_layout.archived_expanded,
+                ),
+                panel_space: None,
             },
             overlays: views::AppOverlays {
                 view: Default::default(),
