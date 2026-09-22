@@ -1,4 +1,4 @@
 ---
-description: Commit your changes as whole files
+description: Commit only your changes
 ---
-Commit your changes. Never undo another agent's work. Stage whole files only, leave unrelated files untouched, and use a concise Conventional Commit message.
+Commit only your changes; preserve others' work. Use `git add -p` for shared files, not custom patches. Review the staged diff and use a concise Conventional Commit message.

@@ -8,10 +8,7 @@ fn catalog_comes_from_the_checked_in_fragments() {
             .map(|command| (command.name, command.description))
             .collect::<Vec<_>>(),
         [
-            (
-                "commit".into(),
-                Some("Commit your changes as whole files".into())
-            ),
+            ("commit".into(), Some("Commit only your changes".into())),
             (
                 "simplify".into(),
                 Some("Refine your implementation without changing behavior".into())
