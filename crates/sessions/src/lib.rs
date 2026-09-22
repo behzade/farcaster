@@ -17,6 +17,6 @@ pub use core::{
     normalize_session_path, relocate_state, root_session_for_path, root_sessions,
     session_family_for_path, set_archived, take_catalog_metrics,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use folders::SessionFolder;
 pub use folders::{FolderDestination, SessionFolders};

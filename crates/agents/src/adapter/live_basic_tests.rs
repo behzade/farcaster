@@ -561,6 +561,104 @@ fn bounded_command_permission_allows_only_exact_oneshot_acp_forms() -> Result<()
 }
 
 #[test]
+fn bounded_command_permission_requires_exact_opencode_resource_and_tool_command()
+-> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let command = TurnGate::new(project.path(), "permission")?.shell_command();
+    let title = |resource: &str, tool_command: &str| {
+        format!(
+            "OpenCode requests permission for shell\n{resource}\n\nTool bash / command:\n{tool_command}"
+        )
+    };
+    let request = |title: String| ExtensionUiRequest::Select {
+        id: "opencode-permission".into(),
+        title,
+        options: vec!["Allow once".into(), "Always allow".into(), "Decline".into()],
+        timeout: None,
+    };
+    let allowed = std::slice::from_ref(&command);
+    assert_eq!(
+        bounded_command_permission(&request(title(&command, &command)), allowed),
+        Ok(ExtensionUiResponse::Value {
+            id: "opencode-permission".into(),
+            value: "Allow once".into(),
+        })
+    );
+    for invalid in [
+        title("*", &command),
+        title(&command, &format!("{command}; touch forbidden")),
+        title(&format!("{command}; touch forbidden"), &command),
+        format!("{}\n\nDetails:\nextra", title(&command, &command)),
+        command.clone(),
+    ] {
+        assert!(
+            bounded_command_permission(&request(invalid), allowed)
+                .expect_err("only the exact registered OpenCode command can receive approval")
+                .contains("E2E_BLOCKED")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn opencode_fixture_permission_accepts_only_its_own_workdir_and_bounded_timeout()
+-> Result<(), String> {
+    use super::live_tests::support::bounded_command_permission_in_project;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let outside = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let command = TurnGate::new(project.path(), "permission")?.shell_command();
+    let base = format!(
+        "OpenCode requests permission for shell\n{command}\n\nTool bash / command:\n{command}"
+    );
+    let workdir = format!("\n\nTool bash / workdir:\n{}", project.path().display());
+    let timeout = "\n\nTool bash / timeout:\n600000";
+    let check = |suffix: &str, directory| {
+        bounded_command_permission_in_project(
+            &ExtensionUiRequest::Select {
+                id: "fixture".into(),
+                title: format!("{base}{suffix}"),
+                options: vec!["Allow once".into(), "Always allow".into(), "Decline".into()],
+                timeout: None,
+            },
+            std::slice::from_ref(&command),
+            directory,
+        )
+    };
+    for suffix in [
+        workdir.clone(),
+        timeout.into(),
+        format!("{workdir}{timeout}"),
+        format!("{timeout}{workdir}"),
+    ] {
+        assert_eq!(
+            check(&suffix, Some(project.path()))?,
+            ExtensionUiResponse::Value {
+                id: "fixture".into(),
+                value: "Allow once".into()
+            }
+        );
+    }
+    assert!(check(&workdir, None).is_err());
+    for suffix in [
+        format!("\n\nTool bash / workdir:\n{}", outside.path().display()),
+        format!("{workdir}{workdir}"),
+        format!("{timeout}{timeout}"),
+        "\n\nTool bash / timeout:\n0".into(),
+        "\n\nTool bash / timeout:\n600001".into(),
+        "\n\nTool bash / timeout:\n600000; touch forbidden".into(),
+        "\n\nTool bash / command:\ntouch forbidden".into(),
+        format!("{workdir}\n\nDetails:\nextra"),
+        format!("{workdir}/missing-directory"),
+    ] {
+        assert!(
+            check(&suffix, Some(project.path())).is_err(),
+            "must reject {suffix}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn bounded_gate_permission_rejects_unregistered_or_composed_commands() -> Result<(), String> {
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let gate = TurnGate::new(project.path(), "permission")?;

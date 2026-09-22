@@ -1,10 +1,14 @@
 // Live-test diagnostics are consumed by the E2E runner.
 #![allow(clippy::print_stderr)]
 use crate::Backend;
+#[cfg(test)]
+use crate::SessionOperation;
 use crate::{SessionHistory, SessionResponsePayload as Payload};
+#[cfg(test)]
+use std::collections::HashSet;
 use std::io::Write as _;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     thread,
@@ -16,7 +20,7 @@ use serde_json::{Value, json};
 use crate::{
     agents::{
         AgentLaunchConfig, HarnessAccessMode, SessionCommand, SessionEvent, SessionLaunch,
-        SessionOperation, SessionResponse, SessionStart, SessionTransport,
+        SessionResponse, SessionStart, SessionTransport,
         extensions::{ExtensionUiRequest, ExtensionUiResponse, PromptImage, PromptMode},
     },
     conversation::{ConversationState, TranscriptKind},
@@ -56,6 +60,7 @@ impl Drop for McpGuard {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 struct Coverage {
     history: bool,
     usage: bool,
@@ -78,6 +83,7 @@ struct Coverage {
     delete: bool,
 }
 
+#[cfg(test)]
 impl Coverage {
     fn from_capabilities(capabilities: &AgentCapabilities) -> Self {
         let available = |support: &CapabilitySupport| *support == CapabilitySupport::Available;
@@ -142,6 +148,7 @@ fn live_e2e_session_catalog_model_resume_move_delete() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> Result<(), String> {
     let coverage = Coverage::from_capabilities(capabilities);
     let case_dir = support::e2e_case_dir()?;
@@ -163,6 +170,7 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
         access_mode: support::live_access_mode_for_harness(harness)?,
         app_proxy: None,
         session_locator_root: Some(locator_root),
+        prompt_boundary_url: None,
     };
     let launch = |start, session_id| SessionLaunch {
         harness: harness.to_owned(),
@@ -236,6 +244,7 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
     }
 }
 
+#[cfg(test)]
 fn exercise_live_move(
     harness: Backend,
     config: &AgentLaunchConfig,
@@ -361,6 +370,7 @@ fn exercise_live_move(
     outcome
 }
 
+#[cfg(test)]
 fn cleanup_error(
     error: String,
     close: Result<(), String>,
@@ -382,6 +392,7 @@ fn cleanup_error(
     }
 }
 
+#[cfg(test)]
 fn exercise_catalog(session: &mut dyn SessionTransport, coverage: Coverage) -> Result<(), String> {
     request(session, SessionCommand::ConfigureSteering)?;
     let Payload::LoadState(state) = request(session, SessionCommand::LoadState)? else {
@@ -456,6 +467,7 @@ fn exercise_catalog(session: &mut dyn SessionTransport, coverage: Coverage) -> R
     Ok(())
 }
 
+#[cfg(test)]
 fn exercise_live_session(
     session: &mut dyn SessionTransport,
     coverage: Coverage,
@@ -592,6 +604,7 @@ fn exercise_live_session(
 }
 
 #[derive(Default)]
+#[cfg(test)]
 struct Lifecycle {
     types: Vec<String>,
     tool_starts: HashSet<String>,
@@ -600,6 +613,7 @@ struct Lifecycle {
     saw_queue: bool,
 }
 
+#[cfg(test)]
 impl Lifecycle {
     fn observe(&mut self, event: &Value) {
         let Some(kind) = event.get("type").and_then(Value::as_str) else {
@@ -666,6 +680,7 @@ impl Lifecycle {
     }
 }
 
+#[cfg(test)]
 fn exercise_abort(session: &mut dyn SessionTransport) -> Result<(), String> {
     session.send(SessionCommand::Prompt {
         mode: PromptMode::Normal,
@@ -711,6 +726,7 @@ fn exercise_abort(session: &mut dyn SessionTransport) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String> {
     let id = match session.send(SessionCommand::Compact { instructions: None }) {
         Ok(id) => id,
@@ -758,6 +774,7 @@ fn exercise_compaction(session: &mut dyn SessionTransport) -> Result<(), String>
     }
 }
 
+#[cfg(test)]
 fn compaction_not_needed(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     [
@@ -769,6 +786,7 @@ fn compaction_not_needed(error: &str) -> bool {
     .any(|message| error.contains(message))
 }
 
+#[cfg(test)]
 fn cleanup_failed_fixture(harness: Backend, path: &Path, coverage: Coverage) -> Result<(), String> {
     if harness == Backend::Pi {
         return if path.is_file() {
@@ -787,6 +805,7 @@ fn cleanup_failed_fixture(harness: Backend, path: &Path, coverage: Coverage) -> 
     }
 }
 
+#[cfg(test)]
 fn verify_persistence_and_cleanup(
     harness: Backend,
     config: &AgentLaunchConfig,
@@ -853,6 +872,7 @@ fn verify_persistence_and_cleanup(
     }
 }
 
+#[cfg(test)]
 fn session_path(session: &mut dyn SessionTransport) -> Result<PathBuf, String> {
     let Payload::LoadState(state) = request(session, SessionCommand::LoadState)? else {
         return Err("expected state response".into());
@@ -863,6 +883,7 @@ fn session_path(session: &mut dyn SessionTransport) -> Result<PathBuf, String> {
         .ok_or_else(|| "session state omitted its locator path".to_owned())
 }
 
+#[cfg(test)]
 fn request(session: &mut dyn SessionTransport, command: SessionCommand) -> Result<Payload, String> {
     let operation = command.response_operation();
     let id = session.send(command)?;
@@ -886,6 +907,7 @@ fn request(session: &mut dyn SessionTransport, command: SessionCommand) -> Resul
     Err(format!("timed out waiting for {operation:?}"))
 }
 
+#[cfg(test)]
 fn require_history_response(
     session: &mut dyn SessionTransport,
     expected: &str,
@@ -902,6 +924,7 @@ fn require_history_response(
         .ok_or_else(|| format!("LoadHistory omitted {expected:?}"))
 }
 
+#[cfg(test)]
 fn require_usage_response(session: &mut dyn SessionTransport) -> Result<(), String> {
     let Payload::LoadUsage(usage) = request(session, SessionCommand::LoadUsage)? else {
         return Err("expected usage response".into());
@@ -915,6 +938,7 @@ fn require_usage_response(session: &mut dyn SessionTransport) -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(test)]
 fn poll_until(
     session: &mut dyn SessionTransport,
     conversation: &mut ConversationState,
@@ -950,6 +974,7 @@ fn poll_until(
     Err(format!("timed out after {} seconds", timeout.as_secs()))
 }
 
+#[cfg(test)]
 fn require_response(
     responses: &HashMap<String, SessionResponse>,
     id: &str,
@@ -965,10 +990,20 @@ fn require_response(
     }
 }
 
+#[cfg(test)]
 fn approve(
     session: &mut dyn SessionTransport,
     request: ExtensionUiRequest,
     allowed_commands: &[String],
+) -> Result<(), String> {
+    approve_in_project(session, request, allowed_commands, None)
+}
+
+fn approve_in_project(
+    session: &mut dyn SessionTransport,
+    request: ExtensionUiRequest,
+    allowed_commands: &[String],
+    project: Option<&Path>,
 ) -> Result<(), String> {
     match request {
         // These mutate only harness UI state.  They have no dialog ID under
@@ -980,7 +1015,11 @@ fn approve(
         | ExtensionUiRequest::SetTitle { .. }
         | ExtensionUiRequest::SetEditorText { .. } => Ok(()),
         request => {
-            let response = support::bounded_command_permission(&request, allowed_commands)?;
+            let response = support::bounded_command_permission_in_project(
+                &request,
+                allowed_commands,
+                project,
+            )?;
             session.respond(response)
         }
     }
@@ -1280,12 +1319,20 @@ pub mod support {
     /// Returns a one-shot reply only when an installed client asks to run one
     /// of the exact project-local commands registered by this test.
     ///
-    /// This recognizes only the three observed permission forms.  In
+    /// This recognizes only the observed permission forms.  In
     /// particular, it never chooses an "always" option and never accepts a
     /// title which merely contains an allowed command.
     pub fn bounded_command_permission(
         request: &ExtensionUiRequest,
         allowed_commands: &[String],
+    ) -> Result<ExtensionUiResponse, String> {
+        bounded_command_permission_in_project(request, allowed_commands, None)
+    }
+
+    pub fn bounded_command_permission_in_project(
+        request: &ExtensionUiRequest,
+        allowed_commands: &[String],
+        project: Option<&Path>,
     ) -> Result<ExtensionUiResponse, String> {
         let ExtensionUiRequest::Select {
             id, title, options, ..
@@ -1337,6 +1384,16 @@ pub mod support {
                 ));
             }
             "Allow once"
+        } else if options_are(&["Allow once", "Always allow", "Decline"]) {
+            if !allowed_commands
+                .iter()
+                .any(|command| opencode_fixture_permission(title, command, project))
+            {
+                return Err(format!(
+                    "E2E_BLOCKED: refusing OpenCode command outside the registered project-local fixture: {title:?}"
+                ));
+            }
+            "Allow once"
         } else if options_are(&["Allow Always (risky)", "Allow", "Deny"]) {
             if !exact_command(title) {
                 return Err(format!(
@@ -1346,12 +1403,53 @@ pub mod support {
             "Allow"
         } else {
             return Err(format!(
-                "E2E_BLOCKED: refusing command permission with unexpected choices: {options:?}"
+                "E2E_BLOCKED: refusing command permission with unexpected choices: {options:?}; title: {title:?}"
             ));
         };
         Ok(ExtensionUiResponse::Value {
             id: id.clone(),
             value: response.into(),
+        })
+    }
+
+    fn opencode_fixture_permission(title: &str, command: &str, project: Option<&Path>) -> bool {
+        let prefix = format!(
+            "OpenCode requests permission for shell\n{command}\n\nTool bash / command:\n{command}"
+        );
+        let Some(rest) = title.strip_prefix(&prefix) else {
+            return false;
+        };
+        if rest.is_empty() {
+            return true;
+        }
+        let Some(fields) = rest.strip_prefix("\n\n") else {
+            return false;
+        };
+        let mut workdir_seen = false;
+        let mut timeout_seen = false;
+        fields.split("\n\n").all(|field| {
+            if let Some(workdir) = field.strip_prefix("Tool bash / workdir:\n") {
+                if workdir_seen {
+                    return false;
+                }
+                workdir_seen = true;
+                project.is_some_and(|project| {
+                    match (project.canonicalize(), Path::new(workdir).canonicalize()) {
+                        (Ok(expected), Ok(actual)) => expected == actual,
+                        _ => false,
+                    }
+                })
+            } else if let Some(timeout) = field.strip_prefix("Tool bash / timeout:\n") {
+                if timeout_seen {
+                    return false;
+                }
+                timeout_seen = true;
+                timeout
+                    .parse::<u64>()
+                    .is_ok_and(|ms| (1..=600_000).contains(&ms))
+            } else {
+                false
+            }
         })
     }
 
@@ -1441,6 +1539,7 @@ pub mod support {
                 access_mode: live_access_mode_for_harness(harness)?,
                 app_proxy: None,
                 session_locator_root: Some(locator_guard.path().into()),
+                prompt_boundary_url: None,
             };
             let resolved_config = super::super::launch_configuration(&config, harness)?;
             let program_version = program_version(&resolved_config.program);
@@ -1604,6 +1703,10 @@ pub mod support {
 
         pub fn abort(&mut self) -> Result<String, String> {
             self.transport.send(SessionCommand::Abort)
+        }
+
+        pub fn cancel_prompt(&mut self, id: &str) -> Result<(), String> {
+            self.transport.cancel_prompt(id)
         }
 
         /// Registers one literal command for the live fixture's narrow
@@ -2351,7 +2454,7 @@ pub mod support {
             response.result.map_err(|error| error.to_string())
         }
 
-        fn load_state(&mut self) -> Result<crate::extensions::SessionState, String> {
+        pub fn load_state(&mut self) -> Result<crate::extensions::SessionState, String> {
             let Payload::LoadState(state) = self.request(SessionCommand::LoadState)? else {
                 return Err("expected state response".into());
             };
@@ -2376,7 +2479,13 @@ pub mod support {
                 Some(SessionEvent::Interaction(request)) => {
                     let mut allowed_commands = self.fixture_commands.clone();
                     allowed_commands.extend(self.gates.iter().map(TurnGate::shell_command));
-                    approve(&mut *self.transport, request, &allowed_commands)?
+                    let project = self.project().to_owned();
+                    approve_in_project(
+                        &mut *self.transport,
+                        request,
+                        &allowed_commands,
+                        Some(&project),
+                    )?
                 }
                 Some(SessionEvent::Failure(error)) => {
                     return Err(format!("live {} transport failure: {error}", self.harness));

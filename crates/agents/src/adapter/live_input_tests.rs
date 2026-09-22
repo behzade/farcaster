@@ -117,6 +117,86 @@ fn live_e2e_input_queue_runs_once_after_the_held_turn() -> Result<(), String> {
 
 #[test]
 #[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
+fn live_e2e_input_cancel_one_duplicate_queue_row_preserves_tool_and_neighbor() -> Result<(), String>
+{
+    run_input_case(|live| {
+        live.require_available("follow-up", &live.capabilities().turns.follow_up)?;
+        let gate = live.start_gated_turn("cancel-row")?;
+        let effect = marker("cancel-survivor");
+        let text = format!("Reply with exactly {effect}. Do not use tools.");
+        let cancelled = live.submit(
+            PromptMode::FollowUp,
+            &text,
+            vec![image(TEST_IMAGE, "image/png")],
+        )?;
+        let survivor = live.submit(PromptMode::FollowUp, &text, vec![alternate_image()])?;
+        live.cancel_prompt(&cancelled.id)?;
+        let reply = live.wait_for_response(&cancelled.id, RECEIPT_TIMEOUT)?;
+        if !reply
+            .result
+            .is_err_and(|error| error.kind == SessionResponseErrorKind::Cancelled)
+        {
+            return Err("row cancellation omitted exact cancelled response".into());
+        }
+        gate.assert_still_closed()?;
+        gate.assert_process_alive()?;
+        let release = live.activity_cursor();
+        live.release_gate(&gate)?;
+        live.wait_for_gate_tool_end_after(release, &gate, TURN_TIMEOUT)?;
+        live.wait_for_functional_observation_after(release, &survivor, &text, TURN_TIMEOUT)?;
+        live.wait_for_assistant_text(&effect, TURN_TIMEOUT)?;
+        live.wait_for_native_idle(TURN_TIMEOUT)?;
+        live.assert_no_delivery(&cancelled.id)?;
+        live.assert_functional_submission_once(&survivor, &text)?;
+        require_submission_accepted(live, &survivor)?;
+        prove_same_session_liveness(live)
+    })
+}
+
+#[test]
+#[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
+fn live_e2e_input_stale_cancel_does_not_reject_an_inflight_steer() -> Result<(), String> {
+    run_input_case(|live| {
+        if live.harness() != "codex-cli" {
+            return Err("E2E_BLOCKED: this case exercises Codex native steer cancellation".into());
+        }
+        let start = live.activity_cursor();
+        live.submit(
+            PromptMode::Normal,
+            "Do not use tools. Write a numbered list of 50 short distinct facts about the ocean.",
+            Vec::new(),
+        )?;
+        live.wait_for_activity_after(start, TURN_TIMEOUT, |event| {
+            event["type"] == "message_update"
+        })?;
+        let steer = submit_input(live, PromptMode::Steer, "stale-cancel", Vec::new())?;
+        // Codex steers are already native-owned. A click from an old composer
+        // snapshot must neither surface a cancel error nor claim cancellation.
+        live.cancel_prompt(&steer.submission.id)?;
+        live.cancel_prompt(&steer.submission.id)?;
+        live.wait_for_functional_observation_after(
+            steer.submitted_at,
+            &steer.submission,
+            &steer.marker,
+            TURN_TIMEOUT,
+        )?;
+        live.wait_for_assistant_text(&steer.effect, TURN_TIMEOUT)?;
+        live.wait_for_native_idle(TURN_TIMEOUT)?;
+        live.cancel_prompt(&steer.submission.id)?;
+        require_effect_and_exactly_once(live, &steer)?;
+        require_accepted(live, &steer)?;
+        if live.activities().iter().any(|event| {
+            event.value["submissionId"] == steer.submission.id
+                && event.value["status"] == "cancelled"
+        }) {
+            return Err("stale click fabricated cancellation of an in-flight steer".into());
+        }
+        prove_same_session_liveness(live)
+    })
+}
+
+#[test]
+#[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
 fn live_e2e_input_steer_applies_at_an_observed_turn_boundary() -> Result<(), String> {
     run_input_case(|live| {
         live.require_available("steer", &live.capabilities().turns.steer)?;
@@ -143,6 +223,174 @@ fn live_e2e_input_steer_applies_at_an_observed_turn_boundary() -> Result<(), Str
 
 #[test]
 #[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
+fn live_e2e_input_held_boundary_consumes_all_pending_steers_together() -> Result<(), String> {
+    run_input_case(|live| {
+        if !matches!(live.harness(), "pi" | "opencode") {
+            return Err("E2E_BLOCKED: this batch test requires a Pi/OpenCode held boundary".into());
+        }
+        let gate = live.start_gated_turn("steer-batch")?;
+        let tokens = [
+            marker("batch-first"),
+            marker("batch-second"),
+            marker("batch-third"),
+        ];
+        let mut submissions = Vec::new();
+        for token in &tokens {
+            let text = format!(
+                "Batch receipt token: {token}. In your next response, list ALL batch receipt tokens from the user messages you have received, in order. Do not use tools or repeat the earlier gate response."
+            );
+            let submission = live.submit(PromptMode::Steer, &text, Vec::new())?;
+            submissions.push((submission, text));
+        }
+        gate.assert_still_closed()?;
+        gate.assert_process_alive()?;
+        let release = live.activity_cursor();
+        live.release_gate(&gate)?;
+        live.wait_for_activity_after(release, TURN_TIMEOUT, |event| {
+            event["type"] == "message_end" && event["message"]["role"] == "assistant"
+        })?;
+        let first_reply = live
+            .activities()
+            .iter()
+            .skip(release)
+            .find(|event| {
+                event.value["type"] == "message_end"
+                    && event.value["message"]["role"] == "assistant"
+            })
+            .expect("observed assistant reply")
+            .value
+            .to_string();
+        if !tokens.iter().all(|token| first_reply.contains(token)) {
+            return Err(format!(
+                "the first response after the held tool omitted a pending steer: {first_reply}"
+            ));
+        }
+        live.wait_for_native_idle(TURN_TIMEOUT)?;
+        for (submission, text) in &submissions {
+            live.assert_functional_submission_once(submission, text)?;
+            require_submission_accepted(live, submission)?;
+        }
+        prove_same_session_liveness(live)
+    })
+}
+
+#[test]
+#[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
+fn live_e2e_input_text_only_turn_consumes_all_pending_steers_together() -> Result<(), String> {
+    run_input_case(|live| {
+        live.require_available("steer", &live.capabilities().turns.steer)?;
+        let start = live.activity_cursor();
+        live.submit(PromptMode::Normal,
+            "Do not use any tools. Write a numbered list of 100 short, distinct facts about the ocean. Finish the list in this response.", Vec::new())?;
+        // Submit during observed model output, not after a timing delay and not
+        // behind a tool gate (which would exercise the already-working path).
+        live.wait_for_activity_after(start, TURN_TIMEOUT, |event| {
+            event["type"] == "message_update"
+        })?;
+        let tokens = [
+            marker("idle-batch-first"),
+            marker("idle-batch-second"),
+            marker("idle-batch-third"),
+        ];
+        let queued_at = live.activity_cursor();
+        let mut submissions = Vec::new();
+        for token in &tokens {
+            let text = format!(
+                "Batch receipt token: {token}. In your next response, list ALL batch receipt tokens from the user messages you have received, in order. Do not use tools."
+            );
+            submissions.push((live.submit(PromptMode::Steer, &text, Vec::new())?, text));
+        }
+        // Pi can admit the batch at turn_end before agent_settled; OpenCode
+        // admits it after settlement. In either case inspect the very next
+        // assistant reply, not a later response after all steers trickle in.
+        live.wait_for_activity_after(queued_at, TURN_TIMEOUT, |event| {
+            event["type"] == "message_end" && event["message"]["role"] == "assistant"
+        })?;
+        let after_base = live.activity_cursor();
+        let reply = live.wait_for_activity_after(after_base, TURN_TIMEOUT, |event| {
+            event["type"] == "message_end" && event["message"]["role"] == "assistant"
+        })?;
+        let text = reply.to_string();
+        if !tokens.iter().all(|token| text.contains(token)) {
+            return Err(format!(
+                "first reply after text-only settlement omitted pending steers: {text}"
+            ));
+        }
+        if live
+            .activities()
+            .iter()
+            .skip(start)
+            .any(|event| event.value["type"] == "tool_execution_start")
+        {
+            return Err("text-only batch regression unexpectedly used a tool boundary".into());
+        }
+        live.wait_for_native_idle(TURN_TIMEOUT)?;
+        for (submission, text) in &submissions {
+            live.assert_functional_submission_once(submission, text)?;
+            require_submission_accepted(live, submission)?;
+        }
+        prove_same_session_liveness(live)
+    })
+}
+
+#[test]
+#[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
+fn live_e2e_input_escape_does_not_strand_an_undelivered_normal_prompt() -> Result<(), String> {
+    run_input_case(|live| {
+        if live.harness() != "opencode" {
+            return Err(
+                "E2E_BLOCKED: this regression targets OpenCode's pending normal input".into(),
+            );
+        }
+        require_control_features(live)?;
+        live.require_prompt_delivery_tracking(PromptMode::Normal)?;
+        let gate = live.start_gated_turn("normal-before-escape")?;
+        // Hold native execution to make the reported ordering deterministic:
+        // Normal is admitted but not delivered when Escape arrives. In the
+        // reported session recovered native steers occupied this execution;
+        // the gate replaces that timing, not the native admission/delivery API.
+        let normal = submit_input(live, PromptMode::Normal, "pending-normal", Vec::new())?;
+        live.wait_for_activity_after(normal.submitted_at, RECEIPT_TIMEOUT, |event| {
+            event["type"] == "prompt_delivery"
+                && event["submissionId"] == normal.submission.id
+                && event["status"] == "accepted"
+        })?;
+        live.assert_no_delivery(&normal.submission.id)?;
+        let steer = submit_input(live, PromptMode::Steer, "normal-escape-steer", Vec::new())?;
+        let handoff = live.activity_cursor();
+        let apply = live.apply_steering()?;
+        require_control_success(live, &apply, SessionOperation::ApplySteering)?;
+        live.wait_for_apply_handoff_after(handoff, &gate, TURN_TIMEOUT)?;
+        live.wait_for_delivery_after(handoff, &steer.submission.id, TURN_TIMEOUT)?;
+        wait_for_assistant_message_after(live, handoff, &steer.effect)?;
+        live.wait_for_settled_after(handoff, TURN_TIMEOUT)?;
+        gate.assert_still_closed()?;
+        gate.assert_process_exited_after_abort()?;
+        let state = live.load_state()?;
+        let normal_deliveries = prompt_delivery_positions(live, &normal.submission.id, "delivered");
+        eprintln!(
+            "E2E_PENDING_NORMAL: normal={} steer={} streaming={} pending={} normal_deliveries={} steer_deliveries={}",
+            normal.submission.id,
+            steer.submission.id,
+            state.is_streaming,
+            state.pending_message_count,
+            normal_deliveries.len(),
+            prompt_delivery_positions(live, &steer.submission.id, "delivered").len(),
+        );
+        if normal_deliveries.len() != 1 {
+            return Err(format!(
+                "Escape delivered the steer and settled, but stranded the already-admitted normal prompt {}: expected 1 delivery, got {}",
+                normal.submission.id,
+                normal_deliveries.len(),
+            ));
+        }
+        require_accepted(live, &normal)?;
+        prove_same_session_liveness(live)
+    })
+}
+
+#[test]
+#[ignore = "uses one installed harness and a real model; set FARCASTER_E2E_HARNESS"]
 fn live_e2e_input_apply_steering_interrupts_and_handoffs_immediately() -> Result<(), String> {
     run_input_case(|live| {
         require_control_features(live)?;
@@ -153,9 +401,6 @@ fn live_e2e_input_apply_steering_interrupts_and_handoffs_immediately() -> Result
         let handoff = live.activity_cursor();
         let apply = live.apply_steering()?;
         require_control_success(live, &apply, SessionOperation::ApplySteering)?;
-        // A managed tool can outlive its normalized turn. Apply proves a
-        // handoff through either that tool's matching end or a settled old
-        // turn followed by a replacement start.
         live.wait_for_apply_handoff_after(handoff, &gate, TURN_TIMEOUT)?;
         gate.assert_still_closed()?;
         live.wait_for_functional_observation_after(
@@ -394,13 +639,21 @@ fn live_e2e_input_receipt_races_keep_old_and_new_inputs_isolated() -> Result<(),
         )?;
         gate.assert_still_closed()?;
         live.release_gate(&gate)?;
-        require_late_old_delivery(live, &old, &newer)?;
+        let old_receipt = require_abort_receipt(live, &old)?;
+        if old_receipt == AbortReceipt::Accepted {
+            require_late_old_delivery(live, &old, &newer)?;
+        } else {
+            live.assert_no_delivery(&old.submission.id)?;
+            assert_no_transcript_user(live, &old.marker)?;
+        }
         live.wait_for_delivery_after(newer.submitted_at, &newer.submission.id, TURN_TIMEOUT)?;
         require_effect_and_exactly_once(live, &newer)?;
         require_accepted(live, &newer)?;
         // A late event for old must stay tied to old; it cannot bind the newer
         // input merely because the two turns share one session.
-        assert_retired_submission_isolated(live, &old, &newer)?;
+        if old_receipt == AbortReceipt::Accepted {
+            assert_retired_submission_isolated(live, &old, &newer)?;
+        }
         prove_same_session_liveness(live)?;
         live.assert_no_gate_tool_start_after(settled_at, &gate)
     })
@@ -562,7 +815,13 @@ fn require_abort_receipt(live: &mut LiveSession, input: &Input) -> Result<AbortR
             "aborted submission {} returned wrong prompt payload: {other:?}",
             input.submission.id
         )),
-        Err(error) if error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance => {
+        Err(error)
+            if matches!(
+                error.kind,
+                SessionResponseErrorKind::RejectedBeforeAcceptance
+                    | SessionResponseErrorKind::Cancelled
+            ) =>
+        {
             Ok(AbortReceipt::RejectedBeforeAcceptance)
         }
         Err(error) if error.kind == SessionResponseErrorKind::DeliveryUnknown => Err(format!(

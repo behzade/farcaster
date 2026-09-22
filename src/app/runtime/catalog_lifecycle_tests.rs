@@ -96,7 +96,9 @@ fn isolated_with_env(name: &str, backends: &[&str], env: &[(&str, &str)], run: i
         .stderr(log);
     command.envs(env.iter().copied());
     for (backend, variable) in [
+        ("codex", "FARCASTER_CODEX_PATH"),
         ("claude", "FARCASTER_CLAUDE_PATH"),
+        ("opencode", "FARCASTER_OPENCODE_PATH"),
         ("antigravity-acp", "FARCASTER_ANTIGRAVITY_ACP_PATH"),
         ("cursor-cli", "FARCASTER_CURSOR_PATH"),
     ] {

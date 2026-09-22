@@ -256,7 +256,10 @@ fn serve(
                 assert_eq!(request["mode"], "all");
                 json!({})
             }
-            "set_steering_mode" | "get_session_stats" | "prompt" | "abort" => json!({}),
+            "set_steering_mode" | "prompt" | "abort" => json!({}),
+            "get_session_stats" => {
+                json!({"tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}})
+            }
             _ => panic!("unhandled fixture request: {request}"),
         };
         if peer.backend == Backend::Pi {
@@ -301,7 +304,7 @@ fn serve(
                     json!({"threadId":id,"turn":{"id":"turn-1","status":"completed"}}),
                 ),
             ] {
-                if method == "item/completed" && request["method"] == "thread/queue/add" {
+                if method == "item/completed" {
                     write(
                         peer.reader.get_mut(),
                         json!({"method":"item/started", "params": {
@@ -321,6 +324,15 @@ fn serve(
                 .lock()
                 .expect("test lock should not be poisoned")
                 .messages += 2;
+            let user = json!({"role":"user", "content":request["message"]});
+            write(
+                peer.reader.get_mut(),
+                json!({"type":"message_start", "message":user}),
+            );
+            write(
+                peer.reader.get_mut(),
+                json!({"type":"message_end", "message":user}),
+            );
             write(peer.reader.get_mut(), json!({"type":"agent_start"}));
             write(
                 peer.reader.get_mut(),

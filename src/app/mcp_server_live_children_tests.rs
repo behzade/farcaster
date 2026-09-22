@@ -341,9 +341,10 @@ struct FamilyPersistence;
 
 impl FamilyPersistence {
     fn install(database: PathBuf) -> Result<Self, String> {
-        crate::storage::StateStore::open_at(&database)?;
+        crate::app::infrastructure::persistence::StateStore::open_at(&database)?;
         CallerRegistry::shared().set_family_sink(Some(Arc::new(move |link| {
-            crate::storage::StateStore::open_at(&database)?.save_worker_family(link)
+            crate::app::infrastructure::persistence::StateStore::open_at(&database)?
+                .save_worker_family(link)
         })));
         Ok(Self)
     }
@@ -498,6 +499,7 @@ impl LiveChildFixture {
             access_mode,
             app_proxy: None,
             session_locator_root: Some(crate::agents::live_e2e_support::isolated_locator_root()?),
+            prompt_boundary_url: None,
         };
         let model = crate::agents::live_e2e_support::selected_live_worker_model(harness)?;
         let model_identity = format!("{}/{}", model.provider, model.model);
@@ -882,7 +884,8 @@ impl LiveChildFixture {
             "persisted child catalog row",
             || {
                 let sessions =
-                    crate::storage::StateStore::open_at(&database)?.cached_sessions("")?;
+                    crate::app::infrastructure::persistence::StateStore::open_at(&database)?
+                        .cached_sessions("")?;
                 Ok(sessions
                     .iter()
                     .any(|session| {

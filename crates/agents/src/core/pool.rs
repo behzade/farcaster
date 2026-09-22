@@ -236,7 +236,7 @@ impl WorkerPool {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn app_proxy(&self) -> Result<Option<String>, String> {
         self.inner
             .app_proxy
@@ -255,7 +255,7 @@ impl WorkerPool {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn start(&self, request: StartWorker) -> Result<WorkerSnapshot, String> {
         self.start_assigned(request, None)
     }

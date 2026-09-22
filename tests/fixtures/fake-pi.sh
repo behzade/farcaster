@@ -202,4 +202,11 @@ while IFS= read -r line; do
       ;;
   esac
   printf '{"type":"response","id":"%s","command":"%s","success":true,"data":%s}\n' "$id" "$type" "$data"
+  if [ "$case_name" = "history-resume" ] && [ "$type" = "prompt" ]; then
+    case "$line" in
+      *'"message":"continue"'*) ;;
+      *) exit 10 ;;
+    esac
+    printf '{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"continue"}]}}\n'
+  fi
 done

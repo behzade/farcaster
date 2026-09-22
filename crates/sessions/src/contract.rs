@@ -125,7 +125,7 @@ impl SessionSummary {
         &self.search
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[allow(clippy::too_many_arguments)]
     pub fn from_cached(
         id: String,

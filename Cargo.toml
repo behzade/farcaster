@@ -78,6 +78,10 @@ zlog = { path = "third_party/zed-gpui-cc053a4/crates/zlog" }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 
 [dev-dependencies]
+farcaster-agents = { path = "crates/agents", features = ["test-support"] }
+farcaster-conversation = { path = "crates/conversation", features = ["test-support"] }
+farcaster-sessions = { path = "crates/sessions", features = ["test-support"] }
+farcaster-storage = { path = "crates/storage", features = ["test-support"] }
 farcaster-mcp-server = { path = "crates/mcp-server", features = ["test-support"] }
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }

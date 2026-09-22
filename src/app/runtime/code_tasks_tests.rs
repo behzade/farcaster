@@ -67,6 +67,37 @@ fn result_for(harness: &Harness, expected: &str, background: bool) -> (bool, Opt
     }
 }
 
+fn background_startup_failure_retains_pending_prompt(harness: &Harness) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match harness.runtime.try_recv() {
+            Ok(RuntimeEvent::SessionReset { .. } | RuntimeEvent::HistoryReset { .. }) => {
+                panic!("background task changed selection")
+            }
+            Ok(RuntimeEvent::Snapshot { snapshot, .. }) => {
+                assert!(
+                    snapshot.conversation.items.is_empty(),
+                    "task reached original chat"
+                );
+            }
+            Ok(RuntimeEvent::PromptResult { .. }) => {
+                panic!("a backend startup failure must leave the task prompt pending")
+            }
+            Ok(RuntimeEvent::SystemNotification { title, body, .. })
+                if title == "Farcaster: Agent failed" && body.contains("fixture unavailable") =>
+            {
+                return;
+            }
+            _ => {}
+        }
+        assert!(
+            Instant::now() < deadline,
+            "background task failure was not reported"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn echo_user(peer: &mut Peer, expected: &str) -> Value {
     let mut line = String::new();
     peer.reader.read_line(&mut line).expect("read user prompt");
@@ -109,12 +140,13 @@ fn comment_reuses_running_background_session_and_queues_when_steering_is_unavail
                 })
                 .expect("send comment");
             // Claude cannot steer. Finishing its turn must release the queued comment.
-            let finished =
-                include_str!("../../modules/agents/adapter/claude/fixtures/cli-2.1.236.jsonl")
-                    .lines()
-                    .map(|line| serde_json::from_str::<Value>(line).expect("recorded frame"))
-                    .find(|frame| frame["type"] == "result")
-                    .expect("recorded result");
+            let finished = include_str!(
+                "../../../crates/agents/src/adapter/claude/fixtures/cli-2.1.236.jsonl"
+            )
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("recorded frame"))
+            .find(|frame| frame["type"] == "result")
+            .expect("recorded result");
             peer.write(finished);
             echo_user(&mut peer, "Fix the selected code");
             assert!(result_for(&harness, &target, true).0);
@@ -232,9 +264,9 @@ fn starts_without_selecting_its_chat() {
 }
 
 #[test]
-fn failure_leaves_original_selected() {
+fn startup_failure_keeps_background_task_prompt_pending() {
     isolated(
-        "code_tasks_tests::failure_leaves_original_selected",
+        "code_tasks_tests::startup_failure_keeps_background_task_prompt_pending",
         &["claude"],
         || {
             let harness = ready_original();
@@ -246,7 +278,7 @@ fn failure_leaves_original_selected() {
                 .accept(WAIT)
                 .expect("task starts")
                 .complete_catalog(true);
-            assert!(!result(&harness, "failed", true).0);
+            background_startup_failure_retains_pending_prompt(&harness);
         },
     );
 }

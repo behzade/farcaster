@@ -8,6 +8,20 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$repo_root/target"}
 
+# Adapter tests moved into the agents crate. Run both binaries by default;
+# SUITE=agents allows focused input-control checks without building GPUI tests.
+case ${SUITE:-all} in
+    all)
+        status=0
+        SUITE=agents sh "$0" || status=1
+        SUITE=app sh "$0" || status=1
+        exit "$status"
+        ;;
+    agents) set -- --manifest-path crates/agents/Cargo.toml --lib ; test_target=farcaster_agents ;;
+    app) set -- --bin farcaster ; test_target=farcaster ;;
+    *) echo "Unknown SUITE: $SUITE (expected all, agents, app)" >&2; exit 2 ;;
+esac
+
 case ${HARNESS:-} in
     "") harnesses="opencode codex-cli pi claude cursor-cli antigravity-acp" ;;
     opencode|codex-cli|pi|claude|cursor-cli|antigravity-acp) harnesses=$HARNESS ;;
@@ -25,7 +39,7 @@ git diff --binary HEAD > "$run_dir/worktree.patch"
 # Build once, then clone that exact binary. Concurrent workspace edits must not
 # change the implementation halfway through a harness's feature matrix.
 if ! python3 scripts/run-live-case.py --timeout "${FARCASTER_E2E_BUILD_TIMEOUT:-900}" -- \
-    cargo test --locked --bin farcaster --no-run --message-format=json \
+    cargo test --locked "$@" --no-run --message-format=json \
     < /dev/null > "$run_dir/build.jsonl" 2> "$run_dir/build.log"; then
     echo "E2E build/discovery failed; no live result claimed." >&2
     tail -n 70 "$run_dir/build.log" >&2
@@ -53,14 +67,14 @@ paths = set()
 for line in sys.stdin:
     event = json.loads(line)
     if (event.get("reason") == "compiler-artifact"
-        and event.get("target", {}).get("name") == "farcaster"
+        and event.get("target", {}).get("name") == sys.argv[1]
         and event.get("profile", {}).get("test")
         and event.get("executable")):
         paths.add(event["executable"])
 if len(paths) != 1:
     sys.exit("Expected exactly one compiled Farcaster test executable")
 print(paths.pop())
-' < "$run_dir/build.jsonl")
+' "$test_target" < "$run_dir/build.jsonl")
 frozen_binary="$run_dir/farcaster-tests"
 # APFS clones retain the inode contents without copying 200+ MB per harness.
 cp -c "$built_binary" "$frozen_binary" 2>/dev/null || cp "$built_binary" "$frozen_binary"

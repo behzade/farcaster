@@ -6,6 +6,9 @@ rust-version = "1.95"
 publish = false
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = []
+
 [dependencies]
 farcaster-contracts = { path = "../contracts" }
 path-clean = "1.0.1"
