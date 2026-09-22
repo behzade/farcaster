@@ -11,9 +11,24 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_picker(window, cx);
-        self.show_chat_surface(window, cx);
-        self.set_runtime_picker_open(true, window, cx);
+        if self.workspace.runtime_picker.open {
+            self.set_runtime_picker_open(false, window, cx);
+        }
+        let mut path = vec![PickerScope::Providers];
+        if let Some(model) = self.snapshot.session_identity().model.and_then(|selected| {
+            self.snapshot
+                .models
+                .iter()
+                .find(|model| model.id == selected.id && model.provider == selected.provider)
+        }) {
+            path.push(PickerScope::Models(model.provider.clone()));
+            if !model_efforts(model, &self.snapshot.thinking_levels).is_empty() {
+                path.push(PickerScope::Efforts(model.clone()));
+            }
+        }
+        for scope in path {
+            self.open_picker(scope, window, cx);
+        }
     }
 
     pub(super) fn configuration_picker_rows(
