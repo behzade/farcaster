@@ -1,4 +1,5 @@
 pub(super) mod deletion;
+mod delivery;
 mod framing;
 mod process;
 mod protocol;

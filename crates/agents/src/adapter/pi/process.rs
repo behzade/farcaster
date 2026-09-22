@@ -201,6 +201,7 @@ pub struct PiRpcProcess {
     queued: VecDeque<SessionEvent>,
     pending: HashMap<String, String>,
     pending_prompt_modes: HashMap<String, crate::extensions::PromptMode>,
+    deliveries: super::delivery::Deliveries,
     peer_messages: VecDeque<PeerMessage>,
     next_id: u64,
     request_namespace: uuid::Uuid,
@@ -398,6 +399,7 @@ impl PiRpcProcess {
             queued: VecDeque::new(),
             pending: HashMap::new(),
             pending_prompt_modes: HashMap::new(),
+            deliveries: super::delivery::Deliveries::default(),
             peer_messages: VecDeque::new(),
             next_id: 0,
             request_namespace: uuid::Uuid::new_v4(),
@@ -513,7 +515,21 @@ impl PiRpcProcess {
             }
             _ => None,
         };
+        let delivery = match &request {
+            SessionCommand::Prompt {
+                mode,
+                message,
+                images,
+            } if !self.is_worker && !compact_prompt => {
+                Some((*mode, message.clone(), images.clone()))
+            }
+            _ => None,
+        };
         let id = self.send_command(super::protocol::encode_request(request)?)?;
+        if let Some((mode, message, images)) = delivery {
+            self.deliveries
+                .submitted(id.clone(), mode, &message, &images);
+        }
         if let Some(mode) = prompt_mode {
             self.pending_prompt_modes.insert(id.clone(), mode);
         }
@@ -694,6 +710,7 @@ impl PiRpcProcess {
             .collect::<Vec<_>>();
         self.queued.extend(abandoned);
         self.pending_prompt_modes.clear();
+        self.deliveries.clear();
         Ok(())
     }
 
@@ -1096,6 +1113,11 @@ impl PiRpcProcess {
                     }
                     if matches!(prompt_operation, crate::SessionOperation::Prompt(_)) {
                         self.pending_prompt_modes.remove(&id);
+                        if response.result.as_ref().is_err_and(|error| {
+                            error.kind == crate::SessionResponseErrorKind::RejectedBeforeAcceptance
+                        }) {
+                            self.deliveries.reject(&id);
+                        }
                     }
                     if response.result.is_err()
                         && prompt_operation
@@ -1160,6 +1182,9 @@ impl PiRpcProcess {
                 }
                 Ok(PiWireMessage::Event(event)) => {
                     let activity: SessionActivity = event.into();
+                    if let Some(receipt) = self.deliveries.observe(activity.value()) {
+                        return receipt;
+                    }
                     match activity.kind() {
                         SessionActivityKind::AgentStarted => {
                             self.caller_identity.ensure_execution();

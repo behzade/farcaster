@@ -517,7 +517,7 @@ fn transformed_native_user_event_remains_visible_without_false_correlation() -> 
     let project = tempdir()?;
     let command = queue_rpc_fixture(project.path())?;
     let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
-    assert!(!crate::SessionTransport::tracks_prompt_delivery(
+    assert!(crate::SessionTransport::tracks_prompt_delivery(
         &rpc,
         crate::extensions::PromptMode::Normal,
     ));
@@ -565,6 +565,55 @@ fn transformed_native_user_event_remains_visible_without_false_correlation() -> 
         );
     }
     rpc.terminate()?;
+    Ok(())
+}
+
+#[test]
+fn main_prompt_delivery_survives_both_rpc_event_orders() -> TestResult {
+    for text in ["response-first", "event-first"] {
+        let project = tempdir()?;
+        let command = queue_rpc_fixture(project.path())?;
+        let mut rpc = PiRpcProcess::spawn(&command, project.path(), None)?;
+        let id = rpc.send_request(SessionCommand::Prompt {
+            mode: crate::extensions::PromptMode::Normal,
+            message: text.into(),
+            images: vec![],
+        })?;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut receipts = 0;
+        let mut replied = false;
+        let mut settled = false;
+        while Instant::now() < deadline && !(replied && settled) {
+            match rpc.try_next() {
+                Some(SessionEvent::Response(response)) if response.id.as_deref() == Some(&id) => {
+                    assert!(response.result.is_ok());
+                    replied = true;
+                }
+                Some(SessionEvent::Activity(event)) => {
+                    let value = event.value();
+                    if value["type"] == "prompt_delivery" {
+                        assert_eq!(value["submissionId"], id);
+                        assert_eq!(value["status"], "delivered");
+                        receipts += 1;
+                    }
+                    if matches!(
+                        value["type"].as_str(),
+                        Some("message_start" | "message_end")
+                    ) {
+                        assert_ne!(
+                            value["message"]["role"], "user",
+                            "raw user echo duplicated receipt"
+                        );
+                    }
+                    settled |= value["type"] == "agent_settled";
+                }
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        rpc.terminate()?;
+        assert!(replied && settled, "{text}");
+        assert_eq!(receipts, 1, "{text}");
+    }
     Ok(())
 }
 

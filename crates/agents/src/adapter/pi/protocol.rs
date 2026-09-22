@@ -92,6 +92,9 @@ pub(super) fn compact_invocation(message: &str) -> Option<&str> {
 }
 
 impl SessionTransport for PiRpcProcess {
+    fn tracks_prompt_delivery(&self, _: PromptMode) -> bool {
+        true
+    }
     fn sandbox_adapter(&self) -> Option<&str> {
         self.sandbox_adapter_id()
     }
