@@ -731,6 +731,23 @@ fn usage_event_updates_context_window_before_settle() {
 }
 
 #[test]
+fn usage_event_updates_session_tokens_before_settle() {
+    let mut stats = json!({"tokens": {"input": 10, "output": 1}});
+    let event = json!({
+        "type": "turn_end",
+        "usage": {"totalTokens": 20},
+        "sessionUsage": {"input": 100, "output": 8, "cacheRead": 5, "cacheWrite": 0, "totalTokens": 113}
+    });
+    assert!(update_tokens_from_event(&mut stats, &event));
+    assert_eq!(stats["tokens"], event["sessionUsage"]);
+    assert!(!update_tokens_from_event(&mut stats, &event));
+    assert!(!update_tokens_from_event(
+        &mut stats,
+        &json!({"usage": {"totalTokens": 21}})
+    ));
+}
+
+#[test]
 fn completed_message_usage_updates_context_when_streaming_usage_is_unavailable() {
     let mut stats = json!({
         "contextUsage": {"tokens": 40, "contextWindow": 200, "percent": 20.0}

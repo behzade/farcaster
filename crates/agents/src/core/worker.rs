@@ -170,6 +170,10 @@ pub enum WorkerActivity {
         detail: Option<String>,
     },
     Usage(WorkerUsage),
+    SelectionChanged {
+        model: Option<(String, String)>,
+        effort: Option<Option<String>>,
+    },
     CommandsChanged {
         commands: Vec<Value>,
     },

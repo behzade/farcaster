@@ -358,6 +358,24 @@ fn interactions_read_child_turn_status_and_discard_superseded_reads() {
     session.close().expect("test operation should succeed");
 }
 
+#[test]
+fn thread_settings_notification_reports_external_selection() {
+    let mut session = test_session();
+    session.queued_inbound.push_back(Ok(CodexInbound::Notification {
+        method: "thread/settings/updated".into(),
+        params: json!({"threadId":"thread-1", "threadSettings": {"model":"gpt-6-sol", "modelProvider":"openai", "effort":"high"}}),
+    }));
+    assert_eq!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SelectionChanged {
+            model: Some(("openai".into(), "gpt-6-sol".into())),
+            effort: Some(Some("high".into())),
+        }))
+    );
+    assert_eq!(session.model.as_deref(), Some("gpt-6-sol"));
+    assert_eq!(session.effort.as_deref(), Some("high"));
+}
+
 fn test_session() -> CodexWorkerSession {
     use crate::core::{CallerProfile, CallerRegistry};
 

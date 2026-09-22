@@ -128,6 +128,21 @@ pub(super) fn update_context_from_event(stats: &mut Value, event: &Value) -> boo
     true
 }
 
+pub(super) fn update_tokens_from_event(stats: &mut Value, event: &Value) -> bool {
+    let Some(tokens) = event.get("sessionUsage").filter(|tokens| {
+        ["input", "output", "cacheRead", "cacheWrite", "totalTokens"]
+            .iter()
+            .all(|key| tokens.get(*key).and_then(Value::as_u64).is_some())
+    }) else {
+        return false;
+    };
+    if stats.get("tokens") == Some(tokens) {
+        return false;
+    }
+    stats["tokens"] = tokens.clone();
+    true
+}
+
 impl RuntimeOwner {
     pub(super) fn apply_response(&mut self, response: crate::agents::SessionResponse) {
         if matches!(response.operation(), SessionOperation::Prompt(_))

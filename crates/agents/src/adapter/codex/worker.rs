@@ -1714,7 +1714,26 @@ impl WorkerSession for CodexWorkerSession {
                             }
                         }
                         CodexMethod::ThreadSettingsUpdated => {
-                            self.observe_command_settings(&params["threadSettings"])
+                            let settings = &params["threadSettings"];
+                            let previous_effort = self.effort.clone();
+                            self.observe_command_settings(settings);
+                            let model = settings["model"].as_str().map(|model| {
+                                (
+                                    settings["modelProvider"]
+                                        .as_str()
+                                        .unwrap_or("openai")
+                                        .to_owned(),
+                                    model.to_owned(),
+                                )
+                            });
+                            if model.is_some() || self.effort != previous_effort {
+                                return Some(WorkerEvent::Activity(
+                                    WorkerActivity::SelectionChanged {
+                                        model,
+                                        effort: settings.get("effort").map(|_| self.effort.clone()),
+                                    },
+                                ));
+                            }
                         }
                         CodexMethod::ThreadNameUpdated => {
                             if let Some(name) = params.get("threadName").and_then(Value::as_str) {

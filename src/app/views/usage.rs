@@ -1,5 +1,7 @@
 use super::super::FarcasterApp;
-use crate::sessions::{UsageSummary, descendant_sessions_for_root, root_session_for_path};
+use crate::sessions::{
+    SessionSummary, UsageSummary, descendant_sessions_for_root, root_session_for_path,
+};
 
 #[derive(Default)]
 pub(super) struct ComposerUsage {
@@ -16,9 +18,23 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
     let descendants = root
         .map(|root| descendant_sessions_for_root(&app.sessions.all, root))
         .unwrap_or_default();
-    let mut aggregate = root.map(|root| root.usage).unwrap_or_default();
+    let selected = app.snapshot.selected_session.as_deref();
+    let live = selected
+        .filter(|path| Some(*path) == app.snapshot.live_session.as_deref())
+        .and_then(|_| live_usage(&app.snapshot.stats));
+    let usage_for = |session: &SessionSummary| {
+        live.filter(|live| {
+            selected == Some(session.path.as_path()) && live.total >= session.usage.total
+        })
+        .map(|live| UsageSummary {
+            cost_micros: session.usage.cost_micros,
+            ..live
+        })
+        .unwrap_or(session.usage)
+    };
+    let mut aggregate = root.map(&usage_for).unwrap_or_default();
     for (session, _) in &descendants {
-        aggregate.add(session.usage);
+        aggregate.add(usage_for(session));
     }
 
     let context = context_summary(visible_context_stats(
@@ -56,6 +72,19 @@ pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
             .weekly
             .filter(|window| window.remaining_percent.is_finite()),
     }
+}
+
+fn live_usage(stats: &serde_json::Value) -> Option<UsageSummary> {
+    let tokens = stats.get("tokens")?;
+    let number = |key| tokens.get(key).and_then(serde_json::Value::as_u64);
+    Some(UsageSummary {
+        input: number("input")?,
+        output: number("output")?,
+        cache_read: number("cacheRead")?,
+        cache_write: number("cacheWrite")?,
+        total: number("totalTokens")?,
+        cost_micros: 0,
+    })
 }
 
 pub(super) fn has_meaningful_usage(usage: &ComposerUsage) -> bool {

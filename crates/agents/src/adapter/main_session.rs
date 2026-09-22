@@ -698,7 +698,26 @@ impl WorkerSessionTransport {
                     "type": "turn_end",
                     "contextWindow": usage.context_window,
                     "usage": usage_json(usage.turn),
+                    "sessionUsage": usage_json(usage.session),
                 })
+            }
+            WorkerActivity::SelectionChanged { model, effort } => {
+                if let Some(model) = model {
+                    self.usage.context_window = self
+                        .metadata
+                        .models
+                        .iter()
+                        .find(|entry| entry["provider"] == model.0 && entry["id"] == model.1)
+                        .and_then(|entry| entry["contextWindow"].as_u64())
+                        .unwrap_or(0);
+                    self.model = Some(model);
+                }
+                if let Some(effort) = effort {
+                    self.effort = effort;
+                }
+                self.response(None, Payload::ListReasoningLevels(self.reasoning_levels()));
+                self.response(None, Payload::LoadState(Box::new(self.state())));
+                return;
             }
             WorkerActivity::CommandsChanged { commands } => {
                 self.metadata.commands.clone_from(&commands);

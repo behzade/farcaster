@@ -80,6 +80,7 @@ impl CodexWorkerSession {
         }
         if let Some(effort) = settings.get("effort") {
             self.effort = effort.as_str().map(str::to_owned);
+            self.caller_identity.set_effort(self.effort.as_deref());
         }
         if let Some(profile) = settings
             .pointer("/activePermissionProfile/id")

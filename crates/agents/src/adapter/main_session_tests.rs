@@ -1106,6 +1106,74 @@ fn neutral_metadata_events_refresh_session_state_and_modes() {
 }
 
 #[test]
+fn usage_activity_reports_turn_context_and_live_session_totals() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    transport.enqueue_activity(WorkerActivity::Usage(WorkerUsage {
+        turn: TokenUsage {
+            input: 20,
+            output: 3,
+            ..Default::default()
+        },
+        session: TokenUsage {
+            input: 100,
+            output: 9,
+            ..Default::default()
+        },
+        context_window: 200_000,
+        cost: None,
+    }));
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Activity(event))
+        if event.value()["usage"]["input"] == 20
+            && event.value()["sessionUsage"]["input"] == 100)
+    );
+}
+
+#[test]
+fn external_selection_refreshes_model_context_and_effort() {
+    let mut transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "session".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata {
+            models: vec![json!({"provider":"openai", "id":"gpt-6-sol", "name":"GPT-6-Sol", "contextWindow":272000})],
+            efforts: vec!["medium".into(), "high".into()],
+            ..Default::default()
+        },
+        None,
+    ).expect("transport");
+    transport.enqueue_activity(WorkerActivity::SelectionChanged {
+        model: Some(("openai".into(), "gpt-6-sol".into())),
+        effort: Some(Some("high".into())),
+    });
+    let state = transport.state();
+    assert_eq!(state.model.expect("model").context_window, 272000);
+    assert_eq!(state.thinking_level.as_deref(), Some("high"));
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response))
+        if response.operation() == SessionOperation::ListReasoningLevels)
+    );
+    assert!(
+        matches!(transport.poll(), Some(SessionEvent::Response(response))
+        if response.operation() == SessionOperation::LoadState)
+    );
+    transport.enqueue_activity(WorkerActivity::SelectionChanged {
+        model: Some(("openai".into(), "gpt-6-sol".into())),
+        effort: None,
+    });
+    assert_eq!(transport.state().thinking_level.as_deref(), Some("high"));
+}
+
+#[test]
 fn two_choice_questions_preserve_their_options() {
     let options = vec!["TypeScript".into(), "Rust".into()];
     assert_eq!(
