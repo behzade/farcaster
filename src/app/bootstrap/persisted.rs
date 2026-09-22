@@ -15,7 +15,7 @@ pub(super) struct PersistedState {
     pub(super) expand_transcript_folders: bool,
 }
 
-pub(super) fn load(project: &Path) -> PersistedState {
+pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedState {
     let registry_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_registry");
     let (mut registry, mut error) = match project_registry::load() {
@@ -101,13 +101,6 @@ pub(super) fn load(project: &Path) -> PersistedState {
     }
 
     let submitted_drafts = drafts::submitted_draft_associations(&registry.drafts);
-    let proxy_timing =
-        crate::app::infrastructure::performance::StartupTiming::new("app.load_proxy");
-    let saved_proxy = crate::app::persistence::open()
-        .ok()
-        .and_then(|store| crate::access::load_proxy(&store).unwrap_or(None));
-    drop(proxy_timing);
-
     let expand_transcript_folders = crate::app::persistence::open()
         .and_then(|store| store.load_expand_transcript_folders())
         .unwrap_or_else(|load_error| {

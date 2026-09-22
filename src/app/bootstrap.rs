@@ -9,6 +9,7 @@ mod tasks;
 impl FarcasterApp {
     pub(crate) fn new(
         project: PathBuf,
+        agent_launch: crate::agents::AgentLaunchConfig,
         repository_execution_allowed: bool,
         workgraph_updates: async_channel::Receiver<()>,
         worker_updates: async_channel::Receiver<()>,
@@ -18,7 +19,7 @@ impl FarcasterApp {
     ) -> Self {
         let _startup_timing =
             crate::app::infrastructure::performance::StartupTiming::always("app.start");
-        let persisted = persisted::load(&project);
+        let persisted = persisted::load(&project, agent_launch.app_proxy.clone());
 
         let runtime_timing =
             crate::app::infrastructure::performance::StartupTiming::new("app.spawn_runtime");
@@ -32,7 +33,7 @@ impl FarcasterApp {
                 .expect("startup draft is registered")
                 .clone(),
             None,
-            persisted.saved_proxy.clone(),
+            agent_launch,
         );
         drop(runtime_timing);
 

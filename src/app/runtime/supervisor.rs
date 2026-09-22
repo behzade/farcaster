@@ -77,15 +77,8 @@ impl RuntimeHandle {
         project: PathBuf,
         draft: crate::projects::DraftSession,
         initial_session: Option<crate::sessions::SessionTarget>,
-        app_proxy: Option<String>,
+        command: AgentLaunchConfig,
     ) -> Self {
-        let command = AgentLaunchConfig {
-            app_proxy,
-            session_locator_root: crate::app::paths::data_dir()
-                .ok()
-                .map(|root| root.join("session-locators")),
-            ..AgentLaunchConfig::default()
-        };
         Self::spawn_with_configuration_refresh(project, draft, initial_session, command, true)
     }
 

@@ -52,7 +52,7 @@ fn main() -> std::process::ExitCode {
         Ok(project) => project,
         Err(error) => return fail(error),
     };
-    let (builtin_mcp_enabled, worker_command, saved_worker_routes) = {
+    let (builtin_mcp_enabled, agent_launch, saved_worker_routes) = {
         let store = match state_store.lock() {
             Ok(store) => store,
             Err(error) => return fail(error),
@@ -61,20 +61,22 @@ fn main() -> std::process::ExitCode {
             Ok(enabled) => enabled,
             Err(error) => return fail(format!("load MCP setting: {error}")),
         };
-        let worker_command = startup_worker_command(&data_root, Some(&store));
+        let agent_launch = match load_agent_launch_config(&data_root, &store) {
+            Ok(command) => command,
+            Err(error) => return fail(format!("load agent launch settings: {error}")),
+        };
         let saved_worker_routes = match store.load_worker_routes() {
             Ok(routes) => routes,
             Err(error) => return fail(format!("load saved worker routes: {error}")),
         };
-        (builtin_mcp_enabled, worker_command, saved_worker_routes)
+        (builtin_mcp_enabled, agent_launch, saved_worker_routes)
     };
     builtin_mcp::set_enabled(builtin_mcp_enabled);
-    let worker_proxy = worker_command.app_proxy.clone();
-    let (factories, default_backend) = agents::worker_factories(worker_command);
+    let (factories, default_backend) = agents::worker_factories(agent_launch.clone());
     let worker_pool = match agents::WorkerPool::new(factories, default_backend, project.clone(), 8)
     {
         Ok(pool) => {
-            if let Err(error) = pool.set_app_proxy(worker_proxy) {
+            if let Err(error) = pool.set_app_proxy(agent_launch.app_proxy.clone()) {
                 return fail(format!("initialize worker proxy: {error}"));
             }
             if let Err(error) = pool.restore_families(saved_worker_routes) {
@@ -100,6 +102,7 @@ fn main() -> std::process::ExitCode {
     drop(prepare_timing);
     match app::launch::run(
         project,
+        agent_launch,
         workgraph_update_receiver,
         worker_updates,
         notice_board,
@@ -109,16 +112,16 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-fn startup_worker_command(
+fn load_agent_launch_config(
     data_root: &std::path::Path,
-    state_store: Option<&app::persistence::StateStore>,
-) -> agents::AgentLaunchConfig {
-    let app_proxy = state_store.and_then(|store| crate::access::load_proxy(store).unwrap_or(None));
-    agents::AgentLaunchConfig {
+    state_store: &app::persistence::StateStore,
+) -> Result<agents::AgentLaunchConfig, String> {
+    let app_proxy = crate::access::load_proxy(state_store)?;
+    Ok(agents::AgentLaunchConfig {
         app_proxy,
         session_locator_root: Some(data_root.join("session-locators")),
         ..agents::AgentLaunchConfig::default()
-    }
+    })
 }
 
 fn init_log_file() -> Result<(), String> {

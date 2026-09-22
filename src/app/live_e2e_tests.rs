@@ -793,6 +793,12 @@ fn with_live_app(
     let window = cx.add_window(|window, cx| {
         FarcasterApp::new(
             project_path.clone(),
+            crate::agents::AgentLaunchConfig {
+                session_locator_root: crate::app::paths::data_dir()
+                    .ok()
+                    .map(|root| root.join("session-locators")),
+                ..Default::default()
+            },
             true,
             workgraph_rx,
             worker_rx,

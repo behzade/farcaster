@@ -23,6 +23,7 @@ fn trust_shortcut(choice: TrustChoice) -> &'static str {
 
 pub(crate) struct ProjectTrustView {
     project: PathBuf,
+    agent_launch: crate::agents::AgentLaunchConfig,
     app: Option<Entity<FarcasterApp>>,
     notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
     workgraph_updates: async_channel::Receiver<()>,
@@ -35,6 +36,7 @@ pub(crate) struct ProjectTrustView {
 impl ProjectTrustView {
     pub(crate) fn new(
         project: PathBuf,
+        agent_launch: crate::agents::AgentLaunchConfig,
         startup_trust: StartupTrust,
         notification_app: Rc<RefCell<Option<WeakEntity<FarcasterApp>>>>,
         workgraph_updates: async_channel::Receiver<()>,
@@ -46,6 +48,7 @@ impl ProjectTrustView {
         let focus = cx.focus_handle();
         let mut this = Self {
             project,
+            agent_launch,
             app: None,
             notification_app,
             workgraph_updates,
@@ -80,6 +83,7 @@ impl ProjectTrustView {
         cx: &mut Context<Self>,
     ) {
         let project = self.project.clone();
+        let agent_launch = self.agent_launch.clone();
         let repository_execution_allowed = repository_execution_allowed.unwrap_or_else(|| {
             crate::app::project::trust::repository_execution_allowed(&project).unwrap_or(false)
         });
@@ -89,6 +93,7 @@ impl ProjectTrustView {
         let app = cx.new(|cx| {
             FarcasterApp::new(
                 project,
+                agent_launch,
                 repository_execution_allowed,
                 workgraph_updates,
                 worker_updates,

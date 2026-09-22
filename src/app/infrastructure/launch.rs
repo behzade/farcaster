@@ -69,6 +69,7 @@ fn update_app(
 
 pub(crate) fn run(
     project: PathBuf,
+    agent_launch: crate::agents::AgentLaunchConfig,
     workgraph_updates: async_channel::Receiver<()>,
     worker_updates: async_channel::Receiver<()>,
     notice_board: crate::app::mcp_server::NoticeBoard,
@@ -199,6 +200,7 @@ pub(crate) fn run(
                 let launch = cx.new(|cx| {
                     ProjectTrustView::new(
                         project.clone(),
+                        agent_launch.clone(),
                         startup_trust,
                         notification_app.clone(),
                         workgraph_updates.clone(),
