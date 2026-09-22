@@ -154,14 +154,11 @@ impl Supervisor {
                         self.needs_input.remove(&key);
                     }
                 }
-                let recovery_target = self
-                    .recovery_target_for_snapshot(&key, &snapshot)
-                    .map(str::to_owned);
-                let status = self.status_with_recovery(&key, &snapshot);
+                let status = session_status(&self.needs_input, &key, &snapshot);
                 publish_session_status_if_changed(
                     &self.event_tx,
                     &mut self.published_statuses,
-                    recovery_target.as_deref().unwrap_or(&key),
+                    &key,
                     snapshot
                         .live_session
                         .clone()
@@ -186,7 +183,6 @@ impl Supervisor {
                         generation: self.generation,
                         snapshot,
                     });
-                    self.publish_selected_recovery_dialogs();
                 }
             }
             RuntimeEvent::ExtensionUiDismissed { id, .. } => {
@@ -198,14 +194,11 @@ impl Supervisor {
                     }
                 }
                 if let Some(snapshot) = self.latest.get(&key) {
-                    let recovery_target = self
-                        .recovery_target_for_snapshot(&key, snapshot)
-                        .map(str::to_owned);
-                    let status = self.status_with_recovery(&key, snapshot);
+                    let status = session_status(&self.needs_input, &key, snapshot);
                     publish_session_status_if_changed(
                         &self.event_tx,
                         &mut self.published_statuses,
-                        recovery_target.as_deref().unwrap_or(&key),
+                        &key,
                         snapshot
                             .live_session
                             .clone()
@@ -280,7 +273,6 @@ impl Supervisor {
                 preserve_submission,
                 ..
             } if key == self.selected => {
-                self.published_recovery_selection = None;
                 let _ = self.event_tx.send(RuntimeEvent::SessionReset {
                     generation: self.generation,
                     preserve_submission,
@@ -356,6 +348,18 @@ impl Supervisor {
             | RuntimeEvent::SessionReset { .. }
             | RuntimeEvent::HistoryReset { .. } => {}
         }
+    }
+}
+
+fn session_status(
+    needs_input: &HashSet<String>,
+    key: &str,
+    snapshot: &RuntimeSnapshot,
+) -> &'static str {
+    if needs_input.contains(key) {
+        "Needs input"
+    } else {
+        semantic_status(snapshot)
     }
 }
 

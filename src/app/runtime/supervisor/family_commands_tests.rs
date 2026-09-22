@@ -183,8 +183,6 @@ fn supervisor_for_family(
             configuration_requests: HashSet::new(),
             requested_access_modes: HashMap::new(),
             published_statuses: HashMap::new(),
-            recovery: Default::default(),
-            published_recovery_selection: None,
         },
         events,
     )

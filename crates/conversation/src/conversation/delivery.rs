@@ -29,6 +29,18 @@ impl SubmittedUser {
 }
 
 impl ConversationState {
+    /// Remove an undelivered receipt after explicit dismissal or confirmed cancellation.
+    /// Delivered messages remain in the transcript even if a late cancellation arrives.
+    pub fn dismiss_pending_receipt(&mut self, id: &str) {
+        if self
+            .submitted_users
+            .get(id)
+            .is_some_and(|entry| !entry.delivered && entry.queued)
+        {
+            self.submitted_users.remove(id);
+        }
+    }
+
     /// Saved receipt presentation only. These records must never become
     /// executable queue entries merely because history was opened.
     pub fn pending_receipts(&self) -> Vec<PendingReceipt> {
@@ -84,6 +96,10 @@ impl ConversationState {
         message: &Value,
         status: &str,
     ) -> Option<usize> {
+        if status == "cancelled" {
+            self.dismiss_pending_receipt(id);
+            return None;
+        }
         if id.is_empty() || !matches!(status, "accepted" | "delivered" | "unknown" | "rejected") {
             return None;
         }

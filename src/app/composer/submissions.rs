@@ -390,6 +390,12 @@ pub(in crate::app) fn visible_prompt_queue(
     target: &str,
 ) -> crate::conversation::QueueState {
     let mut visible = native.clone();
+    visible
+        .steering_ids
+        .resize(visible.steering.len(), String::new());
+    visible
+        .follow_up_ids
+        .resize(visible.follow_up.len(), String::new());
     let mut submissions = pending
         .values()
         .filter(|submission| submission.submitted_target == target && submission.result.is_none())
@@ -398,9 +404,17 @@ pub(in crate::app) fn visible_prompt_queue(
     let mut matched_steering = vec![false; visible.steering.len()];
     let mut matched_follow_up = vec![false; visible.follow_up.len()];
     for submission in submissions {
-        let (messages, matched) = match submission.mode {
-            PromptMode::Steer => (&mut visible.steering, &mut matched_steering),
-            PromptMode::FollowUp => (&mut visible.follow_up, &mut matched_follow_up),
+        let (messages, matched, ids) = match submission.mode {
+            PromptMode::Steer => (
+                &mut visible.steering,
+                &mut matched_steering,
+                &mut visible.steering_ids,
+            ),
+            PromptMode::FollowUp => (
+                &mut visible.follow_up,
+                &mut matched_follow_up,
+                &mut visible.follow_up_ids,
+            ),
             PromptMode::Normal => continue,
         };
         let preview = pending_queue_preview(submission);
@@ -409,8 +423,12 @@ pub(in crate::app) fn visible_prompt_queue(
         }) {
             matched[index] = true;
             messages[index] = preview;
+            if ids[index].is_empty() {
+                ids[index] = submission.id.clone();
+            }
         } else {
             messages.push(preview);
+            ids.push(submission.id.clone());
             matched.push(true);
         }
     }

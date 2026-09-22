@@ -359,7 +359,7 @@ pub fn annotate_prompt_presentations(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn user_message_text(message: &str, image_count: usize) -> String {
     let message = pasted_file_summary(message);
     if image_count == 0 {

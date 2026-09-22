@@ -96,6 +96,9 @@ impl ConversationState {
             "queue_update" => {
                 self.queue.steering = strings(event.get("steering"));
                 self.queue.follow_up = strings(event.get("followUp"));
+                self.queue.steering_ids = strings(event.get("steeringIds"));
+                self.queue.follow_up_ids = strings(event.get("followUpIds"));
+                self.queue.cancellable_ids = strings(event.get("cancellableIds"));
             }
             "compaction_start" => {
                 self.compacting = true;

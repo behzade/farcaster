@@ -7,6 +7,44 @@ fn delivery(id: &str, text: &str, status: &str) -> Value {
 }
 
 #[test]
+fn queue_cancellation_requires_current_owner_evidence_not_an_id_or_receipt() {
+    let mut state = ConversationState::default();
+    state.reduce(&json!({"type":"queue_update", "steering":["same", "same"],
+        "steeringIds":["owned", "native"], "cancellableIds":["owned"]}));
+    assert!(state.queue.can_cancel("owned"));
+    assert!(!state.queue.can_cancel("native"));
+    assert!(!state.queue.can_cancel(""));
+    // The owner claims the row before native delivery arrives. Neither an
+    // accepted nor an unknown receipt can grant ownership back to the UI.
+    state.reduce(&json!({"type":"queue_update", "steering":["same"], "steeringIds":["native"]}));
+    state.reduce(&delivery("owned", "same", "accepted"));
+    state.reduce(&delivery("native", "same", "unknown"));
+    assert!(!state.queue.can_cancel("owned"));
+    assert!(!state.queue.can_cancel("native"));
+}
+
+#[test]
+fn cancel_removes_only_undelivered_receipt_and_late_delivery_still_appears() {
+    let mut state = ConversationState::default();
+    for id in ["first", "second"] {
+        state.reduce(&delivery(id, "same", "accepted"));
+    }
+    state.reduce(&delivery("second", "same", "cancelled"));
+    assert_eq!(
+        state
+            .pending_receipts()
+            .iter()
+            .map(|receipt| receipt.id.as_str())
+            .collect::<Vec<_>>(),
+        ["first"]
+    );
+    state.reduce(&delivery("second", "same", "delivered"));
+    state.reduce(&delivery("second", "same", "cancelled"));
+    assert_eq!(state.items.len(), 1);
+    assert_eq!(state.items[0].text, "same");
+}
+
+#[test]
 fn receipt_and_cancel_orders_keep_one_row_per_submission_not_per_text() {
     let mut state = ConversationState::default();
     state.reduce(&delivery("one", "same text", "unknown"));

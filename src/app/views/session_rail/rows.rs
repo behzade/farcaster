@@ -658,9 +658,7 @@ pub(in crate::app) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
     match status {
         "" => None,
         "Done" | "Complete" => Some((AppIcon::CheckCircle, THEME.colors.success)),
-        "Needs input" | "Delivery unknown" | "Incomplete" => {
-            Some((AppIcon::WarningCircle, THEME.colors.warning))
-        }
+        "Needs input" | "Incomplete" => Some((AppIcon::WarningCircle, THEME.colors.warning)),
         "Waiting" => Some((AppIcon::Hourglass, THEME.colors.accent)),
         "Failed" => Some((AppIcon::XCircle, THEME.colors.error)),
         "Working" => Some((AppIcon::SpinnerGap, THEME.colors.accent)),

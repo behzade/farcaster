@@ -372,9 +372,9 @@ fn dialog_dismissal_requires_the_current_generation_and_schedules_focus_lifecycl
 }
 
 #[test]
-fn parked_dismissal_does_not_replace_visible_recovery() {
+fn parked_dismissal_does_not_replace_visible_dialog() {
     let mut visible = crate::app::extensions::ExtensionUiState::default();
-    visible.apply(dialog("farcaster-recovery-9"));
+    visible.apply(dialog("approval"));
     let mut parked = crate::app::extensions::ExtensionUiState::default();
     parked.apply(dialog("expired-child"));
     let mut restored = None;
@@ -397,26 +397,20 @@ fn parked_dismissal_does_not_replace_visible_recovery() {
             .dialog
             .as_ref()
             .and_then(ExtensionUiRequest::dialog_id),
-        Some("farcaster-recovery-9")
+        Some("approval")
     );
     assert!(!pending_setup);
 }
 
 #[test]
-fn recovery_dialog_stays_visible_across_history_parking_and_restore() {
+fn dialogs_park_and_restore_with_history() {
     let mut visible = crate::app::extensions::ExtensionUiState::default();
     visible.apply(dialog("approval"));
-    visible.apply(dialog("farcaster-recovery-4"));
+    visible.apply(dialog("follow-up"));
     let mut parked = None;
 
     park_extension_for_history(&mut visible, &mut parked);
-    assert_eq!(
-        visible
-            .dialog
-            .as_ref()
-            .and_then(ExtensionUiRequest::dialog_id),
-        Some("farcaster-recovery-4")
-    );
+    assert!(visible.dialog.is_none());
     assert_eq!(
         parked
             .as_ref()
@@ -432,10 +426,10 @@ fn recovery_dialog_stays_visible_across_history_parking_and_restore() {
             .dialog
             .as_ref()
             .and_then(ExtensionUiRequest::dialog_id),
-        Some("farcaster-recovery-4")
+        Some("approval")
     );
     assert_eq!(
-        visible.dismiss_dialog("farcaster-recovery-4"),
+        visible.dismiss_dialog("approval"),
         crate::app::extensions::DialogDismissal::ActiveWithNext
     );
     assert_eq!(
@@ -443,7 +437,7 @@ fn recovery_dialog_stays_visible_across_history_parking_and_restore() {
             .dialog
             .as_ref()
             .and_then(ExtensionUiRequest::dialog_id),
-        Some("approval")
+        Some("follow-up")
     );
 }
 
@@ -511,7 +505,9 @@ fn prompt_result_follows_submission_through_draft_promotion() {
                 outcome,
                 Some(path.clone()),
             );
-            assert_eq!(pending[submission_id].result, Some((outcome, Some(path))));
+            let resolved = (outcome != crate::agents::PromptOutcome::DeliveryUnknown)
+                .then_some((outcome, Some(path)));
+            assert_eq!(pending[submission_id].result, resolved);
             // An unrelated reply must not resolve or overwrite this submission.
             record_pending_prompt_result_for_submission(
                 &mut pending,
@@ -525,7 +521,7 @@ fn prompt_result_follows_submission_through_draft_promotion() {
                     .result
                     .as_ref()
                     .map(|result| result.0),
-                Some(outcome)
+                resolved.map(|result| result.0)
             );
             assert_eq!(pending[submission_id].text, "keep this on rejection");
         }

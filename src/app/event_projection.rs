@@ -597,11 +597,7 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
-        if crate::app::runtime::recovery::is_recovery_dialog(&request) {
-            self.apply_extension_request(request, generation, cx);
-            dirty.root = true;
-            dirty.composer = true;
-        } else if let Some(extension) = self.extensions.parked.as_mut() {
+        if let Some(extension) = self.extensions.parked.as_mut() {
             let _ = extension.apply(request);
         } else {
             self.apply_extension_request(request, generation, cx);
@@ -620,19 +616,11 @@ impl FarcasterApp {
     ) {
         let accepted = outcome == crate::agents::PromptOutcome::Accepted;
         self.code_task_result(&target, accepted, session.as_deref(), cx);
-        self.record_draft_submission(
-            &target,
-            outcome != crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-            session.clone(),
-        );
+        self.record_draft_submission(&target, accepted, session.clone());
         if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
             self.activity
                 .run_statuses
                 .insert(target.clone(), "Failed".into());
-        } else if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
-            self.activity
-                .run_statuses
-                .insert(target.clone(), "Delivery unknown".into());
         }
         record_pending_prompt_result_for_submission(
             &mut self.composer.pending_submissions,
@@ -914,20 +902,14 @@ fn park_extension_for_history(
     visible: &mut crate::app::extensions::ExtensionUiState,
     parked: &mut Option<crate::app::extensions::ExtensionUiState>,
 ) {
-    let recovery_dialogs =
-        visible.take_dialogs_matching(crate::app::runtime::recovery::is_recovery_dialog);
     park_extension_surface(visible, parked);
-    visible.prepend_dialogs(recovery_dialogs);
 }
 
 fn restore_extension_after_history(
     visible: &mut crate::app::extensions::ExtensionUiState,
     parked: &mut Option<crate::app::extensions::ExtensionUiState>,
 ) {
-    let recovery_dialogs =
-        visible.take_dialogs_matching(crate::app::runtime::recovery::is_recovery_dialog);
     restore_extension_surface(visible, parked);
-    visible.prepend_dialogs(recovery_dialogs);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -944,8 +926,7 @@ fn project_dialog_dismissal(
     if generation != runtime_generation {
         return false;
     }
-    let recovery = crate::app::runtime::recovery::is_recovery_dialog_id(id);
-    if !recovery && let Some(parked) = parked_extension {
+    if let Some(parked) = parked_extension {
         parked.dismiss_dialog(id);
         return false;
     }
@@ -973,6 +954,11 @@ pub(in crate::app) fn record_pending_prompt_result_for_submission(
     outcome: crate::agents::PromptOutcome,
     session: Option<PathBuf>,
 ) {
+    // A missing receipt is still pending work. Keep the composer submission
+    // unresolved so the durable outbox can retry it after a restart.
+    if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
+        return;
+    }
     let key = match submission_id {
         Some(id) => pending.contains_key(id).then(|| id.to_owned()),
         None => {
@@ -989,6 +975,7 @@ pub(in crate::app) fn record_pending_prompt_result_for_submission(
                 previous,
                 crate::agents::PromptOutcome::Accepted
                     | crate::agents::PromptOutcome::RejectedBeforeAcceptance
+                    | crate::agents::PromptOutcome::Cancelled
             )
         }) {
             return;

@@ -114,6 +114,27 @@ fn unresolved_queue_keeps_submission_order_and_equal_text() {
 }
 
 #[test]
+fn unresolved_submission_overlay_does_not_invent_cancellation_rights() {
+    let mut local = pending();
+    local.mode = PromptMode::Steer;
+    let id = local.id.clone();
+    let pending = std::collections::HashMap::from([(id.clone(), local)]);
+    let visible = visible_prompt_queue(
+        &crate::conversation::QueueState::default(),
+        &pending,
+        "session:compacting",
+    );
+    assert_eq!(visible.steering.len(), 1);
+    assert!(!visible.can_cancel(&id));
+    let runtime_owned = crate::conversation::QueueState {
+        cancellable_ids: vec![id.clone()],
+        ..Default::default()
+    };
+    let visible = visible_prompt_queue(&runtime_owned, &pending, "session:compacting");
+    assert!(visible.can_cancel(&id));
+}
+
+#[test]
 fn attachment_only_submissions_are_visible_in_both_queue_modes() {
     let image = ComposerImage {
         prompt: PromptImage::new(String::new(), "image/png".into()),
@@ -150,6 +171,7 @@ fn visible_queue_overlays_a_local_submission_already_reflected_by_the_backend() 
     let native = crate::conversation::QueueState {
         steering: vec!["same text".into()],
         follow_up: vec!["native follow-up".into()],
+        ..Default::default()
     };
 
     let visible = visible_prompt_queue(&native, &pending, "session:compacting");
@@ -173,6 +195,7 @@ fn visible_queue_preserves_the_count_of_repeated_submissions() {
     let native = crate::conversation::QueueState {
         steering: vec!["same text".into()],
         follow_up: Vec::new(),
+        ..Default::default()
     };
 
     let visible = visible_prompt_queue(&native, &pending, "session:compacting");
@@ -189,6 +212,7 @@ fn visible_queue_uses_local_attachment_preview_for_a_matching_native_item() {
     let native = crate::conversation::QueueState {
         steering: vec![String::new()],
         follow_up: Vec::new(),
+        ..Default::default()
     };
 
     let visible = visible_prompt_queue(&native, &pending, "session:compacting");
@@ -202,6 +226,7 @@ fn only_explicit_preacceptance_rejection_restores_the_composer() {
         crate::agents::PromptOutcome::RejectedBeforeAcceptance
     ));
     assert!(!restores_composer(crate::agents::PromptOutcome::Accepted));
+    assert!(!restores_composer(crate::agents::PromptOutcome::Cancelled));
     assert!(!restores_composer(
         crate::agents::PromptOutcome::DeliveryUnknown
     ));

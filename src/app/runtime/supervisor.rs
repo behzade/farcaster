@@ -7,7 +7,6 @@ mod family_commands;
 #[cfg(test)]
 #[path = "supervisor_proxy_tests.rs"]
 mod proxy_tests;
-mod recovery;
 
 pub(crate) struct RuntimeHandle {
     pub(crate) session_targets: HashMap<PathBuf, crate::sessions::SessionTarget>,
@@ -452,8 +451,6 @@ struct Supervisor {
     configuration_requests: HashSet<(Backend, PathBuf)>,
     requested_access_modes: HashMap<String, (Backend, PathBuf, HarnessAccessMode)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
-    recovery: crate::app::runtime::recovery::InterruptedPromptRecovery,
-    published_recovery_selection: Option<(u64, String, PathBuf, Option<PathBuf>)>,
 }
 
 fn run_supervisor(
@@ -545,22 +542,6 @@ impl Supervisor {
         let last_touch = HashMap::from([(initial_key.clone(), clock)]);
         let mut configurations = HarnessConfigurationStore::default();
         let catalog_state = crate::app::persistence::open().ok();
-        let recovery = catalog_state
-            .as_ref()
-            .map(crate::app::runtime::recovery::InterruptedPromptRecovery::recover)
-            .transpose();
-        let recovery = match recovery {
-            Ok(Some(recovery)) => recovery,
-            Ok(None) => Default::default(),
-            Err(error) => {
-                let _ = event_tx.send(RuntimeEvent::SystemNotification {
-                    title: "Farcaster: Prompt recovery failed".into(),
-                    body: error,
-                    target: None,
-                });
-                Default::default()
-            }
-        };
         let configuration_catalogs = catalog_state
             .as_ref()
             .and_then(|state| state.load_configuration_catalogs().ok())
@@ -599,7 +580,7 @@ impl Supervisor {
             }
         }
         let selected_session = initial_session.as_ref().map(|target| target.path.clone());
-        let mut supervisor = Self {
+        Self {
             process_command,
             command_rx,
             event_tx,
@@ -630,11 +611,7 @@ impl Supervisor {
             configuration_requests: HashSet::new(),
             requested_access_modes: HashMap::new(),
             published_statuses,
-            recovery,
-            published_recovery_selection: None,
-        };
-        supervisor.publish_recovery_statuses();
-        supervisor
+        }
     }
 
     fn run(mut self) {

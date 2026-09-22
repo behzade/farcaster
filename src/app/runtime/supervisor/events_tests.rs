@@ -8,17 +8,12 @@ struct SupervisorFixture {
 }
 
 impl SupervisorFixture {
-    fn new(
-        selected: &str,
-        project: PathBuf,
-        state: Option<StateStore>,
-        recovery: crate::app::runtime::recovery::InterruptedPromptRecovery,
-    ) -> Self {
+    fn new(selected: &str, project: PathBuf, state: Option<StateStore>) -> Self {
         let (commands, command_rx) = mpsc::channel();
         let (events_tx, events) = mpsc::channel();
         let (wake, _) = async_channel::bounded(1);
         let (_, configuration_rx) = mpsc::channel();
-        let mut fixture = Self {
+        let fixture = Self {
             supervisor: Supervisor {
                 process_command: AgentLaunchConfig::default(),
                 command_rx,
@@ -59,13 +54,10 @@ impl SupervisorFixture {
                 configuration_requests: HashSet::new(),
                 requested_access_modes: HashMap::new(),
                 published_statuses: HashMap::new(),
-                recovery,
-                published_recovery_selection: None,
             },
             commands,
             events,
         };
-        fixture.supervisor.publish_recovery_statuses();
         fixture
     }
 
@@ -120,7 +112,7 @@ impl SupervisorFixture {
 #[test]
 fn capability_only_catalog_reaches_draft_once_without_snapshot_loop() {
     let project = PathBuf::from("/project");
-    let mut fixture = SupervisorFixture::new("draft:pi", project.clone(), None, Default::default());
+    let mut fixture = SupervisorFixture::new("draft:pi", project.clone(), None);
     fixture.supervisor.configurations.set_catalog(
         Backend::Pi,
         project.clone(),
@@ -186,8 +178,7 @@ fn access_mode_command_precedes_catalog_load_when_actor_snapshot_is_delayed() {
     use crate::agents::HarnessAccessMode::{Auto, Full, Sandboxed};
 
     let project = PathBuf::from("/project");
-    let mut fixture =
-        SupervisorFixture::new("draft:open", project.clone(), None, Default::default());
+    let mut fixture = SupervisorFixture::new("draft:open", project.clone(), None);
     fixture.supervisor.latest.insert(
         "draft:open".into(),
         Arc::new(RuntimeSnapshot {
@@ -250,8 +241,7 @@ fn new_session_restores_the_harness_access_mode_before_staging_the_draft() {
     use crate::agents::HarnessAccessMode::Full;
 
     let project = PathBuf::from("/project");
-    let mut fixture =
-        SupervisorFixture::new("draft:old", project.clone(), None, Default::default());
+    let mut fixture = SupervisorFixture::new("draft:old", project.clone(), None);
     assert!(
         fixture
             .supervisor
@@ -305,8 +295,7 @@ fn restart_injects_the_sessions_saved_access_mode_before_launch()
         is_running: false,
     })?;
     let key = format!("session:{}", session.display());
-    let mut fixture =
-        SupervisorFixture::new(&key, project.clone(), Some(state), Default::default());
+    let mut fixture = SupervisorFixture::new(&key, project.clone(), Some(state));
     fixture.supervisor.latest.insert(
         key.clone(),
         Arc::new(RuntimeSnapshot {
@@ -378,12 +367,7 @@ fn dialog(id: &str) -> ExtensionUiRequest {
 
 #[test]
 fn selected_dismissal_uses_supervisor_generation_and_clears_needs_input_last() {
-    let mut fixture = SupervisorFixture::new(
-        "selected",
-        PathBuf::from("/project"),
-        None,
-        Default::default(),
-    );
+    let mut fixture = SupervisorFixture::new("selected", PathBuf::from("/project"), None);
     fixture.supervisor.generation = 8;
     fixture
         .supervisor
@@ -434,7 +418,7 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
     let project = PathBuf::from("/project");
     let path = PathBuf::from("/sessions/background");
     let key = format!("session:{}", path.display());
-    let mut fixture = SupervisorFixture::new("selected", project.clone(), None, Default::default());
+    let mut fixture = SupervisorFixture::new("selected", project.clone(), None);
     fixture.add_actor(&key);
     fixture
         .supervisor
@@ -467,416 +451,5 @@ fn background_dismissal_removes_cached_dialog_before_selection() -> Result<(), S
         event,
         RuntimeEvent::ExtensionUi { request, .. } if request.dialog_id() == Some("expired")
     )));
-    Ok(())
-}
-
-#[test]
-fn cold_selection_keeps_recovery_visible_after_snapshots() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let session = temp.path().join("session.jsonl");
-    let target = format!("session:{}", session.display());
-    let recovered_target = format!(
-        "session:{}",
-        crate::sessions::normalize_session_path(&session).display()
-    );
-    let store = StateStore::open_at(&database)?;
-    let id = store.enqueue_prompt(
-        &target,
-        Backend::Codex,
-        temp.path(),
-        Some(&session),
-        PromptMode::Normal,
-        "recover this exact prompt",
-        &[],
-    )?;
-    store.begin_prompt(id)?;
-    drop(store);
-    let state = StateStore::open_at(&database)?;
-    let recovery = crate::app::runtime::recovery::InterruptedPromptRecovery::recover(&state)?;
-    let mut fixture =
-        SupervisorFixture::new("draft:old", PathBuf::from("/old"), Some(state), recovery);
-    fixture.add_actor(&target);
-    fixture
-        .commands
-        .send(RuntimeCommand::SelectSession {
-            path: session.clone(),
-            harness: Backend::Codex,
-            session_id: "selected".into(),
-            project: temp.path().into(),
-        })
-        .map_err(|error| error.to_string())?;
-    assert!(fixture.supervisor.process_next_command());
-    assert_eq!(fixture.supervisor.generation, 1);
-    assert!(
-        !fixture
-            .drain()
-            .iter()
-            .any(|event| matches!(event, RuntimeEvent::ExtensionUi { .. }))
-    );
-
-    fixture.supervisor.handle_actor_event(
-        target.clone(),
-        RuntimeEvent::Snapshot {
-            generation: 44,
-            snapshot: Arc::new(RuntimeSnapshot {
-                project: temp.path().into(),
-                harness: Some(Backend::Codex),
-                selected_session: Some(session.clone()),
-                history_preview: true,
-                ..RuntimeSnapshot::default()
-            }),
-        },
-    );
-    let events = fixture.drain();
-    let snapshot_index = events
-        .iter()
-        .position(|event| matches!(event, RuntimeEvent::Snapshot { generation: 1, .. }))
-        .ok_or_else(|| "selected snapshot was not forwarded".to_owned())?;
-    let dialog_index = events
-        .iter()
-        .position(|event| {
-            matches!(
-                event,
-                RuntimeEvent::ExtensionUi { generation: 1, request, .. }
-                    if request.dialog_id() == Some(format!("farcaster-recovery-{id}").as_str())
-            )
-        })
-        .ok_or_else(|| "recovery dialog was not forwarded".to_owned())?;
-    assert!(
-        snapshot_index < dialog_index,
-        "UI must adopt the generation before the dialog"
-    );
-    assert_eq!(
-        fixture.supervisor.published_statuses[&recovered_target].1,
-        "Delivery unknown"
-    );
-
-    fixture.supervisor.handle_actor_event(
-        target.clone(),
-        RuntimeEvent::Snapshot {
-            generation: 45,
-            snapshot: Arc::new(RuntimeSnapshot {
-                project: temp.path().into(),
-                harness: Some(Backend::Codex),
-                selected_session: Some(session.clone()),
-                history_preview: true,
-                ..RuntimeSnapshot::default()
-            }),
-        },
-    );
-    assert_eq!(
-        fixture.supervisor.published_statuses[&recovered_target].1, "Delivery unknown",
-        "later settled snapshots must not overwrite the recovery blocker"
-    );
-    assert!(fixture.drain().iter().all(|event| !matches!(
-        event,
-        RuntimeEvent::SessionStatus { status, .. } if status != "Delivery unknown"
-    )));
-
-    fixture
-        .commands
-        .send(RuntimeCommand::ExtensionResponse(
-            ExtensionUiResponse::Cancelled {
-                id: format!("farcaster-recovery-{id}"),
-                cancelled: true,
-            },
-        ))
-        .map_err(|error| error.to_string())?;
-    assert!(fixture.supervisor.process_next_command());
-    fixture
-        .commands
-        .send(RuntimeCommand::SelectSession {
-            path: session,
-            harness: Backend::Codex,
-            session_id: "selected".into(),
-            project: temp.path().into(),
-        })
-        .map_err(|error| error.to_string())?;
-    assert!(fixture.supervisor.process_next_command());
-    assert!(
-        fixture.drain().iter().any(|event| matches!(
-            event,
-            RuntimeEvent::ExtensionUi { generation: 1, request, .. }
-                if request.dialog_id() == Some(format!("farcaster-recovery-{id}").as_str())
-        )),
-        "cancelling and reselecting the same session must show recovery again"
-    );
-    Ok(())
-}
-
-#[test]
-fn draft_actor_locator_snapshot_reveals_its_interrupted_prompt() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let session = temp.path().join("session.jsonl");
-    let target = format!("session:{}", session.display());
-    let store = StateStore::open_at(&database)?;
-    let id = store.enqueue_prompt(
-        &target,
-        Backend::Codex,
-        temp.path(),
-        Some(&session),
-        PromptMode::Normal,
-        "started from a submitted draft",
-        &[],
-    )?;
-    store.begin_prompt(id)?;
-    drop(store);
-    let state = StateStore::open_at(&database)?;
-    let recovery = crate::app::runtime::recovery::InterruptedPromptRecovery::recover(&state)?;
-    let mut fixture =
-        SupervisorFixture::new("draft:startup", temp.path().into(), Some(state), recovery);
-    fixture.drain();
-
-    fixture.supervisor.handle_actor_event(
-        "draft:startup".into(),
-        RuntimeEvent::Snapshot {
-            generation: 0,
-            snapshot: Arc::new(RuntimeSnapshot {
-                project: temp.path().into(),
-                harness: Some(Backend::Codex),
-                live_session: Some(session),
-                ..RuntimeSnapshot::default()
-            }),
-        },
-    );
-    let events = fixture.drain();
-    let snapshot = events
-        .iter()
-        .position(|event| matches!(event, RuntimeEvent::Snapshot { generation: 0, .. }))
-        .ok_or_else(|| "startup snapshot was not forwarded".to_owned())?;
-    let recovery = events
-        .iter()
-        .position(|event| {
-            matches!(
-                event,
-                RuntimeEvent::ExtensionUi { generation: 0, request, .. }
-                    if request.dialog_id() == Some(format!("farcaster-recovery-{id}").as_str())
-            )
-        })
-        .ok_or_else(|| "locator recovery dialog was not forwarded".to_owned())?;
-    assert!(snapshot < recovery);
-    Ok(())
-}
-
-#[test]
-fn last_child_dismissal_keeps_unknown_recovery_visible() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let session = temp.path().join("session.jsonl");
-    let target = format!("session:{}", session.display());
-    let recovered_target = format!(
-        "session:{}",
-        crate::sessions::normalize_session_path(&session).display()
-    );
-    let store = StateStore::open_at(&database)?;
-    let id = store.enqueue_prompt(
-        &target,
-        Backend::Codex,
-        temp.path(),
-        Some(&session),
-        PromptMode::Normal,
-        "unknown delivery beside child input",
-        &[],
-    )?;
-    store.begin_prompt(id)?;
-    drop(store);
-    let state = StateStore::open_at(&database)?;
-    let recovery = crate::app::runtime::recovery::InterruptedPromptRecovery::recover(&state)?;
-    let mut fixture = SupervisorFixture::new(&target, temp.path().into(), Some(state), recovery);
-    fixture.supervisor.selected_session = Some(session.clone());
-    fixture.supervisor.latest.insert(
-        target.clone(),
-        Arc::new(RuntimeSnapshot {
-            project: temp.path().into(),
-            harness: Some(Backend::Codex),
-            selected_session: Some(session),
-            ..RuntimeSnapshot::default()
-        }),
-    );
-    fixture.supervisor.active_dialogs.insert(
-        target.clone(),
-        vec![dialog("farcaster-child-input-expired")],
-    );
-    fixture.supervisor.needs_input.insert(target.clone());
-    fixture.drain();
-
-    fixture.supervisor.handle_actor_event(
-        target,
-        RuntimeEvent::ExtensionUiDismissed {
-            generation: 0,
-            id: "farcaster-child-input-expired".into(),
-        },
-    );
-    assert_eq!(
-        fixture.supervisor.published_statuses[&recovered_target].1,
-        "Delivery unknown"
-    );
-    assert!(fixture.drain().iter().all(|event| !matches!(
-        event,
-        RuntimeEvent::SessionStatus { status, .. } if status != "Delivery unknown"
-    )));
-    Ok(())
-}
-
-#[test]
-fn selected_reset_allows_recovery_to_publish_after_the_next_snapshot() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let session = temp.path().join("session.jsonl");
-    let target = format!("session:{}", session.display());
-    let store = StateStore::open_at(&database)?;
-    let id = store.enqueue_prompt(
-        &target,
-        Backend::Codex,
-        temp.path(),
-        Some(&session),
-        PromptMode::Normal,
-        "show again after reset",
-        &[],
-    )?;
-    store.begin_prompt(id)?;
-    drop(store);
-    let state = StateStore::open_at(&database)?;
-    let recovery = crate::app::runtime::recovery::InterruptedPromptRecovery::recover(&state)?;
-    let mut fixture = SupervisorFixture::new(&target, temp.path().into(), Some(state), recovery);
-    fixture.drain();
-    let snapshot = Arc::new(RuntimeSnapshot {
-        project: temp.path().into(),
-        harness: Some(Backend::Codex),
-        selected_session: Some(session),
-        ..RuntimeSnapshot::default()
-    });
-
-    fixture.supervisor.handle_actor_event(
-        target.clone(),
-        RuntimeEvent::Snapshot {
-            generation: 0,
-            snapshot: snapshot.clone(),
-        },
-    );
-    assert!(fixture.drain().iter().any(|event| matches!(
-        event,
-        RuntimeEvent::ExtensionUi { request, .. }
-            if request.dialog_id() == Some(format!("farcaster-recovery-{id}").as_str())
-    )));
-    fixture.supervisor.handle_actor_event(
-        target.clone(),
-        RuntimeEvent::SessionReset {
-            generation: 0,
-            preserve_submission: false,
-        },
-    );
-    assert!(
-        fixture
-            .drain()
-            .iter()
-            .any(|event| matches!(event, RuntimeEvent::SessionReset { generation: 0, .. }))
-    );
-    fixture.supervisor.handle_actor_event(
-        target,
-        RuntimeEvent::Snapshot {
-            generation: 1,
-            snapshot,
-        },
-    );
-    assert!(
-        fixture.drain().iter().any(|event| matches!(
-            event,
-            RuntimeEvent::ExtensionUi { request, .. }
-                if request.dialog_id() == Some(format!("farcaster-recovery-{id}").as_str())
-        )),
-        "recovery must publish again after reset cleared the UI"
-    );
-    Ok(())
-}
-
-#[test]
-fn recovered_prompts_do_not_block_app_quit_without_live_agents() -> Result<(), String> {
-    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let database = temp.path().join("state.sqlite3");
-    let session = temp.path().join("session.jsonl");
-    let target = format!("session:{}", session.display());
-    let state = StateStore::open_at(&database)?;
-    let id = state.enqueue_prompt(
-        &target,
-        Backend::Codex,
-        temp.path(),
-        Some(&session),
-        PromptMode::Normal,
-        "interrupted prompt",
-        &[],
-    )?;
-    state.begin_prompt(id)?;
-    drop(state);
-    let state = StateStore::open_at(&database)?;
-    let recovery = crate::app::runtime::recovery::InterruptedPromptRecovery::recover(&state)?;
-    let mut fixture =
-        SupervisorFixture::new("draft:startup", temp.path().into(), Some(state), recovery);
-    assert!(fixture.supervisor.actors.is_empty());
-    let mut statuses = fixture
-        .drain()
-        .into_iter()
-        .filter_map(|event| match event {
-            RuntimeEvent::SessionStatus { target, status, .. } => Some((target, status)),
-            _ => None,
-        })
-        .collect::<HashMap<_, _>>();
-    assert!(
-        !statuses.is_empty(),
-        "must exercise startup recovery statuses"
-    );
-    assert!(
-        !crate::app::session::activity::application_has_active_work(
-            &statuses,
-            &RuntimeSnapshot::default(),
-            &HashMap::new(),
-            &[],
-            &[]
-        ),
-        "saved recovery prompts are not running agents: {statuses:?}"
-    );
-    // A recovered record must not hide new work in the same session, nor
-    // leave an active status behind once that work finishes.
-    for status in ["Working", "Compacting", "Retrying", "Needs input", "Done"] {
-        let mut snapshot = RuntimeSnapshot {
-            project: temp.path().into(),
-            selected_session: Some(session.clone()),
-            ..Default::default()
-        };
-        let conversation = Arc::make_mut(&mut snapshot.conversation);
-        conversation.running = status == "Working";
-        conversation.compacting = status == "Compacting";
-        conversation.retrying = status == "Retrying";
-        if status == "Needs input" {
-            fixture.supervisor.needs_input.insert(target.clone());
-        } else {
-            fixture.supervisor.needs_input.remove(&target);
-        }
-        fixture.supervisor.handle_actor_event(
-            target.clone(),
-            RuntimeEvent::Snapshot {
-                generation: 0,
-                snapshot: Arc::new(snapshot),
-            },
-        );
-        for event in fixture.drain() {
-            if let RuntimeEvent::SessionStatus { target, status, .. } = event {
-                statuses.insert(target, status);
-            }
-        }
-        assert_eq!(
-            crate::app::session::activity::application_has_active_work(
-                &statuses,
-                &RuntimeSnapshot::default(),
-                &HashMap::new(),
-                &[],
-                &[]
-            ),
-            status != "Done",
-            "quit activity for {status}: {statuses:?}"
-        );
-    }
     Ok(())
 }

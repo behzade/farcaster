@@ -189,7 +189,7 @@ impl Supervisor {
                 let paths = family_paths.iter().cloned().collect::<Vec<_>>();
                 if agents::has_queued_prompts_for(&state, &paths)? {
                     return Err(
-                        "Send or remove queued prompts before deleting this session".to_owned()
+                        "Send or remove pending messages before deleting this session".to_owned(),
                     );
                 }
                 for key in &family_actor_keys {
@@ -306,7 +306,7 @@ impl Supervisor {
                 let paths = family_paths.iter().cloned().collect::<Vec<_>>();
                 if agents::has_queued_prompts_for(&state, &paths)? {
                     return Err(
-                        "Send or remove queued prompts before moving this session".to_owned()
+                        "Send or remove pending messages before moving this session".to_owned()
                     );
                 }
                 for key in &family_actor_keys {

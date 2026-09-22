@@ -6,6 +6,9 @@ rust-version = "1.95"
 publish = false
 license = "GPL-3.0-or-later"
 
+[features]
+test-support = []
+
 [dependencies]
 base64 = "0.22.1"
 farcaster-agent-protocol = { path = "../agent-protocol" }

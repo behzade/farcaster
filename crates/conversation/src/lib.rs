@@ -39,11 +39,11 @@ mod tool_details;
 mod tools;
 pub use tool_details::{ToolDetails, ToolExecutionState};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use attachments::pasted_file_summary;
 use attachments::{FileAttachment, split_pasted_files};
 pub use history::annotate_prompt_presentations;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use history::user_message_text;
 use history::{decode_prompt_images, message_text, peer_transcript_item, project_message_items};
 use tools::{apply_tool_result, tool_arguments, tool_name, tool_presentation};
@@ -190,13 +190,28 @@ impl TranscriptItem {
 pub struct QueueState {
     pub steering: Vec<String>,
     pub follow_up: Vec<String>,
+    pub steering_ids: Vec<String>,
+    pub follow_up_ids: Vec<String>,
+    /// Exact IDs the queue owner can still remove before dispatch.
+    pub cancellable_ids: Vec<String>,
 }
 
 impl QueueState {
+    pub fn can_cancel(&self, id: &str) -> bool {
+        !id.is_empty() && self.cancellable_ids.iter().any(|candidate| candidate == id)
+    }
+
     fn acknowledge(&mut self, message: &str) {
-        for queue in [&mut self.steering, &mut self.follow_up] {
+        for (queue, ids) in [
+            (&mut self.steering, &mut self.steering_ids),
+            (&mut self.follow_up, &mut self.follow_up_ids),
+        ] {
             if let Some(index) = queue.iter().position(|queued| queued == message) {
                 queue.remove(index);
+                if index < ids.len() {
+                    let id = ids.remove(index);
+                    self.cancellable_ids.retain(|candidate| candidate != &id);
+                }
                 return;
             }
         }
@@ -250,7 +265,7 @@ enum PartialKind {
 }
 
 impl ConversationState {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn push_local_user(
         &mut self,
         message: String,
