@@ -41,6 +41,7 @@ fn wait_for_prompt_acks(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     let mut acknowledgements = Vec::new();
     while std::time::Instant::now() < deadline && acknowledgements.len() < count {
+        let _ = worker.poll();
         while let Some(acknowledgement) = worker.poll_prompt_ack() {
             acknowledgements.push(acknowledgement);
         }
@@ -84,21 +85,23 @@ fn worker_process_correlates_images_and_applies_all_queue_modes()
     ] {
         worker.submit_prompt(id.into(), message.into(), mode, vec![image.clone()])?;
     }
-    let acknowledgements = wait_for_prompt_acks(worker.as_mut(), 4);
-    assert_eq!(
-        acknowledgements
-            .iter()
-            .map(|(id, result)| (id.as_str(), result.is_ok()))
-            .collect::<Vec<_>>(),
-        [
-            ("follow-1", true),
-            ("follow-2", true),
-            ("steer-1", true),
-            ("steer-2", true),
-        ]
-    );
+    assert!(wait_for_prompt_acks(worker.as_mut(), 1).is_empty());
 
     worker.apply_steering()?;
+    let acknowledgements = wait_for_prompt_acks(worker.as_mut(), 4);
+    let acknowledged_ids = acknowledgements
+        .iter()
+        .map(|(id, result)| (id.as_str(), result.is_ok()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        acknowledged_ids,
+        [
+            ("steer-1", true),
+            ("steer-2", true),
+            ("follow-1", true),
+            ("follow-2", true),
+        ]
+    );
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while std::time::Instant::now() < deadline {
         if matches!(worker.poll(), Some(WorkerEvent::Settled { .. })) {
@@ -210,12 +213,20 @@ fn worker_process_failure_is_terminal_before_or_after_prompt_ack()
             WorkerSendMode::Prompt,
             Vec::new(),
         )?;
-        let acknowledgements = wait_for_prompt_acks(worker.as_mut(), usize::from(expects_ack));
-        assert_eq!(acknowledgements.len(), usize::from(expects_ack));
-        assert!(matches!(
-            wait_for_worker_event(worker.as_mut()),
-            Some(WorkerEvent::Failed(_))
-        ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut acknowledged = false;
+        let mut failed = false;
+        while std::time::Instant::now() < deadline && !(failed && acknowledged == expects_ack) {
+            failed |= matches!(worker.poll(), Some(WorkerEvent::Failed(_)));
+            while let Some((id, result)) = worker.poll_prompt_ack() {
+                assert_eq!(id, "child-submission");
+                assert!(result.is_ok());
+                acknowledged = true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(failed);
+        assert_eq!(acknowledged, expects_ack);
         assert!(worker.poll().is_none(), "terminal failure repeated");
         worker.close()?;
     }

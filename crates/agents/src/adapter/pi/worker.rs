@@ -95,9 +95,12 @@ impl WorkerSessionFactory for PiWorkerFactory {
             run_active: false,
             pending_inputs: HashMap::new(),
             prompt_requests: HashMap::new(),
+            pending_deliveries: VecDeque::new(),
             prompt_acks: VecDeque::new(),
             pending_session_events: VecDeque::new(),
             pending_worker_events: VecDeque::new(),
+            delivery_ack_ready: VecDeque::new(),
+            delivery_activity_returned: false,
             terminal: false,
         }))
     }
@@ -112,16 +115,22 @@ struct PiWorkerSession {
     run_active: bool,
     pending_inputs: HashMap<String, InputKind>,
     prompt_requests: HashMap<String, PendingPrompt>,
+    pending_deliveries: VecDeque<PendingPrompt>,
     prompt_acks: VecDeque<(String, Result<(), String>)>,
     pending_session_events: VecDeque<SessionEvent>,
     pending_worker_events: VecDeque<WorkerEvent>,
+    delivery_ack_ready: VecDeque<(String, Result<(), String>)>,
+    delivery_activity_returned: bool,
     terminal: bool,
 }
 
+#[derive(Clone)]
 struct PendingPrompt {
     submission_id: String,
     mode: PromptMode,
     reports_ack: bool,
+    message: String,
+    images: Vec<crate::extensions::PromptImage>,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +140,10 @@ enum InputKind {
 }
 
 impl WorkerSession for PiWorkerSession {
+    fn tracks_prompt_delivery(&self, mode: WorkerSendMode) -> bool {
+        matches!(mode, WorkerSendMode::Steer | WorkerSendMode::Queue)
+    }
+
     fn send(&mut self, message: String, mode: WorkerSendMode) -> Result<(), String> {
         self.send_prompt(None, message, mode, Vec::new())
     }
@@ -157,6 +170,12 @@ impl WorkerSession for PiWorkerSession {
 
     fn poll_prompt_ack(&mut self) -> Option<(String, Result<(), String>)> {
         self.pump();
+        if self.delivery_activity_returned {
+            self.delivery_activity_returned = false;
+            if let Some(ack) = self.delivery_ack_ready.pop_front() {
+                return Some(ack);
+            }
+        }
         self.prompt_acks.pop_front()
     }
 
@@ -204,6 +223,9 @@ impl WorkerSession for PiWorkerSession {
 
     fn poll(&mut self) -> Option<WorkerEvent> {
         if let Some(event) = self.pending_worker_events.pop_front() {
+            if matches!(event, WorkerEvent::Activity(_)) && !self.delivery_ack_ready.is_empty() {
+                self.delivery_activity_returned = true;
+            }
             return Some(event);
         }
         loop {
@@ -237,6 +259,11 @@ impl WorkerSession for PiWorkerSession {
                         return Some(WorkerEvent::Started);
                     }
                     SessionActivityKind::MessageEnded => {
+                        self.route_native_delivery(event.value());
+                        if let Some(event) = self.pending_worker_events.pop_front() {
+                            self.delivery_activity_returned = true;
+                            return Some(event);
+                        }
                         if let Some(output) = final_assistant_text(event.value().get("message")) {
                             self.latest_output = output;
                         }
@@ -313,6 +340,8 @@ impl PiWorkerSession {
         images: Vec<crate::extensions::PromptImage>,
     ) -> Result<(), String> {
         let mode = prompt_mode(mode);
+        let tracked_message = message.clone();
+        let tracked_images = images.clone();
         let request_id = self.process.send_request(SessionCommand::Prompt {
             mode,
             message,
@@ -321,14 +350,17 @@ impl PiWorkerSession {
         let reports_ack = submission_id.is_some();
         let submission_id =
             submission_id.unwrap_or_else(|| format!("pi-worker-input-{}", uuid::Uuid::new_v4()));
-        self.prompt_requests.insert(
-            request_id,
-            PendingPrompt {
-                submission_id,
-                mode,
-                reports_ack,
-            },
-        );
+        let prompt = PendingPrompt {
+            submission_id,
+            mode,
+            reports_ack,
+            message: tracked_message,
+            images: tracked_images,
+        };
+        if reports_ack && mode != PromptMode::Normal {
+            self.pending_deliveries.push_back(prompt.clone());
+        }
+        self.prompt_requests.insert(request_id, prompt);
         Ok(())
     }
 
@@ -368,6 +400,10 @@ impl PiWorkerSession {
             return;
         };
         match response.result {
+            Ok(_) if prompt.reports_ack && prompt.mode != PromptMode::Normal => {
+                // Pi's response proves queue admission. Native user message
+                // events below prove delivery to the model.
+            }
             Ok(_) if prompt.reports_ack => {
                 self.prompt_acks.push_back((prompt.submission_id, Ok(())))
             }
@@ -379,9 +415,12 @@ impl PiWorkerSession {
                         error: error.to_string(),
                     });
             }
-            Err(error) if prompt.reports_ack => self
-                .prompt_acks
-                .push_back((prompt.submission_id, Err(error.to_string()))),
+            Err(error) if prompt.reports_ack => {
+                self.pending_deliveries
+                    .retain(|pending| pending.submission_id != prompt.submission_id);
+                self.prompt_acks
+                    .push_back((prompt.submission_id, Err(error.to_string())));
+            }
             Err(error) => {
                 if prompt.mode == PromptMode::Normal && !self.run_active {
                     self.pending_worker_events
@@ -395,6 +434,57 @@ impl PiWorkerSession {
                 }
             }
         }
+    }
+
+    fn route_native_delivery(&mut self, value: &Value) {
+        let Some(message) = value
+            .get("message")
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        else {
+            return;
+        };
+        let Some(text) = native_user_text(message) else {
+            return;
+        };
+        let Some(index) = self
+            .pending_deliveries
+            .iter()
+            .enumerate()
+            .filter(|(_, pending)| pending.message == text)
+            .min_by_key(|(_, pending)| pending.mode != PromptMode::Steer)
+            .map(|(index, _)| index)
+        else {
+            return;
+        };
+        let pending = self
+            .pending_deliveries
+            .remove(index)
+            .expect("pending delivery index");
+        let mode = match pending.mode {
+            PromptMode::Steer => WorkerSendMode::Steer,
+            PromptMode::FollowUp => WorkerSendMode::Queue,
+            PromptMode::Normal => return,
+        };
+        let submission_id = pending.submission_id.clone();
+        if pending.images.is_empty() {
+            self.pending_worker_events.push_back(WorkerEvent::Activity(
+                crate::agents::WorkerActivity::SubmittedInputDelivered {
+                    submission_id: submission_id.clone(),
+                    mode,
+                    message: pending.message,
+                },
+            ));
+        } else {
+            self.pending_worker_events.push_back(WorkerEvent::Activity(
+                crate::agents::WorkerActivity::SubmittedInputDeliveredWithImages {
+                    submission_id: submission_id.clone(),
+                    mode,
+                    message: pending.message,
+                    images: pending.images,
+                },
+            ));
+        }
+        self.delivery_ack_ready.push_back((submission_id, Ok(())));
     }
 
     fn request_session_state(&mut self) -> Result<(), String> {
@@ -528,6 +618,24 @@ fn final_assistant_text(message: Option<&Value>) -> Option<String> {
                     .flatten()
             })
             .collect::<String>(),
+    )
+}
+
+fn native_user_text(message: &Value) -> Option<String> {
+    if let Some(text) = message.get("content").and_then(Value::as_str) {
+        return Some(text.to_owned());
+    }
+    Some(
+        message
+            .get("content")?
+            .as_array()?
+            .iter()
+            .filter_map(|part| {
+                (part["type"].as_str() == Some("text"))
+                    .then(|| part["text"].as_str())
+                    .flatten()
+            })
+            .collect(),
     )
 }
 
