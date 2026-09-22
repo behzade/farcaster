@@ -24,7 +24,10 @@ fn archived_item_identity(item: &ActiveSessionItem) -> String {
         ActiveSessionItem::Session(item) => session_item_identity(item),
     }
 }
-use crate::{app::session::status::roots_waiting_for_descendants, sessions::root_session_for_path};
+use crate::{
+    app::session::status::roots_waiting_for_descendants, app::ui::theme::theme,
+    sessions::root_session_for_path,
+};
 
 impl FarcasterApp {
     pub(in crate::app::views) fn render_inactive_sessions(
@@ -52,6 +55,7 @@ impl FarcasterApp {
             SessionRailKind::Archived => lists.archived,
             SessionRailKind::Project => unreachable!("active sessions use the main rail"),
         };
+        let empty = rows.is_empty();
         let counts = subagent_counts(&self.sessions.all);
         reconcile_list_rows(
             &list_state,
@@ -120,6 +124,22 @@ impl FarcasterApp {
         .size_full();
 
         let drop_entity = entity.clone();
+        let body = if empty {
+            div()
+                .px(theme().space.md)
+                .py(theme().space.sm)
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.subtle)
+                .child("No archived sessions")
+                .into_any_element()
+        } else {
+            div()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_hidden()
+                .child(rows_list)
+                .into_any_element()
+        };
         let section = div()
             .id("archived-sessions")
             .size_full()
@@ -127,13 +147,7 @@ impl FarcasterApp {
             .flex()
             .flex_col()
             .overflow_y_hidden()
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_hidden()
-                    .child(rows_list),
-            )
+            .child(body)
             .child(Scrollbar::vertical(&section_scrollbar));
         session_section_drop_target(section, kind, drop_entity).into_any_element()
     }

@@ -50,11 +50,17 @@ pub(super) enum RailPanel {
 }
 
 impl RailPanel {
+    pub(super) const ALL: [Self; 2] = [Self::Archived, Self::Notifications];
+
     fn labels(self) -> (&'static str, &'static str) {
         match self {
             Self::Archived => ("archived-panel", "Archived"),
             Self::Notifications => ("notification-panel", "Notifications"),
         }
+    }
+
+    fn index(self) -> usize {
+        self as usize
     }
 }
 
@@ -380,14 +386,6 @@ impl FarcasterApp {
         }
     }
 
-    pub(super) fn rail_panels(&self) -> Vec<RailPanel> {
-        (self.archived_session_count() > 0)
-            .then_some(RailPanel::Archived)
-            .into_iter()
-            .chain([RailPanel::Notifications])
-            .collect()
-    }
-
     fn panel_state(&self, panel: RailPanel) -> ResizeState {
         match panel {
             RailPanel::Archived => self.views.archived_panel,
@@ -414,7 +412,7 @@ impl FarcasterApp {
     }
 
     fn rail_panel_sizes(&self) -> (Vec<Pixels>, Vec<Pixels>) {
-        self.rail_panels()
+        RailPanel::ALL
             .into_iter()
             .map(|panel| {
                 let slot = self.panel_slot(panel, self.panel_collapsed(panel));
@@ -432,16 +430,9 @@ impl FarcasterApp {
             .unwrap_or_else(|| theme().layout.notice_panel_max)
     }
 
-    fn rail_panel_index(&self, panel: RailPanel) -> usize {
-        match panel {
-            RailPanel::Archived => 0,
-            RailPanel::Notifications => self.rail_panels().len() - 1,
-        }
-    }
-
     pub(super) fn panel_bounds(&self, panel: RailPanel, collapsed: bool) -> ResizeBounds {
         let (sizes, floors) = self.rail_panel_sizes();
-        let index = self.rail_panel_index(panel);
+        let index = panel.index();
         let resizing = self.panel_state(panel).is_resizing();
         let room = panel_room(&sizes, &floors, self.panel_budget(), index, resizing);
         panel_bounds(room, self.panel_slot(panel, collapsed))
@@ -501,18 +492,18 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let (mut sizes, floors) = self.rail_panel_sizes();
-        for panel in self.rail_panels() {
+        for panel in RailPanel::ALL {
             if !self.panel_state(panel).is_resizing() {
                 continue;
             }
-            let index = self.rail_panel_index(panel);
+            let index = panel.index();
             let bounds = self.panel_bounds(panel, false);
             sizes[index] = self.panel_state(panel).height(bounds);
             if !self.panel_state_mut(panel).update_resize(bounds, pointer_y) {
                 continue;
             }
             let after = self.panel_state(panel).height(bounds);
-            for (panel, height) in self.rail_panels().into_iter().zip(panel_resized(
+            for (panel, height) in RailPanel::ALL.into_iter().zip(panel_resized(
                 &sizes,
                 &floors,
                 self.panel_budget(),
@@ -526,7 +517,7 @@ impl FarcasterApp {
     }
 
     pub(super) fn finish_rail_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
-        for panel in self.rail_panels() {
+        for panel in RailPanel::ALL {
             if self.panel_state_mut(panel).finish_resize() {
                 self.save_panel_layout();
                 self.notify_session_rail_shell(cx);

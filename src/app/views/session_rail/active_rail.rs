@@ -467,7 +467,7 @@ impl FarcasterApp {
                             .child(Scrollbar::vertical(&rail_scrollbar))
                             .when(
                                 active_entry_count == 0
-                                    && archived_entry_count == 0
+                                    && !self.sessions.visible.is_empty()
                                     && self.sessions.error.is_none(),
                                 |list| {
                                     list.child(
@@ -481,9 +481,7 @@ impl FarcasterApp {
                                 },
                             ),
                     )
-                    .when(archived_entry_count > 0, |stack| {
-                        stack.child(archived_panel)
-                    })
+                    .child(archived_panel)
                     .when_some(
                         self.render_rail_notices(entity.clone()),
                         |stack, notices| stack.child(notices),

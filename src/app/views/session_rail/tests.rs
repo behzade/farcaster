@@ -304,3 +304,10 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
         .any(|line| line == "Subagents: 2 subagents")
     );
 }
+
+#[test]
+fn every_rail_panel_is_numbered_in_stack_order() {
+    for (index, panel) in RailPanel::ALL.into_iter().enumerate() {
+        assert_eq!(panel.index(), index);
+    }
+}
