@@ -1,9 +1,8 @@
 use std::path::PathBuf;
 
 use gpui::{Context, Window};
-use gpui_libghostty::{TerminalConfiguration, TerminalOptions};
 
-use super::{AppSurface, FarcasterApp};
+use super::{AppSurface, FarcasterApp, spawn_workspace_terminal};
 
 gpui_libghostty::bind_gpui!(gpui);
 
@@ -46,13 +45,12 @@ impl FarcasterApp {
         let terminal = if let Some(terminal) = cached {
             terminal
         } else {
-            let mut options = TerminalOptions::new(
+            let terminal = match spawn_workspace_terminal(
                 crate::app::infrastructure::shell_environment::terminal_login_shell_command(),
                 project.clone(),
-            );
-            options.configuration =
-                TerminalConfiguration::Custom(crate::app::ui::theme::terminal_theme());
-            let terminal = match Terminal::spawn(options, window, cx) {
+                window,
+                cx,
+            ) {
                 Ok(terminal) => terminal,
                 Err(error) => {
                     self.notify_workspace_error("Terminal", error, cx);
@@ -96,6 +94,7 @@ impl FarcasterApp {
             terminal
         };
 
+        self.retain_workspace_draft(cx);
         self.hide_terminal(cx);
         self.workspace.terminal.view = Some(terminal);
         self.workspace.terminal.project = Some(project);
@@ -119,6 +118,16 @@ impl FarcasterApp {
                     let _ = terminal.update_theme(theme);
                 }
             });
+        }
+        let editors = self
+            .workspace
+            .editor
+            .project_editors
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for editor in editors {
+            editor.update(cx, |editor, cx| editor.update_theme(cx));
         }
         if self.workspace.native_surface_covered && self.workspace.surface == AppSurface::Terminal {
             self.set_terminal_hidden_rendering(true, cx);

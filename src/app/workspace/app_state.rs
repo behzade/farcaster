@@ -20,12 +20,9 @@ pub(in crate::app) struct WorkspaceState {
 }
 
 pub(in crate::app) struct EditorState {
-    pub(in crate::app) view: Option<Entity<NvimEditor>>,
-    pub(in crate::app) terminal_editor_view: Option<Entity<TerminalEditor>>,
-    pub(in crate::app) terminal_editors:
-        HashMap<(PathBuf, String, crate::storage::EditorChoice), Entity<TerminalEditor>>,
+    pub(in crate::app) view: Option<Entity<EditorSession>>,
     pub(in crate::app) active_review: Option<workspace::review::ActiveReview>,
-    pub(in crate::app) project_editors: HashMap<(PathBuf, u64), Entity<NvimEditor>>,
+    pub(in crate::app) project_editors: HashMap<(PathBuf, u64), Entity<EditorSession>>,
     pub(in crate::app) session_tabs: HashMap<String, u64>,
     pub(in crate::app) ready: bool,
     pub(in crate::app) request_generation: u64,
@@ -48,11 +45,13 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) harness_profile_error: Option<String>,
     pub(in crate::app) network_proxy_input: Entity<InputState>,
     pub(in crate::app) network_proxy_error: Option<String>,
+    pub(in crate::app) text_editor: Option<String>,
+    pub(in crate::app) text_editor_input: Entity<InputState>,
+    pub(in crate::app) text_editor_error: Option<String>,
     pub(in crate::app) proxy_save: Option<Task<()>>,
     pub(in crate::app) mcp_error: Option<String>,
     pub(in crate::app) expand_transcript_folders: bool,
-    pub(in crate::app) editor_choice: crate::storage::EditorChoice,
-    pub(in crate::app) editor_error: Option<String>,
     pub(in crate::app) transcript_error: Option<String>,
     pub(in crate::app) _network_proxy_subscription: Subscription,
+    pub(in crate::app) _text_editor_subscription: Subscription,
 }

@@ -206,21 +206,9 @@ impl FarcasterApp {
             self.workspace.native_surface_covered = self.native_workspace_surface_ready();
             if self.workspace.native_surface_covered {
                 self.workspace.native_surface_snapshot = match self.workspace.surface {
-                    AppSurface::Editor => self
-                        .workspace
-                        .editor
-                        .view
-                        .as_ref()
-                        .and_then(|editor| editor.update(cx, |editor, cx| editor.snapshot(cx)).ok())
-                        .or_else(|| {
-                            self.workspace
-                                .editor
-                                .terminal_editor_view
-                                .as_ref()
-                                .and_then(|editor| {
-                                    editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()
-                                })
-                        }),
+                    AppSurface::Editor => self.workspace.editor.view.as_ref().and_then(|editor| {
+                        editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()
+                    }),
                     AppSurface::Terminal => {
                         self.workspace.terminal.view.as_ref().and_then(|terminal| {
                             terminal.update(cx, |terminal, _| terminal.snapshot()).ok()
@@ -476,11 +464,6 @@ impl FarcasterApp {
                     AppSurface::Editor => {
                         if self.workspace.editor.ready
                             && let Some(editor) = self.workspace.editor.view.as_ref()
-                        {
-                            editor.update(cx, |editor, cx| editor.focus(window, cx));
-                        } else if self.workspace.editor.ready
-                            && let Some(editor) =
-                                self.workspace.editor.terminal_editor_view.as_ref()
                         {
                             editor.update(cx, |editor, cx| editor.focus(window, cx));
                         }
@@ -898,7 +881,6 @@ impl FarcasterApp {
             self.workspace.worker_profile_editor.error = Some(error);
         }
         self.settings.mcp_error = None;
-        self.settings.editor_error = None;
         self.open_sheet(AppSheet::Settings, window, cx);
     }
 
@@ -942,17 +924,58 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn select_editor(
+    pub(in crate::app) fn save_settings_text_editor(
         &mut self,
-        choice: crate::storage::EditorChoice,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match crate::app::persistence::open().and_then(|store| store.save_editor_choice(choice)) {
-            Ok(()) => {
-                self.settings.editor_choice = choice;
-                self.settings.editor_error = None;
+        let value = self
+            .settings
+            .text_editor_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        let command = (!value.is_empty()).then_some(value);
+        self.set_settings_text_editor(command, window, cx);
+    }
+
+    pub(in crate::app) fn set_settings_text_editor(
+        &mut self,
+        command: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let command = match command {
+            Some(command) => match crate::editors::EditorCommand::parse(&command) {
+                Ok(command) => Some(command.command_line()),
+                Err(error) => {
+                    self.settings.text_editor_error = Some(error);
+                    cx.notify();
+                    return;
+                }
+            },
+            None => None,
+        };
+        let result = crate::app::persistence::open().and_then(|store| {
+            if store.load_text_editor()? == command {
+                return Ok(false);
             }
-            Err(error) => self.settings.editor_error = Some(error),
+            store.save_text_editor(command.as_deref())?;
+            Ok(true)
+        });
+        match result {
+            Ok(changed) => {
+                self.settings.text_editor_error = None;
+                self.settings.text_editor = command.clone();
+                self.settings.text_editor_input.update(cx, |input, cx| {
+                    input.set_value(command.clone().unwrap_or_default(), window, cx);
+                });
+                if changed {
+                    self.reset_editor_sessions(cx);
+                }
+            }
+            Err(error) => self.settings.text_editor_error = Some(error),
         }
         cx.notify();
     }

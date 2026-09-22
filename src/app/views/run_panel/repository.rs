@@ -300,7 +300,7 @@ impl FarcasterApp {
         let layer = group_title(change.layer);
         let state = change_kind_label(&change.kind);
         let accessible_path = accessible_change_path(change);
-        let accessible = format!("Edit {layer} {state} file {accessible_path} in Neovim");
+        let accessible = format!("Edit {layer} {state} file {accessible_path} in the editor");
         let target =
             div()
                 .id(("repository-change", row_id))

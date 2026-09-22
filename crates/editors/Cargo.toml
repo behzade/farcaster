@@ -6,6 +6,9 @@ rust-version = "1.95"
 publish = false
 license = "GPL-3.0-or-later"
 
+[dependencies]
+farcaster-agents = { path = "../agents" }
+
 [lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"

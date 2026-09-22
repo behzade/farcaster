@@ -218,6 +218,8 @@ mod sessions {
 mod assets;
 #[path = "../src/app/views/attachments.rs"]
 pub(crate) mod attachment_cards;
+#[path = "../src/modules/editors/mod.rs"]
+mod editors;
 #[path = "../src/app/infrastructure/performance.rs"]
 mod performance;
 pub(crate) mod utility {

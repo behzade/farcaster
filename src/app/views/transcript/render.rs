@@ -395,7 +395,7 @@ fn transcript_context_menu(
                 && let Some(artifact) = review_artifact::from_item(&items[index])
             {
                 let entity = entity.clone();
-                menu = menu.item(PopupMenuItem::new("Open review").on_click(
+                menu = menu.item(PopupMenuItem::new("Open in the editor").on_click(
                     move |_, window, cx| {
                         let _ = entity.update(cx, |this, cx| {
                             this.open_review_editor(
@@ -459,7 +459,7 @@ fn transcript_context_menu(
                     }),
             )
             .item(
-                PopupMenuItem::new("Open transcript in Neovim")
+                PopupMenuItem::new("Open transcript in the editor")
                     .action(Box::new(crate::app::OpenTranscriptScratch))
                     .on_click(move |_, window, cx| {
                         let _ = entity.update(cx, |this, cx| {

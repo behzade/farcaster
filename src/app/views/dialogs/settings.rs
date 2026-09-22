@@ -1,4 +1,5 @@
 mod appearance;
+mod editor;
 mod harness_profiles;
 mod worker_tasks;
 use gpui::{
@@ -14,11 +15,8 @@ use gpui_component::{
 use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
-    app::ui::assets::AppIcon,
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
     app::ui::theme::theme,
-    app::workspace::editor::{editor_available, effective_editor_choice},
-    storage::EditorChoice,
 };
 
 pub(in crate::app::views) fn render(
@@ -68,18 +66,7 @@ pub(in crate::app::views) fn render(
                         .child(worker_tasks::render(app, entity.clone()))
                         .child(appearance::render(app, entity.clone()))
                         .child(harness_profiles::render(app, entity.clone()))
-                        .child(editor_setting(
-                            app.settings.editor_choice,
-                            &app.workspace_project(),
-                            entity.clone(),
-                        ))
-                        .when_some(app.settings.editor_error.clone(), |content, error| {
-                            content.child(feedback(
-                                "settings-editor-error",
-                                error,
-                                FeedbackTone::Error,
-                            ))
-                        })
+                        .child(editor::render(app, entity.clone()))
                         .child(transcript_font_size(app.views.transcript.read(cx).font_size, entity.clone()))
                         .child(toggle_setting(
                             "transcript-folders-toggle",
@@ -190,67 +177,6 @@ pub(in crate::app::views) fn render(
         },
     )
     .into_any_element()
-}
-
-fn editor_setting(
-    choice: EditorChoice,
-    project: &std::path::Path,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    let selected = effective_editor_choice(choice, project);
-    let available: Vec<_> = EditorChoice::ALL
-        .into_iter()
-        .filter(|choice| editor_available(*choice, project))
-        .collect();
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(theme().space.md)
-        .child(setting_label(
-            "Editor",
-            "Open files, projects, and review locations in this editor. Chat code capture uses embedded Neovim.",
-        ))
-        .child(
-            div()
-                .flex()
-                .gap(theme().space.xs)
-                .when(available.is_empty(), |options| {
-                    options.child("No editor is available")
-                })
-                .children(available.into_iter().map(|option| {
-                    editor_option(
-                        format!("editor-{}", option.as_str()),
-                        option.label(),
-                        AppIcon::for_editor(option),
-                        option,
-                        selected,
-                        entity.clone(),
-                    )
-                })),
-        )
-        .into_any_element()
-}
-
-fn editor_option(
-    id: String,
-    label: &'static str,
-    icon: AppIcon,
-    option: EditorChoice,
-    selected: EditorChoice,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    Button::new(id)
-        .icon(icon)
-        .label(label)
-        .with_size(Size::Small)
-        .toggled(option == selected)
-        .when(option == selected, |button| button.primary())
-        .when(option != selected, |button| button.secondary())
-        .on_click(move |_, _, cx| {
-            let _ = entity.update(cx, |this, cx| this.select_editor(option, cx));
-        })
-        .into_any_element()
 }
 
 fn toggle_setting(

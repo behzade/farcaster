@@ -50,7 +50,11 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ("space", "Open action picker", Command::Actions),
     ("/", "Search sessions", Command::SearchSessions),
     ("e", "Open editor", Command::Editor),
-    ("v", "Open transcript in Neovim", Command::TranscriptScratch),
+    (
+        "v",
+        "Open transcript in the editor",
+        Command::TranscriptScratch,
+    ),
     ("c", "Send to chat", Command::SendToChat),
     ("t", "Open terminal", Command::Terminal),
     ("n", "New session", Command::NewSession),

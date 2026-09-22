@@ -1,7 +1,7 @@
 use gpui::{Context, Entity, FocusHandle, Focusable as _, Subscription, Window};
 use gpui_component::input::TextareaState;
 
-use super::neovim::CodeContext;
+use super::editor_session::CodeContext;
 use crate::app::{AppSurface, FarcasterApp, ui::primitives::create_submit_textarea};
 use crate::runtime::TaskSettings;
 

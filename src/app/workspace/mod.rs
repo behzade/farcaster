@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use gpui_libghostty::{TerminalConfiguration, TerminalOptions};
+
 use super::*;
 
 mod app_state;
@@ -11,24 +13,30 @@ const NATIVE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(in crate::app) mod code_tasks;
 pub(in crate::app) mod editor;
-mod external_editor;
+pub(in crate::app) mod editor_session;
 mod harness_profiles;
-pub(in crate::app) mod neovim;
-mod neovim_adapter;
 mod regions;
 pub(in crate::app) mod review;
 pub(in crate::app) mod runtime_picker;
 pub(in crate::app) mod send_to_chat;
 mod surfaces;
 mod terminal;
-pub(in crate::app) mod terminal_editor;
 pub(in crate::app) mod theme_settings;
-mod vscode;
-mod zed;
 pub(in crate::app) use terminal::Terminal;
 pub(in crate::app) mod worker_tasks;
 
 pub(crate) use surfaces::{CycleWorkspaceBackward, CycleWorkspaceForward};
+
+pub(in crate::app) fn spawn_workspace_terminal<T: 'static>(
+    command: String,
+    project: PathBuf,
+    window: &mut Window,
+    cx: &mut Context<T>,
+) -> Result<Entity<Terminal>, String> {
+    let mut options = TerminalOptions::new(command, project);
+    options.configuration = TerminalConfiguration::Custom(crate::app::ui::theme::terminal_theme());
+    Terminal::spawn(options, window, cx)
+}
 
 impl FarcasterApp {
     fn monitor_native_process(

@@ -9,6 +9,7 @@ pub(crate) use farcaster_agents as agents;
 pub(crate) use farcaster_agents::builtin_mcp;
 pub(crate) use farcaster_agents::extensions as protocol;
 pub(crate) use farcaster_conversation as conversation;
+pub(crate) use farcaster_editors as editors;
 pub(crate) use farcaster_projects as projects;
 pub(crate) use farcaster_repository as repository;
 pub(crate) use farcaster_reviews as reviews;

@@ -2,10 +2,10 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::layout::{TRAFFIC_LIGHT_INSET, shows_left_inline},
     app::ui::primitives::{
-        AppIconSize, AppTooltip as _, ButtonTone, app_icon, icon_button, icon_control,
+        AppIconSize, AppTooltip as _, ButtonTone, IndicatorEdge, app_icon, icon_button,
+        icon_control, line_indicator,
     },
     app::ui::theme::theme,
-    app::workspace::editor::effective_editor_choice,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
 };
 use gpui::{
@@ -165,8 +165,6 @@ impl FarcasterApp {
         } else {
             ("Ctrl", "Chat composer (Ctrl+G Ctrl+G anywhere)")
         };
-        let editor =
-            effective_editor_choice(self.settings.editor_choice, &self.workspace_project());
         div()
             .h_full()
             .flex()
@@ -184,12 +182,12 @@ impl FarcasterApp {
                 "show-editor-surface",
                 format!(
                     "{} ({modifier}+E in app views; {} anywhere)",
-                    editor.label(),
+                    self.text_editor_name(),
                     crate::app::ui::navigation::command_key(
                         crate::app::ui::navigation::Command::Editor
                     )
                 ),
-                AppIcon::for_editor(editor),
+                self.text_editor_icon(),
                 self.workspace.surface == AppSurface::Editor,
                 entity.clone(),
                 FarcasterApp::show_editor_surface,
@@ -225,17 +223,17 @@ fn surface_control(
         .w(theme().size(34.0))
         .h_full()
         .rounded_none()
+        .text_color(if active {
+            theme().colors.text
+        } else {
+            theme().colors.muted
+        })
         .hover(|control| control.bg(theme().colors.highlight))
         .when(active, |control| {
-            control.text_color(theme().colors.indicator).child(
-                div()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .h(theme().size(2.0))
-                    .bg(theme().colors.indicator),
-            )
+            control.child(line_indicator(
+                IndicatorEdge::Bottom,
+                theme().colors.indicator,
+            ))
         })
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {

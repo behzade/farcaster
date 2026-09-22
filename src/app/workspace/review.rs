@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use gpui::{Context, Window};
 
-use super::{AppSurface, FarcasterApp, neovim::EditorTarget};
+use super::{AppSurface, FarcasterApp, editor_session::EditorTarget};
 use crate::reviews::{Review, ReviewNavigation, resolve_path};
 
 pub(in crate::app) struct ActiveReview {
@@ -87,6 +87,41 @@ impl FarcasterApp {
                     self.composer.sessions.current_target(),
                 )
             })
+    }
+
+    pub(crate) fn open_review_editor(
+        &mut self,
+        project: PathBuf,
+        review: Review,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.center_surface_switch_blocked() {
+            return;
+        }
+        let current = self.workspace_project();
+        let validation = review.validate().and_then(|()| {
+            let root = current.canonicalize().map_err(|error| error.to_string())?;
+            if project != root {
+                return Err("This review belongs to a different project.".into());
+            }
+            for item in &review.items {
+                resolve_path(&root, &item.path)?;
+            }
+            Ok(())
+        });
+        if let Err(error) = validation {
+            self.notify_workspace_error("Review", error, cx);
+            return;
+        }
+        self.activate_editor_tab(current, EditorTarget::Review(review), window, cx);
+        if self.visible_review().is_some()
+            && !crate::app::ui::layout::shows_right_inline(crate::app::ui::layout::layout_mode(
+                window.viewport_size().width,
+            ))
+        {
+            self.open_run_sheet(window, cx);
+        }
     }
 
     pub(in crate::app) fn open_review_location(

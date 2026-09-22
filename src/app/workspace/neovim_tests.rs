@@ -14,7 +14,7 @@ impl Drop for Server {
 fn code_capture_preserves_normal_visual_and_unsaved_buffer_state() -> Result<(), String> {
     let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
     let socket = directory.path().join("nvim.sock");
-    let executable = nvim_executable();
+    let executable = crate::editors::neovim_executable();
     let _server = Server(
         Command::new(&executable)
             .current_dir(directory.path())
@@ -105,7 +105,7 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
     let project = tempfile::tempdir().map_err(|error| error.to_string())?;
     let a = tempfile::tempdir().map_err(|error| error.to_string())?;
     let b = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let executable = nvim_executable();
+    let executable = crate::editors::neovim_executable();
     let start = |state: &Path| {
         Command::new(&executable)
             .current_dir(project.path())
@@ -270,6 +270,51 @@ fn session_processes_isolate_buffers_and_preserve_views() -> Result<(), String> 
         "one\ntwo\nthree\nfour\nfive\n"
     );
     Ok(())
+}
+
+#[test]
+fn launch_arguments_carry_the_file_and_the_line_when_the_editor_takes_one() {
+    let project = Path::new("/tmp/project");
+    let file = EditorFile::new(PathBuf::from("/tmp/project/src/main.rs"), Some(42));
+    let arguments = |program: &str| {
+        target_arguments(
+            &EditorCommand::parse(program).expect("parses"),
+            Some(&file),
+            project,
+        )
+        .into_iter()
+        .map(|argument| argument.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        arguments("micro"),
+        vec!["+42".to_owned(), "/tmp/project/src/main.rs".to_owned()]
+    );
+    assert_eq!(arguments("vim")[0], "+42");
+    assert_eq!(arguments("hx"), vec!["/tmp/project/src/main.rs".to_owned()]);
+    let plain = EditorFile::new(PathBuf::from("/tmp/project/src/main.rs"), None);
+    let arguments = target_arguments(
+        &EditorCommand::parse("micro").expect("parses"),
+        Some(&plain),
+        project,
+    )
+    .into_iter()
+    .map(|argument| argument.to_string_lossy().into_owned())
+    .collect::<Vec<_>>();
+    assert_eq!(arguments, vec!["/tmp/project/src/main.rs".to_owned()]);
+}
+
+#[test]
+fn launch_arguments_fall_back_to_the_project_when_there_is_no_file() {
+    let arguments = target_arguments(
+        &EditorCommand::parse("micro").expect("parses"),
+        None,
+        Path::new("/tmp/project"),
+    )
+    .into_iter()
+    .map(|argument| argument.to_string_lossy().into_owned())
+    .collect::<Vec<_>>();
+    assert_eq!(arguments, vec!["/tmp/project".to_owned()]);
 }
 
 #[test]

@@ -339,7 +339,14 @@ pub fn backend_statuses() -> Vec<super::contract::AgentBackendStatus> {
         .collect()
 }
 
-fn program_available(program: &std::path::Path) -> bool {
+pub fn program_available(program: &std::path::Path) -> bool {
+    program_available_in(program, std::env::var_os("PATH").as_deref())
+}
+
+pub fn program_available_in(
+    program: &std::path::Path,
+    search_path: Option<&std::ffi::OsStr>,
+) -> bool {
     if program.is_absolute()
         || program
             .parent()
@@ -347,8 +354,8 @@ fn program_available(program: &std::path::Path) -> bool {
     {
         return program.is_file();
     }
-    std::env::var_os("PATH").is_some_and(|path| {
-        std::env::split_paths(&path)
+    search_path.is_some_and(|path| {
+        std::env::split_paths(path)
             .map(|directory| directory.join(program))
             .any(|candidate| candidate.is_file())
     })

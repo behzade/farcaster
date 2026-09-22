@@ -5,18 +5,13 @@ use gpui::{Context, Window};
 
 use super::FarcasterApp;
 use crate::{
-    app::workspace::{editor::EditorRequest, neovim::EditorTarget, send_to_chat::CodeDestination},
+    app::workspace::send_to_chat::CodeDestination,
     projects::{self, StartupTrust, TrustChoice},
     runtime::{RuntimeCommand, TaskSettings},
 };
 
 pub(in crate::app) enum PendingTrustAction {
     Terminal(PathBuf),
-    Editor(EditorRequest),
-    EditorTab {
-        project: PathBuf,
-        target: EditorTarget,
-    },
     SendToChat {
         destination: CodeDestination,
         project: PathBuf,
@@ -31,12 +26,7 @@ pub(in crate::app) enum PendingTrustAction {
 impl PendingTrustAction {
     fn project(&self) -> &Path {
         match self {
-            Self::Terminal(project)
-            | Self::EditorTab { project, .. }
-            | Self::SendToChat { project, .. } => project,
-            Self::Editor(EditorRequest::Project(project))
-            | Self::Editor(EditorRequest::File { project, .. })
-            | Self::Editor(EditorRequest::Review { project, .. }) => project,
+            Self::Terminal(project) | Self::SendToChat { project, .. } => project,
             Self::StartCodeTask { settings, .. } => &settings.project,
         }
     }
@@ -94,24 +84,14 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let current_project = self.workspace_project();
-        if matches!(
-            &action,
-            PendingTrustAction::Terminal(_)
-                | PendingTrustAction::Editor(_)
-                | PendingTrustAction::EditorTab { .. }
-        ) && action.project() != current_project.as_path()
+        if matches!(&action, PendingTrustAction::Terminal(_))
+            && action.project() != current_project.as_path()
         {
             return;
         }
         match action {
             PendingTrustAction::Terminal(project) => {
                 self.activate_terminal_for_project(project, window, cx);
-            }
-            PendingTrustAction::Editor(request) => {
-                self.open_editor_request(request, window, cx);
-            }
-            PendingTrustAction::EditorTab { project, target } => {
-                self.activate_editor_tab(project, target, window, cx);
             }
             PendingTrustAction::SendToChat {
                 destination,

@@ -61,7 +61,7 @@ vim.cmd('qa!')
 "#;
     let script_path = project.path().join("test.lua");
     std::fs::write(&script_path, script).expect("test operation should succeed");
-    let output = Command::new(nvim_executable())
+    let output = Command::new(crate::editors::neovim_executable())
         .current_dir(project.path())
         .args(["--clean", "--headless", "-i", "NONE", "-l"])
         .arg(script_path)

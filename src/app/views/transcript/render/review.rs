@@ -137,7 +137,7 @@ fn review_header(
     let action = if expanded { "hide" } else { "show" };
     tool_changes::activation_row(
         format!("review-header-{key}"),
-        format!("Open review: {title} · {modifier}-click to {action} locations"),
+        format!("Open review in the editor: {title} · {modifier}-click to {action} locations"),
         move |alt, window, cx| {
             if alt {
                 toggle(window, cx);

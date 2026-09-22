@@ -90,10 +90,7 @@ impl FarcasterApp {
                 .into_any_element()
         } else {
             match self.workspace.surface {
-                AppSurface::Editor
-                    if self.workspace.editor.view.is_some()
-                        || self.workspace.editor.terminal_editor_view.is_some() =>
-                {
+                AppSurface::Editor if self.workspace.editor.view.is_some() => {
                     self.render_editor_surface()
                 }
                 AppSurface::Terminal if self.workspace.terminal.view.is_some() => {

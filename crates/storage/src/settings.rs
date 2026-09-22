@@ -125,6 +125,33 @@ impl StateStore {
             .map_err(|error| format!("save transcript folder setting: {error}"))
     }
 
+    pub fn load_text_editor(&self) -> Result<Option<String>, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='text_editor'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| value.filter(|value| !value.trim().is_empty()))
+            .map_err(|error| format!("load text editor setting: {error}"))
+    }
+
+    pub fn save_text_editor(&self, command: Option<&str>) -> Result<(), String> {
+        match command {
+            Some(command) => self.connection.execute(
+                "INSERT INTO meta(key, value) VALUES('text_editor', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [command],
+            ),
+            None => self
+                .connection
+                .execute("DELETE FROM meta WHERE key='text_editor'", []),
+        }
+        .map(|_| ())
+        .map_err(|error| format!("save text editor setting: {error}"))
+    }
+
     pub fn load_preferred_harness(&self, project: &Path) -> Result<Option<Backend>, String> {
         // Before the first saved choice, infer it from this project's main sessions.
         let normalized_project = crate::sessions::normalize_session_path(project);

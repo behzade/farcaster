@@ -79,6 +79,20 @@ Linux AppImages explicitly bundle libxcb, Wayland client/EGL, the Vulkan
 loader, and libglvnd's libEGL and libGLdispatch. Their license and attribution
 texts are included under `THIRD_PARTY_LICENSES`.
 
+The Vim, Helix, and GNU Emacs editor icons under `assets/workbench-icons` are
+from Simple Icons, which distributes its icons under CC0 1.0 Universal.
+Upstream: <https://github.com/simple-icons/simple-icons>. Its license is
+included at `THIRD_PARTY_LICENSES/SIMPLE-ICONS-CC0-1.0.md`.
+
+The GNU nano editor icon is the nano logo from the file-icons icon set,
+distributed under the ISC license. Upstream:
+<https://github.com/file-icons/icons>. Its license is included at
+`THIRD_PARTY_LICENSES/FILE-ICONS-ISC.txt`.
+
+The Micro editor icon is adapted from Micro's logo mark and is distributed
+under MIT. Upstream: <https://github.com/zyedidia/micro>. Its license is
+included at `THIRD_PARTY_LICENSES/MICRO-MIT.txt`.
+
 File-type icons under `assets/file-icons` are from Material Icon Theme,
 distributed under MIT, and retain their upstream colors. The exact upstream
 license is included at `THIRD_PARTY_LICENSES/MATERIAL-ICON-THEME-MIT.txt`.

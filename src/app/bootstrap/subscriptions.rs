@@ -5,6 +5,7 @@ pub(super) struct BootstrapSubscriptions {
     pub(super) search: Subscription,
     pub(super) session_title: Subscription,
     pub(super) network_proxy: Subscription,
+    pub(super) text_editor: Subscription,
     pub(super) window_placement: Subscription,
 }
 
@@ -64,11 +65,25 @@ pub(super) fn create(
         },
     );
 
+    let text_editor = cx.subscribe_in(
+        &inputs.text_editor,
+        window,
+        |this, _, event: &InputEvent, window, cx| {
+            if !this.overlays.view.settings {
+                return;
+            }
+            if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                this.save_settings_text_editor(window, cx);
+            }
+        },
+    );
+
     BootstrapSubscriptions {
         composer,
         search,
         session_title,
         network_proxy,
+        text_editor,
         window_placement,
     }
 }

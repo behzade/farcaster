@@ -277,7 +277,7 @@ fn run_review_script(project: &Path, script: &str) {
     )
     .expect("write editor fixture");
     std::fs::write(project.join("test.lua"), script).expect("write test script");
-    let output = Command::new(nvim_executable())
+    let output = Command::new(crate::editors::neovim_executable())
         .current_dir(project)
         .args(["--clean", "--headless", "-i", "NONE", "-l", "test.lua"])
         .output()

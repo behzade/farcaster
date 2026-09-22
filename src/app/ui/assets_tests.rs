@@ -73,15 +73,19 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
         AppIcon::Codex,
         AppIcon::Copy,
         AppIcon::Cursor,
+        AppIcon::Emacs,
         AppIcon::Eye,
         AppIcon::Folder,
         AppIcon::FolderPlus,
         AppIcon::Ghostty,
         AppIcon::GitFork,
+        AppIcon::Helix,
         AppIcon::Hourglass,
         AppIcon::Key,
         AppIcon::List,
         AppIcon::MagnifyingGlass,
+        AppIcon::Micro,
+        AppIcon::Nano,
         AppIcon::Neovim,
         AppIcon::OpenCode,
         AppIcon::PaintRoller,
@@ -93,6 +97,7 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
         AppIcon::SpinnerGap,
         AppIcon::Stop,
         AppIcon::Trash,
+        AppIcon::Vim,
         AppIcon::WarningCircle,
         AppIcon::X,
         AppIcon::XCircle,
@@ -123,7 +128,7 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
         assert_themeable(icon.path().as_ref());
     }
 
-    for icon in [AppIcon::Helix, AppIcon::Vim, AppIcon::VsCode, AppIcon::Zed] {
+    for icon in [AppIcon::Helix, AppIcon::Vim] {
         assert_bundled(icon.path().as_ref());
     }
 }

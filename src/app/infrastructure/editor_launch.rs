@@ -78,7 +78,7 @@ pub(crate) fn run_if_requested() -> Result<(), String> {
     }
     let path = arguments.next().ok_or("missing editor launch file")?;
     let error = take_command(Path::new(&path))?.exec();
-    Err(format!("launch editor: {error}"))
+    Err(format!("launch the editor: {error}"))
 }
 
 #[cfg(test)]
