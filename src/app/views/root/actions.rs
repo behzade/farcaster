@@ -132,10 +132,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &NextSession, window, cx| {
         this.switch_relative_session(1, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| {
-        this.sessions.archived_expanded = !this.sessions.archived_expanded;
-        this.notify_session_rail(cx);
-    }))
+    .on_action(cx.listener(|this, _: &ToggleArchivedSessions, _, cx| this.toggle_archive_panel(cx)))
     .on_action(cx.listener(|this, _: &SubmitPrompt, window, cx| {
         let value = this.composer.input.read(cx).value().trim().to_owned();
         if !value.is_empty() || this.has_composer_attachments() {
@@ -227,27 +224,21 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
 
 fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     root.on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
-        this.update_session_rail_resize(event.position.x, cx);
-        this.update_run_panel_resize(event.position.x, cx);
-        this.update_notification_panel_resize(event.position.y, cx);
-        this.update_archived_panel_resize(event.position.y, cx);
+        if event.dragging() {
+            this.update_session_rail_resize(event.position.x, cx);
+            this.update_run_panel_resize(event.position.x, cx);
+            this.update_notification_panel_resize(event.position.y, cx);
+            this.update_archived_panel_resize(event.position.y, cx);
+        } else {
+            this.finish_resizes(cx);
+        }
     }))
     .on_mouse_up(
         gpui::MouseButton::Left,
-        cx.listener(|this, _, _, cx| {
-            this.finish_session_rail_resize(cx);
-            this.finish_run_panel_resize(cx);
-            this.finish_notification_panel_resize(cx);
-            this.finish_archived_panel_resize(cx);
-        }),
+        cx.listener(|this, _, _, cx| this.finish_resizes(cx)),
     )
     .on_mouse_up_out(
         gpui::MouseButton::Left,
-        cx.listener(|this, _, _, cx| {
-            this.finish_session_rail_resize(cx);
-            this.finish_run_panel_resize(cx);
-            this.finish_notification_panel_resize(cx);
-            this.finish_archived_panel_resize(cx);
-        }),
+        cx.listener(|this, _, _, cx| this.finish_resizes(cx)),
     )
 }
