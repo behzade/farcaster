@@ -1,6 +1,6 @@
-use crate::app::composer::sessions::{ComposerSessions, ComposerSnapshot, HistoryNavigation};
+use super::{ComposerSessions, ComposerSnapshot, HistoryNavigation};
 
-fn sessions(target: &str) -> ComposerSessions {
+fn sessions(target: &str) -> ComposerSessions<String> {
     ComposerSessions::for_test(target.into())
 }
 
@@ -21,9 +21,7 @@ fn failed_send_to_chat_keeps_both_drafts_and_destination_cursor() {
     let mut sessions = sessions("session:destination");
     let destination = ComposerSnapshot::new("existing draft".into(), 3, 1..3);
     sessions.switch_to("session:source".into(), destination.clone());
-    let attachment = crate::app::infrastructure::persistence::ComposerAttachment::TextFile {
-        path: "/project/notes.txt".into(),
-    };
+    let attachment = "/project/notes.txt".to_owned();
     sessions.set_attachments("session:destination", vec![attachment.clone()]);
     let source = ComposerSnapshot::new("source draft".into(), 2, 2..2);
     sessions.capture_current(source.clone());

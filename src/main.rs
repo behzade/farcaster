@@ -14,6 +14,7 @@ pub(crate) use farcaster_repository as repository;
 pub(crate) use farcaster_reviews as reviews;
 pub(crate) use farcaster_sessions as sessions;
 pub(crate) use farcaster_sessions::activity as agent_activity;
+pub(crate) use farcaster_storage as storage;
 pub(crate) use farcaster_utility as utility;
 
 fn main() -> std::process::ExitCode {

@@ -1,9 +1,14 @@
 pub mod activity;
+mod composer;
 mod contract;
 mod core;
 mod draft;
 mod folders;
 
+pub use composer::{
+    ComposerPersistence, ComposerRecord, ComposerSessions, ComposerSnapshot, HistoryNavigation,
+    draft_id, draft_target, project_target, session_path, session_target,
+};
 pub use contract::{
     LoadedHistory, PromptDeliveryReconciliation, RUNNING_ACTIVITY_TIMEOUT, RestoredQuestion,
     SessionDiscovery, SessionImport, SessionSummary, SessionTarget, SessionTransfer,

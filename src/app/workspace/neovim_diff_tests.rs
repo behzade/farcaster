@@ -1,96 +1,15 @@
 use super::*;
 
-struct Project(tempfile::TempDir);
-
-impl Project {
-    fn new() -> Self {
-        Self(
-            tempfile::tempdir_in(
-                std::env::temp_dir()
-                    .canonicalize()
-                    .expect("test operation should succeed"),
-            )
-            .expect("test operation should succeed"),
-        )
-    }
-
-    fn git(&self, args: &[&str]) {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(self.0.path())
-            .args(args)
-            .output()
-            .expect("test operation should succeed");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-}
-
-#[test]
-fn head_base_handles_nested_added_deleted_and_unborn_files() {
-    let project = Project::new();
-    project.git(&["init", "-q"]);
-    let path = project.0.path().join("nested/it's | file.rs");
-    std::fs::create_dir(path.parent().expect("test operation should succeed"))
-        .expect("test operation should succeed");
-    std::fs::write(&path, "original\n").expect("test operation should succeed");
-    assert_eq!(
-        head_contents(&path).expect("test operation should succeed"),
-        b""
-    );
-    project.git(&["add", "."]);
-    project.git(&[
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.invalid",
-        "-c",
-        "commit.gpgsign=false",
-        "commit",
-        "-qm",
-        "base",
-    ]);
-    std::fs::write(&path, "changed\n").expect("test operation should succeed");
-    assert_eq!(
-        head_contents(&path).expect("test operation should succeed"),
-        b"original\n"
-    );
-    let added = project.0.path().join("nested/added.rs");
-    std::fs::write(&added, "new\n").expect("test operation should succeed");
-    assert_eq!(
-        head_contents(&added).expect("test operation should succeed"),
-        b""
-    );
-    project.git(&["add", "."]);
-    assert_eq!(
-        head_contents(&added).expect("test operation should succeed"),
-        b""
-    );
-    std::fs::remove_file(&added).expect("test operation should succeed");
-    std::fs::remove_file(&path).expect("test operation should succeed");
-    std::fs::remove_dir(path.parent().expect("test operation should succeed"))
-        .expect("test operation should succeed");
-    assert_eq!(
-        head_contents(&path).expect("test operation should succeed"),
-        b"original\n"
-    );
-    let outside = Project::new();
-    assert!(head_contents(&outside.0.path().join("file.rs")).is_err());
-}
-
 #[test]
 #[ignore = "requires a Neovim executable; exercises real diff windows"]
 fn diff_windows_preserve_edits_and_plain_open_restores_normal_view() {
-    let project = Project::new();
-    std::fs::write(project.0.path().join("work.rs"), "working\nsecond\n")
+    let project = tempfile::tempdir().expect("create project");
+    std::fs::write(project.path().join("work.rs"), "working\nsecond\n")
         .expect("test operation should succeed");
-    std::fs::write(project.0.path().join("base"), "original\nsecond\n")
+    std::fs::write(project.path().join("base"), "original\nsecond\n")
         .expect("test operation should succeed");
     std::fs::write(
-        project.0.path().join("activate.lua"),
+        project.path().join("activate.lua"),
         format!("return {}", include_str!("neovim_session.lua")),
     )
     .expect("test operation should succeed");
@@ -140,13 +59,13 @@ assert(not vim.wo.diff and vim.bo.modified)
 assert(vim.api.nvim_get_current_buf() == work)
 vim.cmd('qa!')
 "#;
-    let script_path = project.0.path().join("test.lua");
+    let script_path = project.path().join("test.lua");
     std::fs::write(&script_path, script).expect("test operation should succeed");
     let executable = std::env::var_os("FARCASTER_NVIM")
         .or_else(|| std::env::var_os("GPUI_NVIM"))
         .unwrap_or_else(|| "nvim".into());
     let output = Command::new(executable)
-        .current_dir(project.0.path())
+        .current_dir(project.path())
         .args(["--clean", "--headless", "-i", "NONE", "-l"])
         .arg(script_path)
         .output()

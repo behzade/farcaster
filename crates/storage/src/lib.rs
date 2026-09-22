@@ -30,6 +30,7 @@ use crate::{
 
 mod backend;
 mod composer;
+mod composer_worker;
 #[path = "drafts.rs"]
 mod draft_storage;
 mod identity;
@@ -54,6 +55,7 @@ mod settings;
 mod traits;
 mod transcript;
 
+pub use composer_worker::ComposerPersistenceWorker;
 use draft_storage::{remove_draft_row, save_draft};
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
@@ -140,16 +142,7 @@ pub struct CachedSessionControlDefaults {
     pub access_mode: Option<crate::agents::HarnessAccessMode>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ComposerRecord {
-    pub target: String,
-    pub text: String,
-    pub cursor: usize,
-    pub selection_start: usize,
-    pub selection_end: usize,
-    pub history: Vec<String>,
-    pub attachments: Vec<ComposerAttachment>,
-}
+pub type ComposerRecord = sessions::ComposerRecord<ComposerAttachment>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ComposerAttachment {

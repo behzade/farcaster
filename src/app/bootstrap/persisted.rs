@@ -100,7 +100,8 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
 
     let composer_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_composer_sessions");
-    let (composer_sessions, composer_error) = ComposerSessions::load(draft_target(&selected_draft));
+    let (composer_sessions, composer_error) =
+        crate::app::composer::sessions::load(draft_target(&selected_draft));
     drop(composer_timing);
     if error.is_none() {
         error = composer_error;

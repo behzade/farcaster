@@ -1,5 +1,6 @@
 use super::*;
 use crate::agents::Backend;
+use crate::sessions::session_target;
 
 #[test]
 fn bound_draft_aliases_preserve_write_and_delete_order() -> Result<(), Box<dyn std::error::Error>> {

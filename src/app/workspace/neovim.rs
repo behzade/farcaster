@@ -22,9 +22,11 @@ const RETRY_INTERVAL: Duration = Duration::from_millis(25);
 const SESSION_VIEW: &str = include_str!("neovim_session.lua");
 const REVIEW_SELECTION_FILE: &str = "review-selection.json";
 
-#[path = "neovim_diff.rs"]
-mod diff;
-use diff::head_contents;
+use crate::repository::git_head_contents;
+
+#[cfg(test)]
+#[path = "neovim_diff_tests.rs"]
+mod diff_tests;
 
 #[derive(Debug, serde::Deserialize)]
 pub(in crate::app) struct CodeContext {
@@ -326,7 +328,7 @@ fn open_target(
         EditorTarget::Diff(path, line) => {
             let mut file =
                 tempfile::NamedTempFile::new_in(state_dir).map_err(|error| error.to_string())?;
-            file.write_all(&head_contents(&path)?)
+            file.write_all(&git_head_contents(&path)?)
                 .map_err(|error| error.to_string())?;
             let expression = format!(
                 "luaeval({}, [{tab}, {}, {}, v:null, {}])",

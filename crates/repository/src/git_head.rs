@@ -3,7 +3,7 @@ use std::{
     process::Command,
 };
 
-pub(super) fn head_contents(path: &Path) -> Result<Vec<u8>, String> {
+pub fn git_head_contents(path: &Path) -> Result<Vec<u8>, String> {
     let parent = path
         .ancestors()
         .skip(1)
@@ -51,5 +51,5 @@ pub(super) fn head_contents(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
-#[path = "neovim_diff_tests.rs"]
+#[path = "git_head_tests.rs"]
 mod tests;

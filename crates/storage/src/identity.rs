@@ -268,12 +268,11 @@ pub(super) fn target_for_session(
     locator: Option<&str>,
 ) -> rusqlite::Result<String> {
     if let Some(locator) = locator {
-        Ok(format!(
-            "session:{}",
-            crate::sessions::normalize_session_path(Path::new(locator)).display()
+        Ok(crate::sessions::session_target(
+            &crate::sessions::normalize_session_path(Path::new(locator)),
         ))
     } else if let Some(key) = client_key {
-        Ok(format!("draft:{key}"))
+        Ok(crate::sessions::draft_target(key))
     } else {
         Err(rusqlite::Error::InvalidQuery)
     }
@@ -283,9 +282,8 @@ fn target_locator(target: &str, session_path: Option<&Path>) -> Option<PathBuf> 
     session_path
         .map(PathBuf::from)
         .or_else(|| {
-            target
-                .strip_prefix("session:")
-                .filter(|path| !path.is_empty())
+            crate::sessions::session_path(target)
+                .filter(|path| !path.as_os_str().is_empty())
                 .map(PathBuf::from)
         })
         .map(|path| crate::sessions::normalize_session_path(&path))
@@ -298,7 +296,7 @@ pub(super) fn create_target_session(
     project: &Path,
     session_path: Option<&Path>,
 ) -> Result<i64, String> {
-    let client_key = target.strip_prefix("draft:").filter(|key| !key.is_empty());
+    let client_key = crate::sessions::draft_id(target).filter(|key| !key.is_empty());
     let locator = target_locator(target, session_path);
     if client_key.is_none() && locator.is_none() {
         return Err(format!("invalid session target: {target}"));
@@ -327,7 +325,7 @@ impl StateStore {
         session_path: Option<&Path>,
         harness: Option<Backend>,
     ) -> Result<Option<i64>, String> {
-        if let Some(key) = target.strip_prefix("draft:") {
+        if let Some(key) = crate::sessions::draft_id(target) {
             let id = self
                 .connection
                 .query_row(
