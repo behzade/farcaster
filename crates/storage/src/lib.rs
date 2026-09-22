@@ -11,6 +11,7 @@ use crate::agents::Backend;
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, MutexGuard},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -61,6 +62,43 @@ const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
 pub struct StateStore {
     connection: Connection,
     image_directory: PathBuf,
+}
+
+#[derive(Clone)]
+pub struct SharedStateStore(Arc<Mutex<StateStore>>);
+
+impl SharedStateStore {
+    pub fn new(store: StateStore) -> Self {
+        Self(Arc::new(Mutex::new(store)))
+    }
+
+    pub fn lock(&self) -> Result<MutexGuard<'_, StateStore>, String> {
+        self.0
+            .lock()
+            .map_err(|_| "State database lock is poisoned".into())
+    }
+
+    pub fn with<T>(
+        &self,
+        operation: impl FnOnce(&mut StateStore) -> Result<T, String>,
+    ) -> Result<T, String> {
+        operation(&mut *self.lock()?)
+    }
+
+    pub fn arc(&self) -> Arc<Mutex<StateStore>> {
+        self.0.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_at(path: &Path) -> Result<Self, String> {
+        StateStore::open_at(path).map(Self::new)
+    }
+}
+
+impl From<StateStore> for SharedStateStore {
+    fn from(store: StateStore) -> Self {
+        Self::new(store)
+    }
 }
 
 impl StateStore {

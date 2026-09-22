@@ -1,0 +1,441 @@
+use super::*;
+use crate::agents::Backend;
+
+const ONE_PIXEL_PNG: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+#[test]
+fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<(), String> {
+    use crate::runtime::tests::owner_without_process;
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut state = StateStore::open_at(&database)?;
+    let id = state.enqueue_prompt(
+        "draft:cancel",
+        Backend::Codex,
+        temp.path(),
+        None,
+        PromptMode::FollowUp,
+        "stale",
+        &[],
+    )?;
+    state.record_prompt_acceptance(id, "draft:cancel", Some(&session), "stale-id", true)?;
+    let (mut owner, _) = owner_without_process(temp.path().into());
+    owner.state = Some(state.into());
+    owner.snapshot.selected_session = Some(session.clone());
+    owner.snapshot.history_preview = true;
+    let mut history = vec![];
+    owner.state.as_ref().unwrap().with(|store| {
+        annotate_history_presentations(Some(store), &session, &mut history);
+        Ok(())
+    })?;
+    conversation_mut(&mut owner.snapshot).replace_history(&history);
+    assert_eq!(owner.snapshot.conversation.pending_receipts().len(), 1);
+    owner.apply_command(RuntimeCommand::DismissReceipt {
+        session: temp.path().join("wrong"),
+        id: "stale-id".into(),
+    });
+    assert_eq!(owner.snapshot.conversation.pending_receipts().len(), 1);
+    owner.apply_command(RuntimeCommand::DismissReceipt {
+        session: session.clone(),
+        id: "stale-id".into(),
+    });
+    assert!(owner.snapshot.conversation.pending_receipts().is_empty());
+    drop(owner);
+    let state = StateStore::open_at(&database)?;
+    let mut history = vec![];
+    annotate_history_presentations(Some(&state), &session, &mut history);
+    assert!(history.is_empty());
+    Ok(())
+}
+
+#[test]
+fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::PromptMode;
+    use crate::runtime::tests::owner_without_process;
+
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    for submission_id in ["receipt:delivered", "receipt:pending", "receipt:missing"] {
+        let outbox_id = store.enqueue_prompt(
+            "draft:reconcile",
+            Backend::Codex,
+            temp.path(),
+            None,
+            PromptMode::Steer,
+            submission_id,
+            &[],
+        )?;
+        store.record_prompt_acceptance(
+            outbox_id,
+            "draft:reconcile",
+            Some(&session),
+            submission_id,
+            true,
+        )?;
+    }
+
+    let (mut owner, _events) = owner_without_process(temp.path().to_owned());
+    owner.state = Some(store.into());
+    owner.active_session = Some(session.clone());
+    owner.apply_response(crate::agents::SessionResponse::success(
+        None,
+        crate::agents::SessionResponsePayload::LoadHistory(
+            crate::agents::SessionHistory::Replace {
+                messages: vec![json!({
+                    "role": "user",
+                    "content": [{"type":"text", "text":"receipt:delivered"}],
+                    "submissionId": "receipt:delivered",
+                    "deliveryStatus": "delivered",
+                })],
+                prompt_deliveries: Some(crate::sessions::PromptDeliveryReconciliation {
+                    delivered: vec!["receipt:delivered".into()],
+                    pending: vec!["receipt:pending".into()],
+                }),
+            },
+        ),
+    ));
+
+    let pending = owner.snapshot.conversation.pending_receipts();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, "receipt:pending");
+    drop(owner);
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(
+        store
+            .accepted_prompt_history(&session)?
+            .iter()
+            .filter_map(|message| message.get("submissionId").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        ["receipt:pending"]
+    );
+    Ok(())
+}
+
+#[test]
+fn accepted_image_only_prompt_survives_empty_backend_history_and_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let image = crate::protocol::PromptImage::new(ONE_PIXEL_PNG.into(), "image/png".into());
+    let mut store = StateStore::open_at(&database)?;
+    let id = store.enqueue_prompt(
+        "draft:image",
+        Backend::Pi,
+        temp.path(),
+        None,
+        crate::protocol::PromptMode::Normal,
+        "",
+        std::slice::from_ref(&image),
+    )?;
+    store.record_prompt_acceptance(id, "draft:image", Some(&session), "image-receipt", false)?;
+    store.record_prompt_acceptance(id, "draft:image", Some(&session), "image-receipt", false)?;
+    drop(store);
+
+    let store = StateStore::open_at(&database)?;
+    // Admission retains the image payload and remains retryable after restart.
+    assert_eq!(store.queued_prompts()?.len(), 1);
+    let mut messages = Vec::new();
+    annotate_history_presentations(Some(&store), &session, &mut messages);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["role"], "user");
+    assert_eq!(messages[0]["submissionId"], "image-receipt");
+    assert_eq!(messages[0]["deliveryStatus"], "accepted");
+    assert_eq!(
+        messages[0]["content"][1],
+        serde_json::json!({"type":"image", "data":image.data, "mimeType":image.mime_type})
+    );
+    let mut conversation = crate::conversation::ConversationState::default();
+    conversation.replace_history(&messages);
+    assert_eq!(conversation.items.len(), 1);
+    assert_eq!(conversation.items[0].text, "");
+    assert_eq!(conversation.items[0].images.len(), 1);
+    let mut backend = vec![serde_json::json!({
+        "role":"assistant",
+        "content":[{"type":"text", "text":"existing"}],
+    })];
+    annotate_history_presentations(Some(&store), &session, &mut backend);
+    assert_eq!(backend.len(), 1);
+    assert!(
+        store
+            .accepted_prompt_history(&temp.path().join("other"))?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn uncorrelated_normal_is_not_duplicated_and_correlated_normal_survives_old_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    let first = store.enqueue_prompt(
+        "draft:first",
+        Backend::Codex,
+        temp.path(),
+        None,
+        crate::protocol::PromptMode::Normal,
+        "first",
+        &[],
+    )?;
+    let second = store.enqueue_prompt(
+        "draft:second",
+        Backend::Codex,
+        temp.path(),
+        None,
+        crate::protocol::PromptMode::Normal,
+        "second",
+        &[crate::protocol::PromptImage::new(
+            ONE_PIXEL_PNG.into(),
+            "image/png".into(),
+        )],
+    )?;
+    store.record_prompt_acceptance(first, "draft:first", Some(&session), "receipt:first", false)?;
+    store.record_prompt_acceptance(
+        second,
+        "draft:second",
+        Some(&session),
+        "receipt:second",
+        true,
+    )?;
+    let delivered = store.enqueue_prompt(
+        "draft:delivered",
+        Backend::Codex,
+        temp.path(),
+        None,
+        crate::protocol::PromptMode::Normal,
+        "already in history",
+        &[],
+    )?;
+    store.record_prompt_receipt_delivered("receipt:delivered", Some(delivered))?;
+    store.record_prompt_acceptance(
+        delivered,
+        "draft:delivered",
+        Some(&session),
+        "receipt:delivered",
+        true,
+    )?;
+    drop(store);
+
+    let store = StateStore::open_at(&database)?;
+    let mut history = vec![serde_json::json!({
+        "role":"user",
+        "content":[{"type":"text", "text":"first"}],
+    })];
+    assert_eq!(
+        store.accepted_prompt_history(&session)?.len(),
+        2,
+        "only the receipt with actual delivery evidence is excluded at storage"
+    );
+    annotate_history_presentations(Some(&store), &session, &mut history);
+    assert_eq!(history.len(), 2);
+    assert!(history[0].get("submissionId").is_none());
+    assert_eq!(history[1]["submissionId"], "receipt:second");
+    assert_eq!(history[1]["content"][0]["text"], "second");
+    assert_eq!(
+        history[1]["content"][1],
+        serde_json::json!({"type":"image", "data":ONE_PIXEL_PNG, "mimeType":"image/png"})
+    );
+    let mut conversation = crate::conversation::ConversationState::default();
+    conversation.replace_history(&history);
+    assert_eq!(conversation.items.len(), 2);
+    assert_eq!(conversation.items[1].text, "second");
+    assert_eq!(conversation.items[1].images.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn cold_history_restores_queued_receipt_identity_without_claiming_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::{PromptImage, PromptMode};
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    for (id, mode, tracked) in [
+        ("queued-steer", PromptMode::Steer, true),
+        ("queued-follow", PromptMode::FollowUp, false),
+    ] {
+        let row = store.enqueue_prompt(
+            "draft:pending",
+            Backend::Codex,
+            temp.path(),
+            None,
+            mode,
+            "same text",
+            &[PromptImage::new(ONE_PIXEL_PNG.into(), "image/png".into())],
+        )?;
+        store.record_prompt_acceptance(row, "draft:pending", Some(&session), id, tracked)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    let mut history =
+        vec![json!({"role":"assistant", "content":[{"type":"text", "text":"older answer"}]})];
+    annotate_history_presentations(Some(&store), &session, &mut history);
+    assert_eq!(
+        history.len(),
+        2,
+        "only tracked queued receipts stay pending once native history exists"
+    );
+    assert_eq!(history[1]["submissionId"], "queued-steer");
+    let mut conversation = ConversationState::default();
+    conversation.replace_history(&history);
+    assert_eq!(
+        conversation.items.len(),
+        1,
+        "only the older answer reached the model"
+    );
+    let pending = conversation.pending_receipts();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, "queued-steer");
+    assert_eq!(pending[0].mode, Some(PromptMode::Steer));
+    assert_eq!(pending[0].images.len(), 1);
+    assert!(!pending[0].unknown);
+    assert!(
+        conversation.queue.steering.is_empty() && conversation.queue.follow_up.is_empty(),
+        "saved receipts are presentation, not executable input"
+    );
+    assert_eq!(
+        store.queued_prompts()?.len(),
+        2,
+        "admission is not delivery"
+    );
+    for receipt in &history[1..] {
+        assert_eq!(receipt["content"][1]["data"], ONE_PIXEL_PNG);
+        conversation.record_prompt_delivery(
+            receipt["submissionId"]
+                .as_str()
+                .expect("receipt submission ID"),
+            receipt,
+            "delivered",
+        );
+    }
+    assert_eq!(conversation.items.len(), 2);
+    assert!(conversation.pending_receipts().is_empty());
+    assert_eq!(conversation.items[1].text, "same text");
+    assert_eq!(conversation.items[1].images.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn untracked_queued_receipts_stay_pending_only_when_native_history_is_missing()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::PromptMode;
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    for (id, text) in [
+        ("steer-opencode", "it's an opencode session"),
+        (
+            "steer-model",
+            "I changed the model in between, messages currently shown are from openai astra, later ones are from deepseek flash 4.1",
+        ),
+    ] {
+        let row = store.enqueue_prompt(
+            "draft:pi",
+            Backend::Pi,
+            temp.path(),
+            None,
+            PromptMode::Steer,
+            text,
+            &[],
+        )?;
+        store.record_prompt_acceptance(row, "draft:pi", Some(&session), id, false)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+
+    let mut empty = Vec::new();
+    annotate_history_presentations(Some(&store), &session, &mut empty);
+    assert_eq!(empty.len(), 2);
+    let mut conversation = ConversationState::default();
+    conversation.replace_history(&empty);
+    assert_eq!(conversation.pending_receipts().len(), 2);
+    assert!(conversation.items.is_empty());
+
+    let mut history = vec![
+        json!({"role":"user", "content":[{"type":"text", "text":"it's an opencode session"}]}),
+        json!({"role":"user", "content":[{"type":"text", "text":"I changed the model in between, messages currently shown are from openai astra, later ones are from deepseek flash 4.1"}]}),
+    ];
+    annotate_history_presentations(Some(&store), &session, &mut history);
+    assert_eq!(history.len(), 2);
+    assert!(
+        history
+            .iter()
+            .all(|message| message.get("submissionId").is_none())
+    );
+    let mut conversation = ConversationState::default();
+    conversation.replace_history(&history);
+    assert!(conversation.pending_receipts().is_empty());
+    assert_eq!(conversation.items.len(), 2);
+    assert_eq!(conversation.items[0].text, "it's an opencode session");
+    Ok(())
+}
+
+#[test]
+fn reopened_accepted_queue_receipts_stay_off_transcript_until_delivery()
+-> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::{PromptImage, PromptMode};
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("native-session");
+    let image = PromptImage::new(ONE_PIXEL_PNG.into(), "image/png".into());
+    let mut store = StateStore::open_at(&database)?;
+    for (id, mode) in [
+        ("steer", PromptMode::Steer),
+        ("follow", PromptMode::FollowUp),
+    ] {
+        let row = store.enqueue_prompt(
+            "draft:queue",
+            Backend::Codex,
+            temp.path(),
+            None,
+            mode,
+            "same text",
+            std::slice::from_ref(&image),
+        )?;
+        store.record_prompt_acceptance(row, "draft:queue", Some(&session), id, true)?;
+    }
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(
+        store.queued_prompts()?.len(),
+        2,
+        "admission is not delivery"
+    );
+    let receipts = store.accepted_prompt_history(&session)?;
+    assert_eq!(receipts.len(), 2);
+    for receipt in &receipts {
+        assert_eq!(receipt["queued"], true);
+        assert_eq!(receipt["content"][1]["data"], ONE_PIXEL_PNG);
+    }
+    let mut state = ConversationState::default();
+    state.replace_history(&receipts);
+    assert!(
+        state.items.is_empty(),
+        "reopen cannot turn receipt into delivery"
+    );
+    for receipt in &receipts {
+        let id = receipt["submissionId"]
+            .as_str()
+            .expect("receipt submission ID");
+        state.record_prompt_delivery(id, receipt, "delivered");
+        state.record_prompt_delivery(id, receipt, "delivered");
+    }
+    assert_eq!(state.items.len(), 2);
+    assert!(
+        state
+            .items
+            .iter()
+            .all(|item| item.text == "same text" && item.images.len() == 1)
+    );
+    Ok(())
+}

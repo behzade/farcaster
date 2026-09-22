@@ -49,6 +49,7 @@ farcaster-mcp-server = { path = "crates/mcp-server" }
 farcaster-projects = { path = "crates/projects" }
 farcaster-repository = { path = "crates/repository" }
 farcaster-reviews = { path = "crates/reviews" }
+farcaster-runtime = { path = "crates/runtime" }
 farcaster-sessions = { path = "crates/sessions" }
 farcaster-storage = { path = "crates/storage" }
 farcaster-utility = { path = "crates/utility" }
@@ -83,6 +84,7 @@ farcaster-conversation = { path = "crates/conversation", features = ["test-suppo
 farcaster-sessions = { path = "crates/sessions", features = ["test-support"] }
 farcaster-storage = { path = "crates/storage", features = ["test-support"] }
 farcaster-mcp-server = { path = "crates/mcp-server", features = ["test-support"] }
+farcaster-runtime = { path = "crates/runtime", features = ["test-support"] }
 gpui = { path = "third_party/zed-gpui-cc053a4/crates/gpui", features = ["test-support"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 sha2 = "0.10.9"

@@ -34,6 +34,7 @@ impl FarcasterApp {
                 .clone(),
             None,
             agent_launch,
+            runtime_host::host(),
         );
         drop(runtime_timing);
 

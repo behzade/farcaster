@@ -1905,6 +1905,7 @@ dependencies = [
  "farcaster-projects",
  "farcaster-repository",
  "farcaster-reviews",
+ "farcaster-runtime",
  "farcaster-sessions",
  "farcaster-storage",
  "farcaster-utility",
@@ -2049,6 +2050,23 @@ dependencies = [
  "farcaster-utility",
  "serde",
  "serde_json",
+ "zlog",
+]
+
+[[package]]
+name = "farcaster-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "farcaster-agent-protocol",
+ "farcaster-agents",
+ "farcaster-conversation",
+ "farcaster-projects",
+ "farcaster-reviews",
+ "farcaster-sessions",
+ "farcaster-storage",
+ "serde_json",
+ "uuid",
  "zlog",
 ]
 

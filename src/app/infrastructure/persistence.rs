@@ -2,46 +2,9 @@ pub(crate) use farcaster_storage::*;
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{MutexGuard, OnceLock};
 
 static STATE: OnceLock<SharedStateStore> = OnceLock::new();
-
-#[derive(Clone)]
-pub(crate) struct SharedStateStore(Arc<Mutex<StateStore>>);
-
-impl SharedStateStore {
-    pub(crate) fn new(store: StateStore) -> Self {
-        Self(Arc::new(Mutex::new(store)))
-    }
-
-    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, StateStore>, String> {
-        self.0
-            .lock()
-            .map_err(|_| "State database lock is poisoned".into())
-    }
-
-    pub(crate) fn with<T>(
-        &self,
-        operation: impl FnOnce(&mut StateStore) -> Result<T, String>,
-    ) -> Result<T, String> {
-        operation(&mut *self.lock()?)
-    }
-
-    pub(crate) fn arc(&self) -> Arc<Mutex<StateStore>> {
-        self.0.clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn open_at(path: &std::path::Path) -> Result<Self, String> {
-        StateStore::open_at(path).map(Self::new)
-    }
-}
-
-impl From<StateStore> for SharedStateStore {
-    fn from(store: StateStore) -> Self {
-        Self::new(store)
-    }
-}
 
 pub(crate) enum StoreGuard<'a> {
     Shared(MutexGuard<'a, StateStore>),

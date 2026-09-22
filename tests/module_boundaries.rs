@@ -10,6 +10,7 @@ const EXTRACTED_CRATES: &[&str] = &[
     "projects",
     "repository",
     "reviews",
+    "runtime",
     "sessions",
     "storage",
     "utility",
