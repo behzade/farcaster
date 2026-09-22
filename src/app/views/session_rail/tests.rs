@@ -2,14 +2,15 @@ use crate::agents::Backend;
 use std::{path::PathBuf, time::SystemTime};
 
 use super::{
-    ActiveSessionItem, SessionRailItem, SessionRailKind, archived_panel_bounds,
-    archived_panel_rows, clamped_session_rail_width, first_unsubmitted_draft,
-    hover::session_tooltip_lines, minimal_row_splice, numbered_session_items,
+    ActiveSessionItem, SessionRailItem, SessionRailKind, archived_panel_rows,
+    clamped_session_rail_width, first_unsubmitted_draft, hover::session_tooltip_lines,
+    minimal_row_splice, numbered_session_items, rendering::archived_panel_slot,
     replacement_index_after_close, session_accessible_label, status_visual, subagent_counts,
 };
 use crate::{
     app::session_folders::{SessionFolder, SessionFolders},
     app::ui::assets::AppIcon,
+    app::ui::primitives::panel_bounds,
     app::ui::theme::theme,
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
@@ -151,21 +152,20 @@ fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
 }
 
 #[test]
-fn the_archive_panel_opens_at_five_rows_and_stops_where_the_folders_begin() {
-    let region = theme().size(900.0);
-    let bounds = archived_panel_bounds(100, Some(region));
+fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
+    let room = theme().size(700.0);
+    let bounds = panel_bounds(Some(room), archived_panel_slot(100, false));
     let header = f32::from(theme().controls.icon_button);
     let row = f32::from(theme().controls.archived_preview_row);
     assert_eq!(f32::from(bounds.height), header + row * 5.0);
     assert_eq!(f32::from(bounds.min_height), header + row);
-    assert_eq!(bounds.max_height, region - theme().layout.folders_min);
+    assert_eq!(bounds.max_height, room);
     assert_eq!(bounds.row_height, None);
 }
 
 #[test]
 fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
-    let region = theme().size(900.0);
-    let bounds = archived_panel_bounds(100, Some(region));
+    let bounds = panel_bounds(Some(theme().size(700.0)), archived_panel_slot(100, false));
     assert_eq!(archived_panel_rows(bounds.min_height), 1);
     assert_eq!(archived_panel_rows(bounds.height), 5);
     assert!(archived_panel_rows(bounds.max_height) > 5);
@@ -173,15 +173,17 @@ fn the_archive_panel_shows_one_whole_row_at_its_minimum_size() {
 
 #[test]
 fn the_archive_panel_bounds_stay_valid_without_archived_chats() {
-    for region in [
+    for room in [
         None,
         Some(theme().layout.folders_min),
         Some(theme().size(600.0)),
     ] {
-        let bounds = archived_panel_bounds(0, region);
-        assert!(bounds.min_height <= bounds.max_height);
-        assert!(bounds.height >= bounds.min_height);
-        assert!(bounds.height <= bounds.max_height);
+        for collapsed in [false, true] {
+            let bounds = panel_bounds(room, archived_panel_slot(0, collapsed));
+            assert!(bounds.min_height <= bounds.max_height);
+            assert!(bounds.height >= bounds.min_height);
+            assert!(bounds.height <= bounds.max_height);
+        }
     }
 }
 

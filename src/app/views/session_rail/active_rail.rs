@@ -14,7 +14,7 @@ use super::{
     folders::{FolderRow, folder_header, folder_rows},
     groups::{ActiveSessionItem, session_rail_lists},
     reconcile_list_rows,
-    rendering::{active_session_drop_target, archived_panel_bounds, subagent_counts},
+    rendering::{active_session_drop_target, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
 };
 use crate::{
@@ -24,8 +24,8 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::layout::TRAFFIC_LIGHT_INSET,
     app::ui::primitives::{
-        AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, SearchField, app_icon,
-        feedback, icon_button,
+        AppIconSize, ButtonTone, ContextMenuTrigger, FeedbackTone, Panel, PanelStack, SearchField,
+        app_icon, feedback, icon_button, panel_space,
     },
     app::ui::theme::theme,
     sessions::root_session_for_path,
@@ -248,13 +248,14 @@ impl FarcasterApp {
         })
         .size_full();
         let mut archived_state = self.views.archived_panel;
-        archived_state.set_collapsed(!self.sessions.archived_expanded || session_drag_active);
+        let archived_collapsed = !self.sessions.archived_expanded || session_drag_active;
+        archived_state.set_collapsed(archived_collapsed);
         let archived_resize_entity = entity.clone();
         let archived_toggle_entity = entity.clone();
         let archived_panel = Panel::new(
             "archived-panel",
             &archived_state,
-            archived_panel_bounds(archived_entry_count, self.views.rail_region_height),
+            self.archived_panel_bounds_for(archived_collapsed),
             "Archived",
         )
         .count(archived_entry_count)
@@ -281,11 +282,23 @@ impl FarcasterApp {
             .map(project_label)
             .unwrap_or_else(|| "All".into());
 
+        let measure_entity = entity.clone();
         div()
             .size_full()
             .flex()
             .flex_col()
             .bg(theme().colors.panel)
+            .on_children_prepainted(move |bounds, _, cx| {
+                let space = bounds
+                    .last()
+                    .map(|stack| panel_space(stack.size.height, theme().layout.folders_min));
+                let _ = measure_entity.update(cx, |this, cx| {
+                    if this.views.panel_space != space {
+                        this.views.panel_space = space;
+                        cx.notify();
+                    }
+                });
+            })
             .child(
                 div()
                     .flex_none()
@@ -422,27 +435,8 @@ impl FarcasterApp {
                 rail.child(feedback("sessions-error", error, FeedbackTone::Error))
             })
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .on_children_prepainted({
-                        let measure_entity = entity.clone();
-                        move |bounds, _, cx| {
-                            let Some((first, last)) = bounds.first().zip(bounds.last()) else {
-                                return;
-                            };
-                            let height = last.origin.y + last.size.height - first.origin.y;
-                            let _ = measure_entity.update(cx, |this, cx| {
-                                if this.views.rail_region_height != Some(height) {
-                                    this.views.rail_region_height = Some(height);
-                                    cx.notify();
-                                }
-                            });
-                        }
-                    })
-                    .child(
+                PanelStack::new("session-rail-stack")
+                    .surface(
                         div()
                             .id("session-list-scroll")
                             .relative()
@@ -470,31 +464,32 @@ impl FarcasterApp {
                                 last_active_row,
                                 active_drop_entity,
                             ))
-                            .child(Scrollbar::vertical(&rail_scrollbar)),
+                            .child(Scrollbar::vertical(&rail_scrollbar))
+                            .when(
+                                active_entry_count == 0
+                                    && archived_entry_count == 0
+                                    && self.sessions.error.is_none(),
+                                |list| {
+                                    list.child(
+                                        div()
+                                            .px(theme().space.md)
+                                            .py(theme().space.sm)
+                                            .text_size(theme().type_scale.caption)
+                                            .text_color(theme().colors.subtle)
+                                            .child("No matching sessions"),
+                                    )
+                                },
+                            ),
                     )
-                    .when(archived_entry_count > 0, |region| {
-                        region.child(archived_panel)
-                    }),
-            )
-            .when(
-                active_entry_count == 0
-                    && archived_entry_count == 0
-                    && self.sessions.error.is_none(),
-                |rail| {
-                    rail.child(
-                        div()
-                            .px(theme().space.md)
-                            .py(theme().space.sm)
-                            .text_size(theme().type_scale.caption)
-                            .text_color(theme().colors.subtle)
-                            .child("No matching sessions"),
+                    .when(archived_entry_count > 0, |stack| {
+                        stack.child(archived_panel)
+                    })
+                    .when_some(
+                        self.render_rail_notices(entity.clone()),
+                        |stack, notices| stack.child(notices),
                     )
-                },
+                    .child(self.render_notification_panel(entity)),
             )
-            .when_some(self.render_rail_notices(entity.clone()), |rail, notices| {
-                rail.child(notices)
-            })
-            .child(self.render_notification_panel(entity))
             .into_any_element()
     }
 }

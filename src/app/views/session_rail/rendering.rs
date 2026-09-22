@@ -14,7 +14,7 @@ use crate::{
     app::{
         session::status::resolved_session_status,
         ui::{
-            primitives::{ReorderPosition, ResizeBounds},
+            primitives::{PanelSlot, ReorderPosition},
             theme::theme,
         },
     },
@@ -153,29 +153,25 @@ pub(super) fn archived_panel_height(rows: usize) -> Pixels {
     archived_panel_base() + theme().controls.archived_preview_row * rows as f32
 }
 
-/// How many whole rows the archive is drawing at this height.
-pub(super) fn archived_panel_rows(height: Pixels) -> usize {
-    ((height - archived_panel_base()) / theme().controls.archived_preview_row).max(0.0) as usize
+pub(super) fn archived_panel_slot(count: usize, collapsed: bool) -> PanelSlot {
+    if collapsed {
+        return PanelSlot::new(theme().controls.icon_button, theme().controls.icon_button);
+    }
+    PanelSlot::new(
+        archived_panel_height(1),
+        archived_panel_height(count.clamp(1, ARCHIVED_OPEN_ROWS)),
+    )
 }
 
-/// The archive panel's bounds. It drags like the notification panel — free
-/// pixels, no stepping — up to the room the rail has above the notification
-/// panel, minus the floor the folder list keeps, so a pull can never grow it to
-/// the top over the folders. Its floor is one whole chat and it opens on a short
-/// preview.
-pub(super) fn archived_panel_bounds(count: usize, region: Option<Pixels>) -> ResizeBounds {
-    let held = count.max(1);
-    let floor = archived_panel_height(1);
-    let ceiling = region.map_or(theme().layout.notice_panel_max, |region| {
-        (region - theme().layout.folders_min).max(floor)
-    });
-    let height = archived_panel_height(held.min(ARCHIVED_OPEN_ROWS));
-    ResizeBounds {
-        height: height.clamp(floor, ceiling),
-        min_height: floor,
-        max_height: ceiling,
-        row_height: None,
+pub(super) fn notification_panel_slot(collapsed: bool) -> PanelSlot {
+    if collapsed {
+        return PanelSlot::new(theme().controls.icon_button, theme().controls.icon_button);
     }
+    PanelSlot::new(theme().layout.notice_panel_min, theme().layout.notice_panel)
+}
+
+pub(super) fn archived_panel_rows(height: Pixels) -> usize {
+    ((height - archived_panel_base()) / theme().controls.archived_preview_row).max(0.0) as usize
 }
 
 #[cfg(test)]

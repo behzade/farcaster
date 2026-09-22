@@ -23,6 +23,26 @@ pub(crate) struct ResizeState {
 }
 
 impl ResizeState {
+    pub(crate) fn restored(height: Option<f32>, collapsed: bool) -> Self {
+        Self {
+            height: height.map(gpui::px),
+            collapsed,
+            resize_start: None,
+        }
+    }
+
+    pub(crate) fn stored_height(&self) -> Option<f32> {
+        self.height.map(f32::from)
+    }
+
+    pub(crate) fn set_height(&mut self, height: Pixels) {
+        self.height = Some(height);
+    }
+
+    pub(crate) fn height_or(&self, fallback: Pixels) -> Pixels {
+        self.height.unwrap_or(fallback)
+    }
+
     pub(crate) fn height(&self, bounds: ResizeBounds) -> Pixels {
         clamp(self.height.unwrap_or(bounds.height), bounds)
     }

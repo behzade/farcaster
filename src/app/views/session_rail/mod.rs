@@ -22,12 +22,15 @@ use self::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
         session_rail_lists,
     },
-    rendering::{archived_panel_bounds, archived_panel_rows},
+    rendering::{archived_panel_rows, archived_panel_slot, notification_panel_slot},
 };
 use super::super::FarcasterApp;
 use crate::{
     app::session_folders::SessionFolders,
-    app::ui::primitives::{ReorderPosition, ResizeBounds},
+    app::ui::primitives::{
+        PanelSlot, ReorderPosition, ResizeBounds, panel_bounds, panel_heights, panel_max,
+        panel_resized,
+    },
     app::ui::theme::theme,
     sessions::DraftSession,
     sessions::{SessionSummary, root_session_for_path},
@@ -369,17 +372,74 @@ impl FarcasterApp {
         }
     }
 
-    fn notification_panel_bounds(&self) -> ResizeBounds {
-        ResizeBounds {
-            height: theme().layout.notice_panel,
-            min_height: theme().layout.notice_panel_min,
-            max_height: theme().layout.notice_panel_max,
-            row_height: None,
+    fn rail_panels(&self) -> Vec<(PanelSlot, Pixels)> {
+        let count = self.archived_session_count();
+        let mut panels = Vec::new();
+        if count > 0 {
+            let slot = archived_panel_slot(count, !self.sessions.archived_expanded);
+            panels.push((slot, self.views.archived_panel.height_or(slot.preferred)));
         }
+        let slot = notification_panel_slot(self.views.notification_panel.is_collapsed());
+        panels.push((
+            slot,
+            self.views.notification_panel.height_or(slot.preferred),
+        ));
+        panels
+    }
+
+    fn rail_panel_sizes(panels: &[(PanelSlot, Pixels)]) -> Vec<Pixels> {
+        panels.iter().map(|(_, size)| *size).collect()
+    }
+
+    fn rail_panel_floors(panels: &[(PanelSlot, Pixels)]) -> Vec<Pixels> {
+        panels.iter().map(|(slot, _)| slot.floor).collect()
+    }
+
+    fn panel_budget(&self) -> Pixels {
+        self.views
+            .panel_space
+            .unwrap_or_else(|| theme().layout.notice_panel_max)
+    }
+
+    fn notification_panel_bounds(&self) -> ResizeBounds {
+        let panels = self.rail_panels();
+        let index = panels.len() - 1;
+        panel_bounds(Some(self.panel_room(&panels, index)), panels[index].0)
     }
 
     fn archived_panel_bounds(&self) -> ResizeBounds {
-        archived_panel_bounds(self.archived_session_count(), self.views.rail_region_height)
+        self.archived_panel_bounds_for(!self.sessions.archived_expanded)
+    }
+
+    fn archived_panel_bounds_for(&self, collapsed: bool) -> ResizeBounds {
+        let slot = archived_panel_slot(self.archived_session_count(), collapsed);
+        let panels = self.rail_panels();
+        panel_bounds(
+            Some(if collapsed {
+                slot.floor
+            } else {
+                self.panel_room(&panels, 0)
+            }),
+            slot,
+        )
+    }
+
+    fn panel_room(&self, panels: &[(PanelSlot, Pixels)], index: usize) -> Pixels {
+        let sizes = Self::rail_panel_sizes(panels);
+        let floors = Self::rail_panel_floors(panels);
+        let budget = self.panel_budget();
+        if self.panel_is_resizing(index, panels.len()) {
+            return panel_max(&sizes, &floors, budget, index);
+        }
+        panel_heights(&sizes, &floors, budget)[index]
+    }
+
+    fn panel_is_resizing(&self, index: usize, count: usize) -> bool {
+        if index == count - 1 {
+            self.views.notification_panel.is_resizing()
+        } else {
+            self.views.archived_panel.is_resizing()
+        }
     }
 
     fn archived_session_count(&self) -> usize {
@@ -407,6 +467,7 @@ impl FarcasterApp {
 
     pub(super) fn toggle_archive_panel(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.archived_expanded = !self.sessions.archived_expanded;
+        self.save_panel_layout();
         self.notify_session_rail(cx);
     }
 
@@ -436,6 +497,7 @@ impl FarcasterApp {
 
     pub(super) fn finish_archived_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
         if self.views.archived_panel.finish_resize() {
+            self.save_panel_layout();
             self.notify_session_rail_shell(cx);
         }
     }
@@ -446,6 +508,7 @@ impl FarcasterApp {
         if collapsed {
             self.extensions.active.mark_notifications_seen();
         }
+        self.save_panel_layout();
         self.notify_session_rail_shell(cx);
     }
 
@@ -466,18 +529,39 @@ impl FarcasterApp {
         pointer_y: Pixels,
         cx: &mut gpui::Context<Self>,
     ) {
+        if !self.views.notification_panel.is_resizing() {
+            return;
+        }
         let bounds = self.notification_panel_bounds();
-        if self
+        let before = self.views.notification_panel.height(bounds);
+        if !self
             .views
             .notification_panel
             .update_resize(bounds, pointer_y)
         {
-            self.notify_session_rail_shell(cx);
+            return;
         }
+        let panels = self.rail_panels();
+        let index = panels.len() - 1;
+        let mut sizes = Self::rail_panel_sizes(&panels);
+        sizes[index] = before;
+        let laid_out = panel_resized(
+            &sizes,
+            &Self::rail_panel_floors(&panels),
+            self.panel_budget(),
+            index,
+            self.views.notification_panel.height(bounds),
+        );
+        if index > 0 {
+            self.views.archived_panel.set_height(laid_out[0]);
+        }
+        self.views.notification_panel.set_height(laid_out[index]);
+        self.notify_session_rail_shell(cx);
     }
 
     pub(super) fn finish_notification_panel_resize(&mut self, cx: &mut gpui::Context<Self>) {
         if self.views.notification_panel.finish_resize() {
+            self.save_panel_layout();
             self.notify_session_rail_shell(cx);
         }
     }
