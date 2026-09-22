@@ -400,7 +400,7 @@ fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 19);
+    assert_eq!(database_schema_version(&database)?, 20);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -744,10 +744,12 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
     store.set_session_archived(&catalog_session_path.canonicalize()?, false)?;
     assert!(!store.cached_sessions("")?[0].archived);
     store.begin_prompt(queued[0].id)?;
-    store.complete_prompt(
+    store.complete_delivered_prompt(
         queued[0].id,
         "draft:draft-one",
         Some(&session_path.canonicalize()?),
+        "presentation-delivered",
+        false,
     )?;
     assert!(store.queued_prompts()?.is_empty());
     assert_eq!(
@@ -1238,7 +1240,13 @@ fn prompt_completion_persists_draft_session_association_atomically()
         &[],
     )?;
     store.begin_prompt(outbox)?;
-    store.complete_prompt(outbox, "draft:pending", Some(&session))?;
+    store.complete_delivered_prompt(
+        outbox,
+        "draft:pending",
+        Some(&session),
+        "session-delivered",
+        false,
+    )?;
 
     assert!(store.queued_prompts()?.is_empty());
     let draft = &store.load_registry()?.drafts[0];
@@ -1323,7 +1331,7 @@ fn schema_v1_migrates_to_current_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 19);
+    assert_eq!(database_schema_version(&database)?, 20);
     Ok(())
 }
 
@@ -1361,7 +1369,7 @@ fn schema_v2_migrates_to_current_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 19);
+    assert_eq!(database_schema_version(&database)?, 20);
     Ok(())
 }
 
@@ -1401,7 +1409,7 @@ fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity(
     drop(connection);
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 19);
+    assert_eq!(database_schema_version(&database)?, 20);
     let cached = store.cached_sessions("")?;
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].id, "v3-legacy");
@@ -1435,7 +1443,7 @@ fn schema_v4_migrates_with_a_writable_provisional_title_column()
     // The migration itself adds provisional_title; prove the new column is the
     // registry's title source by writing through it and reopening.
     let mut store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 19);
+    assert_eq!(database_schema_version(&database)?, 20);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     let mut registry = store.load_registry()?;
     registry.drafts[0].title = Some("Migrated column".into());
@@ -1487,7 +1495,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, Backend::Pi);
-    assert_eq!(database_schema_version(&database)?, 19);
+    assert_eq!(database_schema_version(&database)?, 20);
     Ok(())
 }
 
@@ -1740,10 +1748,12 @@ fn discovery_prunes_only_disposable_catalog_rows() -> Result<(), Box<dyn std::er
         Some("invocation"),
         &[],
     )?;
-    store.complete_prompt(
+    store.complete_delivered_prompt(
         presentation,
         &format!("session:{}", sessions[4].path.display()),
         Some(&sessions[4].path),
+        "prune-presentation-delivered",
+        false,
     )?;
     store.index_sessions(&[], true)?;
     let retained = store
@@ -1786,7 +1796,7 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
         Some("invocation"),
         &[],
     )?;
-    store.complete_prompt(first, "draft:pending", None)?;
+    store.complete_delivered_prompt(first, "draft:pending", None, "first-delivered", false)?;
     let mut registry = store.load_registry()?;
     assert!(registry.drafts[0].submitted);
     registry.drafts[0].session_path = Some(temp.path().join("bound.jsonl"));
@@ -1811,7 +1821,7 @@ fn accepted_pathless_draft_retains_presentation_and_outbox_ids_do_not_repeat()
         &[],
     )?;
     assert!(second > first);
-    store.complete_prompt(first, "draft:pending", None)?;
+    store.complete_delivered_prompt(first, "draft:pending", None, "first-delivered", false)?;
     assert_eq!(store.queued_prompts()?[0].id, second);
     Ok(())
 }

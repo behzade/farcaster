@@ -39,21 +39,7 @@ pub trait PromptStore {
     }
 
     fn queued(&self) -> Result<Vec<QueuedPrompt>, String>;
-    fn complete(&mut self, id: i64, target: &str, session: Option<&Path>) -> Result<(), String>;
-    fn complete_with_receipt(
-        &mut self,
-        id: i64,
-        target: &str,
-        session: Option<&Path>,
-        receipt_id: &str,
-        delivery_tracked: bool,
-    ) -> Result<(), String> {
-        let _ = (receipt_id, delivery_tracked);
-        self.complete(id, target, session)
-    }
     fn begin(&self, id: i64) -> Result<(), String>;
-    fn fail(&self, id: i64, error: &str) -> Result<(), String>;
-    fn mark_delivery_unknown(&self, id: i64, error: &str) -> Result<(), String>;
 }
 
 pub fn has_queued_for(store: &impl PromptStore, paths: &[PathBuf]) -> Result<bool, String> {
@@ -90,25 +76,6 @@ pub fn queued(store: &impl PromptStore) -> Result<Vec<QueuedPrompt>, String> {
     store.queued()
 }
 
-pub fn complete_with_receipt(
-    store: &mut impl PromptStore,
-    id: i64,
-    target: &str,
-    session: Option<&Path>,
-    receipt_id: &str,
-    delivery_tracked: bool,
-) -> Result<(), String> {
-    store.complete_with_receipt(id, target, session, receipt_id, delivery_tracked)
-}
-
 pub fn begin(store: &impl PromptStore, id: i64) -> Result<(), String> {
     store.begin(id)
-}
-
-pub fn fail(store: &impl PromptStore, id: i64, error: &str) -> Result<(), String> {
-    store.fail(id, error)
-}
-
-pub fn mark_delivery_unknown(store: &impl PromptStore, id: i64, error: &str) -> Result<(), String> {
-    store.mark_delivery_unknown(id, error)
 }

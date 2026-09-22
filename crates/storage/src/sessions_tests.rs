@@ -912,7 +912,7 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
 }
 
 #[test]
-fn interrupted_prompts_require_explicit_safe_disposition() -> Result<(), String> {
+fn interrupted_prompts_remain_pending_and_retryable() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let mut store = StateStore::open_at(&database)?;
@@ -939,62 +939,18 @@ fn interrupted_prompts_require_explicit_safe_disposition() -> Result<(), String>
     }
     drop(store);
 
-    let mut reopened = StateStore::open_at(&database)?;
-    assert!(reopened.queued_prompts()?.is_empty());
-    let interrupted = reopened.recover_interrupted_prompts()?;
-    assert_eq!(
-        interrupted
-            .iter()
-            .map(|prompt| prompt.message.as_str())
-            .collect::<Vec<_>>(),
-        vec!["delivered", "discarded"]
-    );
+    let reopened = StateStore::open_at(&database)?;
+    assert_eq!(reopened.queued_prompts()?.len(), 2);
     assert!(reopened.has_queued_prompts_for(std::slice::from_ref(&session.path))?);
-    assert!(reopened.begin_prompt(ids[0]).is_err());
-
-    let mut other = metadata("other-session");
-    other.project = temp.path().to_path_buf();
-    other.path = temp.path().join("session-locators/codex-cli/other-session");
-    let other = reopened.update_session_metadata(&other)?;
-    assert!(
-        reopened
-            .discard_unknown_prompt(
-                ids[1],
-                &format!("session:{}", other.path.display()),
-                Some(&other.path),
-            )
-            .is_err()
-    );
-    assert_eq!(reopened.unknown_prompts()?.len(), 2);
-
-    reopened.reconcile_unknown_prompt(
-        ids[0],
-        &format!("session:{}", session.path.display()),
-        Some(&session.path),
-    )?;
-    reopened.discard_unknown_prompt(
-        ids[1],
-        &format!("session:{}", session.path.display()),
-        Some(&session.path),
-    )?;
-
-    assert!(reopened.unknown_prompts()?.is_empty());
-    assert!(!reopened.has_queued_prompts_for(std::slice::from_ref(&session.path))?);
-    assert_eq!(reopened.accepted_prompt_history(&session.path)?.len(), 1);
-    assert!(
-        reopened
-            .discard_unknown_prompt(
-                ids[0],
-                &format!("session:{}", session.path.display()),
-                Some(&session.path),
-            )
-            .is_err()
-    );
+    assert!(reopened.begin_prompt(ids[0]).is_ok());
+    reopened.cancel_queued_prompts(&[ids[1]])?;
+    assert_eq!(reopened.queued_prompts()?.len(), 1);
+    assert!(reopened.has_queued_prompts_for(std::slice::from_ref(&session.path))?);
     Ok(())
 }
 
 #[test]
-fn cancelling_queued_prompts_is_atomic_and_scoped_to_exact_rows() -> Result<(), String> {
+fn cancelling_pending_prompts_is_idempotent_and_scoped_to_exact_rows() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     let project = temp.path();
@@ -1024,7 +980,7 @@ fn cancelling_queued_prompts_is_atomic_and_scoped_to_exact_rows() -> Result<(), 
         "must roll back",
         &[],
     )?;
-    assert!(store.cancel_queued_prompts(&[ids[0], later]).is_err());
+    store.cancel_queued_prompts(&[ids[0], later])?;
 
     let mut statement = store
         .connection
@@ -1045,20 +1001,10 @@ fn cancelling_queued_prompts_is_atomic_and_scoped_to_exact_rows() -> Result<(), 
     assert_eq!(
         rows,
         vec![
-            (
-                ids[0],
-                "first queued".into(),
-                "failed".into(),
-                Some("Prompt cancelled before delivery".into()),
-            ),
-            (
-                ids[1],
-                "second queued".into(),
-                "failed".into(),
-                Some("Prompt cancelled before delivery".into()),
-            ),
-            (ids[2], "already sending".into(), "sending".into(), None),
-            (later, "must roll back".into(), "queued".into(), None),
+            (ids[0], "first queued".into(), "cancelled".into(), None),
+            (ids[1], "second queued".into(), "cancelled".into(), None),
+            (ids[2], "already sending".into(), "pending".into(), None),
+            (later, "must roll back".into(), "cancelled".into(), None),
         ]
     );
     Ok(())
@@ -1186,7 +1132,7 @@ fn v12_migration_preserves_native_id_worker_family_links() -> Result<(), String>
 }
 
 #[test]
-fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Result<(), String> {
+fn schema_v14_upgrade_preserves_retryable_outbox_rows() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let mut store = StateStore::open_at(&database)?;
@@ -1225,7 +1171,6 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
         "already failed",
         &[],
     )?;
-    store.fail_prompt(failed_id, "prior failure")?;
     store
         .connection
         .execute_batch(&format!(
@@ -1246,7 +1191,7 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
 
     let connection = Connection::open(&database).map_err(|error| error.to_string())?;
     connection
-        .execute_batch(
+        .execute_batch(&format!(
             "ALTER TABLE outbox RENAME TO outbox_v15;
              CREATE TABLE outbox (
                id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1262,15 +1207,18 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
                effort TEXT,
                service_tier TEXT,
                state TEXT NOT NULL DEFAULT 'queued'
-                 CHECK (state IN ('queued', 'sending', 'failed')),
+                 CHECK (state IN ('queued', 'sending', 'failed', 'unknown', 'pending')),
                error TEXT,
                created_ms INTEGER NOT NULL
              );
              INSERT INTO outbox SELECT * FROM outbox_v15;
+             UPDATE outbox SET state='queued' WHERE id={queued_id};
+             UPDATE outbox SET state='sending' WHERE id={id};
+             UPDATE outbox SET state='failed' WHERE id={failed_id};
              DROP TABLE outbox_v15;
              CREATE INDEX outbox_session_state ON outbox(session_id, state, id);
              UPDATE meta SET value='14' WHERE key='schema_version';",
-        )
+        ))
         .map_err(|error| error.to_string())?;
     drop(connection);
 
@@ -1281,19 +1229,19 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
             .iter()
             .map(|prompt| (prompt.id, prompt.message.as_str()))
             .collect::<Vec<_>>(),
-        vec![(queued_id, "still queued")]
+        vec![
+            (queued_id, "still queued"),
+            (id, "possibly delivered"),
+            (failed_id, "already failed"),
+        ]
     );
-    let interrupted = reopened.recover_interrupted_prompts()?;
-    assert_eq!(interrupted.len(), 1);
-    assert_eq!(interrupted[0].id, id);
-    assert_eq!(interrupted[0].mode, crate::protocol::PromptMode::FollowUp);
-    assert_eq!(interrupted[0].message, "possibly delivered");
-    assert_eq!(
-        interrupted[0].display_message.as_deref(),
-        Some("shown text")
-    );
-    assert_eq!(interrupted[0].invocation.as_deref(), Some("expanded text"));
-    assert_eq!(interrupted[0].images[0].clone().into_inline()?, image);
+    let pending = reopened.queued_prompts()?;
+    assert_eq!(pending[1].id, id);
+    assert_eq!(pending[1].mode, crate::protocol::PromptMode::FollowUp);
+    assert_eq!(pending[1].message, "possibly delivered");
+    assert_eq!(pending[1].display_message.as_deref(), Some("shown text"));
+    assert_eq!(pending[1].invocation.as_deref(), Some("expanded text"));
+    assert_eq!(pending[1].images[0].clone().into_inline()?, image);
     let migrated_images: String = reopened
         .connection
         .query_row("SELECT images_json FROM outbox WHERE id=?1", [id], |row| {
@@ -1339,8 +1287,8 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
             "model",
             "high",
             "priority",
-            "unknown",
-            "Delivery status unknown after app interruption",
+            "pending",
+            "old error",
         )
     );
     assert_eq!(preserved.7, 102);
@@ -1371,7 +1319,7 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
                 queued_id,
                 session.app_session_id,
                 "still queued".into(),
-                "queued".into(),
+                "pending".into(),
                 None,
                 101,
             ),
@@ -1379,16 +1327,16 @@ fn schema_v14_upgrade_preserves_sending_outbox_and_adds_unknown_state() -> Resul
                 id,
                 session.app_session_id,
                 "possibly delivered".into(),
-                "unknown".into(),
-                Some("Delivery status unknown after app interruption".into()),
+                "pending".into(),
+                Some("old error".into()),
                 102,
             ),
             (
                 failed_id,
                 session.app_session_id,
                 "already failed".into(),
-                "failed".into(),
-                Some("prior failure".into()),
+                "pending".into(),
+                None,
                 103,
             ),
         ]

@@ -2,6 +2,78 @@ use super::*;
 use crate::agents::Backend;
 
 #[test]
+fn accepted_receipt_stays_pending_and_is_idempotent() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let mut store = StateStore::open_at(&database)?;
+    let id = store.enqueue_prompt(
+        "draft:a",
+        Backend::Codex,
+        temp.path(),
+        None,
+        PromptMode::FollowUp,
+        "same text",
+        &[],
+    )?;
+    store.record_prompt_acceptance(id, "draft:a", Some(&session), "first", true)?;
+    store.record_prompt_acceptance(id, "draft:a", Some(&session), "first", true)?;
+    assert_eq!(store.queued_prompts()?.len(), 1);
+    let accepted: i64 = store.connection.query_row(
+        "SELECT COUNT(*) FROM session_events
+          WHERE json_extract(body,'$.type')='accepted_prompt'
+            AND json_extract(body,'$.submissionId')='first'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(accepted, 1);
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(store.queued_prompts()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn late_delivery_receipt_acks_only_its_pending_outbox_row() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempfile::tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let first = store.enqueue_prompt(
+        "draft:late",
+        Backend::Codex,
+        temp.path(),
+        None,
+        PromptMode::FollowUp,
+        "first",
+        &[],
+    )?;
+    let second = store.enqueue_prompt(
+        "draft:late",
+        Backend::Codex,
+        temp.path(),
+        None,
+        PromptMode::FollowUp,
+        "second",
+        &[],
+    )?;
+
+    store.record_prompt_receipt_delivered("late-first", Some(first))?;
+
+    let states = store
+        .connection
+        .prepare("SELECT id, state FROM outbox ORDER BY id")?
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(
+        states,
+        vec![(first, "acked".into()), (second, "pending".into())]
+    );
+    Ok(())
+}
+
+#[test]
 fn delivered_prompt_completion_rolls_back_acceptance_if_delivery_write_fails()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
@@ -35,7 +107,7 @@ fn delivered_prompt_completion_rolls_back_acceptance_if_delivery_write_fails()
         [id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    assert_eq!(saved, ("sending".into(), "exact queued payload".into()));
+    assert_eq!(saved, ("pending".into(), "exact queued payload".into()));
     let accepted: i64 = store.connection.query_row(
         "SELECT COUNT(*) FROM session_events WHERE json_extract(body,'$.submissionId')='atomic-id'",
         [],
@@ -54,7 +126,6 @@ fn delivered_prompt_completion_rolls_back_acceptance_if_delivery_write_fails()
 
     let store = StateStore::open_at(&database)?;
     assert!(store.queued_prompts()?.is_empty());
-    assert!(store.unknown_prompts()?.is_empty());
     assert!(
         store.accepted_prompt_history(&session)?.is_empty(),
         "delivered input is not pending history"

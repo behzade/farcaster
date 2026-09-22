@@ -69,8 +69,8 @@ CREATE TABLE outbox (
   model TEXT,
   effort TEXT,
   service_tier TEXT,
-  state TEXT NOT NULL DEFAULT 'queued'
-    CHECK (state IN ('queued', 'sending', 'failed', 'unknown')),
+  state TEXT NOT NULL DEFAULT 'pending'
+    CHECK (state IN ('pending', 'acked', 'cancelled')),
   error TEXT,
   created_ms INTEGER NOT NULL
 );

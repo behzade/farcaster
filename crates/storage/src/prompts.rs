@@ -6,6 +6,22 @@ use crate::agents::Backend;
 mod tests;
 
 impl StateStore {
+    /// Persist a user dismissal without claiming that the backend delivered the input.
+    pub fn dismiss_prompt_receipt(&self, session: &Path, receipt_id: &str) -> Result<(), String> {
+        let session = crate::sessions::normalize_session_path(session);
+        self.connection.execute(
+            "INSERT INTO session_events(session_id,seq,t,schema_version,body)
+             SELECT s.id, (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=s.id),
+                    ?3,1,json_object('type','prompt_delivery_resolution','submissionId',?2,'status','cancelled')
+               FROM sessions s WHERE s.locator=?1
+                AND NOT EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id
+                  AND json_extract(e.body,'$.submissionId')=?2
+                  AND json_extract(e.body,'$.type') IN ('prompt_delivery_receipt','prompt_delivery_resolution'))",
+            params![session.to_string_lossy(), receipt_id, now_ms()],
+        ).map_err(|error| format!("save pending message dismissal: {error}"))?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn enqueue_prompt(
         &self,
@@ -54,9 +70,9 @@ impl StateStore {
             .execute(
                 "INSERT INTO outbox(
                    session_id, mode, message, display_message, invocation, images_json,
-                   provider, model, effort, service_tier, created_ms
+                   provider, model, effort, service_tier, state, created_ms
                  ) SELECT s.id, ?2, ?3, ?4, ?5, ?6,
-                          m.provider, m.model, m.effort, m.service_tier, ?7
+                          m.provider, m.model, m.effort, m.service_tier, ?7, ?8
                      FROM sessions s LEFT JOIN session_models m ON m.session_id=s.id
                     WHERE s.id=?1",
                 params![
@@ -66,6 +82,7 @@ impl StateStore {
                     display_message,
                     invocation,
                     images_json,
+                    "pending",
                     now_ms(),
                 ],
             )
@@ -83,29 +100,7 @@ impl StateStore {
     }
 
     pub fn queued_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
-        self.prompts_in_state("queued")
-    }
-
-    pub fn recover_interrupted_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
-        let transaction = self
-            .connection
-            .unchecked_transaction()
-            .map_err(|error| format!("start interrupted prompt recovery: {error}"))?;
-        transaction
-            .execute(
-                "UPDATE outbox SET state='unknown', error='Delivery status unknown after app interruption'
-                  WHERE state='sending'",
-                [],
-            )
-            .map_err(|error| format!("mark interrupted prompt delivery unknown: {error}"))?;
-        transaction
-            .commit()
-            .map_err(|error| format!("commit interrupted prompt recovery: {error}"))?;
-        self.prompts_in_state("unknown")
-    }
-
-    pub fn unknown_prompts(&self) -> Result<Vec<QueuedPrompt>, String> {
-        self.prompts_in_state("unknown")
+        self.prompts_in_state("pending")
     }
 
     pub fn cancel_queued_prompts(&self, ids: &[i64]) -> Result<(), String> {
@@ -113,18 +108,15 @@ impl StateStore {
             .connection
             .unchecked_transaction()
             .map_err(|error| format!("start queued prompt cancellation: {error}"))?;
-        for id in ids {
-            let changed = transaction
+        for &id in ids {
+            transaction
                 .execute(
                     "UPDATE outbox
-                        SET state='failed', error='Prompt cancelled before delivery'
-                      WHERE id=?1 AND state='queued'",
+                        SET state='cancelled', error=NULL
+                      WHERE id=?1 AND state='pending'",
                     [id],
                 )
                 .map_err(|error| format!("cancel queued prompt {id}: {error}"))?;
-            if changed != 1 {
-                return Err(format!("queued prompt {id} is no longer ready to cancel"));
-            }
         }
         transaction
             .commit()
@@ -177,67 +169,6 @@ impl StateStore {
             .map_err(|error| format!("query prompt queue: {error}"))?
             .map(|row| row.map_err(|error| format!("decode queued prompt: {error}")))
             .collect()
-    }
-
-    pub fn discard_unknown_prompt(
-        &self,
-        id: i64,
-        target: &str,
-        session: Option<&Path>,
-    ) -> Result<(), String> {
-        let Some(session_id) = self.session_id_for_target(target, session, None)? else {
-            return Err(format!(
-                "interrupted prompt {id} does not belong to {target}"
-            ));
-        };
-        let changed = self
-            .connection
-            .execute(
-                "DELETE FROM outbox WHERE id=?1 AND session_id=?2 AND state='unknown'",
-                params![id, session_id],
-            )
-            .map_err(|error| format!("discard interrupted prompt {id}: {error}"))?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err(format!(
-                "interrupted prompt {id} is no longer awaiting disposition"
-            ))
-        }
-    }
-
-    pub fn reconcile_unknown_prompt(
-        &mut self,
-        id: i64,
-        target: &str,
-        session: Option<&Path>,
-    ) -> Result<(), String> {
-        let Some(session_id) = self.session_id_for_target(target, session, None)? else {
-            return Err(format!(
-                "interrupted prompt {id} does not belong to {target}"
-            ));
-        };
-        let claimed = self
-            .connection
-            .execute(
-                "UPDATE outbox SET state='sending'
-                  WHERE id=?1 AND session_id=?2 AND state='unknown'",
-                params![id, session_id],
-            )
-            .map_err(|error| format!("claim interrupted prompt {id}: {error}"))?;
-        if claimed != 1 {
-            return Err(format!(
-                "interrupted prompt {id} is no longer awaiting disposition"
-            ));
-        }
-        if let Err(error) = self.complete_prompt(id, target, session) {
-            let _ = self.connection.execute(
-                "UPDATE outbox SET state='unknown' WHERE id=?1 AND state='sending'",
-                [id],
-            );
-            return Err(error);
-        }
-        Ok(())
     }
 
     pub fn prompt_presentations(&self, session: &Path) -> Result<Vec<PromptPresentation>, String> {
@@ -438,16 +369,9 @@ impl StateStore {
             .map_err(|error| format!("commit prompt delivery reconciliation: {error}"))
     }
 
-    pub fn complete_prompt(
-        &mut self,
-        id: i64,
-        target: &str,
-        session: Option<&Path>,
-    ) -> Result<(), String> {
-        self.complete_prompt_with_receipt(id, target, session, &format!("outbox:{id}"), false)
-    }
-
-    pub fn complete_prompt_with_receipt(
+    /// Record transport admission without claiming that the model consumed the
+    /// input. The row remains retryable until `complete_delivered_prompt`.
+    pub fn record_prompt_acceptance(
         &mut self,
         id: i64,
         target: &str,
@@ -455,7 +379,7 @@ impl StateStore {
         receipt_id: &str,
         delivery_tracked: bool,
     ) -> Result<(), String> {
-        self.complete_prompt_receipt(id, target, session, receipt_id, delivery_tracked, false)
+        self.record_prompt_delivery(id, target, session, receipt_id, delivery_tracked, false)
     }
 
     pub fn complete_delivered_prompt(
@@ -466,10 +390,10 @@ impl StateStore {
         receipt_id: &str,
         delivery_tracked: bool,
     ) -> Result<(), String> {
-        self.complete_prompt_receipt(id, target, session, receipt_id, delivery_tracked, true)
+        self.record_prompt_delivery(id, target, session, receipt_id, delivery_tracked, true)
     }
 
-    fn complete_prompt_receipt(
+    fn record_prompt_delivery(
         &mut self,
         id: i64,
         _target: &str,
@@ -481,15 +405,20 @@ impl StateStore {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| format!("start queued prompt completion {id}: {error}"))?;
-        let draft_id = transaction.query_row(
-            "SELECT s.client_key FROM outbox o JOIN sessions s ON s.id=o.session_id WHERE o.id=?1",
-            [id], |row| row.get::<_, Option<String>>(0),
-        ).optional().map_err(|error| format!("identify queued prompt {id}: {error}"))?;
+            .map_err(|error| format!("start prompt delivery record {id}: {error}"))?;
+        let draft_id = transaction
+            .query_row(
+                "SELECT s.client_key FROM outbox o JOIN sessions s ON s.id=o.session_id
+              WHERE o.id=?1 AND o.state='pending'",
+                [id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| format!("identify queued prompt {id}: {error}"))?;
         let Some(draft_id) = draft_id else {
             return transaction
                 .commit()
-                .map_err(|error| format!("finish duplicate prompt acknowledgement: {error}"));
+                .map_err(|error| format!("finish duplicate prompt delivery: {error}"));
         };
         if let Some(draft_id) = draft_id
             && let Some(session) = session
@@ -508,28 +437,32 @@ impl StateStore {
              SELECT o.session_id,
                     (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
                     o.created_ms, 1,
-                    json_object('type','prompt_presentation','resolved',o.message,
-                                'display',o.display_message,'invocation',o.invocation)
-               FROM outbox o
-              WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
-            [id],
-        ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
-        // Transport acceptance can precede durable backend history. Keep the payload
-        // before removing it from the delivery queue, including image-only prompts.
-        transaction.execute(
-            "INSERT INTO session_events(session_id, seq, t, schema_version, body)
-             SELECT o.session_id,
-                    (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
-                    o.created_ms, 1,
                     json_object('type','accepted_prompt','submissionId',?2,
                                 'deliveryStatus','accepted',
                                 'deliveryTracked',json(CASE WHEN ?3 THEN 'true' ELSE 'false' END),
                                 'promptMode',o.mode,'message',o.message,
                                 'images',json(o.images_json))
-               FROM outbox o WHERE o.id=?1",
+               FROM outbox o WHERE o.id=?1
+                AND NOT EXISTS (
+                    SELECT 1 FROM session_events e
+                     WHERE e.session_id=o.session_id
+                       AND json_extract(e.body,'$.type')='accepted_prompt'
+                       AND json_extract(e.body,'$.submissionId')=?2
+                )",
             rusqlite::params![id, receipt_id, delivery_tracked],
         ).map_err(|error| format!("save accepted prompt {id}: {error}"))?;
         if delivered {
+            transaction.execute(
+                "INSERT INTO session_events(session_id, seq, t, schema_version, body)
+                 SELECT o.session_id,
+                        (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                        o.created_ms, 1,
+                        json_object('type','prompt_presentation','resolved',o.message,
+                                    'display',o.display_message,'invocation',o.invocation)
+                   FROM outbox o
+                  WHERE o.id=?1 AND o.display_message IS NOT NULL AND o.invocation IS NOT NULL",
+                [id],
+            ).map_err(|error| format!("save prompt presentation {id}: {error}"))?;
             // Acceptance and consumption must commit together. A crash between
             // separate transactions would restore delivered input as pending.
             transaction.execute(
@@ -546,13 +479,16 @@ impl StateStore {
                     )",
                 rusqlite::params![id, receipt_id, now_ms()],
             ).map_err(|error| format!("save delivered prompt {id}: {error}"))?;
+            transaction
+                .execute(
+                    "UPDATE outbox SET state='acked', error=NULL WHERE id=?1 AND state='pending'",
+                    [id],
+                )
+                .map_err(|error| format!("complete delivered prompt {id}: {error}"))?;
         }
         transaction
-            .execute("DELETE FROM outbox WHERE id=?1", [id])
-            .map_err(|error| format!("complete queued prompt {id}: {error}"))?;
-        transaction
             .commit()
-            .map_err(|error| format!("commit queued prompt completion {id}: {error}"))
+            .map_err(|error| format!("commit prompt delivery record {id}: {error}"))
     }
 
     pub fn record_prompt_receipt_delivered(
@@ -601,6 +537,15 @@ impl StateStore {
                 rusqlite::params![session_id, now_ms(), receipt_id],
             )
             .map_err(|error| format!("save prompt delivery receipt {receipt_id}: {error}"))?;
+        if let Some(outbox_id) = outbox_id {
+            transaction
+                .execute(
+                    "UPDATE outbox SET state='acked', error=NULL
+                      WHERE id=?1 AND state='pending'",
+                    [outbox_id],
+                )
+                .map_err(|error| format!("ack delivered prompt {outbox_id}: {error}"))?;
+        }
         transaction
             .commit()
             .map_err(|error| format!("commit prompt delivery receipt {receipt_id}: {error}"))
@@ -608,42 +553,18 @@ impl StateStore {
 }
 impl StateStore {
     pub fn begin_prompt(&self, id: i64) -> Result<(), String> {
-        let changed = self
+        let pending = self
             .connection
-            .execute(
-                "UPDATE outbox SET state='sending', error=NULL WHERE id=?1 AND state='queued'",
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM outbox WHERE id=?1 AND state='pending')",
                 [id],
+                |row| row.get::<_, bool>(0),
             )
-            .map_err(|error| format!("start queued prompt {id}: {error}"))?;
-        if changed == 1 {
+            .map_err(|error| format!("check queued prompt {id}: {error}"))?;
+        if pending {
             Ok(())
         } else {
             Err(format!("queued prompt {id} is no longer ready to send"))
-        }
-    }
-
-    pub fn fail_prompt(&self, id: i64, error: &str) -> Result<(), String> {
-        self.connection
-            .execute(
-                "UPDATE outbox SET state='failed', error=?2 WHERE id=?1",
-                params![id, error],
-            )
-            .map(|_| ())
-            .map_err(|db_error| format!("fail queued prompt {id}: {db_error}"))
-    }
-
-    pub fn mark_prompt_delivery_unknown(&self, id: i64, error: &str) -> Result<(), String> {
-        let changed = self
-            .connection
-            .execute(
-                "UPDATE outbox SET state='unknown', error=?2 WHERE id=?1 AND state='sending'",
-                params![id, error],
-            )
-            .map_err(|db_error| format!("mark queued prompt {id} delivery unknown: {db_error}"))?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err(format!("queued prompt {id} is no longer awaiting delivery"))
         }
     }
 }

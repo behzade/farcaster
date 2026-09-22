@@ -231,7 +231,7 @@ impl StateStore {
         Ok(session)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn replace_sessions(&mut self, sessions: &[SessionSummary]) -> Result<(), String> {
         self.index_sessions(sessions, true)
     }
@@ -318,7 +318,7 @@ impl StateStore {
                     "SELECT EXISTS(
                        SELECT 1 FROM outbox o
                        JOIN sessions s ON s.id = o.session_id
-                      WHERE s.locator=?1 AND o.state IN ('queued','sending','unknown')
+                      WHERE s.locator=?1 AND o.state='pending'
                      )",
                     [locator.to_string_lossy()],
                     |row| row.get::<_, bool>(0),
@@ -337,7 +337,7 @@ impl StateStore {
             .prepare(
                 "SELECT s.locator FROM outbox o
                    JOIN sessions s ON s.id=o.session_id
-                  WHERE o.state IN ('queued','sending','unknown') AND s.locator IS NOT NULL",
+                  WHERE o.state='pending' AND s.locator IS NOT NULL",
             )
             .map_err(|error| format!("prepare legacy queued locator index: {error}"))?;
         let locators = statement

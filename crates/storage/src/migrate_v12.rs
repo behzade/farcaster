@@ -186,10 +186,12 @@ fn copy_outbox(tx: &Transaction<'_>) -> Result<(), String> {
         let Some(session_id) = resolve_target(tx, &target, session_path.as_deref())? else {
             continue;
         };
+        // v12 rebuilds into the current schema, so this legacy copy must
+        // already satisfy the current outbox constraint.
         let state = match state.as_str() {
-            "sending" => "sending",
-            "failed" => "failed",
-            _ => "queued",
+            "acked" => "acked",
+            "cancelled" => "cancelled",
+            _ => "pending",
         };
         tx.execute(
             "INSERT INTO outbox(
