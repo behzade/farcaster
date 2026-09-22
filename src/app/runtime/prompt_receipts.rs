@@ -49,10 +49,10 @@ impl RuntimeOwner {
                 .or_else(|| retired.as_ref().and_then(|prompt| prompt.outbox_id))
                 .or_else(|| current.then_some(self.pending_outbox_id).flatten())
             {
-                state.cancel_queued_prompts(&[outbox_id])?;
+                state.with(|store| store.cancel_queued_prompts(&[outbox_id]))?;
             }
             if let Some(session) = self.active_session.as_deref() {
-                state.dismiss_prompt_receipt(session, id)?;
+                state.with(|store| store.dismiss_prompt_receipt(session, id))?;
             }
             Ok::<_, String>(())
         })();
@@ -152,8 +152,8 @@ impl RuntimeOwner {
         };
         let mut saved = false;
         if let Some(state) = self.state.as_mut() {
-            let result = match (outbox_id, prompt) {
-                (Some(outbox_id), Some((target, session, delivery_tracked))) => state
+            let result = state.with(|store| match (outbox_id, prompt) {
+                (Some(outbox_id), Some((target, session, delivery_tracked))) => store
                     .complete_delivered_prompt(
                         outbox_id,
                         &target,
@@ -161,8 +161,8 @@ impl RuntimeOwner {
                         receipt_id,
                         delivery_tracked,
                     ),
-                _ => state.record_prompt_receipt_delivered(receipt_id, outbox_id),
-            };
+                _ => store.record_prompt_receipt_delivered(receipt_id, outbox_id),
+            });
             match result {
                 Ok(()) => saved = true,
                 Err(error) => {
@@ -216,28 +216,31 @@ impl RuntimeOwner {
             return false;
         };
         let result = (|| {
-            if let Some(store) = self.state.as_mut() {
-                if let Some(outbox_id) = retired.outbox_id {
-                    if delivered {
-                        store.complete_delivered_prompt(
-                            outbox_id,
-                            &retired.target,
-                            retired.session.as_deref(),
-                            id,
-                            retired.delivery_tracked,
-                        )?;
-                    } else {
-                        store.record_prompt_acceptance(
-                            outbox_id,
-                            &retired.target,
-                            retired.session.as_deref(),
-                            id,
-                            retired.delivery_tracked,
-                        )?;
+            if let Some(state) = self.state.as_mut() {
+                state.with(|store| {
+                    if let Some(outbox_id) = retired.outbox_id {
+                        if delivered {
+                            store.complete_delivered_prompt(
+                                outbox_id,
+                                &retired.target,
+                                retired.session.as_deref(),
+                                id,
+                                retired.delivery_tracked,
+                            )?;
+                        } else {
+                            store.record_prompt_acceptance(
+                                outbox_id,
+                                &retired.target,
+                                retired.session.as_deref(),
+                                id,
+                                retired.delivery_tracked,
+                            )?;
+                        }
+                    } else if delivered && !retired.delivered {
+                        store.record_prompt_receipt_delivered(id, None)?;
                     }
-                } else if delivered && !retired.delivered {
-                    store.record_prompt_receipt_delivered(id, None)?;
-                }
+                    Ok(())
+                })?;
             }
             Ok::<_, String>(())
         })();
@@ -286,13 +289,15 @@ impl RuntimeOwner {
         for (receipt_id, queued) in pending {
             if queued.result_emitted {
                 if let Some(state) = self.state.as_mut()
-                    && let Err(database_error) = state.complete_delivered_prompt(
-                        queued.outbox_id,
-                        &queued.target,
-                        queued.session.as_deref(),
-                        &receipt_id,
-                        queued.delivery_tracked,
-                    )
+                    && let Err(database_error) = state.with(|store| {
+                        store.complete_delivered_prompt(
+                            queued.outbox_id,
+                            &queued.target,
+                            queued.session.as_deref(),
+                            &receipt_id,
+                            queued.delivery_tracked,
+                        )
+                    })
                 {
                     zlog::error!(
                         "Save proven queued delivery {}: {database_error}",
@@ -336,13 +341,15 @@ impl RuntimeOwner {
         let Some(state) = self.state.as_mut() else {
             return;
         };
-        match state.complete_delivered_prompt(
-            outbox_id,
-            &target,
-            session.as_deref(),
-            &receipt_id,
-            delivery_tracked,
-        ) {
+        match state.with(|store| {
+            store.complete_delivered_prompt(
+                outbox_id,
+                &target,
+                session.as_deref(),
+                &receipt_id,
+                delivery_tracked,
+            )
+        }) {
             Ok(()) => self.pending_outbox_id = None,
             Err(error) => {
                 zlog::error!("Save proven prompt delivery {outbox_id}: {error}");

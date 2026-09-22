@@ -75,7 +75,7 @@ impl WorkGraphBoardView {
     }
 
     fn submit_create(&mut self, title: String, detail: String, cx: &mut Context<Self>) {
-        let database = self.database.clone();
+        let store = self.store.clone();
         let project = self.project.clone();
         let session_id = self.active_session.as_ref().map(|(id, _)| id.clone());
         let operation = match &self.state {
@@ -99,11 +99,15 @@ impl WorkGraphBoardView {
             PlanLoadState::Loading | PlanLoadState::Failed(_) => return,
         };
         let edit = cx.background_spawn(async move {
-            if let Some((plan, after, files)) = operation {
-                add_node(database, project, plan, title, files, after, session_id)
-            } else {
-                create_plan(database, project, title, detail)
-            }
+            store?.with(|store| {
+                store.with_connection(|connection| {
+                    if let Some((plan, after, files)) = operation {
+                        add_node(connection, project, plan, title, files, after, session_id)
+                    } else {
+                        create_plan(connection, project, title, detail)
+                    }
+                })
+            })
         });
         self.state = PlanLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {

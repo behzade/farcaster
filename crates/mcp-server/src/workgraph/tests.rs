@@ -8,6 +8,49 @@ use crate::{
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
+fn with_test_store<T>(
+    database: &Path,
+    operation: impl FnOnce(&mut StateStore) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut store = StateStore::open_at(database)?;
+    store.with_connection(|connection| {
+        SqliteAdapter::initialize_connection(connection).map_err(|error| error.to_string())
+    })?;
+    operation(&mut store)
+}
+
+fn session_identity(database: &Path, caller: &CallerContext) -> Result<(String, String), String> {
+    with_test_store(database, |store| session_identity_store(store, caller))
+}
+
+fn search(database: &Path, caller: &CallerContext, params: SearchParams) -> Result<Value, String> {
+    with_test_store(database, |store| search_store(store, caller, params))
+}
+
+fn patch(database: &Path, caller: &CallerContext, params: PatchParams) -> Result<Value, String> {
+    with_test_store(database, |store| patch_store(store, caller, params))
+}
+
+fn claim(database: &Path, caller: &CallerContext, params: TaskParams) -> Result<Value, String> {
+    with_test_store(database, |store| claim_store(store, caller, params))
+}
+
+fn release(database: &Path, caller: &CallerContext, params: TaskParams) -> Result<Value, String> {
+    with_test_store(database, |store| release_store(store, caller, params))
+}
+
+fn complete(
+    database: &Path,
+    caller: &CallerContext,
+    params: CompleteParams,
+) -> Result<Value, String> {
+    with_test_store(database, |store| complete_store(store, caller, params))
+}
+
+fn edit(database: &Path, caller: &CallerContext, action: EditAction) -> Result<Value, String> {
+    with_test_store(database, |store| super::edit(store, caller, action))
+}
+
 fn caller(project: &Path, id: &str) -> CallerContext {
     CallerContext {
         worker_id: format!("worker-{id}"),
@@ -123,7 +166,11 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
         )
         .is_err()
     );
-    let selection = workgraph::load_plan(database.clone(), temp.path().to_owned(), Some("alice"))?;
+    let selection = with_test_store(&database, |store| {
+        store.with_connection(|connection| {
+            workgraph::load_plan(connection, temp.path().to_owned(), Some("alice"))
+        })
+    })?;
     assert_eq!(
         selection
             .snapshot

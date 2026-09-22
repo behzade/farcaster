@@ -1,12 +1,18 @@
 use crate::{add_node, create_plan, link_session, load_plan};
 
+fn open_connection(path: &std::path::Path) -> rusqlite::Connection {
+    drop(crate::SqliteAdapter::open(path).expect("initialize work graph"));
+    rusqlite::Connection::open(path).expect("open work graph")
+}
+
 #[test]
 fn browsing_other_plans_preserves_the_session_plan() {
     let directory = tempfile::tempdir().unwrap();
     let database = directory.path().join("state.sqlite3");
+    let mut connection = open_connection(&database);
     let project = directory.path().to_path_buf();
     let (first, _) = create_plan(
-        database.clone(),
+        &mut connection,
         project.clone(),
         "First".into(),
         "First task".into(),
@@ -14,7 +20,7 @@ fn browsing_other_plans_preserves_the_session_plan() {
     .unwrap();
     let first = first.snapshot.unwrap();
     let (second, _) = create_plan(
-        database.clone(),
+        &mut connection,
         project.clone(),
         "Second".into(),
         "Second task".into(),
@@ -22,7 +28,7 @@ fn browsing_other_plans_preserves_the_session_plan() {
     .unwrap();
     let second = second.snapshot.unwrap();
     link_session(
-        database.clone(),
+        &mut connection,
         project.clone(),
         first.walk.as_ref().unwrap().number,
         "session".into(),
@@ -30,7 +36,7 @@ fn browsing_other_plans_preserves_the_session_plan() {
     )
     .unwrap();
     let browse = crate::load_selected_plan(
-        database.clone(),
+        &mut connection,
         project.clone(),
         Some("session"),
         Some(second.plan.number),
@@ -44,7 +50,7 @@ fn browsing_other_plans_preserves_the_session_plan() {
     assert_eq!(browse.snapshot.as_ref().unwrap().walk, second.walk);
     assert_eq!(browse.session_link.unwrap().plan_number, first.plan.number);
     let (edited, node) = add_node(
-        database.clone(),
+        &mut connection,
         project.clone(),
         second.plan.number,
         "Another task".into(),
@@ -65,7 +71,8 @@ fn browsing_other_plans_preserves_the_session_plan() {
             .iter()
             .any(|item| item.number == node)
     );
-    let reopened = load_plan(database, project, Some("session")).unwrap();
+    drop(connection);
+    let reopened = load_plan(&mut open_connection(&database), project, Some("session")).unwrap();
     assert_eq!(reopened.snapshot.unwrap().plan.number, first.plan.number);
 }
 
@@ -73,10 +80,11 @@ fn browsing_other_plans_preserves_the_session_plan() {
 fn application_round_trips_nodes_walk_and_session() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let database = directory.path().join("gui-state.sqlite3");
+    let mut connection = open_connection(&database);
     let project = directory.path().join("project");
     std::fs::create_dir(&project).expect("project directory");
     let (created, root) = create_plan(
-        database.clone(),
+        &mut connection,
         project.clone(),
         "Git and jj integration".into(),
         "Current product".into(),
@@ -88,7 +96,7 @@ fn application_round_trips_nodes_walk_and_session() {
     let walk = snapshot.walk.expect("default walk");
 
     let (with_node, node) = add_node(
-        database.clone(),
+        &mut connection,
         project.clone(),
         snapshot.plan.number,
         "Both backends expose repository state".into(),
@@ -112,7 +120,7 @@ fn application_round_trips_nodes_walk_and_session() {
     );
 
     let linked = link_session(
-        database.clone(),
+        &mut connection,
         project.clone(),
         walk.number,
         "session-1".into(),
@@ -124,7 +132,9 @@ fn application_round_trips_nodes_walk_and_session() {
         Some(walk.number)
     );
 
-    let loaded = load_plan(database, project, Some("session-1")).expect("load linked plan");
+    drop(connection);
+    let loaded = load_plan(&mut open_connection(&database), project, Some("session-1"))
+        .expect("load linked plan");
     assert_eq!(
         loaded.snapshot.as_ref().map(|plan| plan.plan.number),
         Some(snapshot.plan.number)

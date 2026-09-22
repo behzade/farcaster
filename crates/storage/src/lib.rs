@@ -63,6 +63,12 @@ pub struct StateStore {
     image_directory: PathBuf,
 }
 
+impl StateStore {
+    pub fn with_connection<T>(&mut self, operation: impl FnOnce(&mut Connection) -> T) -> T {
+        operation(&mut self.connection)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct WindowPlacement {
     pub bounds: [f32; 4],

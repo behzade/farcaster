@@ -96,20 +96,22 @@ impl RuntimeOwner {
             .as_ref()
             .ok_or_else(|| "Couldn’t save the message".to_owned())
             .and_then(|state| {
-                let images = state.store_prompt_images(&images)?;
-                let id = agents::enqueue_prompt_with_presentation(
-                    state,
-                    &target,
-                    harness,
-                    &self.project,
-                    self.snapshot.selected_session.as_deref(),
-                    mode,
-                    &message,
-                    display_message.as_deref(),
-                    invocation.as_deref(),
-                    &images,
-                )?;
-                Ok((Some(id), images))
+                state.with(|store| {
+                    let images = store.store_prompt_images(&images)?;
+                    let id = agents::enqueue_prompt_with_presentation(
+                        store,
+                        &target,
+                        harness,
+                        &self.project,
+                        self.snapshot.selected_session.as_deref(),
+                        mode,
+                        &message,
+                        display_message.as_deref(),
+                        invocation.as_deref(),
+                        &images,
+                    )?;
+                    Ok((Some(id), images))
+                })
             });
         let (outbox_id, images) = match queued {
             Ok(queued) => queued,
@@ -130,7 +132,7 @@ impl RuntimeOwner {
                     .state
                     .as_ref()
                     .ok_or_else(|| "State unavailable".to_owned())
-                    .and_then(|state| agents::begin_prompt(state, outbox_id))
+                    .and_then(|state| state.with(|store| agents::begin_prompt(store, outbox_id)))
                     .and_then(|()| {
                         self.process.as_mut().expect("checked process").send(
                             SessionCommand::Prompt {
@@ -405,7 +407,7 @@ impl RuntimeOwner {
         }
         if let Some(id) = outbox_id
             && let Some(state) = &self.state
-            && let Err(error) = agents::begin_prompt(state, id)
+            && let Err(error) = state.with(|store| agents::begin_prompt(store, id))
         {
             let target = self.pending_prompt_target.take().unwrap_or_default();
             self.rollback_pending_prompt();
@@ -599,7 +601,7 @@ impl RuntimeOwner {
         };
         if let Some(outbox_id) = prompt.outbox_id
             && let Some(state) = &self.state
-            && let Err(error) = state.cancel_queued_prompts(&[outbox_id])
+            && let Err(error) = state.with(|store| store.cancel_queued_prompts(&[outbox_id]))
         {
             zlog::error!("Save deferred prompt cancellation: {error}");
             return;

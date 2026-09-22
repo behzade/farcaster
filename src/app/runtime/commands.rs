@@ -29,7 +29,7 @@ impl RuntimeOwner {
             self.state
                 .as_ref()
                 .ok_or("State unavailable")?
-                .cancel_queued_prompts(&[prompt.id])?;
+                .with(|store| store.cancel_queued_prompts(&[prompt.id]))?;
             self.queued_prompts.remove(index);
             self.emit_prompt_result(Some(id), target, agents::PromptOutcome::Cancelled);
             return Ok(());
@@ -68,7 +68,7 @@ impl RuntimeOwner {
             .state
             .as_ref()
             .ok_or_else(|| "State unavailable".to_owned())
-            .and_then(|state| state.cancel_queued_prompts(&ids));
+            .and_then(|state| state.with(|store| store.cancel_queued_prompts(&ids)));
         // Stop this run even if the disk write fails. In that case make the
         // missing durability explicit: we cannot promise safety after restart.
         self.queued_prompts.clear();
@@ -101,7 +101,9 @@ impl RuntimeOwner {
                     .state
                     .as_ref()
                     .ok_or_else(|| "State unavailable".to_owned())
-                    .and_then(|state| state.dismiss_prompt_receipt(&session, &id));
+                    .and_then(|state| {
+                        state.with(|store| store.dismiss_prompt_receipt(&session, &id))
+                    });
                 match result {
                     Ok(()) => conversation_mut(&mut self.snapshot).dismiss_pending_receipt(&id),
                     Err(error) => {
@@ -336,7 +338,8 @@ impl RuntimeOwner {
             }
             RuntimeCommand::SetSessionArchived { path, archived } => {
                 if let Some(state) = &self.state
-                    && let Err(error) = sessions::set_archived(state, &path, archived)
+                    && let Err(error) =
+                        state.with(|store| sessions::set_archived(store, &path, archived))
                 {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.session_generation,

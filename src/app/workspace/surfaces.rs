@@ -707,7 +707,7 @@ impl FarcasterApp {
         if self.settings.proxy_save.is_some() {
             self.save_settings_proxy(cx);
         }
-        match crate::app::persistence::open().and_then(|store| crate::access::load_proxy(&store)) {
+        match crate::app::persistence::open().and_then(|store| crate::access::load_proxy(&*store)) {
             Ok(proxy) => {
                 self.settings.network_proxy_input.update(cx, |input, cx| {
                     input.set_value(proxy.unwrap_or_default(), window, cx);

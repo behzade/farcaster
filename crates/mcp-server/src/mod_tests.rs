@@ -118,7 +118,9 @@ async fn workgraph_rejects_missing_authenticated_caller() {
     let temp = tempfile::tempdir().expect("project");
     let (updates, _) = async_channel::bounded(1);
     let server = FarcasterMcp::new(
-        temp.path().join("unused.db"),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::storage::StateStore::open_at(&temp.path().join("state.db")).expect("state"),
+        )),
         worker_pool(temp.path()),
         updates,
         notices::NoticeBoard::default(),
@@ -177,7 +179,9 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
     let database = temp.path().join("state.sqlite3");
     let (updates, _) = async_channel::bounded(1);
     let server = FarcasterMcp::new(
-        database.clone(),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::storage::StateStore::open_at(&database).expect("state"),
+        )),
         worker_pool(temp.path()),
         updates,
         notices::NoticeBoard::default(),

@@ -130,7 +130,9 @@ impl Supervisor {
                     .catalog_state
                     .as_ref()
                     .ok_or_else(|| "Session state is unavailable".to_owned())
-                    .and_then(|state| sessions::set_archived(state, path, true));
+                    .and_then(|state| {
+                        state.with(|store| sessions::set_archived(store, path, true))
+                    });
                 if let Err(message) = archive_result {
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.catalog_generation,
@@ -185,9 +187,9 @@ impl Supervisor {
                         "Wait for the session family to become idle before deleting it".to_owned(),
                     );
                 }
-                let mut state = crate::app::persistence::open()?;
+                let state = crate::app::persistence::shared()?;
                 let paths = family_paths.iter().cloned().collect::<Vec<_>>();
-                if agents::has_queued_prompts_for(&state, &paths)? {
+                if state.with(|store| agents::has_queued_prompts_for(store, &paths))? {
                     return Err(
                         "Send or remove pending messages before deleting this session".to_owned(),
                     );
@@ -214,7 +216,9 @@ impl Supervisor {
                     self.generation = self.generation.saturating_add(1);
                 }
                 let leftovers = agents::delete_session_family(&targets)?;
-                let state_warning = sessions::delete_state(&mut state, &paths).err();
+                let state_warning = state
+                    .with(|store| sessions::delete_state(store, &paths))
+                    .err();
                 Ok((family_paths, leftovers, state_warning))
             })();
             match result {
@@ -302,9 +306,9 @@ impl Supervisor {
                         "Wait for the session family to become idle before moving it".to_owned(),
                     );
                 }
-                let mut state = crate::app::persistence::open()?;
+                let state = crate::app::persistence::shared()?;
                 let paths = family_paths.iter().cloned().collect::<Vec<_>>();
-                if agents::has_queued_prompts_for(&state, &paths)? {
+                if state.with(|store| agents::has_queued_prompts_for(store, &paths))? {
                     return Err(
                         "Send or remove pending messages before moving this session".to_owned()
                     );
@@ -337,8 +341,9 @@ impl Supervisor {
                     .iter()
                     .map(|(source, target)| (source.clone(), target.clone()))
                     .collect::<Vec<_>>();
-                let state_warning =
-                    sessions::relocate_state(&mut state, &path_updates, target_project).err();
+                let state_warning = state
+                    .with(|store| sessions::relocate_state(store, &path_updates, target_project))
+                    .err();
                 let mut target = owned_family[0].target();
                 target.path = moved.root.clone();
                 Ok((moved, target, state_warning))

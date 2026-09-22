@@ -1,5 +1,9 @@
 use std::{
-    future::IntoFuture as _, net::TcpListener, path::PathBuf, sync::Mutex, thread::JoinHandle,
+    future::IntoFuture as _,
+    net::TcpListener,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread::JoinHandle,
 };
 
 use rmcp::transport::streamable_http_server::{
@@ -32,7 +36,7 @@ struct RunningServer {
 }
 
 pub fn start(
-    database: PathBuf,
+    store: Arc<Mutex<crate::storage::StateStore>>,
     workers: crate::agents::WorkerPool,
     updates: async_channel::Sender<()>,
     notices: crate::notice_board::NoticeBoard,
@@ -43,22 +47,33 @@ pub fn start(
     if current.is_some() {
         return Err("MCP server is already initialized".into());
     }
+    super::with_store(&store, |store| {
+        store.with_connection(|connection| {
+            workgraph::SqliteAdapter::initialize_connection(connection)
+                .map_err(|error| error.to_string())
+        })
+    })?;
     let server = ServerState::new(
-        FarcasterMcp::new(database.clone(), workers, updates, notices),
+        FarcasterMcp::new(store.clone(), workers, updates, notices),
         crate::builtin_mcp::enabled(),
         BIND_ADDRESS,
     )?;
-    crate::agents::CallerRegistry::shared().set_family_sink(Some(std::sync::Arc::new(
-        move |link| crate::storage::StateStore::open_at(&database)?.save_worker_family(link),
-    )));
-    let binding_database = server.service.database.clone();
-    let execution_database = binding_database.clone();
+    let family_store = store.clone();
+    crate::agents::CallerRegistry::shared().set_family_sink(Some(Arc::new(move |link| {
+        super::with_store(&family_store, |store| store.save_worker_family(link))
+    })));
+    let binding_store = store.clone();
+    let execution_store = store;
     crate::agents::CallerRegistry::shared().set_execution_sinks(
-        Some(std::sync::Arc::new(move |caller| {
-            crate::storage::StateStore::open_at(&binding_database)?.register_caller_session(caller)
+        Some(Arc::new(move |caller| {
+            super::with_store(&binding_store, |store| {
+                store.register_caller_session(caller)
+            })
         })),
-        Some(std::sync::Arc::new(move |execution| {
-            crate::storage::StateStore::open_at(&execution_database)?.register_execution(execution)
+        Some(Arc::new(move |execution| {
+            super::with_store(&execution_store, |store| {
+                store.register_execution(execution)
+            })
         })),
     );
     *current = Some(server);

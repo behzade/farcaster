@@ -227,12 +227,20 @@ impl RuntimeOwner {
             }
         };
         if let (Some(state), Some(evidence)) =
-            (self.state.as_mut(), history.prompt_deliveries.as_ref())
-            && let Err(error) = state.reconcile_prompt_deliveries(&result.path, evidence)
+            (self.state.as_ref(), history.prompt_deliveries.as_ref())
+            && let Err(error) =
+                state.with(|store| store.reconcile_prompt_deliveries(&result.path, evidence))
         {
             zlog::error!("Reconcile saved prompt deliveries: {error}");
         }
-        annotate_history_presentations(self.state.as_ref(), &result.path, &mut history.messages);
+        if let Some(state) = self.state.as_ref() {
+            if let Err(error) = state.with(|store| {
+                annotate_history_presentations(Some(store), &result.path, &mut history.messages);
+                Ok(())
+            }) {
+                zlog::error!("Annotate saved prompt deliveries: {error}");
+            }
+        }
         if self.parked_snapshot.is_none() {
             self.parked_snapshot = Some(std::mem::take(&mut self.snapshot));
         }

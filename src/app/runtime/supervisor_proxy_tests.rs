@@ -84,7 +84,7 @@ fn test_supervisor(
             clock: 0,
             last_touch: HashMap::new(),
             configurations: HarnessConfigurationStore::default(),
-            catalog_state: Some(state),
+            catalog_state: Some(state.into()),
             configuration_catalogs: Vec::new(),
             configuration_rx,
             configuration_tx: None,

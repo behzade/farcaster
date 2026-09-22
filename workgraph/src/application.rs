@@ -1,3 +1,4 @@
+use rusqlite::Connection;
 use std::path::PathBuf;
 
 use crate::{
@@ -6,15 +7,13 @@ use crate::{
 };
 
 pub fn create_plan(
-    database: PathBuf,
+    connection: &mut Connection,
     project: PathBuf,
     title: String,
     root_title: String,
 ) -> Result<(ProjectSelection, u64), String> {
     let project_key = canonical_project(&project)?;
-    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    let result = graph
+    let result = WorkGraph::new(SqliteAdapter::borrow(connection))
         .edit(&EditRequest {
             project: project_key,
             idempotency_key: format!("workgraph-create-plan-{}", operation_id()?),
@@ -31,13 +30,13 @@ pub fn create_plan(
     };
     let number = snapshot.plan.root_node;
     Ok((
-        load_selected_plan(database, project, None, Some(snapshot.plan.number))?,
+        load_selected_plan(connection, project, None, Some(snapshot.plan.number))?,
         number,
     ))
 }
 
 pub fn add_node(
-    database: PathBuf,
+    connection: &mut Connection,
     project: PathBuf,
     plan: u64,
     title: String,
@@ -46,9 +45,7 @@ pub fn add_node(
     session_id: Option<String>,
 ) -> Result<(ProjectSelection, u64), String> {
     let project_key = canonical_project(&project)?;
-    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    let result = graph
+    let result = WorkGraph::new(SqliteAdapter::borrow(connection))
         .edit(&EditRequest {
             project: project_key,
             idempotency_key: format!("workgraph-add-node-{}", operation_id()?),
@@ -65,22 +62,20 @@ pub fn add_node(
         return Err("work graph returned an unexpected node result".into());
     };
     Ok((
-        load_selected_plan(database, project, session_id.as_deref(), Some(plan))?,
+        load_selected_plan(connection, project, session_id.as_deref(), Some(plan))?,
         node.number,
     ))
 }
 
 pub fn link_session(
-    database: PathBuf,
+    connection: &mut Connection,
     project: PathBuf,
     walk: u64,
     session_id: String,
     session_path: String,
 ) -> Result<ProjectSelection, String> {
     let project_key = canonical_project(&project)?;
-    let adapter = SqliteAdapter::open(&database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    graph
+    WorkGraph::new(SqliteAdapter::borrow(connection))
         .edit(&EditRequest {
             project: project_key,
             idempotency_key: format!("workgraph-link-walk-{walk}-{}", operation_id()?),
@@ -91,25 +86,25 @@ pub fn link_session(
             },
         })
         .map_err(|error| error.to_string())?;
-    load_plan(database, project, Some(&session_id))
+    load_plan(connection, project, Some(&session_id))
 }
 
 pub fn load_plan(
-    database: PathBuf,
+    connection: &mut Connection,
     project: PathBuf,
     session_id: Option<&str>,
 ) -> Result<ProjectSelection, String> {
-    load_selected_plan(database, project, session_id, None)
+    load_selected_plan(connection, project, session_id, None)
 }
 
 pub fn load_selected_plan(
-    database: PathBuf,
+    connection: &mut Connection,
     project: PathBuf,
     session_id: Option<&str>,
     plan: Option<u64>,
 ) -> Result<ProjectSelection, String> {
     let project_key = canonical_project(&project)?;
-    let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
+    let adapter = SqliteAdapter::borrow(connection);
     let mut graph = WorkGraph::new(adapter);
     let project_graph = match graph
         .search(&SearchRequest::Project {

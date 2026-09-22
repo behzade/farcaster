@@ -41,7 +41,7 @@ pub(super) fn create(
     let run_panel = cx.new(|_| RunPanelView::new(app.clone()));
     let workgraph = cx.new(|cx| {
         WorkGraphBoardView::new(
-            crate::app::infrastructure::persistence::state_path(),
+            crate::app::infrastructure::persistence::shared(),
             project.to_path_buf(),
             window,
             cx,
@@ -52,7 +52,7 @@ pub(super) fn create(
     let workgraph_sidebar = cx.new(|cx| {
         WorkGraphSidebarView::new(
             app,
-            crate::app::infrastructure::persistence::state_path(),
+            crate::app::infrastructure::persistence::shared(),
             project.to_path_buf(),
             cx,
         )

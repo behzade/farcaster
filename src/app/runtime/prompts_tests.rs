@@ -1,6 +1,7 @@
 use super::*;
 use crate::agents::Backend;
 use crate::agents::{SessionEvent, SessionResponse, SessionResponsePayload};
+use crate::app::persistence::SharedStateStore;
 use crate::app::runtime::{RuntimeCommand, tests::owner_without_process};
 use serde_json::json;
 use std::{cell::RefCell, rc::Rc, sync::mpsc};
@@ -67,9 +68,7 @@ fn held_acks_runtime(temp: &std::path::Path) -> Result<HeldAcksRuntime, String> 
     let transport = HeldAcks::new();
     let commands = transport.commands.clone();
     owner.process = Some(Box::new(transport));
-    owner.state = Some(crate::app::persistence::StateStore::open_at(
-        &temp.join("state.sqlite3"),
-    )?);
+    owner.state = Some(SharedStateStore::open_at(&temp.join("state.sqlite3"))?);
     owner.harness = Some(Backend::Claude);
     owner.active_session = Some(temp.join("session"));
     owner.snapshot.selected_session = owner.active_session.clone();
@@ -234,7 +233,15 @@ fn admission_before_delivery_retains_the_outbox_and_composer_identity() -> Resul
         owner.apply_response(response.clone());
         assert_eq!(owner.pending_prompt_id.as_deref(), Some(id.as_str()));
         assert!(!owner.pending_prompt_result_emitted);
-        assert_eq!(owner.state.as_ref().unwrap().queued_prompts()?.len(), 1);
+        assert_eq!(
+            owner
+                .state
+                .as_ref()
+                .unwrap()
+                .with(|store| store.queued_prompts())?
+                .len(),
+            1
+        );
         owner.apply_process_item(SessionEvent::Activity(
             json!({
                 "type":"prompt_delivery", "submissionId":id, "status":"delivered",
@@ -243,7 +250,14 @@ fn admission_before_delivery_retains_the_outbox_and_composer_identity() -> Resul
             .into(),
         ));
         owner.apply_response(response);
-        assert!(owner.state.as_ref().unwrap().queued_prompts()?.is_empty());
+        assert!(
+            owner
+                .state
+                .as_ref()
+                .unwrap()
+                .with(|store| store.queued_prompts())?
+                .is_empty()
+        );
         assert!(owner.pending_prompt_id.is_none());
         assert!(owner.snapshot.conversation.pending_receipts().is_empty());
     }
@@ -277,7 +291,12 @@ fn live_cancel_routes_composer_and_native_ids_to_the_shared_owner() -> Result<()
     });
     assert_eq!(*cancelled.borrow(), ["held-1", "held-1"]);
     assert_eq!(
-        owner.state.as_ref().unwrap().queued_prompts()?.len(),
+        owner
+            .state
+            .as_ref()
+            .unwrap()
+            .with(|store| store.queued_prompts())?
+            .len(),
         1,
         "only the owner's cancelled event can change durable state"
     );
@@ -577,7 +596,7 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
             events: transport_events.clone(),
         }));
         let database = temp.path().join("state.sqlite3");
-        owner.state = Some(crate::app::persistence::StateStore::open_at(&database)?);
+        owner.state = Some(SharedStateStore::open_at(&database)?);
         owner.harness = Some(Backend::Claude);
         owner.active_session = Some(temp.path().join("session"));
         let mut state = empty_session();

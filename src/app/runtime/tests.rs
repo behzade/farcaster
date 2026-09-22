@@ -168,7 +168,7 @@ fn model_switch_gates_prompts_and_recovers_after_rejection() {
     let temp = tempdir().expect("test operation should succeed");
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.state = Some(
-        StateStore::open_at(&temp.path().join("state.sqlite3"))
+        SharedStateStore::open_at(&temp.path().join("state.sqlite3"))
             .expect("test operation should succeed"),
     );
     owner.snapshot.session = Some(
@@ -1125,7 +1125,9 @@ fn initial_prompt_is_not_duplicated_when_starting_its_process()
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
     let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("gui-state.sqlite3"),
+    )?);
 
     owner.send_prompt(
         "draft:a".into(),
@@ -1174,7 +1176,9 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
     )?;
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.process = Some(process);
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("gui-state.sqlite3"),
+    )?);
 
     owner.send_prompt(
         "draft:a".into(),
@@ -1199,7 +1203,12 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
     assert!(owner.pending_prompt_item.is_none());
     assert!(!owner.snapshot.conversation.running);
     assert_eq!(
-        owner.state.as_ref().expect("state").queued_prompts()?.len(),
+        owner
+            .state
+            .as_ref()
+            .expect("state")
+            .with(|store| store.queued_prompts())?
+            .len(),
         1
     );
     assert!(events.try_iter().any(|event| matches!(
@@ -1250,7 +1259,7 @@ fn new_session_stays_cold_until_the_first_prompt() -> Result<(), Box<dyn std::er
     fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))?;
     let (mut owner, _events) = owner_without_process(old_project.path().to_path_buf());
     owner.process_command = AgentLaunchConfig::test_script(&script, vec!["quiet".into()]);
-    owner.state = Some(StateStore::open_at(
+    owner.state = Some(SharedStateStore::open_at(
         &old_project.path().join("state.sqlite3"),
     )?);
 
@@ -1380,12 +1389,14 @@ fn background_catalog_refresh_preserves_search_until_user_clears_it()
         summary("beta", beta_path.canonicalize()?, "beta"),
     ];
     let (mut owner, events) = owner_without_process(project);
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("gui-state.sqlite3"),
+    )?);
     owner
         .state
         .as_mut()
         .expect("state")
-        .replace_sessions(&sessions)?;
+        .with(|store| store.replace_sessions(&sessions))?;
 
     owner.load_sessions("alpha".into());
     let searched = events.try_iter().collect::<Vec<_>>();
@@ -1505,12 +1516,14 @@ fn cached_child_only_search_publishes_tree_closure_and_unfiltered_catalog()
         "needle assignment".into(),
     );
     let (mut owner, events) = owner_without_process(project);
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("gui-state.sqlite3"),
+    )?);
     owner
         .state
         .as_mut()
         .expect("state")
-        .replace_sessions(&[root, child])?;
+        .with(|store| store.replace_sessions(&[root, child]))?;
 
     owner.load_sessions("needle".into());
 
@@ -2131,7 +2144,7 @@ fn failed_start_keeps_the_deferred_prompt_pending() -> Result<(), Box<dyn std::e
         session_locator_root: None,
         prompt_boundary_url: None,
     };
-    owner.state = Some(StateStore::open_at(&database)?);
+    owner.state = Some(SharedStateStore::open_at(&database)?);
 
     owner.send_prompt(
         "draft:failed-start".into(),
@@ -2142,7 +2155,12 @@ fn failed_start_keeps_the_deferred_prompt_pending() -> Result<(), Box<dyn std::e
     );
 
     assert_eq!(
-        owner.state.as_ref().expect("state").queued_prompts()?.len(),
+        owner
+            .state
+            .as_ref()
+            .expect("state")
+            .with(|store| store.queued_prompts())?
+            .len(),
         1
     );
     assert!(owner.pending_outbox_id.is_none());
@@ -2163,7 +2181,9 @@ fn prompt_before_history_loads_resumes_the_selected_session() -> Result<(), Stri
     let session = PathBuf::from("/sessions/cursor-historical");
     let project = temp.path().to_path_buf();
     let (mut owner, events) = owner_without_process(project.clone());
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("gui-state.sqlite3"),
+    )?);
 
     owner.apply_command(RuntimeCommand::SelectSession {
         path: session.clone(),
@@ -2240,7 +2260,9 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
         },
     )?;
     let (mut owner, event_rx) = owner_without_process(temp.path().to_path_buf());
-    owner.state = Some(StateStore::open_at(&temp.path().join("state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("state.sqlite3"),
+    )?);
     let old_path = PathBuf::from("/old");
     let new_path = PathBuf::from("/new");
     let old_project = temp.path().to_path_buf();
@@ -2254,7 +2276,9 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
     owner.process_generation = 3;
     owner.history_generation = 1;
     owner.active_session = Some(old_path.clone());
-    owner.state = Some(StateStore::open_at(&temp.path().join("gui-state.sqlite3"))?);
+    owner.state = Some(SharedStateStore::open_at(
+        &temp.path().join("gui-state.sqlite3"),
+    )?);
     conversation_mut(&mut owner.snapshot).running = true;
 
     owner.select_history(old_path.clone(), old_project);

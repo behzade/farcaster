@@ -25,7 +25,9 @@ fn steering_client_sequence_handshakes() {
         .expect("workers");
     let (updates, _) = async_channel::bounded(1);
     let service = FarcasterMcp::new(
-        project.path().join("state.db"),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::storage::StateStore::open_at(&project.path().join("state.db")).expect("state"),
+        )),
         workers,
         updates,
         notices::NoticeBoard::default(),
@@ -234,7 +236,14 @@ fn run_pi_extension_worker_send_test() {
         .expect("worker profiles");
     let observed_workers = workers.clone();
     let (updates, _) = async_channel::bounded(1);
-    let service = FarcasterMcp::new(database, workers, updates, notices::NoticeBoard::default());
+    let service = FarcasterMcp::new(
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::storage::StateStore::open_at(&database).expect("state"),
+        )),
+        workers,
+        updates,
+        notices::NoticeBoard::default(),
+    );
     let address: std::net::SocketAddr = "127.0.0.1:18767".parse().expect("test address");
     let mut server =
         ServerState::new(service, true, &address.to_string()).expect("server should start");

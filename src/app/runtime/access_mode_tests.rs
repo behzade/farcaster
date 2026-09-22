@@ -211,7 +211,7 @@ fn saved_session_access_mode_is_restored_after_runtime_restart()
     drop(state);
 
     let (mut owner, _events) = owner_without_process(temp.path().to_owned());
-    owner.state = Some(StateStore::open_at(&database)?);
+    owner.state = Some(SharedStateStore::open_at(&database)?);
     owner.harness = Some(Backend::Codex);
     owner.snapshot.harness = Some(Backend::Codex);
     owner.process_command.access_mode = HarnessAccessMode::Sandboxed;
@@ -220,7 +220,7 @@ fn saved_session_access_mode_is_restored_after_runtime_restart()
         .state
         .as_ref()
         .expect("state store")
-        .session_access_mode(&session)?
+        .with(|store| store.session_access_mode(&session))?
         .expect("saved access mode");
     owner.apply_command(RuntimeCommand::RestoreAccessMode(restored));
 

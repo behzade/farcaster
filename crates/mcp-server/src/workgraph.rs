@@ -51,8 +51,10 @@ pub(super) struct CompleteParams {
     pub(super) evidence: String,
 }
 
-fn session_identity(database: &Path, caller: &CallerContext) -> Result<(String, String), String> {
-    let store = crate::storage::StateStore::open_at(database)?;
+fn session_identity_store(
+    store: &crate::storage::StateStore,
+    caller: &CallerContext,
+) -> Result<(String, String), String> {
     let sessions = store.cached_sessions("")?;
     let caller_project = crate::sessions::normalize_session_path(&caller.project);
     let caller_session = crate::sessions::normalize_session_path(Path::new(&caller.session));
@@ -81,18 +83,23 @@ fn session_identity(database: &Path, caller: &CallerContext) -> Result<(String, 
     ))
 }
 
-fn project_graph(database: &Path, caller: &CallerContext) -> Result<ProjectGraph, String> {
-    let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    let SearchResult::Project(project) = graph
-        .search(&SearchRequest::Project {
-            project: project_key(caller)?,
-        })
-        .map_err(|error| error.to_string())?
-    else {
-        return Err("work graph returned an unexpected search result".into());
-    };
-    Ok(project)
+fn project_graph(
+    store: &mut crate::storage::StateStore,
+    caller: &CallerContext,
+) -> Result<ProjectGraph, String> {
+    store.with_connection(|connection| {
+        let adapter = SqliteAdapter::borrow(connection);
+        let mut graph = WorkGraph::new(adapter);
+        let SearchResult::Project(project) = graph
+            .search(&SearchRequest::Project {
+                project: project_key(caller)?,
+            })
+            .map_err(|error| error.to_string())?
+        else {
+            return Err("work graph returned an unexpected search result".into());
+        };
+        Ok(project)
+    })
 }
 
 fn task_views(
@@ -160,24 +167,24 @@ fn task_views(
         .collect()
 }
 
-pub(super) fn search(
-    database: &Path,
+pub(super) fn search_store(
+    store: &mut crate::storage::StateStore,
     caller: &CallerContext,
     params: SearchParams,
 ) -> Result<Value, String> {
-    let identity = session_identity(database, caller).ok();
+    let identity = session_identity_store(store, caller).ok();
     Ok(
-        json!({ "tasks": task_views(&project_graph(database, caller)?, &params.query, identity.as_ref()) }),
+        json!({ "tasks": task_views(&project_graph(store, caller)?, &params.query, identity.as_ref()) }),
     )
 }
 
-pub(super) fn patch(
-    database: &Path,
+pub(super) fn patch_store(
+    store: &mut crate::storage::StateStore,
     caller: &CallerContext,
     params: PatchParams,
 ) -> Result<Value, String> {
     edit(
-        database,
+        store,
         caller,
         EditAction::CreateTasks {
             nodes: params
@@ -194,14 +201,14 @@ pub(super) fn patch(
     )
 }
 
-pub(super) fn claim(
-    database: &Path,
+pub(super) fn claim_store(
+    store: &mut crate::storage::StateStore,
     caller: &CallerContext,
     params: TaskParams,
 ) -> Result<Value, String> {
-    let (session_id, session_path) = session_identity(database, caller)?;
+    let (session_id, session_path) = session_identity_store(store, caller)?;
     edit(
-        database,
+        store,
         caller,
         EditAction::ClaimTask {
             task: params.task,
@@ -211,14 +218,14 @@ pub(super) fn claim(
     )
 }
 
-pub(super) fn release(
-    database: &Path,
+pub(super) fn release_store(
+    store: &mut crate::storage::StateStore,
     caller: &CallerContext,
     params: TaskParams,
 ) -> Result<Value, String> {
-    let (session_id, _) = session_identity(database, caller)?;
+    let (session_id, _) = session_identity_store(store, caller)?;
     edit(
-        database,
+        store,
         caller,
         EditAction::ReleaseTask {
             task: params.task,
@@ -227,13 +234,13 @@ pub(super) fn release(
     )
 }
 
-pub(super) fn complete(
-    database: &Path,
+pub(super) fn complete_store(
+    store: &mut crate::storage::StateStore,
     caller: &CallerContext,
     params: CompleteParams,
 ) -> Result<Value, String> {
-    let (session_id, _) = session_identity(database, caller)?;
-    let graph = project_graph(database, caller)?;
+    let (session_id, _) = session_identity_store(store, caller)?;
+    let graph = project_graph(store, caller)?;
     let node = graph
         .nodes
         .iter()
@@ -245,7 +252,7 @@ pub(super) fn complete(
         | workgraph::CompletionRequirement::Observation => EvidenceKind::Observation,
     };
     let mut result = edit(
-        database,
+        store,
         caller,
         EditAction::CompleteTask {
             task: params.task,
@@ -275,18 +282,24 @@ pub(super) fn complete(
     Ok(result)
 }
 
-fn edit(database: &Path, caller: &CallerContext, action: EditAction) -> Result<Value, String> {
-    let adapter = SqliteAdapter::open(database).map_err(|error| error.to_string())?;
-    let mut graph = WorkGraph::new(adapter);
-    graph
-        .edit(&EditRequest {
-            project: project_key(caller)?,
-            idempotency_key: operation_id()?,
-            action,
-        })
-        .map_err(|error| error.to_string())?;
-    search(
-        database,
+fn edit(
+    store: &mut crate::storage::StateStore,
+    caller: &CallerContext,
+    action: EditAction,
+) -> Result<Value, String> {
+    store.with_connection(|connection| {
+        let adapter = SqliteAdapter::borrow(connection);
+        let mut graph = WorkGraph::new(adapter);
+        graph
+            .edit(&EditRequest {
+                project: project_key(caller)?,
+                idempotency_key: operation_id()?,
+                action,
+            })
+            .map_err(|error| error.to_string())
+    })?;
+    search_store(
+        store,
         caller,
         SearchParams {
             query: String::new(),

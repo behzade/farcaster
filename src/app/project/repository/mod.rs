@@ -109,7 +109,7 @@ pub(in crate::app) struct RepositoryState {
 impl RepositoryState {
     pub(in crate::app) fn load(project: PathBuf, execution_allowed: bool) -> Self {
         let (preferences, preference_error) = crate::app::persistence::open()
-            .and_then(|store| crate::repository::load_preferences(&store))
+            .and_then(|store| crate::repository::load_preferences(&*store))
             .map_or_else(
                 |error| (BTreeMap::new(), Some(error)),
                 |preferences| (preferences, None),
@@ -548,7 +548,7 @@ impl FarcasterApp {
         self.project.repository.preference_save_in_flight = true;
         let preferences = self.project.repository.preferences.clone();
         let task = cx.background_spawn(async move {
-            crate::repository::save_preferences(&crate::app::persistence::open()?, &preferences)
+            crate::repository::save_preferences(&*crate::app::persistence::open()?, &preferences)
         });
         cx.spawn(async move |weak, cx| {
             let result = task.await;

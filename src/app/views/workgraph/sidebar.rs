@@ -23,7 +23,7 @@ use workgraph::load_plan;
 
 pub(crate) struct WorkGraphSidebarView {
     app: WeakEntity<FarcasterApp>,
-    database: PathBuf,
+    store: Result<crate::app::persistence::SharedStateStore, String>,
     project: PathBuf,
     session_id: Option<String>,
     session_goal: Option<crate::agents::SessionGoal>,
@@ -34,18 +34,18 @@ pub(crate) struct WorkGraphSidebarView {
 impl WorkGraphSidebarView {
     pub(crate) fn new(
         app: WeakEntity<FarcasterApp>,
-        database: Result<PathBuf, String>,
+        store: Result<crate::app::persistence::SharedStateStore, String>,
         project: PathBuf,
         cx: &mut gpui::Context<Self>,
     ) -> Self {
-        let (database, state) = match database {
-            Ok(database) => (database, PlanLoadState::Loading),
-            Err(error) => (PathBuf::new(), PlanLoadState::Failed(error)),
+        let state = match &store {
+            Ok(_) => PlanLoadState::Loading,
+            Err(error) => PlanLoadState::Failed(error.clone()),
         };
         let should_refresh = matches!(state, PlanLoadState::Loading);
         let mut view = Self {
             app,
-            database,
+            store,
             project,
             session_id: None,
             session_goal: None,
@@ -87,11 +87,16 @@ impl WorkGraphSidebarView {
 
     pub(crate) fn refresh(&mut self, cx: &mut gpui::Context<Self>) {
         let notify_loading = prepare_refresh(&mut self.state);
-        let database = self.database.clone();
+        let store = self.store.clone();
         let project = self.project.clone();
         let session_id = self.session_id.clone();
-        let load =
-            cx.background_spawn(async move { load_plan(database, project, session_id.as_deref()) });
+        let load = cx.background_spawn(async move {
+            store?.with(|store| {
+                store.with_connection(|connection| {
+                    load_plan(connection, project, session_id.as_deref())
+                })
+            })
+        });
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let state = match load.await {
                 Ok(data) => PlanLoadState::Ready(Box::new(data)),

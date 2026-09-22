@@ -42,7 +42,7 @@ fn assert_close_is_idle(scenario: &mut Scenario, mut pending: HashMap<String, Pe
                     .state
                     .as_mut()
                     .expect("state store")
-                    .update_session_metadata(&metadata)
+                    .with(|store| store.update_session_metadata(&metadata))
                     .expect("save session metadata");
                 sessions.retain(|session: &SessionSummary| session.path != row.path);
                 sessions.push(row);

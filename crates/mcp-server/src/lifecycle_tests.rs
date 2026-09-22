@@ -35,7 +35,9 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
         .expect("test operation should succeed");
     let (updates, _) = async_channel::bounded(1);
     let service = FarcasterMcp::new(
-        project.path().join("state.db"),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::storage::StateStore::open_at(&project.path().join("state.db")).expect("state"),
+        )),
         workers,
         updates,
         notices::NoticeBoard::default(),
@@ -152,7 +154,9 @@ fn disabled_server_leaves_the_port_free_and_can_be_reenabled() {
         .expect("workers");
     let (updates, _) = async_channel::bounded(1);
     let service = FarcasterMcp::new(
-        project.path().join("state.db"),
+        std::sync::Arc::new(std::sync::Mutex::new(
+            crate::storage::StateStore::open_at(&project.path().join("state.db")).expect("state"),
+        )),
         workers,
         updates,
         notices::NoticeBoard::default(),

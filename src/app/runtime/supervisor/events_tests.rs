@@ -47,7 +47,7 @@ impl SupervisorFixture {
                 clock: 0,
                 last_touch: HashMap::new(),
                 configurations: HarnessConfigurationStore::default(),
-                catalog_state: state,
+                catalog_state: state.map(Into::into),
                 configuration_catalogs: Vec::new(),
                 configuration_rx,
                 configuration_tx: None,
@@ -339,7 +339,7 @@ fn restart_injects_the_sessions_saved_access_mode_before_launch()
             .catalog_state
             .as_ref()
             .expect("catalog state")
-            .session_access_mode(&session)?,
+            .with(|store| store.session_access_mode(&session))?,
         Some(Sandboxed)
     );
     Ok(())

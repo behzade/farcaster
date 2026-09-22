@@ -179,13 +179,15 @@ impl RuntimeOwner {
             };
             if let Some(state) = self.state.as_mut() {
                 let saved = if pending.result_emitted {
-                    state.complete_delivered_prompt(
-                        pending.outbox_id,
-                        &pending.target,
-                        pending.session.as_deref(),
-                        request_id,
-                        pending.delivery_tracked,
-                    )
+                    state.with(|store| {
+                        store.complete_delivered_prompt(
+                            pending.outbox_id,
+                            &pending.target,
+                            pending.session.as_deref(),
+                            request_id,
+                            pending.delivery_tracked,
+                        )
+                    })
                 } else {
                     // Operational failures leave the durable row pending. Only
                     // model delivery below can acknowledge it.
@@ -281,13 +283,15 @@ impl RuntimeOwner {
                     && let Some(state) = self.state.as_mut()
                 {
                     let receipt_id = response.id.as_deref().unwrap_or_default();
-                    let saved = state.complete_delivered_prompt(
-                        id,
-                        &target,
-                        session.as_deref(),
-                        receipt_id,
-                        delivery_tracked,
-                    );
+                    let saved = state.with(|store| {
+                        store.complete_delivered_prompt(
+                            id,
+                            &target,
+                            session.as_deref(),
+                            receipt_id,
+                            delivery_tracked,
+                        )
+                    });
                     if let Err(error) = saved {
                         // The model already saw the input. A database failure
                         // leaves the outbox pending so a restart may retry; it
@@ -439,14 +443,20 @@ impl RuntimeOwner {
                         self.state.as_mut(),
                         self.active_session.as_deref(),
                         prompt_deliveries.as_ref(),
-                    ) && let Err(error) = state.reconcile_prompt_deliveries(session, evidence)
+                    ) && let Err(error) =
+                        state.with(|store| store.reconcile_prompt_deliveries(session, evidence))
                     {
                         zlog::error!("Reconcile saved prompt deliveries: {error}");
                     }
                     if let (Some(state), Some(session)) =
                         (self.state.as_ref(), self.active_session.as_deref())
                     {
-                        annotate_history_presentations(Some(state), session, &mut messages);
+                        if let Err(error) = state.with(|store| {
+                            annotate_history_presentations(Some(store), session, &mut messages);
+                            Ok(())
+                        }) {
+                            zlog::error!("Annotate prompt deliveries: {error}");
+                        }
                     }
                     conversation_mut(self.active_snapshot_mut()).replace_history(&messages);
                     // Deferred delivery restores the local row after both startup responses.

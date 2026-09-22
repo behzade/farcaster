@@ -22,11 +22,14 @@ fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<
     )?;
     state.record_prompt_acceptance(id, "draft:cancel", Some(&session), "stale-id", true)?;
     let (mut owner, _) = owner_without_process(temp.path().into());
-    owner.state = Some(state);
+    owner.state = Some(state.into());
     owner.snapshot.selected_session = Some(session.clone());
     owner.snapshot.history_preview = true;
     let mut history = vec![];
-    annotate_history_presentations(owner.state.as_ref(), &session, &mut history);
+    owner.state.as_ref().unwrap().with(|store| {
+        annotate_history_presentations(Some(store), &session, &mut history);
+        Ok(())
+    })?;
     conversation_mut(&mut owner.snapshot).replace_history(&history);
     assert_eq!(owner.snapshot.conversation.pending_receipts().len(), 1);
     owner.apply_command(RuntimeCommand::DismissReceipt {
@@ -77,7 +80,7 @@ fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
     }
 
     let (mut owner, _events) = owner_without_process(temp.path().to_owned());
-    owner.state = Some(store);
+    owner.state = Some(store.into());
     owner.active_session = Some(session.clone());
     owner.apply_response(crate::agents::SessionResponse::success(
         None,

@@ -269,7 +269,8 @@ impl Supervisor {
                     if snapshot.live_session.is_none()
                         && let Some(session) = snapshot.selected_session.as_deref()
                         && let Some(state) = self.catalog_state.as_ref()
-                        && let Err(error) = state.set_session_access_mode(session, *mode)
+                        && let Err(error) =
+                            state.with(|store| store.set_session_access_mode(session, *mode))
                     {
                         zlog::error!("Save session access mode: {error}");
                     }

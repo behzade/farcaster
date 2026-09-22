@@ -13,7 +13,7 @@ mod reviews;
 #[cfg(any(test, feature = "test-support"))]
 pub use lifecycle::with_test_worker_pool;
 pub use lifecycle::{
-    finish_session_family_worker_stop, set_enabled, set_worker_app_proxy, start,
+    McpServer, finish_session_family_worker_stop, set_enabled, set_worker_app_proxy, start,
     stop_session_family_workers, worker_snapshots,
 };
 pub use notice_board::{NoticeBoard, NoticeView};
@@ -21,7 +21,10 @@ pub use workers::{SendParams, send};
 mod workers;
 mod workgraph;
 
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex},
+};
 
 use rmcp::{
     ServerHandler,
@@ -39,6 +42,17 @@ const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
 
 type JsonObject = serde_json::Map<String, serde_json::Value>;
+type SharedStore = Arc<Mutex<storage::StateStore>>;
+
+fn with_store<T>(
+    store: &SharedStore,
+    operation: impl FnOnce(&mut storage::StateStore) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut store = store
+        .lock()
+        .map_err(|_| "State database lock is poisoned")?;
+    operation(&mut store)
+}
 
 fn json_object(value: serde_json::Value) -> Result<Json<JsonObject>, String> {
     match value {
@@ -59,7 +73,7 @@ fn server_config() -> StreamableHttpServerConfig {
 
 #[derive(Clone)]
 struct FarcasterMcp {
-    database: PathBuf,
+    store: SharedStore,
     workers: crate::agents::WorkerPool,
     workgraph_updates: async_channel::Sender<()>,
     notices: notices::NoticeBoard,
@@ -67,13 +81,13 @@ struct FarcasterMcp {
 
 impl FarcasterMcp {
     fn new(
-        database: PathBuf,
+        store: SharedStore,
         workers: crate::agents::WorkerPool,
         workgraph_updates: async_channel::Sender<()>,
         notices: notices::NoticeBoard,
     ) -> Self {
         Self {
-            database,
+            store,
             workers,
             workgraph_updates,
             notices,
@@ -85,7 +99,7 @@ impl FarcasterMcp {
         parts: axum::http::request::Parts,
         params: P,
         operation: fn(
-            &std::path::Path,
+            &mut storage::StateStore,
             &crate::agents::CallerContext,
             P,
         ) -> Result<serde_json::Value, String>,
@@ -93,10 +107,10 @@ impl FarcasterMcp {
     ) -> Result<Json<JsonObject>, String> {
         let token = caller_token(&parts)
             .ok_or_else(|| "workgraph requires a registered Farcaster caller".to_owned())?;
-        let database = self.database.clone();
+        let store = self.store.clone();
         let result = tokio::task::spawn_blocking(move || {
             let caller = crate::agents::CallerRegistry::shared().resolve(&token)?;
-            operation(&database, &caller, params)
+            with_store(&store, |store| operation(store, &caller, params))
         })
         .await
         .map_err(|error| format!("work graph task failed: {error}"))??;
@@ -120,13 +134,14 @@ impl FarcasterMcp {
     ) -> Result<Json<JsonObject>, String> {
         let token = caller_token(&parts)
             .ok_or_else(|| "review requires a registered Farcaster caller".to_owned())?;
-        let database = self.database.clone();
+        let store = self.store.clone();
         let (caller, execution) =
             crate::agents::CallerRegistry::shared().resolve_execution(&token)?;
         let result = tokio::task::spawn_blocking(move || {
             let artifact = reviews::submit(&caller, params)?;
-            crate::storage::StateStore::open_at(&database)?
-                .save_review(&caller, &execution, &artifact)?;
+            with_store(&store, |store| {
+                store.save_review(&caller, &execution, &artifact)
+            })?;
             crate::review_domain::delivery::notify();
             Ok::<_, String>(artifact)
         })
@@ -146,11 +161,14 @@ impl FarcasterMcp {
     ) -> Result<Json<JsonObject>, String> {
         let caller_token = caller_token(&parts);
         let pool = self.workers.clone();
-        let database = self.database.clone();
+        let store = self.store.clone();
         let value = tokio::task::spawn_blocking(move || {
-            let store = crate::storage::StateStore::open_at(&database)?;
-            let profiles = store.load_worker_profiles()?;
-            let catalogs = store.load_configuration_catalogs()?;
+            let (profiles, catalogs) = with_store(&store, |store| {
+                Ok((
+                    store.load_worker_profiles()?,
+                    store.load_configuration_catalogs()?,
+                ))
+            })?;
             let backends = crate::agents::backend_statuses()
                 .into_iter()
                 .filter(|backend| backend.available)
@@ -207,7 +225,7 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::SearchParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<JsonObject>, String> {
-        self.workgraph_call(parts, params, workgraph::search, false)
+        self.workgraph_call(parts, params, workgraph::search_store, false)
             .await
     }
 
@@ -220,7 +238,7 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::PatchParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<JsonObject>, String> {
-        self.workgraph_call(parts, params, workgraph::patch, true)
+        self.workgraph_call(parts, params, workgraph::patch_store, true)
             .await
     }
 
@@ -233,7 +251,7 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::TaskParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<JsonObject>, String> {
-        self.workgraph_call(parts, params, workgraph::claim, true)
+        self.workgraph_call(parts, params, workgraph::claim_store, true)
             .await
     }
 
@@ -246,7 +264,7 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::TaskParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<JsonObject>, String> {
-        self.workgraph_call(parts, params, workgraph::release, true)
+        self.workgraph_call(parts, params, workgraph::release_store, true)
             .await
     }
 
@@ -259,7 +277,7 @@ impl FarcasterMcp {
         Parameters(params): Parameters<workgraph::CompleteParams>,
         Extension(parts): Extension<axum::http::request::Parts>,
     ) -> Result<Json<JsonObject>, String> {
-        self.workgraph_call(parts, params, workgraph::complete, true)
+        self.workgraph_call(parts, params, workgraph::complete_store, true)
             .await
     }
 }
@@ -344,8 +362,7 @@ impl ServerHandler for FarcasterMcp {
         let child = crate::agents::CallerRegistry::shared()
             .is_child(&token)
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
-        let tasks = crate::storage::StateStore::open_at(&self.database)
-            .and_then(|store| store.load_worker_profiles())
+        let tasks = with_store(&self.store, |store| store.load_worker_profiles())
             .map_err(|error| rmcp::ErrorData::internal_error(error, None))?;
         Ok(rmcp::model::ListToolsResult {
             result_type: Some(rmcp::model::ResultType::COMPLETE),

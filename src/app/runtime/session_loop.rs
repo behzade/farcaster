@@ -10,7 +10,7 @@ pub(super) fn run(
     harness: Option<Backend>,
 ) -> Result<(), String> {
     let (history_tx, history_rx) = mpsc::channel();
-    let (state, state_error) = match crate::app::persistence::open() {
+    let (state, state_error) = match crate::app::persistence::shared() {
         Ok(state) => (Some(state), None),
         Err(error) => (None, Some(error)),
     };

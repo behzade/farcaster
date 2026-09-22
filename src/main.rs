@@ -40,21 +40,35 @@ fn main() -> std::process::ExitCode {
         zlog::info!("STARTUP operation=main.import_shell_environment elapsed_ms={elapsed_ms}");
     }
     let prepare_timing = StartupTiming::always("main.prepare");
-    let project = match app::launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
-        Ok(project) => project,
-        Err(error) => return fail(error),
-    };
     let data_root = match app::paths::data_dir() {
         Ok(path) => path,
         Err(error) => return fail(error),
     };
-    let state_store = app::persistence::open().ok();
-    let builtin_mcp_enabled = state_store
-        .as_ref()
-        .and_then(|store| store.load_builtin_mcp_enabled().ok())
-        .unwrap_or(true);
+    let state_store = match app::persistence::initialize() {
+        Ok(store) => store,
+        Err(error) => return fail(format!("initialize state database: {error}")),
+    };
+    let project = match app::launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
+        Ok(project) => project,
+        Err(error) => return fail(error),
+    };
+    let (builtin_mcp_enabled, worker_command, saved_worker_routes) = {
+        let store = match state_store.lock() {
+            Ok(store) => store,
+            Err(error) => return fail(error),
+        };
+        let builtin_mcp_enabled = match store.load_builtin_mcp_enabled() {
+            Ok(enabled) => enabled,
+            Err(error) => return fail(format!("load MCP setting: {error}")),
+        };
+        let worker_command = startup_worker_command(&data_root, Some(&store));
+        let saved_worker_routes = match store.load_worker_routes() {
+            Ok(routes) => routes,
+            Err(error) => return fail(format!("load saved worker routes: {error}")),
+        };
+        (builtin_mcp_enabled, worker_command, saved_worker_routes)
+    };
     builtin_mcp::set_enabled(builtin_mcp_enabled);
-    let worker_command = startup_worker_command(&data_root, state_store.as_ref());
     let worker_proxy = worker_command.app_proxy.clone();
     let (factories, default_backend) = agents::worker_factories(worker_command);
     let worker_pool = match agents::WorkerPool::new(factories, default_backend, project.clone(), 8)
@@ -63,14 +77,8 @@ fn main() -> std::process::ExitCode {
             if let Err(error) = pool.set_app_proxy(worker_proxy) {
                 return fail(format!("initialize worker proxy: {error}"));
             }
-            if let Some(store) = state_store.as_ref() {
-                let families = match store.load_worker_routes() {
-                    Ok(families) => families,
-                    Err(error) => return fail(format!("load saved worker routes: {error}")),
-                };
-                if let Err(error) = pool.restore_families(families) {
-                    return fail(format!("restore saved worker routes: {error}"));
-                }
+            if let Err(error) = pool.restore_families(saved_worker_routes) {
+                return fail(format!("restore saved worker routes: {error}"));
             }
             pool
         }
@@ -79,14 +87,12 @@ fn main() -> std::process::ExitCode {
     let worker_updates = worker_pool.updates();
     let (workgraph_updates, workgraph_update_receiver) = async_channel::bounded(1);
     let notice_board = app::mcp_server::NoticeBoard::default();
-    let _mcp_server = match app::persistence::state_path().and_then(|database| {
-        app::mcp_server::start(
-            database,
-            worker_pool,
-            workgraph_updates,
-            notice_board.clone(),
-        )
-    }) {
+    let _mcp_server = match app::mcp_server::start(
+        state_store,
+        worker_pool,
+        workgraph_updates,
+        notice_board.clone(),
+    ) {
         Ok(server) => server,
         Err(error) => return fail(format!("start MCP server: {error}")),
     };

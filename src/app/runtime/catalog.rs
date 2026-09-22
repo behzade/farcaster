@@ -82,7 +82,7 @@ impl RuntimeOwner {
             .state
             .as_mut()
             .ok_or_else(|| "Session database is unavailable".to_owned())
-            .and_then(|state| state.update_session_metadata(&metadata));
+            .and_then(|state| state.with(|store| store.update_session_metadata(&metadata)));
         let event = match result {
             Ok(session) => RuntimeEvent::SessionUpdated(session),
             Err(message) => RuntimeEvent::SessionsFailed {
@@ -130,7 +130,7 @@ impl RuntimeOwner {
             .state
             .as_ref()
             .ok_or_else(|| "Session database is unavailable".to_owned())
-            .and_then(|state| crate::sessions::cached_sessions(state, ""))
+            .and_then(|state| state.with(|store| crate::sessions::cached_sessions(store, "")))
         {
             Ok(sessions) => sessions,
             Err(message) => {
@@ -188,7 +188,9 @@ impl RuntimeOwner {
             .state
             .as_mut()
             .ok_or_else(|| "Session database is unavailable".to_owned())
-            .and_then(|state| crate::sessions::index_sessions(state, &sessions, false))
+            .and_then(|state| {
+                state.with(|store| crate::sessions::index_sessions(store, &sessions, false))
+            })
         {
             let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                 generation: self.session_generation,
@@ -204,7 +206,7 @@ impl RuntimeOwner {
         let Some(state) = &self.state else {
             return;
         };
-        let event = match crate::sessions::cached_sessions(state, "") {
+        let event = match state.with(|store| crate::sessions::cached_sessions(store, "")) {
             Ok(sessions) => self.catalog_event(sessions),
             Err(message) => RuntimeEvent::SessionsFailed {
                 generation: self.session_generation,

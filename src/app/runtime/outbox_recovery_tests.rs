@@ -92,7 +92,7 @@ fn ready_owner(
     let (mut owner, _) = owner_without_process(root.into());
     let sent = Rc::new(RefCell::new(Vec::new()));
     owner.process = Some(Box::new(Recorder(sent.clone())));
-    owner.state = Some(StateStore::open_at(database)?);
+    owner.state = Some(SharedStateStore::open_at(database)?);
     owner.active_session = Some(root.join("session.jsonl"));
     owner.snapshot.session = Some(empty_session());
     owner.startup_state_loaded = true;
@@ -118,7 +118,7 @@ fn recovered_steer_and_follow_up_stay_out_of_the_transcript_until_delivery() -> 
         let prompt = store.queued_prompts()?.remove(0);
         let (mut owner, _) = ready_owner(temp.path(), &database)?;
         owner.harness = Some(Backend::Claude);
-        owner.state = Some(store);
+        owner.state = Some(store.into());
 
         owner.deliver_queued(prompt);
 
@@ -155,7 +155,7 @@ fn abort_cancels_only_local_queue_work() -> Result<(), String> {
         &[],
     )?;
     let (mut owner, sent) = ready_owner(temp.path(), &database)?;
-    owner.state = Some(store);
+    owner.state = Some(store.into());
     for prompt in recovered {
         owner.deliver_queued(prompt);
     }
@@ -232,7 +232,7 @@ fn abort_cancels_a_not_yet_dispatched_prompt_durably() -> Result<(), String> {
             .state
             .as_ref()
             .expect("state")
-            .queued_prompts()?
+            .with(|store| store.queued_prompts())?
             .is_empty()
     );
     assert_eq!(
@@ -278,7 +278,7 @@ fn startup_replays_normal_prompts_in_order_after_delivery_and_settlement() -> Re
     )?;
     let prompts = store.queued_prompts()?;
     let (mut owner, sent) = ready_owner(temp.path(), &database)?;
-    owner.state = Some(store);
+    owner.state = Some(store.into());
     for prompt in prompts {
         owner.deliver_queued(prompt);
     }
@@ -291,7 +291,7 @@ fn startup_replays_normal_prompts_in_order_after_delivery_and_settlement() -> Re
             .state
             .as_ref()
             .expect("state")
-            .queued_prompts()?
+            .with(|store| store.queued_prompts())?
             .iter()
             .map(|prompt| prompt.id)
             .collect::<Vec<_>>(),
@@ -304,7 +304,7 @@ fn startup_replays_normal_prompts_in_order_after_delivery_and_settlement() -> Re
             .state
             .as_ref()
             .expect("state")
-            .queued_prompts()?
+            .with(|store| store.queued_prompts())?
             .iter()
             .map(|prompt| prompt.id)
             .collect::<Vec<_>>(),
@@ -344,7 +344,7 @@ fn operational_rejection_rolls_back_the_transcript_but_retains_pending_work() ->
             .state
             .as_ref()
             .expect("state")
-            .queued_prompts()?
+            .with(|store| store.queued_prompts())?
             .iter()
             .any(|prompt| prompt.message == "retry this input")
     );
@@ -376,7 +376,7 @@ fn normal_replay_waits_for_compaction_retry_or_pending_input() -> Result<(), Str
         )?;
         let prompt = store.queued_prompts()?.remove(0);
         let (mut owner, sent) = ready_owner(temp.path(), &database)?;
-        owner.state = Some(store);
+        owner.state = Some(store.into());
         match blocker {
             "compacting" => Arc::make_mut(&mut owner.snapshot.conversation).compacting = true,
             "retrying" => Arc::make_mut(&mut owner.snapshot.conversation).retrying = true,
@@ -451,20 +451,32 @@ fn delivery_receipt_acks_prompt_and_persists_its_presentation() -> Result<(), St
     let id = owner.pending_prompt_id.clone().expect("request id");
     owner.apply_response(prompt_response(&id, PromptMode::Normal, true));
     let store = owner.state.as_ref().expect("state");
-    assert_eq!(store.queued_prompts()?.len(), 1);
-    assert!(store.accepted_prompt_history(&session)?.is_empty());
-    assert!(store.prompt_presentations(&session)?.is_empty());
+    assert_eq!(store.with(|store| store.queued_prompts())?.len(), 1);
+    assert!(
+        store
+            .with(|store| store.accepted_prompt_history(&session))?
+            .is_empty()
+    );
+    assert!(
+        store
+            .with(|store| store.prompt_presentations(&session))?
+            .is_empty()
+    );
 
     owner.apply_process_item(delivered(&id, "resolved prompt"));
     let store = owner.state.as_ref().expect("state");
-    assert!(store.queued_prompts()?.is_empty());
+    assert!(store.with(|store| store.queued_prompts())?.is_empty());
     assert_eq!(
         outbox_rows(&database)?,
         [("resolved prompt".into(), "acked".into())]
     );
-    assert!(store.accepted_prompt_history(&session)?.is_empty());
+    assert!(
+        store
+            .with(|store| store.accepted_prompt_history(&session))?
+            .is_empty()
+    );
     assert_eq!(
-        store.prompt_presentations(&session)?,
+        store.with(|store| store.prompt_presentations(&session))?,
         [crate::agents::PromptPresentation {
             resolved_message: "resolved prompt".into(),
             display_message: "$review".into(),

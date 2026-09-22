@@ -439,7 +439,7 @@ impl ComposerPersistence {
         let worker = std::thread::Builder::new()
             .name("farcaster-composer-state".into())
             .spawn(move || {
-                let store = match crate::app::persistence::open() {
+                let store = match crate::app::persistence::shared() {
                     Ok(store) => store,
                     Err(error) => {
                         zlog::error!("Open composer state: {error}");
@@ -457,7 +457,7 @@ impl ComposerPersistence {
                     };
                     match received {
                         Ok(PersistenceCommand::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
-                            flush(&store, &mut pending);
+                            flush_shared(&store, &mut pending);
                             break;
                         }
                         Ok(command) => {
@@ -468,7 +468,7 @@ impl ComposerPersistence {
                         Err(RecvTimeoutError::Timeout) => {}
                     }
                     if deadline.is_some_and(|due| Instant::now() >= due) {
-                        flush(&store, &mut pending);
+                        flush_shared(&store, &mut pending);
                         deadline = (!pending.is_empty()).then(|| Instant::now() + WRITE_DELAY);
                     }
                 }
@@ -505,6 +505,18 @@ impl Drop for ComposerPersistence {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+    }
+}
+
+fn flush_shared(
+    store: &crate::app::persistence::SharedStateStore,
+    pending: &mut Vec<PersistenceCommand>,
+) {
+    if let Err(error) = store.with(|store| {
+        flush(store, pending);
+        Ok(())
+    }) {
+        zlog::error!("Save composer state: {error}");
     }
 }
 

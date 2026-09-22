@@ -1,3 +1,4 @@
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior, params};
@@ -9,11 +10,36 @@ use crate::{
 
 const SCHEMA_VERSION: &str = "3";
 
-pub struct SqliteAdapter {
-    connection: Connection,
+pub struct SqliteAdapter<'a> {
+    connection: ConnectionHandle<'a>,
 }
 
-impl SqliteAdapter {
+enum ConnectionHandle<'a> {
+    Owned(Connection),
+    Borrowed(&'a mut Connection),
+}
+
+impl Deref for ConnectionHandle<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Self::Owned(connection) => connection,
+            Self::Borrowed(connection) => connection,
+        }
+    }
+}
+
+impl DerefMut for ConnectionHandle<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        match self {
+            Self::Owned(connection) => connection,
+            Self::Borrowed(connection) => connection,
+        }
+    }
+}
+
+impl SqliteAdapter<'static> {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PersistenceError> {
         let path = path.as_ref();
         if let Some(parent) = path.parent() {
@@ -30,12 +56,29 @@ impl SqliteAdapter {
             .pragma_update(None, "foreign_keys", true)
             .map_err(error)?;
         migrate(&connection)?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection: ConnectionHandle::Owned(connection),
+        })
     }
 }
 
-impl Persistence for SqliteAdapter {
-    type Transaction<'a> = SqliteTransaction<'a>;
+impl<'a> SqliteAdapter<'a> {
+    pub fn initialize_connection(connection: &Connection) -> Result<(), PersistenceError> {
+        migrate(connection)
+    }
+
+    pub fn borrow(connection: &'a mut Connection) -> Self {
+        Self {
+            connection: ConnectionHandle::Borrowed(connection),
+        }
+    }
+}
+
+impl Persistence for SqliteAdapter<'_> {
+    type Transaction<'a>
+        = SqliteTransaction<'a>
+    where
+        Self: 'a;
 
     fn begin(&mut self, mode: TransactionMode) -> Result<Self::Transaction<'_>, PersistenceError> {
         let behavior = match mode {

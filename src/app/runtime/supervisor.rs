@@ -343,18 +343,21 @@ fn update_selected_configuration(
     }
 }
 
-fn persist_configurations(state: Option<&StateStore>, configurations: &HarnessConfigurationStore) {
+fn persist_configurations(
+    state: Option<&crate::app::persistence::SharedStateStore>,
+    configurations: &HarnessConfigurationStore,
+) {
     if let Some(state) = state {
-        let _ = state.save_session_control_defaults(&configurations.cached());
+        let _ = state.with(|store| store.save_session_control_defaults(&configurations.cached()));
     }
 }
 
 fn saved_access_mode(
-    state: Option<&StateStore>,
+    state: Option<&crate::app::persistence::SharedStateStore>,
     session: &std::path::Path,
 ) -> Option<HarnessAccessMode> {
     let state = state?;
-    match state.session_access_mode(session) {
+    match state.with(|store| store.session_access_mode(session)) {
         Ok(mode) => mode,
         Err(error) => {
             zlog::error!("Restore session access mode: {error}");
@@ -441,7 +444,7 @@ struct Supervisor {
     clock: u64,
     last_touch: HashMap<String, u64>,
     configurations: HarnessConfigurationStore,
-    catalog_state: Option<StateStore>,
+    catalog_state: Option<crate::app::persistence::SharedStateStore>,
     configuration_catalogs:
         Vec<crate::app::infrastructure::persistence::CachedConfigurationCatalog>,
     configuration_rx: mpsc::Receiver<ConfigurationUpdate>,
@@ -541,16 +544,16 @@ impl Supervisor {
         let clock = 0_u64;
         let last_touch = HashMap::from([(initial_key.clone(), clock)]);
         let mut configurations = HarnessConfigurationStore::default();
-        let catalog_state = crate::app::persistence::open().ok();
+        let catalog_state = crate::app::persistence::shared().ok();
         let configuration_catalogs = catalog_state
             .as_ref()
-            .and_then(|state| state.load_configuration_catalogs().ok())
+            .and_then(|state| state.with(|store| store.load_configuration_catalogs()).ok())
             .unwrap_or_default();
         for entry in &configuration_catalogs {
             configurations.set_catalog(entry.harness, entry.project.clone(), entry.catalog.clone());
         }
         if let Some(state) = catalog_state.as_ref()
-            && let Ok(defaults) = state.load_session_control_defaults()
+            && let Ok(defaults) = state.with(|store| store.load_session_control_defaults())
         {
             configurations.restore(defaults);
         }
@@ -562,8 +565,8 @@ impl Supervisor {
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();
-        if let Ok(state) = crate::app::persistence::open()
-            && let Ok(prompts) = agents::queued_prompts(&state)
+        if let Ok(state) = crate::app::persistence::shared()
+            && let Ok(prompts) = state.with(|store| agents::queued_prompts(store))
         {
             for prompt in prompts {
                 let key = prompt.target.clone();

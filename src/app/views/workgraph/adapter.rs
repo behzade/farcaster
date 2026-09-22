@@ -32,7 +32,7 @@ pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
 pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";
 
 pub(crate) struct WorkGraphBoardView {
-    database: PathBuf,
+    store: Result<crate::app::persistence::SharedStateStore, String>,
     project: PathBuf,
     pub(super) state: PlanLoadState,
     focus: FocusHandle,
@@ -52,14 +52,14 @@ pub(crate) struct WorkGraphBoardView {
 
 impl WorkGraphBoardView {
     pub(crate) fn new(
-        database: Result<PathBuf, String>,
+        store: Result<crate::app::persistence::SharedStateStore, String>,
         project: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (database, state) = match database {
-            Ok(database) => (database, PlanLoadState::Loading),
-            Err(error) => (PathBuf::new(), PlanLoadState::Failed(error)),
+        let state = match &store {
+            Ok(_) => PlanLoadState::Loading,
+            Err(error) => PlanLoadState::Failed(error.clone()),
         };
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let create_title =
@@ -92,7 +92,7 @@ impl WorkGraphBoardView {
         ];
         let should_refresh = matches!(state, PlanLoadState::Loading);
         let mut view = Self {
-            database,
+            store,
             project,
             state,
             focus: cx.focus_handle(),
@@ -147,12 +147,16 @@ impl WorkGraphBoardView {
     }
 
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
-        let database = self.database.clone();
+        let store = self.store.clone();
         let project = self.project.clone();
         let session_id = self.active_session.as_ref().map(|(id, _)| id.clone());
         let plan = self.plan;
         let load = cx.background_spawn(async move {
-            load_selected_plan(database, project, session_id.as_deref(), plan)
+            store?.with(|store| {
+                store.with_connection(|connection| {
+                    load_selected_plan(connection, project, session_id.as_deref(), plan)
+                })
+            })
         });
         self.refresh = Some(cx.spawn(async move |weak, cx| {
             let state = match load.await {
@@ -283,10 +287,14 @@ impl WorkGraphBoardView {
         let Some((session_id, session_path)) = self.active_session.clone() else {
             return;
         };
-        let database = self.database.clone();
+        let store = self.store.clone();
         let project = self.project.clone();
         let edit = cx.background_spawn(async move {
-            link_session(database, project, walk, session_id, session_path)
+            store?.with(|store| {
+                store.with_connection(|connection| {
+                    link_session(connection, project, walk, session_id, session_path)
+                })
+            })
         });
         self.state = PlanLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {

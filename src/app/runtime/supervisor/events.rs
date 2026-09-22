@@ -16,7 +16,9 @@ impl Supervisor {
                         catalog,
                     ) && let Some(state) = self.catalog_state.as_ref()
                     {
-                        let _ = state.save_configuration_catalogs(&self.configuration_catalogs);
+                        let _ = state.with(|store| {
+                            store.save_configuration_catalogs(&self.configuration_catalogs)
+                        });
                     }
                 }
                 Err(error) => {
@@ -131,7 +133,9 @@ impl Supervisor {
                     )
                     && let Some(state) = self.catalog_state.as_ref()
                 {
-                    let _ = state.save_configuration_catalogs(&self.configuration_catalogs);
+                    let _ = state.with(|store| {
+                        store.save_configuration_catalogs(&self.configuration_catalogs)
+                    });
                 }
                 let adopts_identity = key == self.selected
                     && adopts_selected_configuration(&snapshot, &self.catalog_sessions);

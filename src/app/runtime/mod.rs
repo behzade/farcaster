@@ -53,7 +53,7 @@ use crate::{
         self, AgentLaunchConfig, SessionActivityKind, SessionCommand, SessionEvent, SessionLaunch,
         SessionOperation, SessionStart, SessionTransport,
     },
-    app::infrastructure::persistence::StateStore,
+    app::infrastructure::persistence::{SharedStateStore, StateStore},
     conversation::{ConversationState, TranscriptItem, annotate_prompt_presentations},
     protocol::{
         AgentMode, ExtensionUiRequest, ExtensionUiResponse, Model, PromptImage, PromptMode,
@@ -137,7 +137,7 @@ struct RuntimeOwner {
     access_mode_changes: AccessModeChangeState,
     startup_state_loaded: bool,
     startup_history_loaded: bool,
-    state: Option<StateStore>,
+    state: Option<SharedStateStore>,
     session_query: String,
 }
 
