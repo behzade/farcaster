@@ -220,8 +220,8 @@ impl FarcasterApp {
             workspace: workspace::WorkspaceState {
                 editor: workspace::EditorState {
                     view: None,
-                    helix_view: None,
-                    helix_editors: HashMap::new(),
+                    terminal_editor_view: None,
+                    terminal_editors: HashMap::new(),
                     active_review: None,
                     project_editors: HashMap::new(),
                     session_tabs: HashMap::new(),

@@ -16,8 +16,9 @@ pub(in crate::app) struct WorkspaceState {
 
 pub(in crate::app) struct EditorState {
     pub(in crate::app) view: Option<Entity<NvimEditor>>,
-    pub(in crate::app) helix_view: Option<Entity<HelixEditor>>,
-    pub(in crate::app) helix_editors: HashMap<(PathBuf, String), Entity<HelixEditor>>,
+    pub(in crate::app) terminal_editor_view: Option<Entity<TerminalEditor>>,
+    pub(in crate::app) terminal_editors:
+        HashMap<(PathBuf, String, crate::storage::EditorChoice), Entity<TerminalEditor>>,
     pub(in crate::app) active_review: Option<workspace::review::ActiveReview>,
     pub(in crate::app) project_editors: HashMap<(PathBuf, u64), Entity<NvimEditor>>,
     pub(in crate::app) session_tabs: HashMap<String, u64>,

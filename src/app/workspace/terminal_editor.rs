@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use gpui::{
     Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window, div,
@@ -13,9 +16,9 @@ use super::{
 };
 use crate::app::infrastructure::editor_launch;
 
-pub(super) struct HelixBackend;
+pub(super) struct TerminalBackend(pub(super) crate::storage::EditorChoice);
 
-impl EditorBackend for HelixBackend {
+impl EditorBackend for TerminalBackend {
     fn open(
         &self,
         app: &mut FarcasterApp,
@@ -23,8 +26,16 @@ impl EditorBackend for HelixBackend {
         window: &mut Window,
         cx: &mut Context<FarcasterApp>,
     ) -> Result<(), String> {
+        let choice = self.0;
         let (project, title, args, temporary) = match request {
-            EditorRequest::Project(project) => (project, "Project".to_owned(), vec![], None),
+            EditorRequest::Project(project) => {
+                let args = if choice == crate::storage::EditorChoice::Vim {
+                    vec![project.clone().into_os_string()]
+                } else {
+                    vec![]
+                };
+                (project, "Project".to_owned(), args, None)
+            }
             EditorRequest::File {
                 project,
                 path,
@@ -36,37 +47,62 @@ impl EditorBackend for HelixBackend {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "File".into());
                 if diff {
-                    let base = external_editor::head_tempfile(&path, "Helix")?;
-                    let args = vec![
-                        "--vsplit".into(),
-                        base.path().as_os_str().to_owned(),
-                        path.into_os_string(),
-                    ];
+                    let base = external_editor::head_tempfile(&path, choice.label())?;
+                    let mut args = vec![if choice == crate::storage::EditorChoice::Vim {
+                        "-d".into()
+                    } else {
+                        "--vsplit".into()
+                    }];
+                    args.extend([base.path().as_os_str().to_owned(), path.into_os_string()]);
                     (project, format!("Diff: {title}"), args, Some(base))
                 } else {
-                    (
-                        project,
-                        title,
-                        vec![external_editor::location(&path, line).into()],
-                        None,
-                    )
+                    let args = if choice == crate::storage::EditorChoice::Vim {
+                        let mut args = Vec::new();
+                        if let Some(line) = line {
+                            args.push(format!("+{}", line.max(1)).into());
+                        }
+                        args.push(path.into_os_string());
+                        args
+                    } else {
+                        vec![external_editor::location(&path, line).into()]
+                    };
+                    (project, title, args, None)
                 }
             }
             EditorRequest::Review {
                 project, locations, ..
             } => {
-                let args = locations
-                    .iter()
-                    .map(|(path, line)| external_editor::location(path, *line).into())
-                    .collect();
+                let args = if choice == crate::storage::EditorChoice::Vim {
+                    let lines = locations
+                        .iter()
+                        .map(|(_, line)| line.unwrap_or(1).max(1).to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let mut args = vec!["-p".into()];
+                    if !locations.is_empty() {
+                        args.extend([
+                            "-c".into(),
+                            format!("tabdo call cursor([{lines}][tabpagenr()-1], 1)").into(),
+                            "-c".into(),
+                            "tabfirst".into(),
+                        ]);
+                    }
+                    args.extend(locations.into_iter().map(|(path, _)| path.into_os_string()));
+                    args
+                } else {
+                    locations
+                        .iter()
+                        .map(|(path, line)| external_editor::location(path, *line).into())
+                        .collect()
+                };
                 (project, "Review".into(), args, None)
             }
         };
-        app.activate_helix_editor(project, title, args, temporary, window, cx)
+        app.activate_terminal_editor(project, choice, title, args, temporary, window, cx)
     }
 }
 
-struct HelixTab {
+struct TerminalTab {
     key: Vec<std::ffi::OsString>,
     title: String,
     terminal: Entity<Terminal>,
@@ -74,17 +110,19 @@ struct HelixTab {
     _temporary: Option<tempfile::NamedTempFile>,
 }
 
-pub(in crate::app) struct HelixEditor {
+pub(in crate::app) struct TerminalEditor {
     project: PathBuf,
-    tabs: Vec<HelixTab>,
+    choice: crate::storage::EditorChoice,
+    tabs: Vec<TerminalTab>,
     active: usize,
     visible: bool,
 }
 
-impl HelixEditor {
-    pub(super) fn new(project: PathBuf) -> Self {
+impl TerminalEditor {
+    pub(super) fn new(project: PathBuf, choice: crate::storage::EditorChoice) -> Self {
         Self {
             project,
+            choice,
             tabs: Vec::new(),
             active: 0,
             visible: false,
@@ -108,18 +146,19 @@ impl HelixEditor {
             return Ok(());
         }
         let directory = tempfile::Builder::new()
-            .prefix("farcaster-helix-")
+            .prefix("farcaster-editor-")
             .tempdir()
-            .map_err(|error| format!("prepare Helix: {error}"))?;
+            .map_err(|error| format!("prepare {}: {error}", self.choice.label()))?;
         let launch_file = directory.path().join("launch.json");
         editor_launch::prepare(
             &launch_file,
-            "hx".into(),
+            self.choice
+                .program(&self.project, std::env::var_os("PATH").as_deref()),
             arguments.clone(),
             self.project.clone(),
         )?;
-        let executable =
-            std::env::current_exe().map_err(|error| format!("resolve Helix launcher: {error}"))?;
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("resolve {} launcher: {error}", self.choice.label()))?;
         let command = format!(
             "{} {} {}",
             shell_quote(&executable),
@@ -132,7 +171,7 @@ impl HelixEditor {
             cx,
         )?;
         terminal.update(cx, |terminal, _| terminal.set_visible(false));
-        self.tabs.push(HelixTab {
+        self.tabs.push(TerminalTab {
             key: arguments,
             title,
             terminal,
@@ -195,13 +234,13 @@ impl HelixEditor {
     pub(super) fn snapshot(&mut self, cx: &mut Context<Self>) -> Result<Arc<RenderImage>, String> {
         self.tabs
             .get(self.active)
-            .ok_or("Helix has no open tab")?
+            .ok_or_else(|| format!("{} has no open tab", self.choice.label()))?
             .terminal
             .update(cx, |terminal, _| terminal.snapshot())
     }
 }
 
-impl Render for HelixEditor {
+impl Render for TerminalEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity().downgrade();
         let active = self.active;
@@ -215,7 +254,7 @@ impl Render for HelixEditor {
                     .gap(gpui::px(4.0))
                     .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                         let entity = entity.clone();
-                        Button::new(format!("helix-tab-{index}"))
+                        Button::new(format!("editor-tab-{index}"))
                             .label(tab.title.clone())
                             .with_size(Size::Small)
                             .toggled(index == active)

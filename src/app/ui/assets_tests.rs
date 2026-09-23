@@ -120,7 +120,7 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
         assert_themeable(icon.path().as_ref());
     }
 
-    for icon in [AppIcon::Helix, AppIcon::VsCode, AppIcon::Zed] {
+    for icon in [AppIcon::Helix, AppIcon::Vim, AppIcon::VsCode, AppIcon::Zed] {
         assert_bundled(icon.path().as_ref());
     }
 }

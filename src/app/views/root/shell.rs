@@ -93,7 +93,7 @@ impl FarcasterApp {
             match self.workspace.surface {
                 AppSurface::Editor
                     if self.workspace.editor.view.is_some()
-                        || self.workspace.editor.helix_view.is_some() =>
+                        || self.workspace.editor.terminal_editor_view.is_some() =>
                 {
                     self.render_editor_surface()
                 }

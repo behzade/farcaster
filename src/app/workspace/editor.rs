@@ -7,10 +7,9 @@ use gpui::{AppContext as _, Context, Window};
 
 use super::{
     AppSurface, FarcasterApp,
-    helix::HelixBackend,
-    helix::HelixEditor,
     neovim::{EditorTarget, NvimEditor, new_session_tab},
     neovim_adapter::NeovimBackend,
+    terminal_editor::{TerminalBackend, TerminalEditor},
     vscode::VsCodeBackend,
     zed::ZedBackend,
 };
@@ -45,12 +44,14 @@ fn backend(choice: crate::storage::EditorChoice) -> &'static dyn EditorBackend {
     static NEOVIM: NeovimBackend = NeovimBackend;
     static VSCODE: VsCodeBackend = VsCodeBackend;
     static ZED: ZedBackend = ZedBackend;
-    static HELIX: HelixBackend = HelixBackend;
+    static HELIX: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Helix);
+    static VIM: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Vim);
     match choice {
         crate::storage::EditorChoice::Neovim => &NEOVIM,
         crate::storage::EditorChoice::VsCode => &VSCODE,
         crate::storage::EditorChoice::Zed => &ZED,
         crate::storage::EditorChoice::Helix => &HELIX,
+        crate::storage::EditorChoice::Vim => &VIM,
     }
 }
 
@@ -281,7 +282,7 @@ impl FarcasterApp {
             EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
         );
         self.workspace.editor.view = Some(editor.clone());
-        self.workspace.editor.helix_view = None;
+        self.workspace.editor.terminal_editor_view = None;
         self.hide_terminal(cx);
         // Startup prompts can block remote requests until the user responds.
         // Show the terminal before waiting so those prompts remain accessible.
@@ -411,9 +412,10 @@ impl FarcasterApp {
         }
     }
 
-    pub(super) fn activate_helix_editor(
+    pub(super) fn activate_terminal_editor(
         &mut self,
         project: PathBuf,
+        choice: crate::storage::EditorChoice,
         title: String,
         arguments: Vec<OsString>,
         temporary: Option<tempfile::NamedTempFile>,
@@ -424,33 +426,34 @@ impl FarcasterApp {
         let key = (
             project.clone(),
             self.composer.sessions.current_target().to_owned(),
+            choice,
         );
-        let existing = self.workspace.editor.helix_editors.get(&key).cloned();
+        let existing = self.workspace.editor.terminal_editors.get(&key).cloned();
         let editor = existing
             .clone()
-            .unwrap_or_else(|| cx.new(|_| HelixEditor::new(project)));
+            .unwrap_or_else(|| cx.new(|_| TerminalEditor::new(project, choice)));
         editor.update(cx, |editor, cx| {
             editor.open(arguments, title, temporary, window, cx)
         })?;
         if existing.is_none() {
             self.workspace
                 .editor
-                .helix_editors
+                .terminal_editors
                 .insert(key.clone(), editor.clone());
             let monitored = editor.clone();
             self.monitor_native_process(window, cx, move |this, _window, cx| {
-                if this.workspace.editor.helix_editors.get(&key) != Some(&monitored) {
+                if this.workspace.editor.terminal_editors.get(&key) != Some(&monitored) {
                     return false;
                 }
                 if monitored.update(cx, |editor, cx| editor.retain_alive(cx)) {
                     return true;
                 }
-                this.workspace.editor.helix_editors.remove(&key);
-                if this.workspace.editor.helix_view.as_ref() == Some(&monitored) {
+                this.workspace.editor.terminal_editors.remove(&key);
+                if this.workspace.editor.terminal_editor_view.as_ref() == Some(&monitored) {
                     if this.workspace.surface == AppSurface::Editor {
                         this.close_editor(cx);
                     } else {
-                        this.workspace.editor.helix_view = None;
+                        this.workspace.editor.terminal_editor_view = None;
                         this.workspace.editor.ready = false;
                         this.workspace.editor.return_focus = None;
                         this.request_repository_refresh(cx);
@@ -460,7 +463,7 @@ impl FarcasterApp {
             });
         }
         self.retain_workspace_draft(cx);
-        let switching = self.workspace.editor.helix_view.as_ref() != Some(&editor);
+        let switching = self.workspace.editor.terminal_editor_view.as_ref() != Some(&editor);
         if switching {
             self.hide_editor(cx);
         }
@@ -468,7 +471,7 @@ impl FarcasterApp {
             self.workspace.editor.return_focus = window.focused(cx);
         }
         self.workspace.editor.view = None;
-        self.workspace.editor.helix_view = Some(editor);
+        self.workspace.editor.terminal_editor_view = Some(editor);
         self.workspace.editor.active_review = None;
         self.hide_terminal(cx);
         self.workspace.editor.ready = true;
@@ -482,7 +485,7 @@ impl FarcasterApp {
         if let Some(editor) = self.workspace.editor.view.as_ref() {
             editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
-        if let Some(editor) = self.workspace.editor.helix_view.as_ref() {
+        if let Some(editor) = self.workspace.editor.terminal_editor_view.as_ref() {
             editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
     }
@@ -495,7 +498,7 @@ impl FarcasterApp {
             editor.update(cx, |editor, cx| editor.set_visible(true, cx));
         } else if self.workspace.surface == AppSurface::Editor
             && self.workspace.editor.ready
-            && let Some(editor) = self.workspace.editor.helix_view.as_ref()
+            && let Some(editor) = self.workspace.editor.terminal_editor_view.as_ref()
         {
             editor.update(cx, |editor, cx| editor.set_visible(true, cx));
         }
@@ -504,7 +507,7 @@ impl FarcasterApp {
     pub(in crate::app) fn close_editor(&mut self, cx: &mut Context<Self>) {
         self.hide_editor(cx);
         self.workspace.editor.view = None;
-        self.workspace.editor.helix_view = None;
+        self.workspace.editor.terminal_editor_view = None;
         self.workspace.editor.ready = false;
         let focus = self
             .workspace

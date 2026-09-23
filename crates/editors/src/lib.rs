@@ -3,17 +3,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum EditorChoice {
     #[default]
     Neovim,
     VsCode,
     Zed,
     Helix,
+    Vim,
 }
 
 impl EditorChoice {
-    pub const ALL: [Self; 4] = [Self::Neovim, Self::VsCode, Self::Zed, Self::Helix];
+    pub const ALL: [Self; 5] = [
+        Self::Neovim,
+        Self::VsCode,
+        Self::Zed,
+        Self::Helix,
+        Self::Vim,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -21,6 +28,7 @@ impl EditorChoice {
             Self::VsCode => "VS Code",
             Self::Zed => "Zed",
             Self::Helix => "Helix",
+            Self::Vim => "Vim",
         }
     }
 
@@ -30,6 +38,7 @@ impl EditorChoice {
             Self::VsCode => "vscode",
             Self::Zed => "zed",
             Self::Helix => "helix",
+            Self::Vim => "vim",
         }
     }
 
@@ -39,6 +48,7 @@ impl EditorChoice {
             "vscode" => Some(Self::VsCode),
             "zed" => Some(Self::Zed),
             "helix" => Some(Self::Helix),
+            "vim" => Some(Self::Vim),
             _ => None,
         }
     }
@@ -54,6 +64,7 @@ impl EditorChoice {
             }
             Self::Zed => PathBuf::from("zeditor"),
             Self::Helix => PathBuf::from("hx"),
+            Self::Vim => PathBuf::from("vim"),
         }
     }
 

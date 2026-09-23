@@ -196,7 +196,7 @@ impl FarcasterApp {
                 AppSurface::Editor => {
                     self.workspace.editor.ready
                         && (self.workspace.editor.view.is_some()
-                            || self.workspace.editor.helix_view.is_some())
+                            || self.workspace.editor.terminal_editor_view.is_some())
                 }
                 AppSurface::Terminal => self.workspace.terminal.view.is_some(),
                 AppSurface::Chat | AppSurface::Work => false,
@@ -212,7 +212,7 @@ impl FarcasterApp {
                         .or_else(|| {
                             self.workspace
                                 .editor
-                                .helix_view
+                                .terminal_editor_view
                                 .as_ref()
                                 .and_then(|editor| {
                                     editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()
@@ -383,7 +383,8 @@ impl FarcasterApp {
                         {
                             editor.update(cx, |editor, cx| editor.focus(window, cx));
                         } else if self.workspace.editor.ready
-                            && let Some(editor) = self.workspace.editor.helix_view.as_ref()
+                            && let Some(editor) =
+                                self.workspace.editor.terminal_editor_view.as_ref()
                         {
                             editor.update(cx, |editor, cx| editor.focus(window, cx));
                         }

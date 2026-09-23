@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 57] = [
+const ICON_PATHS: [&str; 58] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -61,6 +61,7 @@ const ICON_PATHS: [&str; 57] = [
     "icons/workbench/neovim.svg",
     "icons/workbench/opencode.svg",
     "icons/workbench/pi.svg",
+    "icons/workbench/vim.svg",
     "icons/workbench/vscode.svg",
     "icons/workbench/zed.svg",
 ];
@@ -289,6 +290,9 @@ impl AssetSource for AppAssets {
             "icons/workbench/pi.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/pi.svg"))
             }
+            "icons/workbench/vim.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/vim.svg"))
+            }
             "icons/workbench/vscode.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/vscode.svg"))
             }
@@ -351,6 +355,7 @@ pub(crate) enum AppIcon {
     Stop,
     Trash,
     WarningCircle,
+    Vim,
     VsCode,
     Zed,
     X,
@@ -364,6 +369,7 @@ impl AppIcon {
             crate::storage::EditorChoice::VsCode => Self::VsCode,
             crate::storage::EditorChoice::Zed => Self::Zed,
             crate::storage::EditorChoice::Helix => Self::Helix,
+            crate::storage::EditorChoice::Vim => Self::Vim,
         }
     }
 
@@ -409,6 +415,7 @@ impl IconNamed for AppIcon {
             Self::FolderPlus => "folder-plus",
             Self::Ghostty => return "icons/workbench/ghostty.svg".into(),
             Self::Helix => return "icons/workbench/helix.svg".into(),
+            Self::Vim => return "icons/workbench/vim.svg".into(),
             Self::GitFork => "git-fork",
             Self::Hourglass => "hourglass",
             Self::Key => "key",
