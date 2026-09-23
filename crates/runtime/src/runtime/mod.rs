@@ -5,6 +5,7 @@ mod command_queue;
 mod commands;
 mod documents;
 mod history;
+pub mod history_cache;
 mod notifications;
 mod process;
 mod projection;
