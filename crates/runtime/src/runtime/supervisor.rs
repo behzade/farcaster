@@ -534,7 +534,7 @@ impl Supervisor {
                 }),
             );
         }
-        let actor_paths = initial_session
+        let mut actor_paths = initial_session
             .as_ref()
             .map(|target| HashMap::from([(target.path.clone(), initial_key.clone())]))
             .unwrap_or_default();
@@ -571,7 +571,15 @@ impl Supervisor {
             && let Ok(prompts) = state.with(|store| agents::queued_prompts(store))
         {
             for prompt in prompts {
-                let key = prompt.target.clone();
+                let key = prompt.session.as_ref().map_or_else(
+                    || initial_key.clone(),
+                    |session| {
+                        actor_paths
+                            .entry(session.clone())
+                            .or_insert_with(|| format!("session:{}", session.display()))
+                            .clone()
+                    },
+                );
                 let actor = actors.entry(key).or_insert_with(|| {
                     SessionRuntimeHandle::spawn(
                         prompt.project.clone(),
@@ -582,7 +590,7 @@ impl Supervisor {
                         host.clone(),
                     )
                 });
-                actor.send(RuntimeCommand::DeliverQueued(prompt));
+                actor.send(RuntimeCommand::RecoverPending(prompt));
             }
         }
         let selected_session = initial_session.as_ref().map(|target| target.path.clone());

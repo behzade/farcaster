@@ -101,6 +101,91 @@ fn ready_owner(
 }
 
 #[test]
+fn recovered_prompt_waits_for_an_explicit_choice() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    let target = "draft:saved";
+    let first = store.enqueue_prompt(
+        target,
+        Backend::Pi,
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "send later",
+        &[],
+    )?;
+    let second = store.enqueue_prompt(
+        target,
+        Backend::Pi,
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "remove me",
+        &[],
+    )?;
+    let prompts = store.queued_prompts()?;
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+    owner.state = Some(store.into());
+    for prompt in prompts {
+        owner.apply_command(RuntimeCommand::RecoverPending(prompt));
+    }
+    assert!(sent_messages(&sent).is_empty());
+    assert_eq!(owner.saved_prompts.len(), 2);
+    owner.apply_command(RuntimeCommand::RemoveSaved {
+        target: target.into(),
+        id: second,
+    });
+    assert_eq!(owner.saved_prompts.len(), 1);
+    assert_eq!(outbox_rows(&database)?[1].1, "cancelled");
+    conversation_mut(&mut owner.snapshot).running = true;
+    owner.apply_command(RuntimeCommand::SendSaved {
+        target: target.into(),
+        id: first,
+    });
+    assert!(sent_messages(&sent).is_empty());
+    assert_eq!(owner.saved_prompts.len(), 1);
+    conversation_mut(&mut owner.snapshot).running = false;
+    owner.apply_command(RuntimeCommand::SendSaved {
+        target: target.into(),
+        id: first,
+    });
+    assert_eq!(sent_messages(&sent), ["send later"]);
+    assert!(owner.saved_prompts.is_empty());
+    Ok(())
+}
+
+#[test]
+fn failed_manual_retry_stays_saved() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    let id = store.enqueue_prompt(
+        "draft:retry",
+        Backend::Pi,
+        temp.path(),
+        None,
+        PromptMode::Normal,
+        "keep on failure",
+        &[],
+    )?;
+    let prompt = store.queued_prompts()?.remove(0);
+    let (mut owner, _) = owner_without_process(temp.path().to_path_buf());
+    owner.state = Some(store.into());
+    owner.apply_command(RuntimeCommand::RecoverPending(prompt));
+    owner.apply_command(RuntimeCommand::SendSaved {
+        target: "draft:retry".into(),
+        id,
+    });
+    assert_eq!(owner.saved_prompts.len(), 1);
+    assert_eq!(
+        outbox_rows(&database)?,
+        [("keep on failure".into(), "pending".into())]
+    );
+    Ok(())
+}
+
+#[test]
 fn recovered_steer_and_follow_up_stay_out_of_the_transcript_until_delivery() -> Result<(), String> {
     for mode in [PromptMode::Steer, PromptMode::FollowUp] {
         let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -381,6 +466,10 @@ fn operational_rejection_rolls_back_the_transcript_but_retains_pending_work() ->
     owner.apply_response(prompt_response("request-1", PromptMode::Normal, false));
 
     assert_eq!(sent_messages(&sent), ["retry this input"]);
+    assert_eq!(owner.saved_prompts.len(), 1);
+    assert_eq!(owner.saved_prompts[0].message, "retry this input");
+    assert_eq!(owner.snapshot.status, "Done");
+    assert!(!owner.snapshot.conversation.running);
     assert!(
         owner
             .state
@@ -529,7 +618,8 @@ fn delivery_receipt_acks_prompt_and_persists_its_presentation() -> Result<(), St
 }
 
 #[test]
-fn process_failure_after_dispatch_keeps_the_outbox_pending_for_retry() -> Result<(), String> {
+fn process_failure_after_dispatch_keeps_the_outbox_visible_for_manual_retry() -> Result<(), String>
+{
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let (mut owner, _) = ready_owner(temp.path(), &database)?;
@@ -543,6 +633,8 @@ fn process_failure_after_dispatch_keeps_the_outbox_pending_for_retry() -> Result
     owner.apply_process_item(SessionEvent::Failure(
         "transport disconnected after dispatch".into(),
     ));
+    assert_eq!(owner.saved_prompts.len(), 1);
+    assert_eq!(owner.saved_prompts[0].message, "retain after crash");
 
     assert!(
         owner

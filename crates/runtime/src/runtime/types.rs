@@ -122,7 +122,15 @@ pub enum RuntimeCommand {
     RestoreAccessMode(HarnessAccessMode),
     SetAppProxy(Option<String>),
     ExtensionResponse(ExtensionUiResponse),
-    DeliverQueued(crate::agents::QueuedPrompt),
+    RecoverPending(crate::agents::QueuedPrompt),
+    SendSaved {
+        target: String,
+        id: i64,
+    },
+    RemoveSaved {
+        target: String,
+        id: i64,
+    },
     SetSessionArchived {
         path: PathBuf,
         archived: bool,

@@ -55,6 +55,44 @@ impl RuntimeOwner {
         Ok(())
     }
 
+    fn remove_saved_prompt(&mut self, target: &str, id: i64) -> Result<(), String> {
+        let Some(index) = self
+            .saved_prompts
+            .iter()
+            .position(|prompt| prompt.id == id && prompt.target == target)
+        else {
+            return Ok(());
+        };
+        self.state
+            .as_ref()
+            .ok_or("State unavailable")?
+            .with(|store| store.cancel_queued_prompts(&[id]))?;
+        self.saved_prompts.remove(index);
+        self.publish();
+        Ok(())
+    }
+
+    fn send_saved_prompt(&mut self, target: &str, id: i64) {
+        let Some(index) = self
+            .saved_prompts
+            .iter()
+            .position(|prompt| prompt.id == id && prompt.target == target)
+        else {
+            return;
+        };
+        if !self.can_deliver_queued(self.saved_prompts[index].mode) {
+            return;
+        }
+        let Some(mut prompt) = self.saved_prompts.remove(index) else {
+            return;
+        };
+        // This is a new, explicit attempt. The old composer submission has
+        // already been settled, so a later failure must return to saved state.
+        prompt.submission_id = None;
+        self.publish();
+        self.deliver_queued(prompt);
+    }
+
     fn cancel_recovered_prompts(&mut self) {
         if self.queued_prompts.is_empty() {
             return;
@@ -165,7 +203,18 @@ impl RuntimeOwner {
                     allow_while_running,
                 ),
             },
-            RuntimeCommand::DeliverQueued(prompt) => self.deliver_queued(prompt),
+            RuntimeCommand::RecoverPending(prompt) => {
+                if !self.saved_prompts.iter().any(|saved| saved.id == prompt.id) {
+                    self.saved_prompts.push_back(prompt);
+                    self.publish();
+                }
+            }
+            RuntimeCommand::SendSaved { target, id } => self.send_saved_prompt(&target, id),
+            RuntimeCommand::RemoveSaved { target, id } => {
+                if let Err(error) = self.remove_saved_prompt(&target, id) {
+                    zlog::error!("Could not remove saved prompt {id}: {error}");
+                }
+            }
             RuntimeCommand::UpdateConfigurationCatalog {
                 harness,
                 project,

@@ -966,11 +966,8 @@ pub(in crate::app) fn record_pending_prompt_result_for_submission(
     outcome: crate::agents::PromptOutcome,
     session: Option<PathBuf>,
 ) {
-    // A missing receipt is still pending work. Keep the composer submission
-    // unresolved so the durable outbox can retry it after a restart.
-    if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
-        return;
-    }
+    // An uncertain send remains in the visible saved-message queue. It is no
+    // longer active work and must not keep the quit warning on screen.
     let key = match submission_id {
         Some(id) => pending.contains_key(id).then(|| id.to_owned()),
         None => {

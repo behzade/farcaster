@@ -198,7 +198,7 @@ pub(super) fn render(
     history_preview: bool,
 ) -> Option<AnyElement> {
     let groups = pending_message_groups(queue, receipts, history_preview);
-    if groups.is_empty() {
+    if groups.is_empty() && queue.saved.is_empty() {
         return None;
     }
     Some(
@@ -209,7 +209,7 @@ pub(super) fn render(
             .rounded(THEME.radius)
             .overflow_hidden()
             .bg(THEME.colors.surface)
-            .when(!individual, |queue| {
+            .when(!individual && !groups.is_empty(), |queue| {
                 let entity = entity.clone();
                 queue.child(div().flex().justify_end().child(button(
                     "clear-prompt-queue",
@@ -222,6 +222,70 @@ pub(super) fn render(
                     },
                 )))
             })
+            .children(queue.saved.iter().map(|saved| {
+                let send_entity = entity.clone();
+                let remove_entity = entity.clone();
+                let send_target = saved.target.clone();
+                let remove_target = saved.target.clone();
+                let id = saved.id;
+                div()
+                    .border_t(THEME.border)
+                    .border_color(THEME.colors.border)
+                    .px(THEME.space.sm)
+                    .py(THEME.space.xs)
+                    .child(
+                        div().text_color(THEME.colors.subtle).child(
+                            "Delivery unconfirmed. Sending again may duplicate this message.",
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_color(THEME.colors.text)
+                            .child(saved.text.clone()),
+                    )
+                    .when(saved.image_count > 0, |row| {
+                        row.child(format!("{} image(s) attached", saved.image_count))
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .gap(THEME.space.xs)
+                            .child(button(
+                                format!("send-saved-{}", saved.id),
+                                "Send again",
+                                ButtonTone::Quiet,
+                                saved.sendable,
+                                move |_, cx| {
+                                    let _ = send_entity.update(cx, |app, cx| {
+                                        app.send(
+                                            RuntimeCommand::SendSaved {
+                                                target: send_target.clone(),
+                                                id,
+                                            },
+                                            cx,
+                                        );
+                                    });
+                                },
+                            ))
+                            .child(button(
+                                format!("remove-saved-{}", saved.id),
+                                "Remove",
+                                ButtonTone::Quiet,
+                                true,
+                                move |_, cx| {
+                                    let _ = remove_entity.update(cx, |app, cx| {
+                                        app.send(
+                                            RuntimeCommand::RemoveSaved {
+                                                target: remove_target.clone(),
+                                                id,
+                                            },
+                                            cx,
+                                        );
+                                    });
+                                },
+                            )),
+                    )
+            }))
             .children(
                 groups
                     .into_iter()

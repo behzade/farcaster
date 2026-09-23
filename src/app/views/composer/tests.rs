@@ -61,6 +61,7 @@ fn queue_close_button_requires_owner_evidence_for_that_exact_row() {
         follow_up: vec!["later".into()],
         follow_up_ids: vec!["recovered".into()],
         cancellable_ids: vec!["owned".into(), "recovered".into()],
+        ..Default::default()
     };
     let groups = queued_message_groups(&queue);
     assert_eq!(groups[0].1[0].id.map(String::as_str), Some("owned"));

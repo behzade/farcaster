@@ -276,6 +276,15 @@ impl RuntimeOwner {
                 self.normal_prompt_in_flight = false;
                 self.rollback_pending_prompt();
                 self.release_pending_outbox();
+                let running = self
+                    .active_snapshot()
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.is_streaming);
+                conversation_mut(self.active_snapshot_mut()).running = running;
+                if !running {
+                    self.snapshot.status = "Done".into();
+                }
                 self.pending_prompt_id = None;
                 self.pending_prompt_target = None;
                 self.pending_submission_id = None;

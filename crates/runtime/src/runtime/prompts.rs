@@ -169,9 +169,16 @@ impl RuntimeOwner {
                     }
                     Err(error) => {
                         if is_user_actionable_prompt_error(&error) {
-                            self.reject_prompt(&submission_id, &target, error);
+                            if self.cancel_outbox_or_park(outbox_id) {
+                                self.reject_prompt(&submission_id, &target, error);
+                            }
                         } else {
-                            self.queued_prompts.push_back(QueuedPrompt {
+                            self.emit_prompt_result(
+                                Some(&submission_id),
+                                &target,
+                                PromptOutcome::DeliveryUnknown,
+                            );
+                            self.saved_prompts.push_back(QueuedPrompt {
                                 id: outbox_id,
                                 submission_id: Some(submission_id),
                                 target,
@@ -184,6 +191,7 @@ impl RuntimeOwner {
                                 invocation,
                                 images,
                             });
+                            self.publish();
                         }
                     }
                 }
@@ -326,7 +334,45 @@ impl RuntimeOwner {
         );
     }
 
-    fn can_deliver_queued(&self, mode: PromptMode) -> bool {
+    pub(super) fn cancel_outbox_or_park(&mut self, id: i64) -> bool {
+        let result = self
+            .state
+            .as_ref()
+            .ok_or("State unavailable".to_owned())
+            .and_then(|state| state.with(|store| store.cancel_queued_prompts(&[id])));
+        if let Err(error) = result {
+            zlog::error!("Could not cancel unsent prompt {id}: {error}");
+            self.park_pending_outbox(id);
+            return false;
+        }
+        true
+    }
+
+    fn finish_unsent_prompt(&mut self, outbox_id: Option<i64>, error: String) {
+        let cancelled = match outbox_id {
+            Some(id) if self.pending_submission_id.is_none() => {
+                self.park_pending_outbox(id);
+                false
+            }
+            Some(id) => self.cancel_outbox_or_park(id),
+            None => true,
+        };
+        self.pending_outbox_id = None;
+        let target = self.pending_prompt_target.take().unwrap_or_default();
+        self.rollback_failed_prompt(&error);
+        self.pending_prompt_id = None;
+        if cancelled {
+            self.reject_pending_prompt(&target, error);
+        } else {
+            self.pending_submission_id = None;
+            if !self.active_snapshot().conversation.running {
+                self.snapshot.status = "Done".into();
+            }
+            self.publish();
+        }
+    }
+
+    pub(super) fn can_deliver_queued(&self, mode: PromptMode) -> bool {
         if self.pending_prompt_id.is_some()
             || self.pending_prompt_target.is_some()
             || self.deferred_prompt.is_some()
@@ -391,26 +437,14 @@ impl RuntimeOwner {
         }
         if self.active_session.is_none() {
             let error = format!("{} did not provide a session locator", self.backend_name());
-            let error = error.as_str();
-            let was_running = self
-                .active_snapshot()
-                .session
-                .as_ref()
-                .is_some_and(|state| state.is_streaming);
-            self.release_pending_outbox();
-            let target = self.pending_prompt_target.take().unwrap_or_default();
-            self.rollback_pending_prompt();
-            conversation_mut(self.active_snapshot_mut()).running = was_running;
-            self.reject_pending_prompt(&target, error.into());
+            self.finish_unsent_prompt(outbox_id, error);
             return;
         }
         if let Some(id) = outbox_id
             && let Some(state) = &self.state
             && let Err(error) = state.with(|store| agents::begin_prompt(store, id))
         {
-            let target = self.pending_prompt_target.take().unwrap_or_default();
-            self.rollback_pending_prompt();
-            self.reject_pending_prompt(&target, error);
+            self.finish_unsent_prompt(Some(id), error);
             return;
         }
         let was_running = self
@@ -453,20 +487,28 @@ impl RuntimeOwner {
                 // Submission may fail locally (for example, an unreadable image or
                 // an unsupported mode). Only a transport failure event owns the
                 // session lifetime; rejecting this request must not end its turn.
-                self.rollback_failed_prompt(&error);
-                self.pending_prompt_id = None;
-                if let Some(target) = self.pending_prompt_target.take() {
-                    self.reject_pending_prompt(&target, error);
-                }
+                self.finish_unsent_prompt(outbox_id, error);
             }
             None => {
-                // The durable outbox owns retry. A process that is not ready
-                // is not a user-facing prompt failure.
+                // The process cannot accept this prompt. Leave it saved for
+                // an explicit user choice.
                 self.release_pending_outbox();
+                self.rollback_pending_prompt();
                 self.pending_prompt_id = None;
+                self.pending_prompt_target = None;
+                self.pending_submission_id = None;
                 self.pending_prompt_result_emitted = false;
                 self.pending_prompt_delivery_tracked = false;
                 self.normal_prompt_in_flight = false;
+                let running = self
+                    .active_snapshot()
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.is_streaming);
+                conversation_mut(self.active_snapshot_mut()).running = running;
+                if !running {
+                    self.snapshot.status = "Done".into();
+                }
                 if self.parked_snapshot.is_none() {
                     self.publish();
                 }

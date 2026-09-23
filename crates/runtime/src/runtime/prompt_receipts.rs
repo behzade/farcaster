@@ -279,9 +279,41 @@ impl RuntimeOwner {
     }
 
     pub(super) fn release_pending_outbox(&mut self) {
-        // The durable row stays pending. Runtime ownership ends here; the next
-        // dispatch or restart can retry it.
-        self.pending_outbox_id = None;
+        // Delivery may be uncertain. Keep the row visible until the user acts.
+        if let Some(id) = self.pending_outbox_id.take() {
+            self.park_pending_outbox(id);
+        }
+    }
+
+    pub(super) fn park_pending_outbox(&mut self, id: i64) {
+        if self.saved_prompts.iter().any(|prompt| prompt.id == id) {
+            return;
+        }
+        let result = self
+            .state
+            .as_ref()
+            .ok_or_else(|| "State unavailable".to_owned())
+            .and_then(|state| state.with(|store| store.queued_prompts()));
+        match result {
+            Ok(prompts) => {
+                if let Some(prompt) = prompts.into_iter().find(|prompt| prompt.id == id) {
+                    let submission_id = prompt
+                        .submission_id
+                        .as_deref()
+                        .or(self.pending_submission_id.as_deref());
+                    self.emit_prompt_result(
+                        submission_id,
+                        &prompt.target,
+                        crate::agents::PromptOutcome::DeliveryUnknown,
+                    );
+                    self.saved_prompts.push_back(prompt);
+                    self.publish();
+                }
+            }
+            Err(error) => {
+                zlog::error!("Could not load pending prompt {id}: {error}");
+            }
+        }
     }
 
     pub(super) fn fail_pending_queued_prompts(&mut self, _error: &str) {
@@ -306,9 +338,13 @@ impl RuntimeOwner {
                 }
                 continue;
             }
-            // A reset before model admission is not a user-visible failure.
-            // Keep the durable row pending and let the next process retry it.
-            self.queued_prompts.push_back(crate::agents::QueuedPrompt {
+            // Keep unconfirmed delivery visible until the user acts.
+            self.emit_prompt_result(
+                Some(&queued.submission_id),
+                &queued.target,
+                crate::agents::PromptOutcome::DeliveryUnknown,
+            );
+            self.saved_prompts.push_back(crate::agents::QueuedPrompt {
                 id: queued.outbox_id,
                 submission_id: Some(queued.submission_id),
                 target: queued.target,

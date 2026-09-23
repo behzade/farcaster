@@ -138,6 +138,7 @@ pub(super) fn owner_without_process(
             parked_snapshot: None,
             deferred_prompt: None,
             queued_prompts: VecDeque::new(),
+            saved_prompts: VecDeque::new(),
             normal_prompt_in_flight: false,
             pending_session_controls: PendingSessionControls::default(),
             access_mode_changes: AccessModeChangeState::default(),
@@ -2220,10 +2221,11 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
 }
 
 #[test]
-fn failed_start_keeps_the_deferred_prompt_pending() -> Result<(), Box<dyn std::error::Error>> {
+fn failed_start_returns_the_deferred_prompt_to_the_composer()
+-> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let database = temp.path().join("gui-state.sqlite3");
-    let (mut owner, _events) = owner_without_process(temp.path().to_path_buf());
+    let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
     owner.process_command = AgentLaunchConfig {
         program: PathBuf::from("/definitely/missing/farcaster-test-command"),
         prefix_args: Vec::new(),
@@ -2249,7 +2251,7 @@ fn failed_start_keeps_the_deferred_prompt_pending() -> Result<(), Box<dyn std::e
             .expect("state")
             .with(|store| store.queued_prompts())?
             .len(),
-        1
+        0
     );
     assert!(owner.pending_outbox_id.is_none());
     let connection = rusqlite::Connection::open(database)?;
@@ -2258,8 +2260,15 @@ fn failed_start_keeps_the_deferred_prompt_pending() -> Result<(), Box<dyn std::e
         [],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
     )?;
-    assert_eq!(state, "pending");
+    assert_eq!(state, "cancelled");
     assert!(error.is_none());
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            ..
+        }
+    )));
     Ok(())
 }
 
@@ -2551,6 +2560,7 @@ fn active_session_events_stay_parked_while_other_history_is_visible() -> Result<
         parked_snapshot: None,
         deferred_prompt: None,
         queued_prompts: VecDeque::new(),
+        saved_prompts: VecDeque::new(),
         normal_prompt_in_flight: false,
         pending_session_controls: PendingSessionControls::default(),
         access_mode_changes: AccessModeChangeState::default(),

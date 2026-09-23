@@ -188,12 +188,22 @@ impl TranscriptItem {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueueState {
+    pub saved: Vec<SavedPrompt>,
     pub steering: Vec<String>,
     pub follow_up: Vec<String>,
     pub steering_ids: Vec<String>,
     pub follow_up_ids: Vec<String>,
     /// Exact IDs the queue owner can still remove before dispatch.
     pub cancellable_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SavedPrompt {
+    pub id: i64,
+    pub target: String,
+    pub text: String,
+    pub image_count: usize,
+    pub sendable: bool,
 }
 
 impl QueueState {

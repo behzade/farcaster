@@ -133,6 +133,7 @@ struct RuntimeOwner {
     parked_snapshot: Option<RuntimeSnapshot>,
     deferred_prompt: Option<DeferredPrompt>,
     queued_prompts: VecDeque<crate::agents::QueuedPrompt>,
+    saved_prompts: VecDeque<crate::agents::QueuedPrompt>,
     normal_prompt_in_flight: bool,
     pending_session_controls: PendingSessionControls,
     access_mode_changes: AccessModeChangeState,

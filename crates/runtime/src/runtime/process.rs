@@ -467,11 +467,42 @@ impl RuntimeOwner {
         self.complete_current_delivered_prompt();
         self.fail_pending_queued_prompts(&details);
         let prompt_was_delivered = self.pending_prompt_result_emitted;
-        // A process failure cannot prove that an undelivered prompt was
+        // A deferred prompt never reached the backend. Return it to the
+        // composer instead of retrying it after a later successful send.
+        if let (Some(outbox_id), Some(target)) = (
+            self.deferred_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.outbox_id),
+            self.pending_prompt_target.clone(),
+        ) {
+            if self.pending_submission_id.is_none() {
+                self.park_pending_outbox(outbox_id);
+            } else if self.cancel_outbox_or_park(outbox_id) {
+                self.emit_prompt_result(
+                    self.pending_submission_id.as_deref(),
+                    &target,
+                    agents::PromptOutcome::RejectedBeforeAcceptance,
+                );
+            }
+        }
+        // A failure after dispatch cannot prove that an undelivered prompt was
         // rejected. Leave its durable outbox row pending for a later retry.
         if !prompt_was_delivered {
-            self.pending_outbox_id = None;
+            if self.deferred_prompt.is_some() {
+                self.pending_outbox_id = None;
+            } else {
+                self.release_pending_outbox();
+            }
             self.rollback_pending_prompt();
+        }
+        let queued = self.queued_prompts.drain(..).collect::<Vec<_>>();
+        for prompt in queued {
+            self.emit_prompt_result(
+                prompt.submission_id.as_deref(),
+                &prompt.target,
+                agents::PromptOutcome::DeliveryUnknown,
+            );
+            self.saved_prompts.push_back(prompt);
         }
         self.pending_prompt_id = None;
         self.normal_prompt_in_flight = false;
@@ -539,6 +570,20 @@ impl RuntimeOwner {
                         .filter_map(|prompt| prompt.submission_id.clone()),
                 );
         }
+        conversation_mut(&mut snapshot).queue.saved = self
+            .saved_prompts
+            .iter()
+            .map(|prompt| crate::conversation::SavedPrompt {
+                id: prompt.id,
+                target: prompt.target.clone(),
+                text: prompt
+                    .display_message
+                    .clone()
+                    .unwrap_or_else(|| prompt.message.clone()),
+                image_count: prompt.images.len(),
+                sendable: self.can_deliver_queued(prompt.mode),
+            })
+            .collect();
         snapshot.harness.clone_from(&self.harness);
         snapshot.live_session = self
             .active_session

@@ -638,9 +638,9 @@ fn rejected_submission_keeps_the_process_and_accepts_the_next_message() -> Resul
                 Ok((row.get(0)?, row.get(1)?))
             })
             .map_err(|e| e.to_string())?;
-        assert_eq!(rejected, ("bad input".into(), "pending".into()));
+        assert_eq!(rejected, ("bad input".into(), "cancelled".into()));
         let reopened = farcaster_storage::StateStore::open_at(&database)?;
-        assert_eq!(reopened.queued_prompts()?.len(), 1);
+        assert!(reopened.queued_prompts()?.is_empty());
         assert!(events.try_iter().any(|event| matches!(
             event,
             RuntimeEvent::PromptResult {

@@ -505,8 +505,7 @@ fn prompt_result_follows_submission_through_draft_promotion() {
                 outcome,
                 Some(path.clone()),
             );
-            let resolved = (outcome != crate::agents::PromptOutcome::DeliveryUnknown)
-                .then_some((outcome, Some(path)));
+            let resolved = Some((outcome, Some(path)));
             assert_eq!(pending[submission_id].result, resolved);
             // An unrelated reply must not resolve or overwrite this submission.
             record_pending_prompt_result_for_submission(
