@@ -45,7 +45,8 @@ pub struct ExecutionBinding {
 }
 
 pub type SessionRecordSink = Arc<dyn Fn(&CallerContext) -> Result<i64, String> + Send + Sync>;
-pub type ExecutionSink = Arc<dyn Fn(&ExecutionBinding) -> Result<(), String> + Send + Sync>;
+pub type ExecutionSink =
+    Arc<dyn Fn(&CallerContext, &ExecutionBinding) -> Result<i64, String> + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct CallerRegistry {
@@ -137,21 +138,7 @@ impl CallerRegistry {
             .lock()
             .map_err(|_| "caller registry unavailable")?;
         let caller = callers.get(token).ok_or("unknown Farcaster caller")?;
-        let context = CallerContext {
-            worker_id: caller.worker_id.clone(),
-            worker_name: caller.worker_name.clone(),
-            project: caller.project.clone(),
-            session: caller
-                .session
-                .clone()
-                .ok_or("caller session is not bound")?,
-            backend: caller.backend,
-            provider: caller.provider.clone(),
-            model: caller.model.clone(),
-            effort: caller.effort.clone(),
-            access_mode: caller.access_mode,
-            parent_worker_id: caller.parent_worker_id.clone(),
-        };
+        let context = caller.context().ok_or("caller session is not bound")?;
         let execution = caller
             .execution
             .clone()
@@ -394,20 +381,7 @@ impl CallerRegistry {
                 .lock()
                 .map_err(|_| "worker caller registry is unavailable".to_owned())?
                 .get(token)
-                .and_then(|caller| {
-                    Some(CallerContext {
-                        worker_id: caller.worker_id.clone(),
-                        worker_name: caller.worker_name.clone(),
-                        project: caller.project.clone(),
-                        session: caller.session.clone()?,
-                        backend: caller.backend,
-                        provider: caller.provider.clone(),
-                        model: caller.model.clone(),
-                        effort: caller.effort.clone(),
-                        access_mode: caller.access_mode,
-                        parent_worker_id: caller.parent_worker_id.clone(),
-                    })
-                })
+                .and_then(RegisteredCaller::context)
             {
                 return Ok(context);
             }
@@ -554,6 +528,21 @@ impl CallerRegistry {
 }
 
 impl RegisteredCaller {
+    fn context(&self) -> Option<CallerContext> {
+        Some(CallerContext {
+            worker_id: self.worker_id.clone(),
+            worker_name: self.worker_name.clone(),
+            project: self.project.clone(),
+            session: self.session.clone()?,
+            backend: self.backend,
+            provider: self.provider.clone(),
+            model: self.model.clone(),
+            effort: self.effort.clone(),
+            access_mode: self.access_mode,
+            parent_worker_id: self.parent_worker_id.clone(),
+        })
+    }
+
     fn session_key(&self) -> Option<CallerSession> {
         Some(CallerSession {
             project: self.project.clone(),
@@ -633,7 +622,7 @@ impl CallerIdentity {
     /// A missing sink is normal for standalone adapters and isolated tests.
     pub fn begin_execution(&self, prompt_id: Option<&str>) {
         self.registry.bind_record(&self.token);
-        let binding = (|| {
+        let execution = (|| {
             let mut callers = self.registry.callers.lock().ok()?;
             let caller = callers.get_mut(&self.token)?;
             if prompt_id.is_some()
@@ -645,28 +634,37 @@ impl CallerIdentity {
                 return None;
             }
             caller.execution = None;
-            Some(ExecutionBinding {
+            let binding = ExecutionBinding {
                 session_record: caller.session_record?,
                 turn_id: uuid::Uuid::new_v4().to_string(),
                 prompt_id: prompt_id.map(str::to_owned),
-            })
+            };
+            let context = caller.context()?;
+            Some((binding, context))
         })();
-        let Some(binding) = binding else { return };
+        let Some((mut binding, context)) = execution else {
+            return;
+        };
         let sink = self
             .registry
             .execution_sink
             .lock()
             .ok()
             .and_then(|sink| sink.clone());
-        if let Some(sink) = sink
-            && let Err(error) = sink(&binding)
-        {
-            zlog::error!("Register execution turn: {error}");
-            return;
+        if let Some(sink) = sink {
+            match sink(&context, &binding) {
+                Ok(session_record) => binding.session_record = session_record,
+                Err(error) => {
+                    zlog::error!("Register execution turn: {error}");
+                    return;
+                }
+            }
         }
         if let Ok(mut callers) = self.registry.callers.lock()
             && let Some(caller) = callers.get_mut(&self.token)
+            && caller.session.as_deref() == Some(context.session.as_str())
         {
+            caller.session_record = Some(binding.session_record);
             caller.execution = Some(binding);
         }
     }

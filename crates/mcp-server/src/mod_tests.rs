@@ -201,12 +201,14 @@ async fn review_success_is_durable_before_response_and_storage_failure_is_report
     let context = crate::agents::CallerRegistry::shared()
         .resolve(caller.token())
         .expect("caller");
-    let execution = crate::agents::ExecutionBinding {
+    let mut execution = crate::agents::ExecutionBinding {
         session_record: store.register_caller_session(&context).expect("session"),
         turn_id: "test-turn".into(),
         prompt_id: Some("test-prompt".into()),
     };
-    store.register_execution(&execution).expect("execution");
+    execution.session_record = store
+        .register_execution_for_caller(&context, &execution)
+        .expect("execution");
     caller.bind_execution_for_test(execution);
     let params = || {
         Parameters(

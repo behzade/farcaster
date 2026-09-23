@@ -65,9 +65,9 @@ fn execution_binding_is_captured_before_later_turns_and_cleared_on_rebind() {
     let captured = turns.clone();
     registry.set_execution_sinks(
         Some(Arc::new(|_| Ok(42))),
-        Some(Arc::new(move |turn| {
+        Some(Arc::new(move |_, turn| {
             captured.lock().expect("turns").push(turn.clone());
-            Ok(())
+            Ok(84)
         })),
     );
     let identity = identity(&registry, Path::new("/project"), Backend::Cursor);
@@ -76,6 +76,7 @@ fn execution_binding_is_captured_before_later_turns_and_cleared_on_rebind() {
     let (_, first) = registry
         .resolve_execution(identity.token())
         .expect("first execution");
+    assert_eq!(first.session_record, 84);
     identity.set_activity(WorkerActivityState::Working);
     assert_eq!(
         registry

@@ -23,14 +23,16 @@ fn execution(
     caller: &crate::agents::CallerContext,
     turn: &str,
 ) -> crate::agents::ExecutionBinding {
-    let execution = crate::agents::ExecutionBinding {
+    let mut execution = crate::agents::ExecutionBinding {
         session_record: store
             .register_caller_session(caller)
             .expect("register session"),
         turn_id: turn.into(),
         prompt_id: Some(turn.into()),
     };
-    store.register_execution(&execution).expect("register turn");
+    execution.session_record = store
+        .register_execution_for_caller(caller, &execution)
+        .expect("register turn");
     execution
 }
 
@@ -99,6 +101,39 @@ fn reviews_survive_identity_merges_and_refuse_stranger_callers() -> Result<(), S
             )
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn turn_registration_resolves_a_session_merged_after_caller_binding() -> Result<(), String> {
+    let temp = tempfile::tempdir().expect("project");
+    let store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let caller = caller(temp.path(), "native");
+    let stale = store.register_caller_session(&caller)?;
+    let keep = store.register_caller_session(&self::caller(temp.path(), "other"))?;
+    let tx = store
+        .connection
+        .unchecked_transaction()
+        .expect("transaction");
+    super::super::identity::merge_session(&tx, keep, stale)?;
+    tx.commit().expect("merge");
+
+    let turn = crate::agents::ExecutionBinding {
+        session_record: stale,
+        turn_id: "after-merge".into(),
+        prompt_id: Some("prompt".into()),
+    };
+    assert_eq!(store.register_execution_for_caller(&caller, &turn)?, keep);
+    let owner: i64 = store
+        .connection
+        .query_row(
+            "SELECT session_id FROM session_turns WHERE id=?1",
+            [&turn.turn_id],
+            |row| row.get(0),
+        )
+        .expect("registered turn");
+    assert_eq!(owner, keep);
+    store.save_review(&caller, &turn, &artifact(temp.path(), "after-merge-review"))?;
     Ok(())
 }
 

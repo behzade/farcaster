@@ -70,9 +70,9 @@ pub fn start(
                 store.register_caller_session(caller)
             })
         })),
-        Some(Arc::new(move |execution| {
+        Some(Arc::new(move |caller, execution| {
             super::with_store(&execution_store, |store| {
-                store.register_execution(execution)
+                store.register_execution_for_caller(caller, execution)
             })
         })),
     );

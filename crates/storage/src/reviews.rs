@@ -9,47 +9,28 @@ impl StateStore {
     ) -> Result<i64, String> {
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
             .map_err(|e| format!("register caller session: {e}"))?;
-        let project = ensure_project(&tx, &caller.project, u64_to_i64(now_ms()))?;
-        let root = self
-            .image_directory
-            .parent()
-            .ok_or("session database has no parent")?
-            .join("session-locators");
-        if !Path::new(&caller.session).is_absolute() {
-            let encoded =
-                url::form_urlencoded::byte_serialize(caller.session.as_bytes()).collect::<String>();
-            let legacy = crate::sessions::normalize_session_path(
-                &root.join(caller.backend.as_str()).join(encoded),
-            );
-            tx.execute("UPDATE sessions SET backend_id=?1 WHERE harness=?2 AND project_id=?3 AND locator=?4 AND backend_id IS NULL",
-                params![caller.session,caller.backend.as_str(),project,legacy.to_string_lossy()]).map_err(|e| format!("bind native session identity: {e}"))?;
-        }
-        let root = super::identity::family_locator_root(
-            &crate::sessions::normalize_session_path(&root),
-            &caller.project,
-        );
-        let id = ensure_locator_session(&tx, caller.backend, &caller.session, project, &root)?;
+        let id = register_caller_session_in(&tx, &self.image_directory, caller)?;
         tx.commit()
             .map_err(|e| format!("commit caller session: {e}"))?;
         Ok(id)
     }
 
-    pub fn register_execution(
+    pub fn register_execution_for_caller(
         &self,
+        caller: &crate::agents::CallerContext,
         execution: &crate::agents::ExecutionBinding,
-    ) -> Result<(), String> {
-        self.connection
-            .execute(
-                "INSERT INTO session_turns(id,session_id,prompt_id,started_ms) VALUES(?1,?2,?3,?4)",
-                params![
-                    execution.turn_id,
-                    execution.session_record,
-                    execution.prompt_id,
-                    now_ms()
-                ],
-            )
-            .map(|_| ())
-            .map_err(|e| format!("register execution turn: {e}"))
+    ) -> Result<i64, String> {
+        let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)
+            .map_err(|e| format!("register execution turn: {e}"))?;
+        let session_id = register_caller_session_in(&tx, &self.image_directory, caller)?;
+        tx.execute(
+            "INSERT INTO session_turns(id,session_id,prompt_id,started_ms) VALUES(?1,?2,?3,?4)",
+            params![execution.turn_id, session_id, execution.prompt_id, now_ms()],
+        )
+        .map_err(|e| format!("register execution turn: {e}"))?;
+        tx.commit()
+            .map_err(|e| format!("commit execution turn: {e}"))?;
+        Ok(session_id)
     }
 
     pub fn save_review(
@@ -89,6 +70,32 @@ impl StateStore {
         }
         Ok(())
     }
+}
+
+fn register_caller_session_in(
+    tx: &Transaction<'_>,
+    image_directory: &Path,
+    caller: &crate::agents::CallerContext,
+) -> Result<i64, String> {
+    let project = ensure_project(tx, &caller.project, u64_to_i64(now_ms()))?;
+    let root = image_directory
+        .parent()
+        .ok_or("session database has no parent")?
+        .join("session-locators");
+    if !Path::new(&caller.session).is_absolute() {
+        let encoded =
+            url::form_urlencoded::byte_serialize(caller.session.as_bytes()).collect::<String>();
+        let legacy = crate::sessions::normalize_session_path(
+            &root.join(caller.backend.as_str()).join(encoded),
+        );
+        tx.execute("UPDATE sessions SET backend_id=?1 WHERE harness=?2 AND project_id=?3 AND locator=?4 AND backend_id IS NULL",
+            params![caller.session,caller.backend.as_str(),project,legacy.to_string_lossy()]).map_err(|e| format!("bind native session identity: {e}"))?;
+    }
+    let root = super::identity::family_locator_root(
+        &crate::sessions::normalize_session_path(&root),
+        &caller.project,
+    );
+    ensure_locator_session(tx, caller.backend, &caller.session, project, &root)
 }
 
 #[cfg(test)]
