@@ -21,6 +21,7 @@ fn dialog_lifecycle_action(pending: bool, has_dialog: bool) -> DialogLifecycleAc
 impl FarcasterApp {
     pub(super) fn prepare_root_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resolve_pending_submission(window, cx);
+        self.close_stale_worker_model_picker(window, cx);
         let native_surface = matches!(
             self.workspace.surface,
             AppSurface::Editor | AppSurface::Terminal
@@ -61,7 +62,7 @@ impl FarcasterApp {
             if self.extensions.dialog_return_focus.is_none() {
                 self.extensions.dialog_return_focus = window.focused(cx);
             }
-            if native_surface {
+            if native_surface && self.native_workspace_covered_by_overlay() {
                 self.cover_native_workspace_surface(cx);
             }
             self.extensions.pending_dialog_setup = false;

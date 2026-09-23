@@ -56,6 +56,9 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.runtime_generation = generation;
+        if self.workspace.runtime_picker.worker.is_some() {
+            self.workspace.runtime_picker = Default::default();
+        }
         self.extensions.active.reset();
         self.extensions.parked = None;
         self.activity.background_jobs.clear();

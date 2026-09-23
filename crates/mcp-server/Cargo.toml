@@ -12,6 +12,7 @@ test-support = []
 [dependencies]
 async-channel = "2.5.0"
 axum = "0.8.8"
+farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-agents = { path = "../agents" }
 farcaster-reviews = { path = "../reviews" }
 farcaster-sessions = { path = "../sessions" }
@@ -26,7 +27,6 @@ uuid = { version = "1.24.0", features = ["v4"] }
 workgraph = { path = "../../workgraph" }
 
 [dev-dependencies]
-farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-agents = { path = "../agents", features = ["test-support"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 tempfile = "3.27.0"

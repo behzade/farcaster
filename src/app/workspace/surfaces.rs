@@ -340,6 +340,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_worker_picker_for_surface_switch(window, cx);
         self.set_surface(surface, cx);
         if self.native_workspace_covered_by_overlay() {
             self.cover_native_workspace_surface(cx);
@@ -418,11 +419,26 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn native_workspace_covered_by_overlay(&self) -> bool {
-        self.native_workspace_modal_active() || self.extensions.active.dialog.is_some()
+        self.native_workspace_modal_active()
+            || self
+                .extensions
+                .active
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| {
+                    !matches!(dialog, ExtensionUiRequest::WorkerModel { .. })
+                        || self.workspace.runtime_picker.open
+                })
     }
 
     pub(in crate::app) fn center_surface_switch_blocked(&self) -> bool {
-        self.native_workspace_covered_by_overlay()
+        self.native_workspace_modal_active()
+            || self
+                .extensions
+                .active
+                .dialog
+                .as_ref()
+                .is_some_and(|dialog| !matches!(dialog, ExtensionUiRequest::WorkerModel { .. }))
     }
 
     pub(in crate::app) fn workspace_switch_blocked(&self) -> bool {
@@ -520,6 +536,9 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn cancel_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.runtime_picker.worker.is_some() {
+            self.set_runtime_picker_open(false, window, cx);
+        }
         let Some(id) = self
             .extensions
             .active
@@ -613,6 +632,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_worker_picker_for_surface_switch(window, cx);
         if self.workspace.surface == AppSurface::Chat
             && self.extensions.active.dialog.is_some()
             && !self.native_workspace_modal_active()
@@ -633,6 +653,7 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_worker_picker_for_surface_switch(window, cx);
         self.hide_native_workspace_surfaces(cx);
         if self.overlays.view.run {
             self.close_sheet(window, cx);
@@ -967,6 +988,10 @@ impl FarcasterApp {
             self.close_sheet(window, cx);
         } else if self.navigation.picker.is_some() {
             self.close_picker(window, cx);
+        } else if self.workspace.runtime_picker.open
+            && self.workspace.runtime_picker.worker.is_some()
+        {
+            self.set_runtime_picker_open(false, window, cx);
         } else if self.extensions.active.dialog.is_some() {
             self.cancel_dialog(window, cx);
         }

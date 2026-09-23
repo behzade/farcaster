@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn worker_model_request_survives_worker_input_projection() {
+    let request = WorkerModelRequest {
+        profile: "standard".into(),
+        choices: vec![WorkerModelChoice {
+            harness: crate::Backend::Codex,
+            provider: "openai".into(),
+            id: "model-id".into(),
+            name: "Model name".into(),
+            efforts: vec!["medium".into()],
+        }],
+    };
+    let input = crate::WorkerInput {
+        id: "pending-1".into(),
+        prompt: format!(
+            "{WORKER_MODEL_REQUEST_PREFIX}{}",
+            serde_json::to_string(&request).unwrap()
+        ),
+        options: vec!["Choose model".into()],
+        secret: false,
+    };
+
+    assert_eq!(
+        ExtensionUiRequest::from_worker_input(input.clone()),
+        ExtensionUiRequest::WorkerModel {
+            id: input.id,
+            profile: request.profile,
+            choices: request.choices,
+        }
+    );
+}
+
+#[test]
 fn model_efforts_distinguish_unknown_from_known_empty() {
     let legacy = serde_json::from_value::<Model>(json!({
         "id": "legacy",

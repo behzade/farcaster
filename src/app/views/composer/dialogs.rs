@@ -7,12 +7,13 @@ use gpui::{
     ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     WeakEntity, div, prelude::FluentBuilder as _,
 };
+use gpui_component::popover::Popover;
 use gpui_component::text::TextView;
 
 use self::{confirm::ConfirmRequestView, select::SelectRequestView, text_input::TextRequestView};
 use super::super::{FarcasterApp, OVERLAY_KEY_CONTEXT};
 use crate::{
-    app::ui::primitives::{ButtonTone, button},
+    app::ui::primitives::{ButtonTone, button, dropdown_content_button},
     app::ui::theme::THEME,
     protocol::ExtensionUiRequest,
 };
@@ -36,8 +37,48 @@ impl FarcasterApp {
         if dialog.dialog_id().is_none() {
             return div().into_any_element();
         }
-
         let (title, body) = match dialog {
+            ExtensionUiRequest::WorkerModel { id, profile, .. } => {
+                let title = format!("{profile} needs a model");
+                let picker_entity = entity.clone();
+                let content_entity = entity.clone();
+                let picker_id = id.clone();
+                let picker = Popover::new("worker-model-popover")
+                    .anchor(gpui::Anchor::BottomLeft)
+                    .appearance(false)
+                    .open(
+                        self.workspace.runtime_picker.open
+                            && self.workspace.runtime_picker.worker.is_some(),
+                    )
+                    .trigger(dropdown_content_button(
+                        "choose-worker-model",
+                        "Choose model",
+                        div().child("Choose model"),
+                        ButtonTone::Neutral,
+                        true,
+                    ))
+                    .on_open_change(move |open, window, cx| {
+                        let _ = picker_entity.update(cx, |app, cx| {
+                            app.set_worker_model_picker_open(*open, &picker_id, window, cx)
+                        });
+                    })
+                    .content(move |_, window, cx| {
+                        content_entity
+                            .update(cx, |app, cx| app.render_runtime_picker(window, cx))
+                            .unwrap_or_else(|_| div().into_any_element())
+                    });
+                let body = div()
+                    .flex()
+                    .flex_col()
+                    .gap(THEME.space.sm)
+                    .child(
+                        div()
+                            .text_color(THEME.colors.muted)
+                            .child("Choose a model to start this worker."),
+                    )
+                    .child(picker);
+                (title.into(), body.into_any_element())
+            }
             ExtensionUiRequest::Select {
                 id, title, options, ..
             } => {
@@ -165,7 +206,11 @@ impl FarcasterApp {
                         .pb(THEME.space.sm)
                         .child(button(
                             "dialog-cancel",
-                            "Cancel",
+                            if matches!(dialog, ExtensionUiRequest::WorkerModel { .. }) {
+                                "Cancel request"
+                            } else {
+                                "Cancel"
+                            },
                             ButtonTone::Quiet,
                             true,
                             move |window, cx| {

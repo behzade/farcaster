@@ -156,6 +156,9 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.workspace.runtime_picker.open && self.workspace.runtime_picker.worker.is_some() {
+            self.set_runtime_picker_open(false, window, cx);
+        }
         if scope == PickerScope::Harnesses && self.editable_draft_harness().is_none() {
             return;
         }

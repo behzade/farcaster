@@ -56,7 +56,8 @@ pub(crate) enum DialogDismissal {
 impl ExtensionUiState {
     pub(crate) fn apply(&mut self, request: ExtensionUiRequest) -> ExtensionEffect {
         match request {
-            request @ (ExtensionUiRequest::Select { .. }
+            request @ (ExtensionUiRequest::WorkerModel { .. }
+            | ExtensionUiRequest::Select { .. }
             | ExtensionUiRequest::Confirm { .. }
             | ExtensionUiRequest::Input { .. }
             | ExtensionUiRequest::Editor { .. }) => {

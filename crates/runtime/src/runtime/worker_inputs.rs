@@ -67,21 +67,7 @@ impl RuntimeOwner {
 }
 
 fn child_interaction(input: agents::WorkerInput) -> ExtensionUiRequest {
-    if input.options.is_empty() {
-        ExtensionUiRequest::Input {
-            id: input.id,
-            title: input.prompt,
-            placeholder: None,
-            timeout: None,
-        }
-    } else {
-        ExtensionUiRequest::Select {
-            id: input.id,
-            title: input.prompt,
-            options: input.options,
-            timeout: None,
-        }
-    }
+    ExtensionUiRequest::from_worker_input(input)
 }
 
 #[cfg(test)]

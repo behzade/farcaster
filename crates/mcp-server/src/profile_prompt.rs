@@ -1,6 +1,9 @@
 use std::{sync::mpsc, time::Duration};
 
 use crate::{SharedStore, agents, storage, with_store};
+use farcaster_agent_protocol::extensions::{
+    WORKER_MODEL_REQUEST_PREFIX, WorkerModelChoice, WorkerModelRequest, WorkerModelSelection,
+};
 
 fn choose(
     caller: &agents::CallerContext,
@@ -62,7 +65,7 @@ pub(super) fn configure(
             })
         })
         .collect::<Vec<_>>();
-    let execution = if choices.is_empty() {
+    let (execution, save_choice) = if choices.is_empty() {
         let harnesses = backends.iter().map(ToString::to_string).collect::<Vec<_>>();
         if harnesses.is_empty() {
             return Err("no worker harness is installed".into());
@@ -95,62 +98,66 @@ pub(super) fn configure(
         } else {
             String::new()
         };
-        agents::WorkerExecution {
-            harness,
-            provider,
-            model,
-            effort: (!effort.trim().is_empty()).then_some(effort.trim().to_owned()),
-            service_tier: (!service_tier.trim().is_empty())
-                .then_some(service_tier.trim().to_owned()),
-        }
+        (
+            agents::WorkerExecution {
+                harness,
+                provider,
+                model,
+                effort: (!effort.trim().is_empty()).then_some(effort.trim().to_owned()),
+                service_tier: (!service_tier.trim().is_empty())
+                    .then_some(service_tier.trim().to_owned()),
+            },
+            None,
+        )
     } else {
-        let labels = choices
-            .iter()
-            .enumerate()
-            .map(|(index, (harness, model, _))| {
-                format!(
-                    "{}. {} · {} · {}",
-                    index + 1,
-                    harness,
-                    model.provider,
-                    model.name
-                )
-            })
-            .collect::<Vec<_>>();
-        let chosen = choose(
+        let request = WorkerModelRequest {
+            profile: profile.to_owned(),
+            choices: choices
+                .iter()
+                .map(|(harness, model, fallback_efforts)| WorkerModelChoice {
+                    harness: *harness,
+                    provider: model.provider.clone(),
+                    id: model.id.clone(),
+                    name: model.name.clone(),
+                    efforts: if model.reasoning {
+                        model.efforts.as_ref().unwrap_or(fallback_efforts).clone()
+                    } else {
+                        Vec::new()
+                    },
+                })
+                .collect(),
+        };
+        let selected = choose(
             caller,
-            format!("Worker '{profile}' has no available model. Choose a model:"),
-            labels.clone(),
+            format!(
+                "{WORKER_MODEL_REQUEST_PREFIX}{}",
+                serde_json::to_string(&request).map_err(|error| error.to_string())?
+            ),
+            vec!["Choose model".into()],
         )?;
-        let index = labels
-            .iter()
-            .position(|label| label == &chosen)
+        let selected: WorkerModelSelection =
+            serde_json::from_str(&selected).map_err(|_| "worker model choice is invalid")?;
+        let (harness, model, _) = choices
+            .get(selected.choice)
             .ok_or("worker model choice is no longer available")?;
-        let (harness, model, fallback_efforts) = &choices[index];
-        let efforts = if model.reasoning {
-            model.efforts.as_ref().unwrap_or(fallback_efforts)
-        } else {
-            &Vec::new()
-        };
-        let effort = if efforts.is_empty() {
-            None
-        } else {
-            let mut options = vec!["Default effort".to_owned()];
-            options.extend(efforts.iter().cloned());
-            let selected = choose(
-                caller,
-                format!("Choose effort for worker '{profile}':"),
-                options,
-            )?;
-            (selected != "Default effort").then_some(selected)
-        };
-        agents::WorkerExecution {
-            harness: *harness,
-            provider: model.provider.clone(),
-            model: model.id.clone(),
-            effort,
-            service_tier: None,
+        let available = &request.choices[selected.choice].efforts;
+        if selected
+            .effort
+            .as_ref()
+            .is_some_and(|effort| !available.contains(effort))
+        {
+            return Err("worker effort choice is unavailable".into());
         }
+        (
+            agents::WorkerExecution {
+                harness: *harness,
+                provider: model.provider.clone(),
+                model: model.id.clone(),
+                effort: selected.effort,
+                service_tier: None,
+            },
+            Some(selected.save),
+        )
     };
     execution.validate()?;
     let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
@@ -159,12 +166,21 @@ pub(super) fn configure(
     {
         return Err("selected worker model is unavailable for this parent's access mode".into());
     }
-    let save = choose(
-        caller,
-        format!("Use this model for worker '{profile}'?"),
-        vec!["Save for this profile".into(), "Use once".into()],
-    )?;
-    if save == "Save for this profile" {
+    let save = match save_choice {
+        Some(save) => save,
+        None => match choose(
+            caller,
+            format!("Use this model for worker '{profile}'?"),
+            vec!["Save for this profile".into(), "Use once".into()],
+        )?
+        .as_str()
+        {
+            "Save for this profile" => true,
+            "Use once" => false,
+            _ => return Err("worker profile choice is no longer available".into()),
+        },
+    };
+    if save {
         with_store(store, |store| {
             let mut profiles = store.load_worker_profiles()?;
             let selected = profiles
@@ -175,8 +191,6 @@ pub(super) fn configure(
             selected.models = vec![execution.clone()];
             store.save_worker_profiles(&profiles)
         })?;
-    } else if save != "Use once" {
-        return Err("worker profile choice is no longer available".into());
     }
     Ok(execution)
 }

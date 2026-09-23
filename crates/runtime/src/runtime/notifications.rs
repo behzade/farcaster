@@ -95,6 +95,10 @@ pub(super) fn interaction_notification(
         return None;
     }
     let (title, body) = match request {
+        ExtensionUiRequest::WorkerModel { profile, .. } => (
+            "Farcaster: Input needed",
+            format!("{profile} needs a model to start a worker"),
+        ),
         ExtensionUiRequest::Select { title, options, .. } => (
             "Farcaster: Input needed",
             request_text(title, &options.join("\n")),

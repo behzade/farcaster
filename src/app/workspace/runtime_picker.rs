@@ -1,5 +1,6 @@
 use super::*;
 mod layout;
+mod worker_model_picker;
 use crate::app::ui::{
     primitives::{ButtonTone, button, dropdown_button},
     theme::THEME,
@@ -13,9 +14,18 @@ use gpui_component::{
     menu::{DropdownMenu as _, PopupMenuItem},
 };
 
+pub(in crate::app) struct WorkerModelPicker {
+    id: String,
+    harness: crate::agents::Backend,
+    provider: String,
+    selected: Option<usize>,
+    effort: Option<String>,
+}
+
 #[derive(Default)]
 pub(in crate::app) struct RuntimePickerState {
     pub(in crate::app) open: bool,
+    pub(in crate::app) worker: Option<WorkerModelPicker>,
     provider: Option<String>,
     search: Option<Entity<InputState>>,
     subscription: Option<Subscription>,
@@ -23,7 +33,84 @@ pub(in crate::app) struct RuntimePickerState {
     scroll: gpui::UniformListScrollHandle,
 }
 
+fn model_result_button(
+    id: impl Into<gpui::ElementId>,
+    label: String,
+    highlighted: bool,
+    on_press: impl Fn(&mut Window, &mut gpui::App) + 'static,
+) -> impl gpui::IntoElement {
+    button(id, "", ButtonTone::Quiet, true, on_press)
+        .accessibility_label(label.clone())
+        .tooltip(label.clone())
+        .child(div().w_full().min_w(px(0.0)).truncate().child(label))
+        .w_full()
+        .min_w(px(0.0))
+        .overflow_hidden()
+        .h(px(32.0))
+        .justify_start()
+        .when(highlighted, |row| row.bg(THEME.colors.surface))
+}
+
 impl FarcasterApp {
+    pub(in crate::app) fn close_worker_picker_for_surface_switch(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.runtime_picker.open && self.workspace.runtime_picker.worker.is_some() {
+            self.set_runtime_picker_open(false, window, cx);
+        }
+    }
+
+    pub(in crate::app) fn set_worker_model_picker_open(
+        &mut self,
+        open: bool,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if open {
+            let Some(crate::protocol::ExtensionUiRequest::WorkerModel {
+                id: active,
+                choices,
+                ..
+            }) = self.extensions.active.dialog.as_ref()
+            else {
+                return;
+            };
+            if active != id || choices.is_empty() {
+                return;
+            }
+            let first = &choices[0];
+            self.workspace.runtime_picker.worker = Some(WorkerModelPicker {
+                id: id.to_owned(),
+                harness: first.harness,
+                provider: first.provider.clone(),
+                selected: None,
+                effort: None,
+            });
+        }
+        self.set_runtime_picker_open(open, window, cx);
+    }
+
+    pub(in crate::app) fn close_stale_worker_model_picker(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(worker) = self.workspace.runtime_picker.worker.as_ref()
+            && self
+                .extensions
+                .active
+                .dialog
+                .as_ref()
+                .and_then(crate::protocol::ExtensionUiRequest::dialog_id)
+                != Some(worker.id.as_str())
+        {
+            self.set_runtime_picker_open(false, window, cx);
+        }
+    }
+
     pub(in crate::app) fn set_runtime_picker_open(
         &mut self,
         open: bool,
@@ -32,7 +119,9 @@ impl FarcasterApp {
     ) {
         self.workspace.runtime_picker.open = open;
         if open {
-            if let Some(harness) = self.snapshot.harness {
+            if self.workspace.runtime_picker.worker.is_none()
+                && let Some(harness) = self.snapshot.harness
+            {
                 self.send(
                     RuntimeCommand::LoadConfiguration {
                         harness,
@@ -43,9 +132,16 @@ impl FarcasterApp {
             }
             self.workspace.runtime_picker.highlighted = 0;
             self.workspace.runtime_picker.scroll = gpui::UniformListScrollHandle::new();
-            self.workspace.runtime_picker.provider =
-                self.snapshot.session_identity().provider.map(str::to_owned);
-            if let Some(selected) = self.snapshot.session_identity().model {
+            self.workspace.runtime_picker.provider = self
+                .workspace
+                .runtime_picker
+                .worker
+                .as_ref()
+                .map(|worker| worker.provider.clone())
+                .or_else(|| self.snapshot.session_identity().provider.map(str::to_owned));
+            if self.workspace.runtime_picker.worker.is_none()
+                && let Some(selected) = self.snapshot.session_identity().model
+            {
                 self.workspace.runtime_picker.highlighted = self
                     .snapshot
                     .models
@@ -81,10 +177,17 @@ impl FarcasterApp {
                 .as_ref()
                 .is_some_and(|input| input.read(cx).focus_handle(cx).contains_focused(window, cx))
             {
-                self.composer.focus.focus(window, cx);
+                if self.workspace.runtime_picker.worker.is_some()
+                    && self.extensions.active.dialog.is_some()
+                {
+                    self.extensions.dialog_focus.focus(window, cx);
+                } else {
+                    self.composer.focus.focus(window, cx);
+                }
             }
             self.workspace.runtime_picker.subscription = None;
             self.workspace.runtime_picker.search = None;
+            self.workspace.runtime_picker.worker = None;
         }
         cx.notify();
     }
@@ -94,6 +197,9 @@ impl FarcasterApp {
         window: &Window,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
+        if self.workspace.runtime_picker.worker.is_some() {
+            return self.render_worker_model_picker(window, cx);
+        }
         let Some(search) = self.workspace.runtime_picker.search.as_ref() else {
             return div().into_any_element();
         };
@@ -287,25 +393,15 @@ impl FarcasterApp {
                             let entity = rows_entity.clone();
                             let label =
                                 format!("{}{}", if current { "✓ " } else { "" }, model.name);
-                            button(
+                            model_result_button(
                                 ("runtime-model", index),
-                                "",
-                                ButtonTone::Quiet,
-                                true,
+                                label,
+                                index == highlighted,
                                 move |_, cx| {
                                     let _ =
                                         entity.update(cx, |app, cx| app.select_model(&model, cx));
                                 },
                             )
-                            .accessibility_label(label.clone())
-                            .tooltip(label.clone())
-                            .child(div().w_full().min_w(px(0.0)).truncate().child(label))
-                            .w_full()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .h(px(32.0))
-                            .justify_start()
-                            .when(index == highlighted, |row| row.bg(THEME.colors.surface))
                             .into_any_element()
                         })
                         .collect()

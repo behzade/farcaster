@@ -69,6 +69,30 @@ pub struct Model {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkerModelChoice {
+    pub harness: crate::Backend,
+    pub provider: String,
+    pub id: String,
+    pub name: String,
+    pub efforts: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkerModelRequest {
+    pub profile: String,
+    pub choices: Vec<WorkerModelChoice>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkerModelSelection {
+    pub choice: usize,
+    pub effort: Option<String>,
+    pub save: bool,
+}
+
+pub const WORKER_MODEL_REQUEST_PREFIX: &str = "\u{1f}farcaster-worker-model:v1\u{1f}";
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AgentMode {
     pub id: String,
     pub name: String,
@@ -150,6 +174,12 @@ impl PromptImage {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "method")]
 pub enum ExtensionUiRequest {
+    #[serde(rename = "workerModel")]
+    WorkerModel {
+        id: String,
+        profile: String,
+        choices: Vec<WorkerModelChoice>,
+    },
     #[serde(rename = "select")]
     Select {
         id: String,
@@ -211,6 +241,34 @@ pub enum ExtensionUiRequest {
 }
 
 impl ExtensionUiRequest {
+    pub fn from_worker_input(input: crate::WorkerInput) -> Self {
+        if let Some(payload) = input.prompt.strip_prefix(WORKER_MODEL_REQUEST_PREFIX)
+            && let Ok(request) = serde_json::from_str::<WorkerModelRequest>(payload)
+            && !request.choices.is_empty()
+        {
+            return Self::WorkerModel {
+                id: input.id,
+                profile: request.profile,
+                choices: request.choices,
+            };
+        }
+        if input.options.is_empty() {
+            Self::Input {
+                id: input.id,
+                title: input.prompt,
+                placeholder: None,
+                timeout: None,
+            }
+        } else {
+            Self::Select {
+                id: input.id,
+                title: input.prompt,
+                options: input.options,
+                timeout: None,
+            }
+        }
+    }
+
     pub fn gpui_system_notification(&self) -> Option<(&str, &str)> {
         let Self::Notify { message, .. } = self else {
             return None;
@@ -223,7 +281,8 @@ impl ExtensionUiRequest {
 
     pub fn dialog_id(&self) -> Option<&str> {
         match self {
-            Self::Select { id, .. }
+            Self::WorkerModel { id, .. }
+            | Self::Select { id, .. }
             | Self::Confirm { id, .. }
             | Self::Input { id, .. }
             | Self::Editor { id, .. } => Some(id),

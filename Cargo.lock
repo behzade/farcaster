@@ -2013,6 +2013,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "axum",
+ "farcaster-agent-protocol",
  "farcaster-agents",
  "farcaster-reviews",
  "farcaster-sessions",
