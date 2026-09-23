@@ -12,6 +12,30 @@ use gpui_component::{
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let editor = &app.workspace.worker_profile_editor;
+    if !editor.loaded {
+        return div()
+            .flex()
+            .flex_col()
+            .gap(THEME.space.sm)
+            .child("Worker profiles could not be loaded.")
+            .when_some(editor.error.as_ref(), |view, error| {
+                view.child(
+                    div()
+                        .text_color(THEME.colors.danger)
+                        .child(error.to_owned()),
+                )
+            })
+            .child(button(
+                "retry-worker-profiles",
+                "Retry loading profiles",
+                ButtonTone::Quiet,
+                true,
+                move |_, cx| {
+                    let _ = entity.update(cx, |this, cx| this.retry_worker_profile_settings(cx));
+                },
+            ))
+            .into_any_element();
+    }
     let editing = editor.edit.is_some();
     let reload = entity.clone();
     div()

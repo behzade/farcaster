@@ -353,6 +353,16 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn retry_worker_profile_settings(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.worker_profile_editor.loaded {
+            return;
+        }
+        if let Err(error) = self.load_worker_profile_settings() {
+            self.workspace.worker_profile_editor.error = Some(error);
+        }
+        cx.notify();
+    }
+
     pub(in crate::app) fn select_worker_route(
         &mut self,
         target: WorkerRouteTarget,
