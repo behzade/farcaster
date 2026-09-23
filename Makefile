@@ -4,12 +4,17 @@ DATA_DIR := $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(if $(XDG_DATA_HOM
 LOG_FILE ?= $(DATA_DIR)/logs/farcaster.log
 TAIL_ARGS ?= -n 50
 BUMP ?= patch
+ISOLATED ?=
 DEP_GRAPH := Cargo.toml Cargo.lock
 INCREMENTAL_BUDGET ?= 3072
 INCREMENTAL_STAMP := $(CARGO_TARGET_DIR)/.incremental-stamp
 INCREMENTAL_DIR := $(CARGO_TARGET_DIR)/debug/incremental
+SCRATCH := $(CARGO_TARGET_DIR)/scratch
+SANDBOX = rm -rf "$(SCRATCH)"; FARCASTER_DATA_DIR="$(SCRATCH)"
+MODEL ?= opencode/big-pickle
+FREE_MODEL = FARCASTER_OPENCODE_MODEL="$(MODEL)"
 PRUNE = status=$$?; size=$$(du -sm "$(INCREMENTAL_DIR)" 2>/dev/null | cut -f1); if [ "$${size:-0}" -gt "$(INCREMENTAL_BUDGET)" ]; then echo "pruning the local incremental cache: $${size}MB of $(INCREMENTAL_BUDGET)MB"; cargo clean -p farcaster; fi; exit $$status
-CARGO_TARGETS := build run test e2e debug release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
+CARGO_TARGETS := build run test e2e debug isolated release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
 
 .SILENT:
 .PHONY: $(CARGO_TARGETS) logs fmt check-flake clean prune-incremental libcxx build-nix
@@ -26,11 +31,13 @@ $(INCREMENTAL_STAMP): $(DEP_GRAPH)
 build:
 	cargo build; $(PRUNE)
 run debug:
-	DEBUG=$(if $(filter debug,$@),true) cargo run -- "$(PROJECT)"; $(PRUNE)
+	$(if $(ISOLATED),$(FREE_MODEL) )DEBUG=$(if $(filter debug,$@),true) cargo run -- $(if $(ISOLATED),--isolated) "$(PROJECT)"; $(PRUNE)
+isolated: ISOLATED := 1
+isolated: run
 test:
-	cargo test; $(PRUNE)
+	$(SANDBOX) cargo test; $(PRUNE)
 e2e:
-	HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh; $(PRUNE)
+	$(SANDBOX) $(FREE_MODEL) HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh; $(PRUNE)
 release release-debug:
 	DEBUG=$(if $(filter release-debug,$@),true) cargo run --release -- "$(PROJECT)"
 release-local:
