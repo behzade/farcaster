@@ -1,9 +1,8 @@
 use gpui::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div, img,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _,
 };
-use gpui_component::IconNamed as _;
 use gpui_component::tooltip::Tooltip;
 
 use crate::{
@@ -198,14 +197,7 @@ fn surface_control(
                 .border_color(THEME.colors.accent)
                 .text_color(THEME.colors.accent)
         })
-        .child(if icon == AppIcon::Vim {
-            img(icon.path())
-                .size(THEME.icons.control)
-                .flex_none()
-                .into_any_element()
-        } else {
-            app_icon(icon, AppIconSize::Control).into_any_element()
-        })
+        .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
             let _ = entity.update(cx, |app, cx| action(app, window, cx));
         })
