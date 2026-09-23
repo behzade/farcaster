@@ -16,10 +16,10 @@ pub enum EditorChoice {
 impl EditorChoice {
     pub const ALL: [Self; 5] = [
         Self::Neovim,
+        Self::Vim,
         Self::VsCode,
         Self::Zed,
         Self::Helix,
-        Self::Vim,
     ];
 
     pub const fn label(self) -> &'static str {
