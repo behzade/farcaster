@@ -720,6 +720,7 @@ impl FarcasterApp {
             self.workspace.worker_profile_editor.error = Some(error);
         }
         self.settings.mcp_error = None;
+        self.settings.editor_error = None;
         self.open_sheet(AppSheet::Settings, window, cx);
     }
 
@@ -759,6 +760,21 @@ impl FarcasterApp {
                 });
             }
             Err(error) => self.settings.transcript_error = Some(error),
+        }
+        cx.notify();
+    }
+
+    pub(in crate::app) fn select_editor(
+        &mut self,
+        choice: crate::storage::EditorChoice,
+        cx: &mut Context<Self>,
+    ) {
+        match crate::app::persistence::open().and_then(|store| store.save_editor_choice(choice)) {
+            Ok(()) => {
+                self.settings.editor_choice = choice;
+                self.settings.editor_error = None;
+            }
+            Err(error) => self.settings.editor_error = Some(error),
         }
         cx.notify();
     }

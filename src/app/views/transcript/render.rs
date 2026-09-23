@@ -397,7 +397,7 @@ fn transcript_context_menu(
                 && let Some(artifact) = review_artifact::from_item(&items[index])
             {
                 let entity = entity.clone();
-                menu = menu.item(PopupMenuItem::new("Open in Neovim").on_click(
+                menu = menu.item(PopupMenuItem::new("Open review").on_click(
                     move |_, window, cx| {
                         let _ = entity.update(cx, |this, cx| {
                             this.open_review_editor(

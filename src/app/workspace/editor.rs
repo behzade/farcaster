@@ -5,7 +5,45 @@ use gpui::{AppContext as _, Context, Window};
 use super::{
     AppSurface, FarcasterApp,
     neovim::{EditorTarget, NvimEditor, new_session_tab},
+    neovim_adapter::NeovimBackend,
+    vscode::VsCodeBackend,
 };
+use crate::reviews::{Review, resolve_path};
+
+pub(super) enum EditorRequest {
+    Project(PathBuf),
+    File {
+        project: PathBuf,
+        path: PathBuf,
+        line: Option<u64>,
+        diff: bool,
+    },
+    Review {
+        project: PathBuf,
+        review: Review,
+        locations: Vec<(PathBuf, Option<u64>)>,
+    },
+}
+
+pub(super) trait EditorBackend {
+    fn name(&self) -> &'static str;
+    fn open(
+        &self,
+        app: &mut FarcasterApp,
+        request: EditorRequest,
+        window: &mut Window,
+        cx: &mut Context<FarcasterApp>,
+    ) -> Result<(), String>;
+}
+
+fn selected_backend(choice: crate::storage::EditorChoice) -> &'static dyn EditorBackend {
+    static NEOVIM: NeovimBackend = NeovimBackend;
+    static VSCODE: VsCodeBackend = VsCodeBackend;
+    match choice {
+        crate::storage::EditorChoice::Neovim => &NEOVIM,
+        crate::storage::EditorChoice::VsCode => &VSCODE,
+    }
+}
 
 impl FarcasterApp {
     pub(crate) fn open_file_editor(
@@ -39,19 +77,24 @@ impl FarcasterApp {
             self.close_sheet(window, cx);
         }
         let project = self.workspace_project();
+        let editor_name = selected_backend(self.settings.editor_choice).name();
         let path = match resolve_editor_path(&project, &path) {
             Ok(path) => path,
             Err(error) => {
-                self.notify_workspace_error("Neovim", error, cx);
+                self.notify_workspace_error(editor_name, error, cx);
                 return;
             }
         };
-        let target = if diff {
-            EditorTarget::Diff(path, line)
-        } else {
-            EditorTarget::File(path, line)
-        };
-        self.activate_editor_tab(project, target, window, cx);
+        self.open_editor_request(
+            EditorRequest::File {
+                project,
+                path,
+                line,
+                diff,
+            },
+            window,
+            cx,
+        );
     }
 
     pub(in crate::app) fn show_editor_surface(
@@ -89,7 +132,70 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.activate_editor_tab(project, EditorTarget::Resume, window, cx);
+        self.open_editor_request(EditorRequest::Project(project), window, cx);
+    }
+
+    pub(crate) fn open_review_editor(
+        &mut self,
+        project: PathBuf,
+        review: Review,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.center_surface_switch_blocked() {
+            return;
+        }
+        let current = self.workspace_project();
+        let locations = review.validate().and_then(|()| {
+            let root = current.canonicalize().map_err(|error| error.to_string())?;
+            if project != root {
+                return Err("This review belongs to a different project.".into());
+            }
+            review
+                .items
+                .iter()
+                .map(|item| {
+                    resolve_path(&root, &item.path)
+                        .map(|path| (path, item.start_line.map(u64::from)))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        });
+        let locations = match locations {
+            Ok(locations) => locations,
+            Err(error) => {
+                self.notify_workspace_error("Review", error, cx);
+                return;
+            }
+        };
+        self.open_editor_request(
+            EditorRequest::Review {
+                project: current,
+                review,
+                locations,
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn open_editor_request(
+        &mut self,
+        request: EditorRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let backend = selected_backend(self.settings.editor_choice);
+        if !self.project.repository.execution_allowed {
+            self.notify_workspace_error(
+                backend.name(),
+                format!("Trust this project before opening {}.", backend.name()),
+                cx,
+            );
+            return;
+        }
+        if let Err(error) = backend.open(self, request, window, cx) {
+            self.notify_workspace_error(backend.name(), error, cx);
+        }
     }
 
     pub(super) fn activate_editor_tab(

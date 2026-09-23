@@ -81,6 +81,7 @@ impl FarcasterApp {
             submitted_drafts: HashMap::new(),
             saved_proxy: None,
             expand_transcript_folders: false,
+            editor_choice: Default::default(),
         };
         Self::from_bootstrap_state(
             project,
@@ -247,6 +248,8 @@ impl FarcasterApp {
                 proxy_save: None,
                 mcp_error: None,
                 expand_transcript_folders: persisted.expand_transcript_folders,
+                editor_choice: persisted.editor_choice,
+                editor_error: None,
                 transcript_error: None,
                 _network_proxy_subscription: subscriptions.network_proxy,
             },

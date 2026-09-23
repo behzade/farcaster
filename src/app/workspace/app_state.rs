@@ -36,6 +36,8 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) proxy_save: Option<Task<()>>,
     pub(in crate::app) mcp_error: Option<String>,
     pub(in crate::app) expand_transcript_folders: bool,
+    pub(in crate::app) editor_choice: crate::storage::EditorChoice,
+    pub(in crate::app) editor_error: Option<String>,
     pub(in crate::app) transcript_error: Option<String>,
     pub(in crate::app) _network_proxy_subscription: Subscription,
 }

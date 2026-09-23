@@ -14,6 +14,7 @@ use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
     app::ui::theme::THEME,
+    storage::EditorChoice,
 };
 
 pub(in crate::app::views) fn render(
@@ -61,6 +62,14 @@ pub(in crate::app::views) fn render(
                         .gap(gpui::px(24.0))
                         .p(gpui::px(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
+                        .child(editor_setting(app.settings.editor_choice, entity.clone()))
+                        .when_some(app.settings.editor_error.clone(), |content, error| {
+                            content.child(feedback(
+                                "settings-editor-error",
+                                error,
+                                FeedbackTone::Error,
+                            ))
+                        })
                         .child(transcript_font_size(app.views.transcript.read(cx).font_size, entity.clone()))
                         .child(toggle_setting(
                             "transcript-folders-toggle",
@@ -171,6 +180,57 @@ pub(in crate::app::views) fn render(
         },
     )
     .into_any_element()
+}
+
+fn editor_setting(choice: EditorChoice, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(THEME.space.md)
+        .child(setting_label(
+            "Editor",
+            "Open files, projects, and review locations in this editor. Chat code capture uses embedded Neovim.",
+        ))
+        .child(
+            div()
+                .flex()
+                .gap(THEME.space.xs)
+                .child(editor_option(
+                    "editor-neovim",
+                    "Neovim",
+                    EditorChoice::Neovim,
+                    choice,
+                    entity.clone(),
+                ))
+                .child(editor_option(
+                    "editor-vscode",
+                    "VS Code",
+                    EditorChoice::VsCode,
+                    choice,
+                    entity,
+                )),
+        )
+        .into_any_element()
+}
+
+fn editor_option(
+    id: &'static str,
+    label: &'static str,
+    option: EditorChoice,
+    selected: EditorChoice,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    Button::new(id)
+        .label(label)
+        .with_size(Size::Small)
+        .toggled(option == selected)
+        .when(option == selected, |button| button.primary())
+        .when(option != selected, |button| button.secondary())
+        .on_click(move |_, _, cx| {
+            let _ = entity.update(cx, |this, cx| this.select_editor(option, cx));
+        })
+        .into_any_element()
 }
 
 fn toggle_setting(
