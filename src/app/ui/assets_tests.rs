@@ -85,6 +85,7 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::Neovim,
         AppIcon::OpenCode,
         AppIcon::Pi,
+        AppIcon::VsCode,
         AppIcon::Plus,
         AppIcon::Question,
         AppIcon::SpinnerGap,

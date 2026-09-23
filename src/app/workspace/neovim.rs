@@ -259,9 +259,8 @@ impl Render for NvimEditor {
     }
 }
 
-fn nvim_executable() -> PathBuf {
+pub(super) fn nvim_executable() -> PathBuf {
     std::env::var_os("FARCASTER_NVIM")
-        .or_else(|| std::env::var_os("GPUI_NVIM"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("nvim"))
 }

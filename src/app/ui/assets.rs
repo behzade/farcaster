@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 54] = [
+const ICON_PATHS: [&str; 55] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -60,6 +60,7 @@ const ICON_PATHS: [&str; 54] = [
     "icons/workbench/neovim.svg",
     "icons/workbench/opencode.svg",
     "icons/workbench/pi.svg",
+    "icons/workbench/vscode.svg",
 ];
 
 pub(crate) struct AppAssets;
@@ -283,6 +284,9 @@ impl AssetSource for AppAssets {
             "icons/workbench/pi.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/pi.svg"))
             }
+            "icons/workbench/vscode.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/vscode.svg"))
+            }
             _ => None,
         };
         Ok(bytes.map(Cow::Borrowed))
@@ -338,6 +342,7 @@ pub(crate) enum AppIcon {
     Stop,
     Trash,
     WarningCircle,
+    VsCode,
     X,
     XCircle,
 }
@@ -399,6 +404,7 @@ impl IconNamed for AppIcon {
             Self::Stop => "stop",
             Self::Trash => "trash",
             Self::WarningCircle => "warning-circle",
+            Self::VsCode => return "icons/workbench/vscode.svg".into(),
             Self::X => "x",
             Self::XCircle => "x-circle",
         };

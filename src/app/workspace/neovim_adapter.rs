@@ -1,4 +1,5 @@
 use gpui::{Context, Window};
+use std::path::PathBuf;
 
 use super::{
     FarcasterApp,
@@ -11,6 +12,10 @@ pub(super) struct NeovimBackend;
 impl EditorBackend for NeovimBackend {
     fn name(&self) -> &'static str {
         "Neovim"
+    }
+
+    fn program(&self) -> PathBuf {
+        super::neovim::nvim_executable()
     }
 
     fn open(

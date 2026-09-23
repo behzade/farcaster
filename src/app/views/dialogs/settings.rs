@@ -12,8 +12,10 @@ use gpui_component::{
 use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
+    app::ui::assets::AppIcon,
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
     app::ui::theme::THEME,
+    app::workspace::editor::{editor_available, effective_editor_choice},
     storage::EditorChoice,
 };
 
@@ -62,7 +64,11 @@ pub(in crate::app::views) fn render(
                         .gap(gpui::px(24.0))
                         .p(gpui::px(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
-                        .child(editor_setting(app.settings.editor_choice, entity.clone()))
+                        .child(editor_setting(
+                            app.settings.editor_choice,
+                            &app.workspace_project(),
+                            entity.clone(),
+                        ))
                         .when_some(app.settings.editor_error.clone(), |content, error| {
                             content.child(feedback(
                                 "settings-editor-error",
@@ -182,7 +188,14 @@ pub(in crate::app::views) fn render(
     .into_any_element()
 }
 
-fn editor_setting(choice: EditorChoice, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+fn editor_setting(
+    choice: EditorChoice,
+    project: &std::path::Path,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let selected = effective_editor_choice(choice, project);
+    let neovim_available = editor_available(EditorChoice::Neovim, project);
+    let vscode_available = editor_available(EditorChoice::VsCode, project);
     div()
         .flex()
         .items_center()
@@ -196,20 +209,29 @@ fn editor_setting(choice: EditorChoice, entity: WeakEntity<FarcasterApp>) -> Any
             div()
                 .flex()
                 .gap(THEME.space.xs)
-                .child(editor_option(
-                    "editor-neovim",
-                    "Neovim",
-                    EditorChoice::Neovim,
-                    choice,
-                    entity.clone(),
-                ))
-                .child(editor_option(
-                    "editor-vscode",
-                    "VS Code",
-                    EditorChoice::VsCode,
-                    choice,
-                    entity,
-                )),
+                .when(neovim_available, |options| {
+                    options.child(editor_option(
+                        "editor-neovim",
+                        "Neovim",
+                        AppIcon::Neovim,
+                        EditorChoice::Neovim,
+                        selected,
+                        entity.clone(),
+                    ))
+                })
+                .when(vscode_available, |options| {
+                    options.child(editor_option(
+                        "editor-vscode",
+                        "VS Code",
+                        AppIcon::VsCode,
+                        EditorChoice::VsCode,
+                        selected,
+                        entity,
+                    ))
+                })
+                .when(!neovim_available && !vscode_available, |options| {
+                    options.child("No editor is available")
+                }),
         )
         .into_any_element()
 }
@@ -217,11 +239,13 @@ fn editor_setting(choice: EditorChoice, entity: WeakEntity<FarcasterApp>) -> Any
 fn editor_option(
     id: &'static str,
     label: &'static str,
+    icon: AppIcon,
     option: EditorChoice,
     selected: EditorChoice,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     Button::new(id)
+        .icon(icon)
         .label(label)
         .with_size(Size::Small)
         .toggled(option == selected)

@@ -19,6 +19,10 @@ impl EditorBackend for VsCodeBackend {
         "VS Code"
     }
 
+    fn program(&self) -> PathBuf {
+        PathBuf::from("code")
+    }
+
     fn open(
         &self,
         _app: &mut FarcasterApp,

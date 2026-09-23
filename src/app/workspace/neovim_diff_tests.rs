@@ -61,10 +61,7 @@ vim.cmd('qa!')
 "#;
     let script_path = project.path().join("test.lua");
     std::fs::write(&script_path, script).expect("test operation should succeed");
-    let executable = std::env::var_os("FARCASTER_NVIM")
-        .or_else(|| std::env::var_os("GPUI_NVIM"))
-        .unwrap_or_else(|| "nvim".into());
-    let output = Command::new(executable)
+    let output = Command::new(nvim_executable())
         .current_dir(project.path())
         .args(["--clean", "--headless", "-i", "NONE", "-l"])
         .arg(script_path)

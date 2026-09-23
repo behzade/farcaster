@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use gpui::{AppContext as _, Context, Window};
 
@@ -27,6 +30,14 @@ pub(super) enum EditorRequest {
 
 pub(super) trait EditorBackend {
     fn name(&self) -> &'static str;
+    fn program(&self) -> PathBuf;
+    fn available(&self, project: &Path) -> bool {
+        executable_available(
+            &self.program(),
+            project,
+            std::env::var_os("PATH").as_deref(),
+        )
+    }
     fn open(
         &self,
         app: &mut FarcasterApp,
@@ -36,12 +47,74 @@ pub(super) trait EditorBackend {
     ) -> Result<(), String>;
 }
 
-fn selected_backend(choice: crate::storage::EditorChoice) -> &'static dyn EditorBackend {
+fn backend(choice: crate::storage::EditorChoice) -> &'static dyn EditorBackend {
     static NEOVIM: NeovimBackend = NeovimBackend;
     static VSCODE: VsCodeBackend = VsCodeBackend;
     match choice {
         crate::storage::EditorChoice::Neovim => &NEOVIM,
         crate::storage::EditorChoice::VsCode => &VSCODE,
+    }
+}
+
+pub(in crate::app) fn editor_available(
+    choice: crate::storage::EditorChoice,
+    project: &Path,
+) -> bool {
+    backend(choice).available(project)
+}
+
+pub(in crate::app) fn effective_editor_choice(
+    choice: crate::storage::EditorChoice,
+    project: &Path,
+) -> crate::storage::EditorChoice {
+    [
+        choice,
+        crate::storage::EditorChoice::Neovim,
+        crate::storage::EditorChoice::VsCode,
+    ]
+    .into_iter()
+    .find(|candidate| editor_available(*candidate, project))
+    .unwrap_or(choice)
+}
+
+fn selected_backend(
+    choice: crate::storage::EditorChoice,
+    project: &Path,
+) -> &'static dyn EditorBackend {
+    backend(effective_editor_choice(choice, project))
+}
+
+fn executable_available(program: &Path, project: &Path, search_path: Option<&OsStr>) -> bool {
+    if program.is_absolute() {
+        return is_executable(program);
+    }
+    if program.components().count() > 1 {
+        return is_executable(&project.join(program));
+    }
+    search_path.is_some_and(|path| {
+        std::env::split_paths(path).any(|directory| {
+            let directory = if directory.is_absolute() {
+                directory
+            } else {
+                project.join(directory)
+            };
+            is_executable(&directory.join(program))
+        })
+    })
+}
+
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        metadata.is_file()
     }
 }
 
@@ -77,7 +150,7 @@ impl FarcasterApp {
             self.close_sheet(window, cx);
         }
         let project = self.workspace_project();
-        let editor_name = selected_backend(self.settings.editor_choice).name();
+        let editor_name = selected_backend(self.settings.editor_choice, &project).name();
         let path = match resolve_editor_path(&project, &path) {
             Ok(path) => path,
             Err(error) => {
@@ -184,7 +257,12 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let backend = selected_backend(self.settings.editor_choice);
+        let project = match &request {
+            EditorRequest::Project(project)
+            | EditorRequest::File { project, .. }
+            | EditorRequest::Review { project, .. } => project,
+        };
+        let backend = selected_backend(self.settings.editor_choice, project);
         if !self.project.repository.execution_allowed {
             self.notify_workspace_error(
                 backend.name(),
