@@ -7,7 +7,7 @@ LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER
 TAIL_ARGS ?= -n $(LOG_LINES)
 BUMP ?= patch
 
-.PHONY: run test e2e debug release release-local release-debug release-preview release-publish bundle bundle-relaunch package logs check check-flake
+.PHONY: run test e2e debug release release-local release-debug release-preview release-publish bundle bundle-relaunch package logs check check-flake build-nix
 
 run:
 	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
@@ -60,3 +60,6 @@ check:
 
 check-flake:
 	nix flake check
+
+build-nix:
+	nix build --print-build-logs .#default

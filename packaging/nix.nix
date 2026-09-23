@@ -79,11 +79,11 @@ rustPlatform.buildRustPackage {
     # All git dependencies have full commit IDs in Cargo.lock.
     allowBuiltinFetchGit = true;
   };
+  # Zig comes from ZIG below; a direct input would replace Cargo's build phases.
   nativeBuildInputs = [
     pkg-config
     cmake
     makeWrapper
-    zig_0_16
     rustPlatform.bindgenHook
   ];
   buildInputs = runtimeLibraries;
