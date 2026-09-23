@@ -74,6 +74,7 @@ fn assert_persisted_child_reuse(profile: &str) -> Result<(), String> {
             provider: "openai".into(),
             model: "saved-model".into(),
             effort: Some("high".into()),
+            service_tier: None,
         },
     };
     crate::storage::StateStore::open_at(&database)?.save_worker_family(

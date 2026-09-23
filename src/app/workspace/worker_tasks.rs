@@ -12,6 +12,8 @@ pub(in crate::app) struct WorkerProfileEditor {
     pub(in crate::app) error: Option<String>,
     loaded: bool,
     saved: Vec<WorkerProfile>,
+    pub(in crate::app) inherit_limit: usize,
+    pub(in crate::app) inherit_enabled: bool,
     subscriptions: Vec<Subscription>,
     catalogs: Vec<crate::app::persistence::CachedConfigurationCatalog>,
 }
@@ -26,8 +28,6 @@ pub(in crate::app) struct WorkerRouteTarget {
 pub(in crate::app) enum WorkerModelEdit {
     Add,
     Remove,
-    MoveUp,
-    MoveDown,
 }
 
 pub(in crate::app) enum WorkerProfileEdit {
@@ -35,10 +35,15 @@ pub(in crate::app) enum WorkerProfileEdit {
         profile: Option<usize>,
         input: Entity<InputState>,
         description: Entity<InputState>,
+        limit: Entity<InputState>,
+    },
+    Limit {
+        profile: Option<usize>,
+        input: Entity<InputState>,
     },
     Custom {
         target: WorkerRouteTarget,
-        inputs: [Entity<InputState>; 3],
+        inputs: [Entity<InputState>; 4],
     },
 }
 
@@ -61,7 +66,11 @@ impl WorkerProfileEditor {
                 "worker profile settings could not be loaded; reopen Settings before saving".into(),
             );
         }
-        let profiles = WorkerProfiles { profiles };
+        let profiles = WorkerProfiles {
+            profiles,
+            inherit_limit: self.inherit_limit,
+            inherit_enabled: self.inherit_enabled,
+        };
         profiles.validate()?;
         if profiles.profiles == self.saved {
             return Ok(());
@@ -142,7 +151,7 @@ impl WorkerProfileEditor {
     fn save_custom_route(
         &mut self,
         target: WorkerRouteTarget,
-        [provider, model, effort]: [String; 3],
+        [provider, model, effort, service_tier]: [String; 4],
     ) -> Result<(), String> {
         let route = self.route_mut(target).ok_or("Profile no longer exists")?;
         let next = WorkerExecution {
@@ -150,6 +159,7 @@ impl WorkerProfileEditor {
             provider,
             model,
             effort: (!effort.is_empty()).then_some(effort),
+            service_tier: (!service_tier.is_empty()).then_some(service_tier),
         };
         next.validate()?;
         *route = next;
@@ -178,6 +188,9 @@ impl WorkerProfileEditor {
             return Err("Finish or delete the unsaved profile before adding another.".into());
         }
         if let Some(index) = profile {
+            if self.profiles[index].name != name {
+                return Err("Profile names stay fixed after creation so existing workers keep their assignment.".into());
+            }
             self.profiles
                 .get_mut(index)
                 .ok_or("Profile no longer exists")?
@@ -203,28 +216,17 @@ fn edit_models(
             provider: String::new(),
             model: String::new(),
             effort: None,
+            service_tier: None,
         });
         return Ok(0);
     }
-    let model = models.get(index).ok_or("Model no longer exists")?;
+    models.get(index).ok_or("Model no longer exists")?;
     match edit {
-        WorkerModelEdit::Add => {
-            models.push(model.clone());
-            Ok(models.len() - 1)
-        }
-        WorkerModelEdit::Remove if models.len() > 1 => {
+        WorkerModelEdit::Add => Err("This profile already has a model.".into()),
+        WorkerModelEdit::Remove => {
             models.remove(index);
-            Ok(index.min(models.len() - 1))
+            Ok(0)
         }
-        WorkerModelEdit::MoveUp if index > 0 => {
-            models.swap(index, index - 1);
-            Ok(index - 1)
-        }
-        WorkerModelEdit::MoveDown if index + 1 < models.len() => {
-            models.swap(index, index + 1);
-            Ok(index + 1)
-        }
-        _ => Err("Keep at least one model and move models only within the list.".into()),
     }
 }
 
@@ -235,11 +237,13 @@ fn apply_choice(route: &mut WorkerExecution, choice: WorkerRouteChoice) {
             route.provider.clear();
             route.model.clear();
             route.effort = None;
+            route.service_tier = None;
         }
         WorkerRouteChoice::Provider(provider) if route.provider != provider => {
             route.provider = provider;
             route.model.clear();
             route.effort = None;
+            route.service_tier = None;
         }
         WorkerRouteChoice::Model { provider, id }
             if route.provider != provider || route.model != id =>
@@ -247,6 +251,7 @@ fn apply_choice(route: &mut WorkerExecution, choice: WorkerRouteChoice) {
             route.provider = provider;
             route.model = id;
             route.effort = None;
+            route.service_tier = None;
         }
         WorkerRouteChoice::Effort(effort) => route.effort = (!effort.is_empty()).then_some(effort),
         _ => {}
@@ -282,11 +287,14 @@ impl FarcasterApp {
                 .ok_or("Profile no longer exists")?;
             // Keep incomplete edits attached to their model as the list moves.
             let selected = if let Some(saved) = profiles.get_mut(target.profile) {
+                if saved.models.is_empty() && matches!(edit, WorkerModelEdit::Add) {
+                    let selected = edit_models(&mut draft.models, target.model, edit)?;
+                    editor.profiles = current;
+                    editor.selected_model = selected;
+                    return Ok(());
+                }
                 let selected = edit_models(&mut saved.models, target.model, edit)?;
                 edit_models(&mut draft.models, target.model, edit)?;
-                if matches!(edit, WorkerModelEdit::Add) {
-                    draft.models[selected] = saved.models[selected].clone();
-                }
                 editor.persist(profiles)?;
                 selected
             } else if target.profile == profiles.len() {
@@ -305,12 +313,23 @@ impl FarcasterApp {
     pub(in crate::app) fn load_worker_profile_settings(&mut self) -> Result<(), String> {
         self.workspace.worker_profile_editor = WorkerProfileEditor::default();
         let store = crate::app::persistence::open()?;
-        let profiles = store.load_worker_profiles()?.profiles;
-        let inherit_selected = profiles.is_empty();
+        let mut profiles = store.load_worker_profiles()?;
+        profiles
+            .profiles
+            .sort_by_key(|profile| match profile.name.as_str() {
+                "smartest" => 0,
+                "smart" => 1,
+                "standard" => 2,
+                "light" => 3,
+                _ => 4,
+            });
+        let inherit_selected = false;
         self.workspace.worker_profile_editor = WorkerProfileEditor {
-            saved: profiles.clone(),
-            profiles,
+            saved: profiles.profiles.clone(),
+            profiles: profiles.profiles,
             inherit_selected,
+            inherit_limit: profiles.inherit_limit,
+            inherit_enabled: profiles.inherit_enabled,
             catalogs: store.load_configuration_catalogs()?,
             loaded: true,
             ..WorkerProfileEditor::default()
@@ -382,14 +401,83 @@ impl FarcasterApp {
                 .default_value(description)
                 .placeholder("When should the agent choose this worker?")
         });
-        input.read(cx).focus_handle(cx).focus(window, cx);
+        let limit = current.map_or(10, |profile| profile.limit);
+        let limit = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(limit.to_string())
+                .placeholder("Maximum active workers")
+        });
+        if profile.is_some() {
+            description.read(cx).focus_handle(cx).focus(window, cx);
+        } else {
+            input.read(cx).focus_handle(cx).focus(window, cx);
+        }
         self.workspace.worker_profile_editor.edit = Some(WorkerProfileEdit::Name {
             profile,
             input,
             description,
+            limit,
         });
         self.subscribe_worker_profile_inputs(window, cx);
         self.workspace.worker_profile_editor.error = None;
+        cx.notify();
+    }
+
+    pub(in crate::app) fn edit_worker_limit(
+        &mut self,
+        profile: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.worker_profile_editor.edit.is_some() {
+            return;
+        }
+        let editor = &mut self.workspace.worker_profile_editor;
+        let limit = profile
+            .and_then(|index| editor.profiles.get(index).map(|profile| profile.limit))
+            .unwrap_or(editor.inherit_limit);
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .default_value(limit.to_string())
+                .placeholder("Maximum active workers")
+        });
+        input.read(cx).focus_handle(cx).focus(window, cx);
+        editor.edit = Some(WorkerProfileEdit::Limit { profile, input });
+        self.subscribe_worker_profile_inputs(window, cx);
+        cx.notify();
+    }
+
+    pub(in crate::app) fn toggle_worker_profile(
+        &mut self,
+        profile: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = &mut self.workspace.worker_profile_editor;
+        if editor.edit.is_some() {
+            return;
+        }
+        let mut settings = WorkerProfiles {
+            profiles: editor.saved.clone(),
+            inherit_limit: editor.inherit_limit,
+            inherit_enabled: editor.inherit_enabled,
+        };
+        if let Some(index) = profile {
+            if let Some(item) = settings.profiles.get_mut(index) {
+                item.enabled = !item.enabled;
+            }
+        } else {
+            settings.inherit_enabled = !settings.inherit_enabled;
+        }
+        editor.error = crate::app::persistence::open()
+            .and_then(|store| store.save_worker_profiles(&settings))
+            .err();
+        if editor.error.is_none() {
+            editor.inherit_enabled = settings.inherit_enabled;
+            editor.saved = settings.profiles.clone();
+            if let Some(index) = profile {
+                editor.profiles[index].enabled = settings.profiles[index].enabled;
+            }
+        }
         cx.notify();
     }
 
@@ -409,6 +497,7 @@ impl FarcasterApp {
             route.provider.clone(),
             route.model.clone(),
             route.effort.clone().unwrap_or_default(),
+            route.service_tier.clone().unwrap_or_default(),
         ];
         let inputs =
             values.map(|value| cx.new(|cx| InputState::new(window, cx).default_value(value)));
@@ -436,8 +525,12 @@ impl FarcasterApp {
     fn subscribe_worker_profile_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let inputs = match &self.workspace.worker_profile_editor.edit {
             Some(WorkerProfileEdit::Name {
-                input, description, ..
-            }) => vec![input.clone(), description.clone()],
+                input,
+                description,
+                limit,
+                ..
+            }) => vec![input.clone(), description.clone(), limit.clone()],
+            Some(WorkerProfileEdit::Limit { input, .. }) => vec![input.clone()],
             Some(WorkerProfileEdit::Custom { inputs, .. }) => inputs.to_vec(),
             None => return,
         };
@@ -445,7 +538,12 @@ impl FarcasterApp {
             .iter()
             .map(|input| {
                 cx.subscribe_in(input, window, |this, _, event: &InputEvent, _, cx| {
-                    if matches!(event, InputEvent::Change) {
+                    if matches!(event, InputEvent::Change)
+                        && matches!(
+                            this.workspace.worker_profile_editor.edit.as_ref(),
+                            Some(WorkerProfileEdit::Custom { .. })
+                        )
+                    {
                         this.save_worker_profile_edit(cx);
                     }
                 })
@@ -463,19 +561,33 @@ impl FarcasterApp {
                 profile,
                 input,
                 description,
+                limit,
             }) => {
                 let (profile, name) = (*profile, input.read(cx).value().to_string());
                 let description = description.read(cx).value().trim().to_owned();
+                let limit = limit
+                    .read(cx)
+                    .value()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|limit| *limit > 0);
                 if description.is_empty() || description.chars().any(char::is_control) {
                     Err("Provide a short description without control characters.".into())
+                } else if limit.is_none() {
+                    Err("Enter a positive worker limit.".into())
                 } else {
                     editor.save_name(profile, &name).and_then(|()| {
                         let index = profile.unwrap_or(editor.selected);
                         editor.profiles[index].description = description;
+                        editor.profiles[index].limit = limit.expect("checked above");
                         let mut saved = editor.saved.clone();
                         if index < saved.len() {
                             saved[index].name = editor.profiles[index].name.clone();
                             saved[index].description = editor.profiles[index].description.clone();
+                            saved[index].limit = editor.profiles[index].limit;
+                            editor.persist(saved)?;
+                        } else if index == saved.len() {
+                            saved.push(editor.profiles[index].clone());
                             editor.persist(saved)?;
                         } else if index != saved.len() {
                             return Err("Profile no longer exists".into());
@@ -486,6 +598,36 @@ impl FarcasterApp {
                         Ok(())
                     })
                 }
+            }
+            Some(WorkerProfileEdit::Limit { profile, input }) => {
+                let profile = *profile;
+                let limit = input
+                    .read(cx)
+                    .value()
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|limit| *limit > 0)
+                    .ok_or("Enter a positive worker limit.");
+                limit.and_then(|limit| {
+                    if let Some(index) = profile {
+                        let mut saved = editor.saved.clone();
+                        saved
+                            .get_mut(index)
+                            .ok_or("Profile no longer exists")?
+                            .limit = limit;
+                        editor.persist(saved)?;
+                        editor.profiles[index].limit = limit;
+                    } else {
+                        let settings = WorkerProfiles {
+                            profiles: editor.saved.clone(),
+                            inherit_limit: limit,
+                            inherit_enabled: editor.inherit_enabled,
+                        };
+                        crate::app::persistence::open()?.save_worker_profiles(&settings)?;
+                        editor.inherit_limit = limit;
+                    }
+                    Ok(())
+                })
             }
             Some(WorkerProfileEdit::Custom { target, inputs }) => {
                 let target = *target;
@@ -515,6 +657,15 @@ impl FarcasterApp {
             return;
         }
         if editor.selected < editor.profiles.len() {
+            if matches!(
+                editor.profiles[editor.selected].name.as_str(),
+                "smartest" | "smart" | "standard" | "light"
+            ) {
+                editor.error =
+                    Some("Built-in profiles cannot be deleted; disable one instead.".into());
+                cx.notify();
+                return;
+            }
             let mut saved = editor.saved.clone();
             if editor.selected < saved.len() {
                 saved.remove(editor.selected);

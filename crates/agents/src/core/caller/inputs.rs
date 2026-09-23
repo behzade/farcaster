@@ -60,6 +60,51 @@ impl Drop for InputLease {
 }
 
 impl CallerRegistry {
+    pub fn request_profile_input(
+        &self,
+        caller: &CallerContext,
+        mut input: WorkerInput,
+        responses: mpsc::Sender<WorkerInputResponse>,
+    ) -> Result<InputLease, String> {
+        let callers = self
+            .callers
+            .lock()
+            .map_err(|_| "worker caller registry is unavailable")?;
+        let parent = callers
+            .values()
+            .find(|registered| {
+                registered.worker_id == caller.worker_id
+                    && registered.project == caller.project
+                    && registered.session.as_deref() == Some(&caller.session)
+                    && registered.parent_worker_id.is_none()
+            })
+            .ok_or("caller is no longer available for worker profile selection")?;
+        let parent_session = parent
+            .session_key()
+            .ok_or("caller has no persistent session")?;
+        let original_id = input.id;
+        input.id = new_identity("farcaster-worker-input");
+        let id = input.id.clone();
+        self.inputs
+            .lock()
+            .map_err(|_| "worker input registry is unavailable")?
+            .push(PendingInput {
+                parent_id: parent.worker_id.clone(),
+                input,
+                original_id,
+                delivered: false,
+                responses,
+                parent_session,
+            });
+        if let Some(wake) = &parent.wake {
+            wake.unpark();
+        }
+        Ok(InputLease {
+            registry: self.clone(),
+            id,
+        })
+    }
+
     pub fn take_child_inputs(
         &self,
         project: &Path,

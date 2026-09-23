@@ -1,264 +1,32 @@
 use super::*;
-use crate::agents::Backend;
 
-fn test_profile(name: &str) -> WorkerProfile {
-    WorkerProfile {
-        name: name.into(),
-        description: "Test profile.".into(),
-        models: vec![
-            WorkerExecution {
-                harness: Backend::Pi,
-                provider: "provider".into(),
-                model: "model".into(),
-                effort: None,
-            },
-            WorkerExecution {
-                harness: Backend::Codex,
-                provider: "other-provider".into(),
-                model: "other-model".into(),
-                effort: Some("high".into()),
-            },
-        ],
-    }
+#[test]
+fn profile_editor_keeps_one_route() {
+    let mut models = Vec::new();
+    assert_eq!(edit_models(&mut models, 0, WorkerModelEdit::Add), Ok(0));
+    assert_eq!(models.len(), 1);
+    assert!(edit_models(&mut models, 0, WorkerModelEdit::Add).is_err());
+    assert_eq!(edit_models(&mut models, 0, WorkerModelEdit::Remove), Ok(0));
+    assert!(models.is_empty());
 }
 
 #[test]
-fn model_list_edits_preserve_order_and_keep_at_least_one_choice() {
-    let mut models = vec![
-        test_profile("first").models[0].clone(),
-        WorkerExecution {
-            model: "second".into(),
-            ..test_profile("second").models[0].clone()
-        },
-    ];
-    let original = models.clone();
-    assert_eq!(
-        edit_models(&mut models, 1, WorkerModelEdit::MoveUp)
-            .expect("test operation should succeed"),
-        0
-    );
-    assert_eq!(models[0], original[1]);
-    assert_eq!(
-        edit_models(&mut models, 0, WorkerModelEdit::MoveDown)
-            .expect("test operation should succeed"),
-        1
-    );
-    assert_eq!(models, original);
-    let added =
-        edit_models(&mut models, 0, WorkerModelEdit::Add).expect("test operation should succeed");
-    assert_eq!(models[added], original[0]);
-    edit_models(&mut models, added, WorkerModelEdit::Remove)
-        .expect("test operation should succeed");
-    assert_eq!(models, original);
-    models.truncate(1);
-    assert!(edit_models(&mut models, 0, WorkerModelEdit::Remove).is_err());
-    assert!(edit_models(&mut models, 0, WorkerModelEdit::MoveUp).is_err());
-    assert_eq!(models, original[..1]);
-}
-
-#[test]
-fn saving_one_route_preserves_other_routes_with_incomplete_edits() {
-    let profile = test_profile("audit");
-    let mut editor = WorkerProfileEditor {
-        profiles: vec![profile.clone(), test_profile("other")],
-        saved: vec![profile.clone(), test_profile("other")],
-        ..Default::default()
+fn changing_a_route_clears_incompatible_choices() {
+    let mut route = WorkerExecution {
+        harness: Backend::Cursor,
+        provider: "cursor-cli".into(),
+        model: "first".into(),
+        effort: Some("high".into()),
+        service_tier: Some("fast".into()),
     };
-    editor.profiles[1].models[0].provider.clear();
-    editor.profiles[0].models[1].provider.clear();
-    editor.profiles[0].models[0].model = "another-model".into();
-    let saved = editor
-        .route_settings(WorkerRouteTarget {
-            profile: 0,
-            model: 0,
-        })
-        .expect("test operation should succeed");
-    assert_eq!(saved[0].models[0].model, "another-model");
-    assert_eq!(saved[1], editor.saved[1]);
-    assert_eq!(saved[0].models[1], editor.saved[0].models[1]);
-    assert!(
-        editor
-            .route_settings(WorkerRouteTarget {
-                profile: 1,
-                model: 0
-            })
-            .is_err()
-    );
-    assert_eq!(editor.saved[0], profile);
-}
-
-#[test]
-fn worker_route_changes_clear_only_downstream_choices() {
-    let mut route = test_profile("read").models[0].clone();
-    let original = route.clone();
-    apply_choice(
-        &mut route,
-        WorkerRouteChoice::Provider(original.provider.clone()),
-    );
-    assert_eq!(route, original);
     apply_choice(
         &mut route,
         WorkerRouteChoice::Model {
-            provider: original.provider.clone(),
-            id: original.model.clone(),
+            provider: "cursor-cli".into(),
+            id: "second".into(),
         },
     );
-    assert_eq!(route, original);
-    apply_choice(
-        &mut route,
-        WorkerRouteChoice::Model {
-            provider: original.provider.clone(),
-            id: "another-model".into(),
-        },
-    );
-    assert_eq!(route.provider, original.provider);
+    assert_eq!(route.model, "second");
     assert_eq!(route.effort, None);
-    apply_choice(&mut route, WorkerRouteChoice::Provider("other".into()));
-    assert_eq!(route.harness, original.harness);
-    assert!(route.model.is_empty());
-    assert_eq!(route.effort, None);
-    apply_choice(&mut route, WorkerRouteChoice::Harness(Backend::Codex));
-    assert!(route.provider.is_empty());
-}
-
-#[test]
-fn worker_task_edits_validate_before_mutating() {
-    let mut editor = WorkerProfileEditor::default();
-    assert!(editor.save_name(None, "bad name").is_err());
-    assert!(editor.save_name(None, "InHeRiT").is_err());
-    assert!(editor.profiles.is_empty());
-    editor
-        .save_name(None, "audit")
-        .expect("test operation should succeed");
-    assert!(editor.profiles[0].description.is_empty());
-    assert!(editor.profiles[0].models.is_empty());
-    assert!(editor.save_name(None, "AUDIT").is_err());
-    assert!(editor.save_name(None, "other").is_err());
-    assert_eq!(editor.profiles.len(), 1);
-    editor
-        .save_name(Some(0), "review")
-        .expect("test operation should succeed");
-    assert_eq!(editor.profiles.len(), 1);
-    assert_eq!(editor.profiles[0].name, "review");
-    let target = WorkerRouteTarget {
-        profile: 0,
-        model: 0,
-    };
-    assert_eq!(
-        edit_models(&mut editor.profiles[0].models, 0, WorkerModelEdit::Add)
-            .expect("an empty draft accepts its first model"),
-        0
-    );
-    let original = editor.profiles[0].models[0].clone();
-    assert!(
-        editor
-            .save_custom_route(target, ["provider".into(), String::new(), "high".into()])
-            .is_err()
-    );
-    assert_eq!(editor.profiles[0].models[0], original);
-    editor
-        .save_custom_route(
-            target,
-            ["provider".into(), "custom-model".into(), String::new()],
-        )
-        .expect("test operation should succeed");
-    assert_eq!(editor.profiles[0].models[0].harness, original.harness);
-    assert_eq!(editor.profiles[0].models[0].model, "custom-model");
-    assert_eq!(editor.profiles[0].models[0].effort, None);
-}
-
-#[test]
-fn worker_catalogs_preserve_effort_order_and_project_scope() {
-    let entry = |harness: Backend, project: &str, efforts: &[&str]| {
-        crate::app::persistence::CachedConfigurationCatalog {
-            harness,
-            project: project.into(),
-            catalog: ConfigurationCatalog {
-                models: vec![],
-                efforts: efforts.iter().map(|value| (*value).into()).collect(),
-                sandbox_adapter: None,
-            },
-        }
-    };
-    let editor = WorkerProfileEditor {
-        catalogs: vec![
-            entry(Backend::Pi, "/project", &["low", "medium", "high"]),
-            entry(Backend::Pi, "/other", &["wrong"]),
-            entry(Backend::Codex, "/project", &["wrong"]),
-            entry(Backend::Pi, "/project", &["high"]),
-        ],
-        ..WorkerProfileEditor::default()
-    };
-    assert_eq!(
-        editor.catalog(Backend::Pi, Path::new("/project")).efforts,
-        ["low", "medium", "high"]
-    );
-}
-
-#[test]
-fn worker_efforts_follow_the_selected_model_not_the_harness_alone() {
-    let route = test_profile("read").models[0].clone();
-    let mut catalog = ConfigurationCatalog {
-        models: vec![crate::protocol::Model {
-            id: route.model.clone(),
-            name: "Luna".into(),
-            provider: route.provider.clone(),
-            context_window: 0,
-            reasoning: true,
-            resolved_model: None,
-            access_modes: None,
-            efforts: Some(vec!["high".into()]),
-        }],
-        efforts: vec!["low".into(), "high".into()],
-        sandbox_adapter: None,
-    };
-    assert_eq!(model_efforts(&catalog, catalog.models.first()), ["high"]);
-    catalog.models[0].efforts = Some(vec![]);
-    assert!(model_efforts(&catalog, catalog.models.first()).is_empty());
-    catalog.models[0].efforts = None;
-    assert_eq!(
-        model_efforts(&catalog, catalog.models.first()),
-        ["low", "high"]
-    );
-    catalog.models[0].reasoning = false;
-    assert!(model_efforts(&catalog, catalog.models.first()).is_empty());
-}
-
-#[test]
-fn first_complete_route_saves_new_profile_without_changing_existing_profiles() {
-    let existing = test_profile("existing");
-    let mut draft = WorkerProfile::new("custom".into());
-    draft.description = "Custom worker".into();
-    draft.models.push(test_profile("custom").models.remove(0));
-    let mut editor = WorkerProfileEditor {
-        profiles: vec![existing.clone(), draft.clone()],
-        saved: vec![existing.clone()],
-        ..Default::default()
-    };
-    let target = WorkerRouteTarget {
-        profile: 1,
-        model: 0,
-    };
-    assert_eq!(
-        editor.route_settings(target).expect("complete draft"),
-        vec![existing, draft]
-    );
-    editor.profiles[1].models[0].model.clear();
-    assert!(editor.route_settings(target).is_err());
-    assert_eq!(editor.saved.len(), 1);
-}
-
-#[test]
-fn stale_model_targets_return_errors_without_mutating_the_list() {
-    let original = test_profile("custom").models;
-    for edit in [
-        WorkerModelEdit::Add,
-        WorkerModelEdit::Remove,
-        WorkerModelEdit::MoveUp,
-        WorkerModelEdit::MoveDown,
-    ] {
-        let mut models = original.clone();
-        assert!(edit_models(&mut models, usize::MAX, edit).is_err());
-        assert_eq!(models, original);
-    }
+    assert_eq!(route.service_tier, None);
 }

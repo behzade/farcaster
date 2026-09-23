@@ -716,6 +716,7 @@ fn live_metadata_merges_family_placeholder_without_losing_related_state() -> Res
                     provider: "openai".into(),
                     model: "saved-model".into(),
                     effort: None,
+                    service_tier: None,
                 },
             },
             access_mode: crate::agents::HarnessAccessMode::Auto,

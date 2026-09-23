@@ -18,7 +18,10 @@ struct LegacyTask {
 
 pub(super) fn migrate(value: serde_json::Value) -> Result<WorkerProfiles, String> {
     let legacy: LegacyTasks = serde_json::from_value(value).map_err(|error| error.to_string())?;
-    let mut result = WorkerProfiles::default();
+    let mut result = WorkerProfiles {
+        profiles: Vec::new(),
+        ..WorkerProfiles::default()
+    };
     let mut names = std::collections::BTreeSet::new();
     for task in legacy.tasks {
         if !super::super::super::valid_worker_name(&task.name)
@@ -65,6 +68,8 @@ pub(super) fn migrate(value: serde_json::Value) -> Result<WorkerProfiles, String
                 name,
                 description: format!("Saved custom worker for {} ({level}). Edit this description to explain when to use it.", task.name),
                 models: vec![execution],
+                limit: 10,
+                enabled: true,
             });
         }
     }

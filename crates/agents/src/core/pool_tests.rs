@@ -226,6 +226,7 @@ fn assignment() -> super::WorkerAssignment {
             provider: "test-provider".into(),
             model: "test-model".into(),
             effort: None,
+            service_tier: None,
         },
     }
 }

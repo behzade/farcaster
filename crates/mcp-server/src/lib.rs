@@ -9,6 +9,7 @@ use farcaster_storage as storage;
 mod lifecycle;
 mod notice_board;
 mod notices;
+mod profile_prompt;
 mod reviews;
 #[cfg(any(test, feature = "test-support"))]
 pub use lifecycle::with_test_worker_pool;
@@ -174,7 +175,7 @@ impl FarcasterMcp {
                 .filter(|backend| backend.available)
                 .map(|backend| backend.id)
                 .collect::<Vec<_>>();
-            workers::send(
+            workers::send_configurable(
                 &pool,
                 params,
                 caller_token,
@@ -187,6 +188,9 @@ impl FarcasterMcp {
                         &backends,
                         &catalogs,
                     )
+                },
+                |profile, caller| {
+                    profile_prompt::configure(profile, caller, &catalogs, &backends, &store)
                 },
             )
         })
@@ -321,12 +325,14 @@ fn tools_for_role(child: bool, tasks: &crate::agents::WorkerProfiles) -> Vec<rmc
                 let descriptions = tasks
                     .profiles
                     .iter()
+                    .filter(|profile| profile.enabled)
                     .map(|profile| format!("{}: {}", profile.name, profile.description))
                     .collect::<Vec<_>>()
                     .join("\n");
                 properties.insert("profile".into(), serde_json::json!({
-                    "type": "string", "enum": std::iter::once("inherit").chain(tasks.profiles.iter().map(|profile| profile.name.as_str())).collect::<Vec<_>>(),
-                    "description": format!("Worker profile. Omit on creation or use inherit (Same as caller) to copy the caller's harness, provider, model, and effort. Custom profiles select the first available model in their ordered list. Selection stays fixed for the child's lifetime; omit on reuse to keep it.\n{descriptions}")
+                    "type": "string", "enum": (tasks.inherit_enabled.then_some("inherit")).into_iter().chain(tasks.profiles.iter().filter(|profile| profile.enabled).map(|profile| profile.name.as_str())).collect::<Vec<_>>(),
+                    "description": format!("Worker profile. {} Each named profile has one model and its own worker limit. Selection stays fixed for the child's lifetime; omit on reuse to keep it.\n{descriptions}",
+                        if tasks.inherit_enabled { "Omit on creation or use inherit to copy the caller's harness, provider, model, and effort." } else { "Choose an enabled named profile on creation." })
                 }));
             }
             schema.insert("required".into(), serde_json::json!(["to", "message"]));

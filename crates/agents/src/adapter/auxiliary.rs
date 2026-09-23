@@ -87,6 +87,7 @@ fn generate_worker_title(
         provider: selection.map(|model| model.provider.clone()),
         model: selection.map(|model| model.id.clone()),
         effort,
+        service_tier: None,
         access_mode: config.access_mode,
         app_proxy: config.app_proxy.clone(),
         ephemeral: true,

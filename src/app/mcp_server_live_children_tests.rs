@@ -511,13 +511,17 @@ impl LiveChildFixture {
             profiles: vec![WorkerProfile {
                 name: "live".into(),
                 description: "Live child-worker E2E profile.".into(),
+                limit: 2,
+                enabled: true,
                 models: vec![WorkerExecution {
                     harness,
                     provider: model.provider,
                     model: model.model,
                     effort: None,
+                    service_tier: None,
                 }],
             }],
+            ..WorkerProfiles::default()
         };
         let (factories, default_backend) = crate::agents::worker_factories(config);
         let pool = WorkerPool::new(factories, default_backend, project.clone(), 2)?;

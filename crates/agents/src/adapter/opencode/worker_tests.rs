@@ -183,6 +183,7 @@ fn worker_factory_resumes_the_saved_session_and_accepts_a_new_prompt() -> Result
         provider: None,
         model: None,
         effort: None,
+        service_tier: None,
         access_mode: crate::HarnessAccessMode::Sandboxed,
         app_proxy: None,
         ephemeral: false,

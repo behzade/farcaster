@@ -22,6 +22,25 @@ pub fn send(
         crate::agents::HarnessAccessMode,
     ) -> Option<crate::agents::HarnessAccessMode>,
 ) -> Result<serde_json::Value, String> {
+    send_configurable(pool, params, caller_token, tasks, route, |profile, _| {
+        Err(format!(
+            "worker profile '{profile}' has no available model; select one in Settings"
+        ))
+    })
+}
+
+pub fn send_configurable(
+    pool: &WorkerPool,
+    params: SendParams,
+    caller_token: Option<String>,
+    tasks: &crate::agents::WorkerProfiles,
+    route: impl Fn(
+        &crate::agents::WorkerExecution,
+        &std::path::Path,
+        crate::agents::HarnessAccessMode,
+    ) -> Option<crate::agents::HarnessAccessMode>,
+    configure: impl Fn(&str, &CallerContext) -> Result<crate::agents::WorkerExecution, String>,
+) -> Result<serde_json::Value, String> {
     if params.message.trim().is_empty() {
         return Err("worker message must not be empty".into());
     }
@@ -30,6 +49,7 @@ pub fn send(
         .ok_or_else(|| "worker send requires a registered Farcaster caller".to_owned())?;
     let registry = CallerRegistry::shared();
     let caller = registry.resolve(token)?;
+    pool.set_profile_limits(tasks)?;
 
     if caller.parent_worker_id.is_some() {
         if params.profile.is_some() {
@@ -114,6 +134,9 @@ pub fn send(
     let profile = params.profile.as_deref().unwrap_or("inherit");
     let requested_access_mode = delegated_access_mode(caller.backend, caller.access_mode);
     let (assignment, child_access_mode) = if profile == "inherit" {
+        if !tasks.inherit_enabled {
+            return Err("worker profile 'inherit' is disabled".into());
+        }
         let execution = crate::agents::WorkerExecution {
             harness: caller.backend,
             provider: caller
@@ -125,6 +148,7 @@ pub fn send(
                 .clone()
                 .ok_or("cannot inherit: caller model is unknown")?,
             effort: caller.effort.clone(),
+            service_tier: None,
         };
         execution
             .validate()
@@ -139,13 +163,30 @@ pub fn send(
             access_mode,
         )
     } else {
-        resolve_child(
-            tasks,
-            profile,
-            &caller.project,
-            requested_access_mode,
-            route,
-        )?
+        let definition = tasks
+            .profiles
+            .iter()
+            .find(|definition| definition.name == profile)
+            .ok_or_else(|| format!("unknown worker profile: {profile}"))?;
+        if !definition.enabled {
+            return Err(format!("worker profile '{profile}' is disabled"));
+        }
+        let selected = definition
+            .models
+            .first()
+            .filter(|model| route(model, &caller.project, requested_access_mode).is_some())
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| configure(profile, &caller))?;
+        let access_mode = route(&selected, &caller.project, requested_access_mode)
+            .ok_or("selected worker model is unavailable for worker creation")?;
+        (
+            crate::agents::WorkerAssignment {
+                profile: profile.into(),
+                execution: selected,
+            },
+            access_mode,
+        )
     };
     let initial_message = params.message;
     let concurrent_message = crate::agents::PeerMessage {
@@ -179,7 +220,7 @@ pub fn send(
     }))
 }
 
-fn delegated_access_mode(
+pub(super) fn delegated_access_mode(
     parent_backend: crate::agents::Backend,
     parent_access_mode: crate::agents::HarnessAccessMode,
 ) -> crate::agents::HarnessAccessMode {
@@ -193,6 +234,7 @@ fn delegated_access_mode(
     }
 }
 
+#[cfg(test)]
 fn resolve_child(
     profiles: &crate::agents::WorkerProfiles,
     profile: &str,
@@ -210,22 +252,8 @@ fn resolve_child(
     ),
     String,
 > {
-    let prefer_auto = parent_access_mode == crate::agents::HarnessAccessMode::Auto
-        && profiles
-            .profiles
-            .iter()
-            .find(|definition| definition.name == profile)
-            .is_some_and(|definition| {
-                definition.models.iter().any(|model| {
-                    route(model, project, parent_access_mode)
-                        == Some(crate::agents::HarnessAccessMode::Auto)
-                })
-            });
     let assignment = profiles.resolve(profile, |model| {
-        let Some(access_mode) = route(model, project, parent_access_mode) else {
-            return false;
-        };
-        !prefer_auto || access_mode == crate::agents::HarnessAccessMode::Auto
+        route(model, project, parent_access_mode).is_some()
     })?;
     let access_mode = route(&assignment.execution, project, parent_access_mode)
         .ok_or("selected worker model no longer supports the required child access mode")?;

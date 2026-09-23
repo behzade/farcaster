@@ -358,6 +358,7 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
                 provider: "opencode-go".into(),
                 model: "glm-5.3-flash".into(),
                 effort: Some("high".into()),
+                service_tier: None,
             },
         },
     )?;

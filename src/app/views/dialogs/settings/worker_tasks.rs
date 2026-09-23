@@ -40,7 +40,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                                 .text_size(THEME.type_scale.body_small)
                                 .text_color(THEME.colors.muted)
                                 .child(
-                                    "Custom profiles use the first available model in their list.",
+                                    "Choose one model and an active worker limit for each profile. An empty profile asks when first used.",
                                 ),
                         ),
                 )
@@ -79,7 +79,7 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
         .child(
             button(
                 "worker-profile-inherit",
-                "Same as caller",
+                "inherit",
                 ButtonTone::Quiet,
                 !editing,
                 move |_, cx| {
@@ -99,7 +99,11 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
         rail = rail.child(
             button(
                 ("worker-profile", index),
-                profile.name.clone(),
+                if profile.enabled {
+                    profile.name.clone()
+                } else {
+                    format!("{} (off)", profile.name)
+                },
                 ButtonTone::Quiet,
                 !editing,
                 move |_, cx| {
@@ -143,7 +147,9 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
         .flex()
         .flex_col()
         .gap(THEME.space.sm);
-    if let Some(edit @ WorkerProfileEdit::Name { .. }) = &editor.edit {
+    if let Some(edit @ (WorkerProfileEdit::Name { .. } | WorkerProfileEdit::Limit { .. })) =
+        &editor.edit
+    {
         detail = detail.child(edit_form(edit, entity.clone()));
     } else if editor.inherit_selected {
         detail = detail
@@ -157,14 +163,48 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 div()
                     .text_size(THEME.type_scale.body_small)
                     .text_color(THEME.colors.muted)
-                    .child(
-                        "The worker tool calls this profile 'inherit'. It uses the caller's harness, provider, model, and effort and cannot be changed.",
-                    ),
+                    .child("Uses the caller's harness, provider, model, and effort."),
             );
+        let limit = entity.clone();
+        let toggle = entity.clone();
+        detail = detail.child(
+            div()
+                .flex()
+                .gap(THEME.space.sm)
+                .child(button(
+                    "inherit-limit",
+                    format!("Limit: {} active", editor.inherit_limit),
+                    ButtonTone::Quiet,
+                    !editing,
+                    move |window, cx| {
+                        let _ =
+                            limit.update(cx, |this, cx| this.edit_worker_limit(None, window, cx));
+                    },
+                ))
+                .child(button(
+                    "inherit-enabled",
+                    if editor.inherit_enabled {
+                        "Disable"
+                    } else {
+                        "Enable"
+                    },
+                    ButtonTone::Quiet,
+                    !editing,
+                    move |_, cx| {
+                        let _ = toggle.update(cx, |this, cx| this.toggle_worker_profile(None, cx));
+                    },
+                )),
+        );
     } else if let Some(profile) = editor.profiles.get(editor.selected) {
         let rename = entity.clone();
         let delete = entity.clone();
+        let toggle = entity.clone();
         let selected = editor.selected;
+        let enabled = profile.enabled;
+        let built_in = matches!(
+            profile.name.as_str(),
+            "smartest" | "smart" | "standard" | "light"
+        );
         detail = detail.child(
             div()
                 .flex()
@@ -181,19 +221,39 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         .dropdown_menu_with_anchor(gpui::Anchor::TopRight, move |menu, _, _| {
                             let rename = rename.clone();
                             let delete = delete.clone();
-                            menu.item(PopupMenuItem::new("Edit profile…").on_click(
-                                move |_, window, cx| {
-                                    let _ = rename.update(cx, |this, cx| {
-                                        this.edit_worker_profile(Some(selected), window, cx)
-                                    });
-                                },
-                            ))
-                            .item(
-                                PopupMenuItem::new("Delete profile").on_click(move |_, _, cx| {
-                                    let _ = delete
-                                        .update(cx, |this, cx| this.delete_worker_profile(cx));
-                                }),
-                            )
+                            let toggle = toggle.clone();
+                            let menu = menu
+                                .item(PopupMenuItem::new("Edit profile…").on_click(
+                                    move |_, window, cx| {
+                                        let _ = rename.update(cx, |this, cx| {
+                                            this.edit_worker_profile(Some(selected), window, cx)
+                                        });
+                                    },
+                                ))
+                                .item(
+                                    PopupMenuItem::new(if enabled {
+                                        "Disable profile"
+                                    } else {
+                                        "Enable profile"
+                                    })
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            let _ = toggle.update(cx, |this, cx| {
+                                                this.toggle_worker_profile(Some(selected), cx)
+                                            });
+                                        },
+                                    ),
+                                );
+                            if built_in {
+                                menu
+                            } else {
+                                menu.item(PopupMenuItem::new("Delete profile").on_click(
+                                    move |_, _, cx| {
+                                        let _ = delete
+                                            .update(cx, |this, cx| this.delete_worker_profile(cx));
+                                    },
+                                ))
+                            }
                         }),
                 ),
         );
@@ -203,43 +263,18 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 .text_color(THEME.colors.muted)
                 .child(profile.description.clone()),
         );
-        for (index, model) in profile.models.iter().enumerate() {
-            let select = entity.clone();
-            let catalog = editor.catalog(model.harness, &app.project.path);
-            let name = catalog
-                .models
-                .iter()
-                .find(|candidate| {
-                    candidate.provider == model.provider && candidate.id == model.model
-                })
-                .map(model_label)
-                .unwrap_or_else(|| model.model.clone());
-            let label = format!(
-                "{}. {} · {}",
-                index + 1,
-                crate::agents::backend_display_name(model.harness),
-                name
-            );
-            detail = detail.child(
-                Button::new(("worker-model-choice", index))
-                    .accessibility_label(label.clone())
-                    .tooltip(label.clone())
-                    .child(div().flex_1().min_w_0().truncate().child(label))
-                    .with_size(Size::Small)
-                    .ghost()
-                    .disabled(editing)
-                    .on_click(move |_, _, cx| {
-                        let _ = select.update(cx, |this, cx| {
-                            this.workspace.worker_profile_editor.selected_model = index;
-                            cx.notify();
-                        });
-                    })
-                    .w_full()
-                    .min_w_0()
-                    .justify_start()
-                    .toggled(index == editor.selected_model),
-            );
-        }
+        let limit = entity.clone();
+        detail = detail.child(button(
+            "worker-profile-limit",
+            format!("Limit: {} active", profile.limit),
+            ButtonTone::Quiet,
+            !editing,
+            move |window, cx| {
+                let _ = limit.update(cx, |this, cx| {
+                    this.edit_worker_limit(Some(selected), window, cx)
+                });
+            },
+        ));
         if profile.models.is_empty() {
             let add = entity.clone();
             let target = WorkerRouteTarget {
@@ -251,11 +286,11 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                     div()
                         .text_size(THEME.type_scale.body_small)
                         .text_color(THEME.colors.muted)
-                        .child("Not saved yet. Add a model to finish this profile."),
+                        .child("No model selected. The first worker request will ask you to choose one."),
                 )
                 .child(button(
                     "worker-model-add-empty",
-                    "+ Add model",
+                    "Choose model",
                     ButtonTone::Quiet,
                     !editing,
                     move |_, cx| {
@@ -264,56 +299,23 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         });
                     },
                 ));
-        } else if let Some(model) = profile.models.get(editor.selected_model) {
+        } else if let Some(model) = profile.models.first() {
             let target = WorkerRouteTarget {
                 profile: selected,
-                model: editor.selected_model,
+                model: 0,
             };
-            detail = detail.child(
-                div().flex().gap(THEME.space.sm).children(
-                    [
-                        (
-                            "worker-model-add",
-                            "+ Add model",
-                            WorkerModelEdit::Add,
-                            true,
-                        ),
-                        (
-                            "worker-model-up",
-                            "Move up",
-                            WorkerModelEdit::MoveUp,
-                            target.model > 0,
-                        ),
-                        (
-                            "worker-model-down",
-                            "Move down",
-                            WorkerModelEdit::MoveDown,
-                            target.model + 1 < profile.models.len(),
-                        ),
-                        (
-                            "worker-model-remove",
-                            "Remove model",
-                            WorkerModelEdit::Remove,
-                            profile.models.len() > 1,
-                        ),
-                    ]
-                    .into_iter()
-                    .map(|(id, label, edit, enabled)| {
-                        let entity = entity.clone();
-                        button(
-                            id,
-                            label,
-                            ButtonTone::Quiet,
-                            enabled && !editing,
-                            move |_, cx| {
-                                let _ = entity.update(cx, |this, cx| {
-                                    this.edit_worker_models(target, edit, cx)
-                                });
-                            },
-                        )
-                    }),
-                ),
-            );
+            let clear = entity.clone();
+            detail = detail.child(button(
+                "worker-model-clear",
+                "Clear model",
+                ButtonTone::Quiet,
+                !editing,
+                move |_, cx| {
+                    let _ = clear.update(cx, |this, cx| {
+                        this.edit_worker_models(target, WorkerModelEdit::Remove, cx)
+                    });
+                },
+            ));
             detail = detail.child(route(app, entity.clone(), target));
             if model.validate().is_err() {
                 detail = detail.child(div().text_size(THEME.type_scale.caption)
@@ -521,7 +523,7 @@ fn route(
                 .text_size(THEME.type_scale.caption)
                 .text_color(THEME.colors.subtle)
                 .child(
-                    "This model is not in the saved catalog and will be skipped. Reload choices after refreshing the harness catalog, or choose a listed model.",
+                    "This model is not in the saved catalog. Worker creation will ask you to choose again. Reload choices or choose a listed model.",
                 ),
         );
     }
@@ -601,6 +603,7 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
             profile,
             input,
             description,
+            limit,
         } => {
             form = form
                 .child(div().child(if profile.is_some() {
@@ -608,9 +611,11 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
                 } else {
                     "New profile"
                 }))
-                .child(Input::new(input))
+                .when(profile.is_none(), |form| form.child(Input::new(input)))
                 .child(div().child("When to use"))
                 .child(Input::new(description))
+                .child(div().child("Maximum active workers"))
+                .child(Input::new(limit))
                 .child(
                     div()
                         .text_size(THEME.type_scale.caption)
@@ -618,10 +623,15 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
                         .child("Use letters, numbers, '-' or '_'."),
                 );
         }
+        WorkerProfileEdit::Limit { input, .. } => {
+            form = form
+                .child(div().child("Maximum active workers"))
+                .child(Input::new(input));
+        }
         WorkerProfileEdit::Custom { inputs, .. } => {
             form = form.child(div().child("Custom IDs"))
-                .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child("Use exact IDs for models not listed by the harness. Leave effort blank for its default."))
-                .child(div().flex().gap(THEME.space.sm).children(["Provider ID", "Model ID", "Effort"].into_iter().zip(inputs).map(|(label, input)| {
+                .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child("Use exact IDs for models not listed by the harness. Leave effort blank for its default. Service tier is available for Cursor."))
+                .child(div().flex().gap(THEME.space.sm).children(["Provider ID", "Model ID", "Effort", "Service tier"].into_iter().zip(inputs).map(|(label, input)| {
                     div().flex_1().min_w_0().flex().flex_col().gap(THEME.space.xs)
                         .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child(label))
                         .child(Input::new(input))

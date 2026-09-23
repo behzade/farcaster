@@ -30,3 +30,21 @@ fn concurrent_reactivation_admits_only_one_worker() {
         1
     );
 }
+
+#[test]
+fn profile_limits_are_independent_and_include_pending_slots() {
+    let concurrency = WorkerConcurrency::new(1);
+    concurrency
+        .set_profile_limits([("smartest".into(), 1), ("light".into(), 2)])
+        .unwrap();
+    let expensive = concurrency.reserve_profile("smartest").unwrap();
+    assert!(concurrency.reserve_profile("smartest").is_err());
+    let first = concurrency.reserve_profile("light").unwrap();
+    let second = concurrency.reserve_profile("light").unwrap();
+    assert!(concurrency.reserve_profile("light").is_err());
+    first.release();
+    assert!(concurrency.reserve_profile("light").is_ok());
+    expensive.release();
+    assert!(concurrency.reserve_profile("smartest").is_ok());
+    drop(second);
+}

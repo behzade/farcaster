@@ -35,6 +35,7 @@ done
         provider: None,
         model: None,
         effort: None,
+        service_tier: None,
         access_mode: crate::HarnessAccessMode::Sandboxed,
         app_proxy: None,
         ephemeral: false,

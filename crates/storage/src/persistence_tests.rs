@@ -2015,7 +2015,9 @@ fn concurrent_state_store_open_waits_for_schema_writers() -> Result<(), Box<dyn 
 fn fresh_state_store_has_no_custom_worker_profiles() -> Result<(), String> {
     let temp = tempdir().map_err(|error| error.to_string())?;
     let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
-    assert!(store.load_worker_profiles()?.profiles.is_empty());
+    let profiles = store.load_worker_profiles()?;
+    assert_eq!(profiles.profiles.len(), 4);
+    assert!(profiles.profiles.iter().all(|profile| profile.models.is_empty()));
     Ok(())
 }
 
@@ -2026,26 +2028,17 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
     let store = StateStore::open_at(&database)?;
     let mut tasks = test_worker_profiles();
     store.save_worker_profiles(&tasks)?;
-    assert_eq!(tasks.profiles.len(), 4);
-    tasks.profiles[0].name = "audit".into();
+    assert!(tasks.profiles.len() > 4);
     tasks.profiles[0].description = "Review security-sensitive changes.".into();
-    tasks.profiles[0].models.swap(0, 1);
-    tasks.profiles[0].models[0].harness = Backend::Codex;
-    tasks.profiles[0].models[0].provider = "openai".into();
-    tasks.profiles.remove(1);
+    tasks.profiles.retain(|profile| profile.name != "fast");
     store.save_worker_profiles(&tasks)?;
     assert_eq!(
         StateStore::open_at(&database)?.load_worker_profiles()?,
         tasks
     );
-    tasks.profiles.clear();
+    tasks.profiles.retain(|profile| matches!(profile.name.as_str(), "smartest" | "smart" | "standard" | "light"));
     store.save_worker_profiles(&tasks)?;
-    assert!(
-        StateStore::open_at(&database)?
-            .load_worker_profiles()?
-            .profiles
-            .is_empty()
-    );
+    assert_eq!(StateStore::open_at(&database)?.load_worker_profiles()?, tasks);
     Ok(())
 }
 
@@ -2083,8 +2076,10 @@ fn settings_save_independently_and_reject_invalid_values() -> Result<(), String>
 }
 
 fn test_worker_profiles() -> crate::agents::WorkerProfiles {
-    serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
-        .expect("historical worker profiles")
+    crate::agents::WorkerProfiles::from_saved(
+        serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
+            .expect("historical worker profiles"),
+    ).expect("migrated worker profiles")
 }
 
 #[test]
@@ -2096,6 +2091,7 @@ fn cross_harness_worker_families_survive_reopen() -> Result<(), String> {
         provider: "opencode-go".into(),
         model: "glm-5.3-flash".into(),
         effort: None,
+        service_tier: None,
     };
     let link = crate::agents::WorkerFamilyLink {
         project: temp.path().to_owned(),

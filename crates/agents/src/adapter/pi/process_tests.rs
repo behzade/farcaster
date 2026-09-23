@@ -181,6 +181,7 @@ fn installed_pi_child_model_does_not_replace_the_users_selected_default() -> Tes
             provider: Some("farcaster-fixture".into()),
             model: Some("fixture-child".into()),
             effort: Some("high".into()),
+            service_tier: None,
             access_mode: HarnessAccessMode::Full,
             app_proxy: None,
             ephemeral: false,

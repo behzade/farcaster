@@ -1,8 +1,10 @@
 use super::*;
 
 fn configured_profiles() -> crate::agents::WorkerProfiles {
-    serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
-        .expect("configured test profiles")
+    crate::agents::WorkerProfiles::from_saved(
+        serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
+            .expect("configured test profiles"),
+    ).expect("migrated test profiles")
 }
 use crate::agents::Backend;
 use crate::agents::{CallerIdentity, CallerProfile};
@@ -91,8 +93,6 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
         })
     };
     let mut tasks = configured_profiles();
-    // Cursor is preferred here, but only Codex is available to this pool.
-    tasks.profiles[0].models.rotate_right(1);
     let params = |profile| SendParams {
         to: Some("inspect".into()),
         message: "inspect these files".into(),
@@ -132,7 +132,7 @@ fn worker_send_routes_across_harnesses_and_reuses_the_original_assignment() -> R
                 .expect("test operation should succeed")
         );
     }
-    tasks.profiles[0].models[1].model = "changed-model".into();
+    tasks.profiles[0].models[0].model = "changed-model".into();
     assert!(send(&pool, params(Some("oracle".into())), token.clone(), &tasks).is_ok());
     assert!(
         send(
@@ -364,6 +364,7 @@ fn nested_parent_policy_reaches_the_grandchild_factory_launch() -> Result<(), St
             provider: "openai".into(),
             model: "test-model".into(),
             effort: None,
+            service_tier: None,
         },
     };
 
@@ -430,6 +431,7 @@ fn restricted_parent_cannot_reuse_a_running_full_child_after_session_rebind() ->
                 provider: "openai".into(),
                 model: "model".into(),
                 effort: None,
+                service_tier: None,
             },
         },
     )?;
@@ -494,7 +496,7 @@ fn restrictive_cross_backend_launch_errors_instead_of_using_auto() -> Result<(),
         SendParams {
             to: Some("pi-child".into()),
             message: "work".into(),
-            profile: Some("oracle".into()),
+            profile: Some("oracle_2".into()),
         },
         Some(parent.token().into()),
         &configured_profiles(),
@@ -762,7 +764,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
     };
     let catalogs = [catalog];
     let assignment = profiles
-        .resolve("cheap", |model| {
+        .resolve("cheap_4", |model| {
             model_available(model, project, &backends, &catalogs)
         })
         .expect("test operation should succeed");
@@ -781,7 +783,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
         &[],
         &catalogs
     ));
-    let preferred_pi = &profiles.profiles[3].models[1];
+    let preferred_pi = &profiles.profiles.iter().find(|profile| profile.name == "cheap_2").unwrap().models[0];
     assert!(!model_available(
         preferred_pi,
         project,
@@ -798,103 +800,6 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
 }
 
 #[test]
-fn auto_parent_prefers_an_auto_candidate_within_the_profile() {
-    let mut profiles = configured_profiles();
-    profiles.profiles[0].models = vec![
-        crate::agents::WorkerExecution {
-            harness: Backend::OpenCode,
-            provider: "openai".into(),
-            model: "sandboxed".into(),
-            effort: None,
-        },
-        crate::agents::WorkerExecution {
-            harness: Backend::Codex,
-            provider: "openai".into(),
-            model: "auto".into(),
-            effort: None,
-        },
-    ];
-    let profile_name = profiles.profiles[0].name.clone();
-
-    let (assignment, mode) = resolve_child(
-        &profiles,
-        &profile_name,
-        std::path::Path::new("/project"),
-        crate::agents::HarnessAccessMode::Auto,
-        |model, _, _| match model.harness {
-            Backend::OpenCode => Some(crate::agents::HarnessAccessMode::Sandboxed),
-            Backend::Codex => Some(crate::agents::HarnessAccessMode::Auto),
-            _ => None,
-        },
-    )
-    .expect("an Auto-capable candidate should be selected");
-
-    assert_eq!(assignment.execution.harness, Backend::Codex);
-    assert_eq!(mode, crate::agents::HarnessAccessMode::Auto);
-}
-
-#[test]
-fn sandboxed_pi_parent_prefers_an_auto_cursor_child() {
-    let mut profiles = configured_profiles();
-    profiles.profiles[0].models = vec![
-        crate::agents::WorkerExecution {
-            harness: Backend::OpenCode,
-            provider: "openai".into(),
-            model: "sandboxed".into(),
-            effort: None,
-        },
-        crate::agents::WorkerExecution {
-            harness: Backend::Cursor,
-            provider: "cursor-cli".into(),
-            model: "auto".into(),
-            effort: None,
-        },
-    ];
-    let profile_name = profiles.profiles[0].name.clone();
-    let requested = delegated_access_mode(Backend::Pi, crate::agents::HarnessAccessMode::Sandboxed);
-
-    let (assignment, mode) = resolve_child(
-        &profiles,
-        &profile_name,
-        std::path::Path::new("/project"),
-        requested,
-        |model, _, _| match model.harness {
-            Backend::OpenCode => Some(crate::agents::HarnessAccessMode::Sandboxed),
-            Backend::Cursor => Some(crate::agents::HarnessAccessMode::Auto),
-            _ => None,
-        },
-    )
-    .expect("Cursor Auto should be preferred for a sandboxed Pi parent");
-
-    assert_eq!(assignment.execution.harness, Backend::Cursor);
-    assert_eq!(mode, crate::agents::HarnessAccessMode::Auto);
-}
-
-#[test]
-fn auto_parent_degrades_to_sandboxed_when_no_auto_candidate_exists() {
-    let mut profiles = configured_profiles();
-    profiles.profiles[0].models = vec![crate::agents::WorkerExecution {
-        harness: Backend::OpenCode,
-        provider: "openai".into(),
-        model: "sandboxed".into(),
-        effort: None,
-    }];
-    let profile_name = profiles.profiles[0].name.clone();
-
-    let (assignment, mode) = resolve_child(
-        &profiles,
-        &profile_name,
-        std::path::Path::new("/project"),
-        crate::agents::HarnessAccessMode::Auto,
-        |_, _, _| Some(crate::agents::HarnessAccessMode::Sandboxed),
-    )
-    .expect("a sandboxed candidate should be used as the fallback");
-
-    assert_eq!(assignment.execution.harness, Backend::OpenCode);
-    assert_eq!(mode, crate::agents::HarnessAccessMode::Sandboxed);
-}
-
-#[test]
 fn restricted_parent_never_routes_to_unsandboxed_pi() {
     let project = std::path::Path::new("/project");
     let auto = crate::agents::HarnessAccessMode::Auto;
@@ -904,12 +809,14 @@ fn restricted_parent_never_routes_to_unsandboxed_pi() {
         provider: "openai".into(),
         model: "model".into(),
         effort: None,
+        service_tier: None,
     };
     let opencode = crate::agents::WorkerExecution {
         harness: Backend::OpenCode,
         provider: "openai".into(),
         model: "model".into(),
         effort: None,
+        service_tier: None,
     };
 
     assert_eq!(
@@ -960,6 +867,7 @@ fn auto_parent_can_route_to_pi_when_its_sandbox_adapter_is_configured() {
         provider: "openai".into(),
         model: "model".into(),
         effort: None,
+        service_tier: None,
     };
     let catalogs = [crate::storage::CachedConfigurationCatalog {
         harness: Backend::Pi,

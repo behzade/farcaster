@@ -108,6 +108,9 @@ impl WorkerSessionFactory for AcpWorkerFactory {
         {
             session.select_effort(effort)?;
         }
+        if let Some(tier) = launch.service_tier.as_deref() {
+            session.select_service_tier(tier)?;
+        }
         caller_identity.bind(session.session_id.clone());
         session.events.push_back(WorkerEvent::SessionChanged {
             locator: session.session_id.clone(),

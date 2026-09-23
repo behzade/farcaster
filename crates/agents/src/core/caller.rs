@@ -216,6 +216,7 @@ impl CallerRegistry {
                         provider: provider.clone(),
                         model: model.clone(),
                         effort: child.effort.clone(),
+                        service_tier: None,
                     },
                 ),
                 routing: child.assignment.clone().map(|assignment| WorkerRouting {

@@ -112,6 +112,17 @@ impl WorkerPool {
         self.inner.update_receiver.clone()
     }
 
+    pub fn set_profile_limits(&self, profiles: &super::WorkerProfiles) -> Result<(), String> {
+        self.inner.concurrency.set_profile_limits(
+            std::iter::once(("inherit".into(), profiles.inherit_limit)).chain(
+                profiles
+                    .profiles
+                    .iter()
+                    .map(|profile| (profile.name.clone(), profile.limit)),
+            ),
+        )
+    }
+
     pub fn restore_families(
         &self,
         families: impl IntoIterator<Item = super::WorkerFamilyLink>,
@@ -194,6 +205,7 @@ impl WorkerPool {
                         provider: Some(routing.assignment.execution.provider.clone()),
                         model: Some(routing.assignment.execution.model.clone()),
                         effort: routing.assignment.execution.effort.clone(),
+                        service_tier: routing.assignment.execution.service_tier.clone(),
                         access_mode: routing.access_mode,
                         app_proxy: None,
                         ephemeral: false,
@@ -450,7 +462,13 @@ impl WorkerPool {
         join_terminal_runs(&mut state)?;
         reap_terminal(&mut state);
         retire_idle_for_new_worker(&mut state, self.inner.process_limit)?;
-        let slot = self.inner.concurrency.reserve()?;
+        let slot = match &assignment {
+            Some(assignment) => self
+                .inner
+                .concurrency
+                .reserve_profile(&assignment.profile)?,
+            None => self.inner.concurrency.reserve()?,
+        };
         state.sequence = state.sequence.saturating_add(1);
         let id = worker_id(state.sequence)?;
         let launch = WorkerLaunch {
@@ -464,6 +482,9 @@ impl WorkerPool {
             provider: request.provider,
             model: request.model,
             effort: request.effort,
+            service_tier: assignment
+                .as_ref()
+                .and_then(|assignment| assignment.execution.service_tier.clone()),
             access_mode: request.access_mode,
             app_proxy,
             ephemeral: false,
@@ -730,7 +751,10 @@ impl WorkerPool {
                     "saved child access mode is no longer available for this parent".into(),
                 );
             }
-            let slot = self.inner.concurrency.reserve()?;
+            let slot = self
+                .inner
+                .concurrency
+                .reserve_profile(&assignment.profile)?;
             record.launch.slot = Some(slot);
             record.launch.parent_worker_id = Some(parent.worker_id.clone());
             record.launch.parent_session.clone_from(&parent.session);
@@ -937,15 +961,19 @@ fn retire_idle_for_new_worker(state: &mut PoolState, process_limit: usize) -> Re
         .map(|(id, _)| id.clone())
         .take(retire)
         .collect::<Vec<_>>();
-    if ids.len() < retire {
-        let unresolved = state.records.values().find_map(|record| {
-            (record.thread.is_none() && !record.cleanup_confirmed.load(Ordering::SeqCst))
-                .then(|| snapshot(record).ok()?.error)
-                .flatten()
-        });
-        return Err(unresolved.unwrap_or_else(|| {
-            format!("worker process limit reached ({process_limit}); no idle worker can retire")
-        }));
+    if ids.len() < retire
+        && let Some(error) = state.records.values().find_map(|record| {
+            (record.thread.is_none() && !record.cleanup_confirmed.load(Ordering::SeqCst)).then(
+                || {
+                    snapshot(record)
+                        .ok()
+                        .and_then(|snapshot| snapshot.error)
+                        .unwrap_or_else(|| "worker cleanup is not confirmed".into())
+                },
+            )
+        })
+    {
+        return Err(error);
     }
     for id in ids {
         finish_run(

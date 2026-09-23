@@ -179,6 +179,7 @@ done
         provider: None,
         model: None,
         effort: None,
+        service_tier: None,
         access_mode: HarnessAccessMode::Sandboxed,
         app_proxy: None,
         ephemeral: false,

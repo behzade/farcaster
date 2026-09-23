@@ -44,6 +44,7 @@ pub struct WorkerLaunch {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    pub service_tier: Option<String>,
     pub access_mode: crate::HarnessAccessMode,
     pub app_proxy: Option<String>,
     pub ephemeral: bool,

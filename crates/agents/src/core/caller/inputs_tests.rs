@@ -2,6 +2,51 @@ use super::*;
 use crate::Backend;
 
 #[test]
+fn profile_choice_uses_the_parent_input_channel() -> Result<(), String> {
+    let registry = CallerRegistry::default();
+    let identity = registry.issue(
+        Path::new("/project"),
+        CallerProfile {
+            backend: Backend::Codex,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    identity.bind("parent-session");
+    let parent = registry.resolve(identity.token())?;
+    let (tx, rx) = mpsc::channel();
+    let lease = registry.request_profile_input(
+        &parent,
+        WorkerInput {
+            id: "choice".into(),
+            prompt: "Choose model".into(),
+            options: vec!["One".into()],
+            secret: false,
+        },
+        tx,
+    )?;
+    let inputs = registry.take_child_inputs(&parent.project, Backend::Codex, "parent-session");
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].prompt, "Choose model");
+    registry.respond_to_child_input(WorkerInputResponse {
+        id: inputs[0].id.clone(),
+        value: Some("One".into()),
+        cancel: false,
+    })?;
+    assert_eq!(
+        rx.recv()
+            .map_err(|error| error.to_string())?
+            .value
+            .as_deref(),
+        Some("One")
+    );
+    drop(lease);
+    Ok(())
+}
+
+#[test]
 fn requests_are_scoped_deduplicated_and_routed_with_original_ids() -> Result<(), String> {
     let registry = CallerRegistry::default();
     let identity = registry.issue(

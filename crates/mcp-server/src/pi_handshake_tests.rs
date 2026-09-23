@@ -225,13 +225,17 @@ fn run_pi_extension_worker_send_test() {
             profiles: vec![WorkerProfile {
                 name: "test".into(),
                 description: "Delayed Pi test worker".into(),
+                limit: 10,
+                enabled: true,
                 models: vec![WorkerExecution {
                     harness: Backend::Pi,
                     provider: "test-provider".into(),
                     model: "test-model".into(),
                     effort: None,
+                    service_tier: None,
                 }],
             }],
+            ..WorkerProfiles::default()
         })
         .expect("worker profiles");
     let observed_workers = workers.clone();
