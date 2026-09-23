@@ -62,15 +62,18 @@ impl WorkGraphSidebarView {
         &mut self,
         project: PathBuf,
         session_id: Option<String>,
-        session_goal: Option<crate::agents::SessionGoal>,
+        session_goal: Option<Option<crate::agents::SessionGoal>>,
         cx: &mut gpui::Context<Self>,
     ) {
         if self.project != project || self.session_id != session_id {
             self.state = PlanLoadState::Ready(Box::default());
+            self.session_goal = None;
         }
         self.project = project;
         self.session_id = session_id;
-        self.session_goal = session_goal;
+        if let Some(goal) = session_goal {
+            self.session_goal = goal;
+        }
         self.refresh(cx);
     }
 

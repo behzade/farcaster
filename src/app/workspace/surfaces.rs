@@ -688,7 +688,7 @@ impl FarcasterApp {
     fn refresh_workgraph_board(&mut self, cx: &mut Context<Self>) {
         let project = self.project.path.clone();
         let active_session = self.active_workgraph_session();
-        let session_goal = self.snapshot.session_goal.clone();
+        let session_goal = self.active_root_session_goal();
         self.views.workgraph.update(cx, |view, cx| {
             view.refresh_for(project, active_session, session_goal, cx);
         });
@@ -699,14 +699,16 @@ impl FarcasterApp {
         let session_id = self
             .active_workgraph_session()
             .map(|(session_id, _)| session_id);
-        let session_goal = self.snapshot.session_goal.clone();
+        let session_goal = self.active_root_session_goal();
         self.views.workgraph_sidebar.update(cx, |view, cx| {
             view.refresh_for(project, session_id, session_goal, cx);
         });
     }
 
     pub(in crate::app) fn refresh_workgraph_goal(&mut self, cx: &mut Context<Self>) {
-        let goal = self.snapshot.session_goal.clone();
+        let Some(goal) = self.active_root_session_goal() else {
+            return;
+        };
         self.views
             .workgraph
             .update(cx, |view, cx| view.set_session_goal(goal.clone(), cx));
@@ -716,13 +718,20 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn active_workgraph_session(&self) -> Option<(String, String)> {
-        let selected = self.snapshot.selected_session.as_deref()?;
-        self.sessions
-            .all
-            .iter()
-            .chain(&self.sessions.visible)
-            .find(|session| session.path == selected)
-            .map(|session| (session.id.clone(), session.path.display().to_string()))
+        root_session_for_path(
+            &self.sessions.all,
+            self.snapshot.selected_session.as_deref(),
+        )
+        .map(|root| (root.id.clone(), root.path.display().to_string()))
+    }
+
+    fn active_root_session_goal(&self) -> Option<Option<crate::agents::SessionGoal>> {
+        let root = root_session_for_path(
+            &self.sessions.all,
+            self.snapshot.selected_session.as_deref(),
+        )?;
+        (self.snapshot.selected_session.as_deref() == Some(root.path.as_path()))
+            .then(|| self.snapshot.session_goal.clone())
     }
 
     pub(in crate::app) fn close_sessions_sheet_after_selection(

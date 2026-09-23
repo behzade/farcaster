@@ -119,7 +119,7 @@ impl WorkGraphBoardView {
         &mut self,
         project: PathBuf,
         active_session: Option<(String, String)>,
-        session_goal: Option<crate::agents::SessionGoal>,
+        session_goal: Option<Option<crate::agents::SessionGoal>>,
         cx: &mut Context<Self>,
     ) {
         if self.project != project || self.active_session != active_session {
@@ -128,10 +128,13 @@ impl WorkGraphBoardView {
             self.selected = None;
             self.catalog = catalog::CatalogState::default();
             self.state = PlanLoadState::Loading;
+            self.session_goal = None;
         }
         self.project = project;
         self.active_session = active_session;
-        self.session_goal = session_goal;
+        if let Some(goal) = session_goal {
+            self.session_goal = goal;
+        }
         self.refresh(cx);
     }
 

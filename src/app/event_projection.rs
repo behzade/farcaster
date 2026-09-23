@@ -125,8 +125,14 @@ impl DirtyRegions {
                 self.composer |= composer_snapshot_changed(&app.snapshot, snapshot);
                 self.root |= app.snapshot.pending_question != snapshot.pending_question;
                 self.run |= run_panel_snapshot_changed(&app.snapshot, snapshot);
+                let previous_root = root_session_for_path(
+                    &app.sessions.all,
+                    app.snapshot.selected_session.as_deref(),
+                );
+                let next_root =
+                    root_session_for_path(&app.sessions.all, snapshot.selected_session.as_deref());
                 self.workgraph_session |=
-                    app.snapshot.selected_session != snapshot.selected_session;
+                    previous_root.map(|root| &root.path) != next_root.map(|root| &root.path);
                 self.workgraph_goal |= app.snapshot.session_goal != snapshot.session_goal;
             }
             RuntimeEvent::Sessions { .. }
