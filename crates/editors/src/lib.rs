@@ -15,6 +15,15 @@ pub enum EditorChoice {
 impl EditorChoice {
     pub const ALL: [Self; 4] = [Self::Neovim, Self::VsCode, Self::Zed, Self::Helix];
 
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Neovim => "Neovim",
+            Self::VsCode => "VS Code",
+            Self::Zed => "Zed",
+            Self::Helix => "Helix",
+        }
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Neovim => "neovim",

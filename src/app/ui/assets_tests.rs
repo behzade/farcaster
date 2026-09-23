@@ -46,7 +46,7 @@ fn harnesses_use_their_brand_icons() {
 }
 
 #[test]
-fn asset_source_serves_only_themeable_icons() {
+fn asset_source_serves_themeable_and_editor_brand_icons() {
     assert!(
         AppAssets
             .load("icons/search.svg")
@@ -77,7 +77,6 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::Folder,
         AppIcon::FolderPlus,
         AppIcon::Ghostty,
-        AppIcon::Helix,
         AppIcon::GitFork,
         AppIcon::Hourglass,
         AppIcon::Key,
@@ -86,8 +85,6 @@ fn asset_source_serves_only_themeable_icons() {
         AppIcon::Neovim,
         AppIcon::OpenCode,
         AppIcon::Pi,
-        AppIcon::VsCode,
-        AppIcon::Zed,
         AppIcon::Plus,
         AppIcon::Question,
         AppIcon::SpinnerGap,
@@ -122,17 +119,26 @@ fn asset_source_serves_only_themeable_icons() {
     ] {
         assert_themeable(icon.path().as_ref());
     }
+
+    for icon in [AppIcon::Helix, AppIcon::VsCode, AppIcon::Zed] {
+        assert_bundled(icon.path().as_ref());
+    }
 }
 
 fn assert_themeable(path: &str) {
-    let bytes = AppAssets
-        .load(path)
-        .expect("asset lookup should work")
-        .expect("icon should be embedded");
-    assert!(bytes.starts_with(b"<svg"));
+    let bytes = assert_bundled(path);
     assert!(
         bytes
             .windows(b"currentColor".len())
             .any(|window| window == b"currentColor")
     );
+}
+
+fn assert_bundled(path: &str) -> std::borrow::Cow<'static, [u8]> {
+    let bytes = AppAssets
+        .load(path)
+        .expect("asset lookup should work")
+        .expect("icon should be embedded");
+    assert!(bytes.starts_with(b"<svg"));
+    bytes
 }

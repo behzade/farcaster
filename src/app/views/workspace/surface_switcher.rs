@@ -9,6 +9,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, app_icon, icon_control},
     app::ui::theme::THEME,
+    app::workspace::editor::effective_editor_choice,
     app::{AppSurface, FarcasterApp, views::session_rail::project_label},
 };
 
@@ -130,6 +131,8 @@ impl FarcasterApp {
         } else {
             ("Ctrl", "Chat composer (Ctrl+G Ctrl+G anywhere)")
         };
+        let editor =
+            effective_editor_choice(self.settings.editor_choice, &self.workspace_project());
         div()
             .h_full()
             .flex()
@@ -146,12 +149,13 @@ impl FarcasterApp {
             .child(surface_control(
                 "show-editor-surface",
                 format!(
-                    "Neovim ({modifier}+E in app views; {} anywhere)",
+                    "{} ({modifier}+E in app views; {} anywhere)",
+                    editor.label(),
                     crate::app::ui::navigation::command_key(
                         crate::app::ui::navigation::Command::Editor
                     )
                 ),
-                AppIcon::Neovim,
+                AppIcon::for_editor(editor),
                 self.workspace.surface == AppSurface::Editor,
                 entity.clone(),
                 FarcasterApp::show_editor_surface,

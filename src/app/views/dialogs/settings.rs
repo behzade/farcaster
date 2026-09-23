@@ -215,20 +215,21 @@ fn editor_setting(
                     options.child("No editor is available")
                 })
                 .children(available.into_iter().map(|option| {
-                    let (id, label, icon) = match option {
-                        EditorChoice::Neovim => ("editor-neovim", "Neovim", AppIcon::Neovim),
-                        EditorChoice::VsCode => ("editor-vscode", "VS Code", AppIcon::VsCode),
-                        EditorChoice::Zed => ("editor-zed", "Zed", AppIcon::Zed),
-                        EditorChoice::Helix => ("editor-helix", "Helix", AppIcon::Helix),
-                    };
-                    editor_option(id, label, icon, option, selected, entity.clone())
+                    editor_option(
+                        format!("editor-{}", option.as_str()),
+                        option.label(),
+                        AppIcon::for_editor(option),
+                        option,
+                        selected,
+                        entity.clone(),
+                    )
                 })),
         )
         .into_any_element()
 }
 
 fn editor_option(
-    id: &'static str,
+    id: String,
     label: &'static str,
     icon: AppIcon,
     option: EditorChoice,

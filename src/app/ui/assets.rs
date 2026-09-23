@@ -358,6 +358,15 @@ pub(crate) enum AppIcon {
 }
 
 impl AppIcon {
+    pub(crate) fn for_editor(editor: crate::storage::EditorChoice) -> Self {
+        match editor {
+            crate::storage::EditorChoice::Neovim => Self::Neovim,
+            crate::storage::EditorChoice::VsCode => Self::VsCode,
+            crate::storage::EditorChoice::Zed => Self::Zed,
+            crate::storage::EditorChoice::Helix => Self::Helix,
+        }
+    }
+
     pub(crate) fn for_harness(harness: impl Into<Option<Backend>>) -> Self {
         let Some(harness) = harness.into() else {
             return Self::Code;
