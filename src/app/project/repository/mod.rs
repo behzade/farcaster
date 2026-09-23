@@ -185,6 +185,8 @@ pub(in crate::app) struct RepositoryState {
     watcher_generation: u64,
     observations: ObservationCache,
     warmed: BTreeSet<PathBuf>,
+    pass_started: bool,
+    pass_cursor: usize,
 }
 
 impl RepositoryState {
@@ -223,6 +225,8 @@ impl RepositoryState {
             watcher_generation: 0,
             observations: ObservationCache::default(),
             warmed: BTreeSet::new(),
+            pass_started: false,
+            pass_cursor: 0,
         }
     }
 
@@ -482,6 +486,7 @@ impl FarcasterApp {
     /// Reads the working copies of the other known projects one at a time, so
     /// switching to one shows its changes right away instead of an empty panel.
     pub(in crate::app) fn warm_repository_observations(&mut self, cx: &mut Context<Self>) {
+        self.start_offscreen_observation_pass(cx);
         let repository = &mut self.project.repository;
         let current = repository.project.clone();
         let mut projects = self.project.registered.clone();
@@ -513,6 +518,76 @@ impl FarcasterApp {
                     }
                 });
             }
+        })
+        .detach();
+    }
+
+    fn next_offscreen_project(&mut self) -> Option<PathBuf> {
+        let mut projects = self.project.registered.clone();
+        projects.extend(
+            self.sessions
+                .visible
+                .iter()
+                .map(|session| session.project.clone()),
+        );
+        projects.sort();
+        projects.dedup();
+        let current = self.project.repository.project.clone();
+        projects.retain(|project| project != &current);
+        if projects.is_empty() {
+            return None;
+        }
+        let cursor = self.project.repository.pass_cursor % projects.len();
+        self.project.repository.pass_cursor = cursor.wrapping_add(1);
+        Some(projects[cursor].clone())
+    }
+
+    /// Reads one project per tick so the counts off screen stay current and a
+    /// switch can show them without waiting for a refresh of its own.
+    pub(in crate::app) fn start_offscreen_observation_pass(&mut self, cx: &mut Context<Self>) {
+        if self.project.repository.pass_started {
+            return;
+        }
+        self.project.repository.pass_started = true;
+        cx.spawn(async move |weak, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(5))
+                    .await;
+                if weak
+                    .update(cx, |this, cx| {
+                        if let Some(project) = this.next_offscreen_project() {
+                            this.prefetch_repository_observation(project, cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    pub(in crate::app) fn prefetch_repository_observation(
+        &mut self,
+        project: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if project == self.project.repository.project {
+            return;
+        }
+        let preference = preference_for(&self.project.repository.preferences, &project);
+        let target = project.clone();
+        cx.spawn(async move |weak, cx| {
+            let scanned = cx
+                .background_spawn(async move { observe_project(&target, preference) })
+                .await;
+            let _ = weak.update(cx, |this, _| {
+                if let Some(observation) = RepositoryObservation::from_scan(preference, scanned) {
+                    this.project.repository.remember(project, observation);
+                }
+            });
         })
         .detach();
     }
