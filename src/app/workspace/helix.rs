@@ -4,13 +4,9 @@ use std::{
 };
 
 use gpui::{
-    App, Context, Entity, IntoElement as _, ParentElement as _, Render, RenderImage, Styled as _,
-    Window, div,
+    Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window, div,
 };
-use gpui_component::{
-    Sizable as _, Size,
-    button::Button,
-};
+use gpui_component::{Sizable as _, Size, button::Button};
 use gpui_libghostty::TerminalOptions;
 
 use super::{

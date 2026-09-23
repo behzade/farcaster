@@ -39,8 +39,12 @@ pub(super) fn launch(
         .map_err(|error| format!("start {editor} ({}): {error}", program.display()))?;
     std::thread::spawn(move || {
         match child.wait() {
-            Ok(status) if !status.success() => zlog::warn!("{editor} command exited with {status}"),
-            Err(error) => zlog::warn!("{editor} command failed: {error}"),
+            Ok(status) if !status.success() => {
+                zlog::warn!("{editor} command exited with {status}");
+            }
+            Err(error) => {
+                zlog::warn!("{editor} command failed: {error}");
+            }
             _ => {}
         }
         drop(temporary);
