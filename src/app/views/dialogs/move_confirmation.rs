@@ -1,10 +1,11 @@
 use gpui::{AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div};
 
-use crate::app::FarcasterApp;
-use crate::{
-    app::OVERLAY_KEY_CONTEXT,
-    app::ui::primitives::{ButtonTone, button, modal},
-    app::ui::theme::THEME,
+use crate::app::{
+    FarcasterApp, OVERLAY_KEY_CONTEXT,
+    ui::{
+        primitives::{ButtonTone, button, modal},
+        theme::THEME,
+    },
 };
 
 pub(in crate::app::views) fn render(
@@ -13,18 +14,16 @@ pub(in crate::app::views) fn render(
 ) -> AnyElement {
     let dismiss = entity.clone();
     modal(
-        "delete-session",
-        "Delete session permanently?",
-        &app.sessions.pending_delete.as_ref().expect("visible confirmation").focus,
+        "move-active-session",
+        "Session has work or pending messages",
+        &app.sessions.pending_move.as_ref().expect("visible confirmation").focus,
         OVERLAY_KEY_CONTEXT,
         move |window, cx| {
-            let _ = dismiss.update(cx, |this, cx| {
-                this.close_delete_confirmation(window, cx)
-            });
+            let _ = dismiss.update(cx, |this, cx| this.close_move_confirmation(window, cx));
         },
         |surface| {
             let cancel = entity.clone();
-            let stop_and_delete = entity;
+            let confirm = entity;
             surface.child(
                 div()
                     .flex()
@@ -35,7 +34,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .text_size(THEME.type_scale.body)
                             .text_color(THEME.colors.text)
-                            .child("This stops active work, discards pending messages, and permanently deletes the session and its subagent sessions. This cannot be undone."),
+                            .child("Moving this session will stop its active work and discard pending messages in the session family."),
                     )
                     .child(
                         div()
@@ -43,24 +42,24 @@ pub(in crate::app::views) fn render(
                             .justify_end()
                             .gap(THEME.space.sm)
                             .child(button(
-                                "cancel-session-delete",
+                                "cancel-active-session-move",
                                 "Cancel",
                                 ButtonTone::Neutral,
                                 true,
                                 move |window, cx| {
                                     let _ = cancel.update(cx, |this, cx| {
-                                        this.close_delete_confirmation(window, cx)
+                                        this.close_move_confirmation(window, cx)
                                     });
                                 },
                             ))
                             .child(button(
-                                "stop-and-delete-session",
-                                "Stop work and delete permanently",
+                                "stop-and-move-session",
+                                "Stop, discard pending, and move",
                                 ButtonTone::Danger,
                                 true,
                                 move |window, cx| {
-                                    let _ = stop_and_delete.update(cx, |this, cx| {
-                                        this.stop_and_delete_pending_session(window, cx)
+                                    let _ = confirm.update(cx, |this, cx| {
+                                        this.stop_and_move_pending_session(window, cx)
                                     });
                                 },
                             )),

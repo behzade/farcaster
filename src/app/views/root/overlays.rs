@@ -147,6 +147,9 @@ impl FarcasterApp {
             .when(self.sessions.pending_delete.is_some(), |root| {
                 root.child(dialogs::delete_confirmation::render(self, entity.clone()))
             })
+            .when(self.sessions.pending_move.is_some(), |root| {
+                root.child(dialogs::move_confirmation::render(self, entity.clone()))
+            })
             .when(self.sessions.import.is_some(), |root| {
                 root.child(dialogs::session_import::render(self, entity.clone()))
             })

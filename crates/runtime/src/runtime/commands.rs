@@ -314,6 +314,8 @@ impl RuntimeOwner {
             }
             RuntimeCommand::MoveSession { .. }
             | RuntimeCommand::StopSessionFamily { .. }
+            | RuntimeCommand::StopAndDeleteSessionFamily { .. }
+            | RuntimeCommand::StopAndMoveSession { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
             RuntimeCommand::NewSession {
                 harness, project, ..

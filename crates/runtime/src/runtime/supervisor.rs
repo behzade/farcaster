@@ -682,6 +682,7 @@ pub(super) fn command_targets_catalog(command: &RuntimeCommand) -> bool {
             | RuntimeCommand::SetSessionArchived { .. }
             | RuntimeCommand::RenameSession { .. }
             | RuntimeCommand::MoveSession { .. }
+            | RuntimeCommand::StopAndMoveSession { .. }
             | RuntimeCommand::PreviewImport { .. }
             | RuntimeCommand::CommitImport { .. }
     )

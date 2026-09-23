@@ -175,6 +175,7 @@ impl FarcasterApp {
                 pending_title_focus: false,
                 pending_archive: None,
                 pending_delete: None,
+                pending_move: None,
                 import: None,
                 import_generation: 0,
                 archived_expanded: false,

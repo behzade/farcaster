@@ -211,6 +211,106 @@ fn wait_for(counter: &AtomicUsize, expected: usize) {
 }
 
 #[test]
+fn stopping_for_move_keeps_family_unarchived_and_discards_only_its_queue() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let root = summary(temp.path(), "root", None);
+    let unrelated = summary(temp.path(), "unrelated", None);
+    let mut state = StateStore::open_at(&database)?;
+    state.replace_sessions(&[root.clone(), unrelated.clone()])?;
+    let pool = lifecycle_pool(temp.path(), Arc::new(LifecycleFactory::default()))?;
+    let (mut supervisor, _) = supervisor_for_family(state, vec![root.clone(), unrelated.clone()]);
+    let host_state = supervisor.host.state_store()?;
+    let (root_prompt, unrelated_prompt) = host_state.with(|store| {
+        store.replace_sessions(&[root.clone(), unrelated.clone()])?;
+        let root_prompt = store.enqueue_prompt(
+            &format!("session:{}", root.path.display()),
+            Backend::Pi,
+            temp.path(),
+            Some(&root.path),
+            crate::protocol::PromptMode::Normal,
+            "move me",
+            &[],
+        )?;
+        let unrelated_prompt = store.enqueue_prompt(
+            &format!("session:{}", unrelated.path.display()),
+            Backend::Pi,
+            temp.path(),
+            Some(&unrelated.path),
+            crate::protocol::PromptMode::Normal,
+            "keep me",
+            &[],
+        )?;
+        Ok((root_prompt, unrelated_prompt))
+    })?;
+
+    farcaster_mcp_server::with_test_worker_pool(pool, || {
+        supervisor.stop_session_family_work(&root.path, false)?;
+        supervisor.discard_family_queue(&root.path)?;
+        assert!(!archived(&database, &root.path)?);
+        let remaining = host_state.with(|store| store.queued_prompts())?;
+        assert_eq!(remaining.len(), 1, "{remaining:?}");
+        assert_eq!(remaining[0].id, unrelated_prompt);
+        assert_ne!(remaining[0].id, root_prompt);
+        Ok(())
+    })
+}
+
+#[test]
+fn failed_stop_keeps_an_archived_session_and_its_pending_message() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut root = summary(temp.path(), "root", None);
+    root.archived = true;
+    let mut state = StateStore::open_at(&database)?;
+    state.replace_sessions(std::slice::from_ref(&root))?;
+    let factory = Arc::new(LifecycleFactory::default());
+    factory.fail_close.store(true, Ordering::SeqCst);
+    let pool = lifecycle_pool(temp.path(), factory)?;
+    start_worker(&pool, temp.path(), "family-child", &root.path)?;
+    let (mut supervisor, events) = supervisor_for_family(state, vec![root.clone()]);
+    let host_state = supervisor.host.state_store()?;
+    let prompt = host_state.with(|store| {
+        store.replace_sessions(std::slice::from_ref(&root))?;
+        store.enqueue_prompt(
+            &format!("session:{}", root.path.display()),
+            Backend::Pi,
+            temp.path(),
+            Some(&root.path),
+            crate::protocol::PromptMode::Normal,
+            "keep this message",
+            &[],
+        )
+    })?;
+
+    farcaster_mcp_server::with_test_worker_pool(pool, || {
+        assert!(supervisor.handle_session_family_command(
+            &RuntimeCommand::StopAndDeleteSessionFamily {
+                path: root.path.clone(),
+            },
+        ));
+        assert!(
+            supervisor
+                .catalog_sessions
+                .iter()
+                .any(|session| session.path == root.path)
+        );
+        assert!(archived(&database, &root.path)?);
+        assert!(
+            host_state
+                .with(|store| store.queued_prompts())?
+                .iter()
+                .any(|row| row.id == prompt)
+        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::SessionsFailed { message, .. } if message.contains("gated close failed")
+        )));
+        Ok(())
+    })
+}
+
+#[test]
 fn retrying_actor_blocks_destructive_family_commands() {
     let mut snapshot = RuntimeSnapshot::default();
     assert!(!session_actor_has_active_work(&snapshot, false));

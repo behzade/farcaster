@@ -42,6 +42,13 @@ pub enum RuntimeCommand {
     StopSessionFamily {
         path: PathBuf,
     },
+    StopAndDeleteSessionFamily {
+        path: PathBuf,
+    },
+    StopAndMoveSession {
+        path: PathBuf,
+        target_project: PathBuf,
+    },
     DeleteSessionFamily {
         path: PathBuf,
     },

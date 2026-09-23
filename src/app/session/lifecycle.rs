@@ -2,6 +2,13 @@ use super::*;
 
 pub(in crate::app) const USER_SESSION_SWITCH_RESTORES_CENTER: bool = true;
 
+pub(in crate::app) struct PendingMove {
+    pub(in crate::app) focus: FocusHandle,
+    path: PathBuf,
+    target_project: PathBuf,
+    return_focus: Option<FocusHandle>,
+}
+
 pub(in crate::app) fn current_close_target(
     selected_draft: Option<&str>,
     selected_session: Option<&std::path::Path>,
@@ -16,6 +23,72 @@ pub(in crate::app) fn current_close_target(
 }
 
 impl FarcasterApp {
+    fn target_for_path(&self, path: &Path) -> Option<SessionTarget> {
+        let path = crate::sessions::normalize_session_path(path);
+        self.sessions
+            .all
+            .iter()
+            .find(|session| session.path == path)
+            .map(SessionSummary::target)
+            .or_else(|| self.runtime.session_targets.get(&path).cloned())
+            .or_else(|| {
+                self.snapshot
+                    .session_target()
+                    .filter(|target| target.path == path)
+            })
+    }
+
+    pub(in crate::app) fn retry_after_session_refresh(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        let current_target = self.composer.sessions.current_target().to_owned();
+        let mut action = Some(action);
+        cx.spawn_in(window, async move |weak, cx| {
+            for _ in 0..50 {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
+                let done = weak
+                    .update_in(cx, |this, window, cx| {
+                        if this.composer.sessions.current_target() != current_target {
+                            if this.sessions.error.as_deref() == Some("Refreshing session details…")
+                            {
+                                this.sessions.error = None;
+                                this.notify_session_rail(cx);
+                            }
+                            return true;
+                        }
+                        if this.target_for_path(&path).is_some() {
+                            if let Some(action) = action.take() {
+                                this.sessions.error = None;
+                                action(this, window, cx);
+                            }
+                            return true;
+                        }
+                        false
+                    })
+                    .unwrap_or(true);
+                if done {
+                    return;
+                }
+            }
+            let _ = weak.update_in(cx, |this, _, cx| {
+                if this.composer.sessions.current_target() == current_target {
+                    this.sessions.error = Some(
+                        "This session was not found after refreshing. It may have been removed."
+                            .into(),
+                    );
+                    this.notify_session_rail(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(in crate::app) fn close_current_target(
         &mut self,
         window: &mut Window,
@@ -54,24 +127,10 @@ impl FarcasterApp {
         path: &Path,
         cx: &mut Context<Self>,
     ) -> Option<SessionTarget> {
-        let path = crate::sessions::normalize_session_path(path);
-        let target = self
-            .sessions
-            .all
-            .iter()
-            .find(|session| session.path == path)
-            .map(SessionSummary::target)
-            .or_else(|| self.runtime.session_targets.get(&path).cloned())
-            .or_else(|| {
-                self.snapshot
-                    .session_target()
-                    .filter(|target| target.path == path)
-            });
+        let target = self.target_for_path(path);
         if target.is_none() {
-            self.sessions.error = Some(
-                "The session's harness identity is unavailable; refresh sessions and try again"
-                    .into(),
-            );
+            self.sessions.error = Some("Refreshing session details…".into());
+            self.send(RuntimeCommand::RefreshSessions, cx);
             self.notify_session_rail(cx);
         }
         target
@@ -134,6 +193,9 @@ impl FarcasterApp {
         )
         .map(|session| session.id.clone());
         let Some(target) = self.backend_target_for_path(&path, cx) else {
+            self.retry_after_session_refresh(path.clone(), window, cx, move |this, window, cx| {
+                this.select_session_restoring_center(path, project, restore_center, window, cx);
+            });
             return;
         };
         let next_root = root_session_for_path(&self.sessions.visible, Some(&path))
@@ -180,10 +242,13 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.project.pending_trust_command.is_some() || self.workspace_switch_blocked() {
+        if self.project.pending_trust_command.is_some() || self.center_surface_switch_blocked() {
             return;
         }
         let Some(target) = self.backend_target_for_path(&path, cx) else {
+            self.retry_after_session_refresh(path.clone(), window, cx, move |this, window, cx| {
+                this.fork_session(path, project, window, cx);
+            });
             return;
         };
         if !crate::agents::supports_session_fork(target.harness) {
@@ -197,6 +262,9 @@ impl FarcasterApp {
         self.reset_run_panel_scroll(cx);
         self.sessions.selected_draft = None;
         self.select_project(project.clone(), cx);
+        if self.workspace.surface == AppSurface::Work {
+            self.show_chat_surface(window, cx);
+        }
         self.restore_center_surface(project.clone(), window, cx);
         self.send_project_command(
             &project,
@@ -341,6 +409,14 @@ impl FarcasterApp {
         }
         let command = if let Some(Some(path)) = self.sessions.submitted_drafts.get(&id).cloned() {
             let Some(target) = self.backend_target_for_path(&path, cx) else {
+                self.retry_after_session_refresh(
+                    path.clone(),
+                    window,
+                    cx,
+                    move |this, window, cx| {
+                        this.resume_draft_restoring_center(id, project, restore_center, window, cx);
+                    },
+                );
                 return;
             };
             RuntimeCommand::SelectSession {
@@ -475,12 +551,35 @@ impl FarcasterApp {
             self.notify_session_rail(cx);
             return;
         }
-        if self.session_family_has_active_work(&path) {
-            self.sessions.error = Some(
-                "Wait for the session family to finish before moving it to another project"
-                    .to_owned(),
-            );
-            self.notify_session_rail(cx);
+        let family_paths = crate::sessions::session_family_for_path(&self.sessions.all, &path)
+            .map(|family| {
+                family
+                    .iter()
+                    .map(|session| session.path.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![path.clone()]);
+        let has_pending_messages = match crate::app::persistence::open()
+            .and_then(|store| store.has_queued_prompts_for(&family_paths))
+        {
+            Ok(pending) => pending,
+            Err(error) => {
+                self.sessions.error = Some(format!("Could not check pending messages: {error}"));
+                self.notify_session_rail(cx);
+                return;
+            }
+        };
+        if self.session_family_has_active_work(&path) || has_pending_messages {
+            self.cover_native_workspace_surface(cx);
+            let pending = PendingMove {
+                focus: cx.focus_handle(),
+                path,
+                target_project,
+                return_focus: window.focused(cx),
+            };
+            pending.focus.focus(window, cx);
+            self.sessions.pending_move = Some(pending);
+            cx.notify();
             return;
         }
         self.send_project_command(
@@ -488,6 +587,37 @@ impl FarcasterApp {
             RuntimeCommand::MoveSession {
                 path,
                 target_project: target_project.clone(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    pub(in crate::app) fn close_move_confirmation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<PendingMove> {
+        let pending = self.sessions.pending_move.take()?;
+        self.restore_overlay_focus(pending.return_focus.clone(), &pending.focus, window, cx);
+        self.restore_active_native_workspace_surface(window, cx);
+        cx.notify();
+        Some(pending)
+    }
+
+    pub(in crate::app) fn stop_and_move_pending_session(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.close_move_confirmation(window, cx) else {
+            return;
+        };
+        self.send_project_command(
+            &pending.target_project,
+            RuntimeCommand::StopAndMoveSession {
+                path: pending.path,
+                target_project: pending.target_project.clone(),
             },
             window,
             cx,

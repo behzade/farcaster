@@ -35,7 +35,7 @@ impl FarcasterApp {
 
     pub(in crate::app) fn commit_session_title_edit(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.sessions.editing_folder.is_some() {
@@ -60,6 +60,10 @@ impl FarcasterApp {
             .map(|path| normalize_session_path(&path));
         let edited_path = normalize_session_path(&edit.path);
         let Some(target) = self.backend_target_for_path(&edit.path, cx) else {
+            self.sessions.editing_title = Some(edit);
+            self.retry_after_session_refresh(edited_path, window, cx, |this, window, cx| {
+                this.commit_session_title_edit(window, cx);
+            });
             return;
         };
         self.sessions

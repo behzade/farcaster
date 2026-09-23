@@ -984,6 +984,8 @@ impl FarcasterApp {
             self.close_jj_init_confirmation(window, cx);
         } else if self.sessions.pending_delete.is_some() {
             self.close_delete_confirmation(window, cx);
+        } else if self.sessions.pending_move.is_some() {
+            self.close_move_confirmation(window, cx);
         } else if self.sessions.import.is_some() {
             self.close_session_import(window, cx);
         } else if self.sessions.pending_archive.is_some() {

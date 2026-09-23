@@ -8,6 +8,7 @@ pub(super) mod quit_confirmation;
 pub(super) mod repository_edit;
 pub(in crate::app) mod send_to_chat;
 pub(super) mod session_import;
+pub(super) mod move_confirmation;
 pub(super) mod settings;
 pub(in crate::app) mod startup_trust;
 pub(super) mod worker_notices;

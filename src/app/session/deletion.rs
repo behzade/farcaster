@@ -1,4 +1,4 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::path::PathBuf;
 
 use gpui::{Context, FocusHandle, Window};
 
@@ -8,7 +8,6 @@ use crate::{runtime::RuntimeCommand, sessions::archived_root_family_for_path};
 pub(in crate::app) struct PendingDelete {
     pub(in crate::app) focus: FocusHandle,
     path: PathBuf,
-    family_paths: HashSet<PathBuf>,
     return_focus: Option<FocusHandle>,
 }
 
@@ -19,26 +18,15 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(family) = archived_root_family_for_path(&self.sessions.all, &path) else {
+        let Some(_) = archived_root_family_for_path(&self.sessions.all, &path) else {
             self.sessions.error = Some("Only an archived root session can be deleted".to_owned());
             self.notify_session_rail(cx);
             return;
         };
-        if self.session_family_has_active_work(&path) {
-            self.sessions.error =
-                Some("Wait for the session family to finish before deleting it".to_owned());
-            self.notify_session_rail(cx);
-            return;
-        }
-        let family_paths = family
-            .into_iter()
-            .map(|session| session.path.clone())
-            .collect();
         self.cover_native_workspace_surface(cx);
         let pending = PendingDelete {
             focus: cx.focus_handle(),
             path,
-            family_paths,
             return_focus: window.focused(cx),
         };
         pending.focus.focus(window, cx);
@@ -46,7 +34,7 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn delete_pending_session(
+    pub(in crate::app) fn stop_and_delete_pending_session(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -54,15 +42,8 @@ impl FarcasterApp {
         let Some(pending) = self.close_delete_confirmation(window, cx) else {
             return;
         };
-        self.sessions
-            .visible
-            .retain(|session| !pending.family_paths.contains(&session.path));
-        if !self.sessions.visible.iter().any(|session| session.archived) {
-            self.sessions.archived_expanded = false;
-        }
-        self.notify_session_rail(cx);
         self.send(
-            RuntimeCommand::DeleteSessionFamily { path: pending.path },
+            RuntimeCommand::StopAndDeleteSessionFamily { path: pending.path },
             cx,
         );
     }
