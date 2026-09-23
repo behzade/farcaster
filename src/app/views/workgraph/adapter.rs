@@ -13,6 +13,7 @@ use super::{
     layout::{BoardLayoutMode, board_layout},
 };
 use crate::{
+    app::FarcasterApp,
     app::ui::assets::AppIcon,
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, icon_button},
     app::ui::theme::THEME,
@@ -20,7 +21,7 @@ use crate::{
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, Focusable as _, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
-    Task, Window, div, prelude::FluentBuilder as _, px,
+    Task, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     input::{Input, InputEvent, InputState, TextareaState},
@@ -32,6 +33,7 @@ pub(crate) const WORKGRAPH_KEY_CONTEXT: &str = "PiWorkGraph";
 pub(crate) const WORKGRAPH_NAV_KEY_CONTEXT: &str = "PiWorkGraph && !Input";
 
 pub(crate) struct WorkGraphBoardView {
+    app: WeakEntity<FarcasterApp>,
     store: Result<crate::app::persistence::SharedStateStore, String>,
     project: PathBuf,
     pub(super) state: PlanLoadState,
@@ -52,6 +54,7 @@ pub(crate) struct WorkGraphBoardView {
 
 impl WorkGraphBoardView {
     pub(crate) fn new(
+        app: WeakEntity<FarcasterApp>,
         store: Result<crate::app::persistence::SharedStateStore, String>,
         project: PathBuf,
         window: &mut Window,
@@ -92,6 +95,7 @@ impl WorkGraphBoardView {
         ];
         let should_refresh = matches!(state, PlanLoadState::Loading);
         let mut view = Self {
+            app,
             store,
             project,
             state,
@@ -147,6 +151,14 @@ impl WorkGraphBoardView {
             self.session_goal = goal;
             cx.notify();
         }
+    }
+
+    fn refresh_sidebar_after_edit(&self, cx: &mut Context<Self>) {
+        let _ = self.app.update(cx, |app, cx| {
+            app.views
+                .workgraph_sidebar
+                .update(cx, |view, cx| view.invalidate_and_refresh(cx));
+        });
     }
 
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -301,12 +313,15 @@ impl WorkGraphBoardView {
         });
         self.state = PlanLoadState::Loading;
         self.refresh = Some(cx.spawn(async move |weak, cx| {
-            let state = match edit.await {
-                Ok(data) => PlanLoadState::Ready(Box::new(data)),
-                Err(error) => PlanLoadState::Failed(error),
+            let (state, changed) = match edit.await {
+                Ok(data) => (PlanLoadState::Ready(Box::new(data)), true),
+                Err(error) => (PlanLoadState::Failed(error), false),
             };
             let _ = weak.update(cx, |this, cx| {
                 this.state = state;
+                if changed {
+                    this.refresh_sidebar_after_edit(cx);
+                }
                 cx.notify();
             });
         }));

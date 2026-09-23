@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+};
 
 use gpui::{
     AppContext as _, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, Render,
@@ -8,7 +11,7 @@ use gpui::{
 
 use super::{
     components::render_session_goal,
-    contract::{PlanLoadState, PlanRow},
+    contract::{PlanData, PlanLoadState, PlanRow},
     core::plan_rows,
 };
 use crate::{
@@ -21,6 +24,8 @@ use crate::{
 };
 use workgraph::load_plan;
 
+const MAX_CACHED_SESSIONS: usize = 8;
+
 pub(crate) struct WorkGraphSidebarView {
     app: WeakEntity<FarcasterApp>,
     store: Result<crate::app::persistence::SharedStateStore, String>,
@@ -28,6 +33,8 @@ pub(crate) struct WorkGraphSidebarView {
     session_id: Option<String>,
     session_goal: Option<crate::agents::SessionGoal>,
     state: PlanLoadState,
+    cache: HashMap<(PathBuf, String), Box<PlanData>>,
+    cache_order: VecDeque<(PathBuf, String)>,
     refresh: Option<Task<()>>,
 }
 
@@ -36,26 +43,23 @@ impl WorkGraphSidebarView {
         app: WeakEntity<FarcasterApp>,
         store: Result<crate::app::persistence::SharedStateStore, String>,
         project: PathBuf,
-        cx: &mut gpui::Context<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) -> Self {
         let state = match &store {
-            Ok(_) => PlanLoadState::Loading,
+            Ok(_) => PlanLoadState::Ready(Box::default()),
             Err(error) => PlanLoadState::Failed(error.clone()),
         };
-        let should_refresh = matches!(state, PlanLoadState::Loading);
-        let mut view = Self {
+        Self {
             app,
             store,
             project,
             session_id: None,
             session_goal: None,
             state,
+            cache: HashMap::new(),
+            cache_order: VecDeque::new(),
             refresh: None,
-        };
-        if should_refresh {
-            view.refresh(cx);
         }
-        view
     }
 
     pub(crate) fn refresh_for(
@@ -65,15 +69,42 @@ impl WorkGraphSidebarView {
         session_goal: Option<Option<crate::agents::SessionGoal>>,
         cx: &mut gpui::Context<Self>,
     ) {
-        if self.project != project || self.session_id != session_id {
-            self.state = PlanLoadState::Ready(Box::default());
+        let changed = self.project != project || self.session_id != session_id;
+        if changed {
+            self.refresh = None;
+            self.project = project;
+            self.session_id = session_id;
             self.session_goal = None;
+            let key = self
+                .session_id
+                .as_ref()
+                .map(|session_id| (self.project.clone(), session_id.clone()));
+            let cached = key.as_ref().and_then(|key| self.cache.get(key).cloned());
+            if cached.is_some()
+                && let Some(key) = key
+            {
+                self.cache_order.retain(|entry| entry != &key);
+                self.cache_order.push_back(key);
+            }
+            let needs_load = self.session_id.is_some() && cached.is_none();
+            self.state = match (&self.store, cached) {
+                (_, Some(data)) => PlanLoadState::Ready(data),
+                (Ok(_), None) => PlanLoadState::Ready(Box::default()),
+                (Err(error), None) => PlanLoadState::Failed(error.clone()),
+            };
+            cx.notify();
+            if needs_load {
+                self.refresh(cx);
+            }
         }
-        self.project = project;
-        self.session_id = session_id;
         if let Some(goal) = session_goal {
-            self.session_goal = goal;
+            self.set_session_goal(goal, cx);
         }
+    }
+
+    pub(crate) fn invalidate_and_refresh(&mut self, cx: &mut gpui::Context<Self>) {
+        self.cache.clear();
+        self.cache_order.clear();
         self.refresh(cx);
     }
 
@@ -89,15 +120,17 @@ impl WorkGraphSidebarView {
     }
 
     pub(crate) fn refresh(&mut self, cx: &mut gpui::Context<Self>) {
+        let Some(session_id) = self.session_id.clone() else {
+            return;
+        };
         let notify_loading = prepare_refresh(&mut self.state);
         let store = self.store.clone();
         let project = self.project.clone();
-        let session_id = self.session_id.clone();
+        let key = (project.clone(), session_id.clone());
         let load = cx.background_spawn(async move {
             store?.with(|store| {
-                store.with_connection(|connection| {
-                    load_plan(connection, project, session_id.as_deref())
-                })
+                store
+                    .with_connection(|connection| load_plan(connection, project, Some(&session_id)))
             })
         });
         self.refresh = Some(cx.spawn(async move |weak, cx| {
@@ -106,6 +139,19 @@ impl WorkGraphSidebarView {
                 Err(error) => PlanLoadState::Failed(error),
             };
             let _ = weak.update(cx, |this, cx| {
+                if this.project != key.0 || this.session_id.as_deref() != Some(&key.1) {
+                    return;
+                }
+                if let PlanLoadState::Ready(data) = &state {
+                    this.cache_order.retain(|entry| entry != &key);
+                    this.cache_order.push_back(key.clone());
+                    this.cache.insert(key, data.clone());
+                    if this.cache.len() > MAX_CACHED_SESSIONS
+                        && let Some(oldest) = this.cache_order.pop_front()
+                    {
+                        this.cache.remove(&oldest);
+                    }
+                }
                 if this.state != state {
                     this.state = state;
                     cx.notify();

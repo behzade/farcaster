@@ -41,6 +41,7 @@ pub(super) fn create(
     let run_panel = cx.new(|_| RunPanelView::new(app.clone()));
     let workgraph = cx.new(|cx| {
         WorkGraphBoardView::new(
+            app.clone(),
             crate::app::infrastructure::persistence::shared(),
             project.to_path_buf(),
             window,

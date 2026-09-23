@@ -31,7 +31,9 @@ pub(super) fn spawn(
         while workgraph_updates.recv().await.is_ok() {
             if weak
                 .update(cx, |this, cx| {
-                    this.refresh_workgraph_sidebar(cx);
+                    this.views
+                        .workgraph_sidebar
+                        .update(cx, |view, cx| view.invalidate_and_refresh(cx));
                     this.views.workgraph.update(cx, |view, cx| view.refresh(cx));
                 })
                 .is_err()

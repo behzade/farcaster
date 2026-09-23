@@ -120,6 +120,7 @@ impl WorkGraphBoardView {
                         this.all_plans = false;
                         this.state = PlanLoadState::Ready(Box::new(data));
                         this.selected = Some(number);
+                        this.refresh_sidebar_after_edit(cx);
                     }
                     Err(error) => this.state = PlanLoadState::Failed(error),
                 }
