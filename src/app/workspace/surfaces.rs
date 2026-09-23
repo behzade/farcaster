@@ -877,6 +877,7 @@ impl FarcasterApp {
         self.project.trust_project = Some(self.project.path.clone());
         self.project.trust_backend = None;
         self.project.pending_trust_command = None;
+        self.project.pending_trust_action = None;
         self.open_sheet(AppSheet::ProjectTrust, window, cx);
     }
 

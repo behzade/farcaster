@@ -152,6 +152,7 @@ impl FarcasterApp {
                 trust_project: None,
                 trust_backend: None,
                 pending_trust_command: None,
+                pending_trust_action: None,
             },
             sessions: session::SessionState {
                 visible: Vec::new(),

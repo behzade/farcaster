@@ -26,9 +26,10 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if !self.project.repository.execution_allowed {
-            self.notify_workspace_error(
-                "Terminal",
-                "Trust this project before opening its terminal.".to_owned(),
+            self.request_project_trust_for_action(
+                project.clone(),
+                crate::app::project::trust::PendingTrustAction::Terminal(project),
+                window,
                 cx,
             );
             return;

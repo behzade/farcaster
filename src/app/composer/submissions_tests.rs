@@ -283,6 +283,42 @@ fn resolved_submissions_are_ordered_by_submission_time_then_id() {
 }
 
 #[test]
+fn a_later_failure_waits_for_the_earlier_submission_in_the_same_chat() {
+    let base = Instant::now();
+    let first = PendingSubmission {
+        id: "first".into(),
+        submitted_at: base,
+        submitted_target: "session:one".into(),
+        text: "first".into(),
+        result: None,
+        ..pending()
+    };
+    let second = PendingSubmission {
+        id: "second".into(),
+        submitted_at: base + Duration::from_millis(1),
+        submitted_target: "session:one".into(),
+        text: "second".into(),
+        result: Some((crate::agents::PromptOutcome::RejectedBeforeAcceptance, None)),
+        ..pending()
+    };
+    let mut submissions =
+        std::collections::HashMap::from([(first.id.clone(), first), (second.id.clone(), second)]);
+
+    assert!(take_resolved_pending_submissions(&mut submissions).is_empty());
+    assert_eq!(submissions.len(), 2);
+    submissions.get_mut("first").unwrap().result =
+        Some((crate::agents::PromptOutcome::RejectedBeforeAcceptance, None));
+    let resolved = take_resolved_pending_submissions(&mut submissions);
+    assert_eq!(
+        resolved
+            .iter()
+            .map(|(_, row, _, _)| row.id.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+}
+
+#[test]
 fn rejected_submissions_restore_every_text_in_order() {
     use crate::app::composer::sessions::ComposerSessions;
 

@@ -21,7 +21,7 @@ use crate::{
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
-        primitives::{AppIconSize, activates_button, app_icon},
+        primitives::{AppIconSize, ButtonTone, activates_button, app_icon, button},
     },
     repository::{RepositoryEdit, RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };
@@ -48,6 +48,7 @@ impl FarcasterApp {
             panel.clone(),
             !browser.query.trim().is_empty(),
         );
+        let trust = entity.clone();
 
         div()
             .flex_1()
@@ -126,14 +127,26 @@ impl FarcasterApp {
                     ))
             })
             .when(!self.project.repository.execution_allowed, |section| {
-                section.child(
-                    div()
-                        .id("repository-disabled")
-                        .role(Role::Status)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.warning)
-                        .child("Repository integration is disabled for this untrusted project"),
-                )
+                section
+                    .child(
+                        div()
+                            .id("repository-disabled")
+                            .role(Role::Status)
+                            .text_size(THEME.type_scale.caption)
+                            .text_color(THEME.colors.warning)
+                            .child("Repository integration is disabled for this untrusted project"),
+                    )
+                    .child(button(
+                        "trust-repository-project",
+                        "Trust project…",
+                        ButtonTone::Quiet,
+                        true,
+                        move |window, cx| {
+                            let _ = trust.update(cx, |this, cx| {
+                                this.open_project_trust(window, cx);
+                            });
+                        },
+                    ))
             })
             .when(
                 self.project.repository.execution_allowed

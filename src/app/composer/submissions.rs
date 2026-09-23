@@ -322,11 +322,20 @@ pub(in crate::app) fn take_resolved_pending_submissions(
     crate::agents::PromptOutcome,
     Option<std::path::PathBuf>,
 )> {
-    let completed = pending
-        .iter()
-        .filter_map(|(id, pending)| pending.result.clone().map(|result| (id.clone(), result)))
+    let mut ordered = pending.iter().collect::<Vec<_>>();
+    ordered.sort_by(|left, right| submission_order(left.1, right.1));
+    let mut waiting_targets = std::collections::HashSet::new();
+    let completed = ordered
+        .into_iter()
+        .filter_map(|(id, submission)| {
+            let Some(result) = submission.result.clone() else {
+                waiting_targets.insert(submission.submitted_target.clone());
+                return None;
+            };
+            (!waiting_targets.contains(&submission.submitted_target)).then(|| (id.clone(), result))
+        })
         .collect::<Vec<_>>();
-    let mut resolved = completed
+    completed
         .into_iter()
         .filter_map(|(id, (outcome, session))| {
             pending.remove(&id).map(|submission| {
@@ -334,9 +343,7 @@ pub(in crate::app) fn take_resolved_pending_submissions(
                 (target, submission, outcome, session)
             })
         })
-        .collect::<Vec<_>>();
-    resolved.sort_by(|left, right| submission_order(&left.1, &right.1));
-    resolved
+        .collect()
 }
 
 fn submission_order(left: &PendingSubmission, right: &PendingSubmission) -> std::cmp::Ordering {

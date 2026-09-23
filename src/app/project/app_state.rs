@@ -9,4 +9,5 @@ pub(in crate::app) struct ProjectState {
     pub(in crate::app) trust_project: Option<PathBuf>,
     pub(in crate::app) trust_backend: Option<Backend>,
     pub(in crate::app) pending_trust_command: Option<RuntimeCommand>,
+    pub(in crate::app) pending_trust_action: Option<super::trust::PendingTrustAction>,
 }

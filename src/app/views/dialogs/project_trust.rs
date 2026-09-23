@@ -133,13 +133,17 @@ pub(in crate::app::views) fn render(
                         div()
                             .text_size(THEME.type_scale.caption)
                             .text_color(THEME.colors.subtle)
-                            .child(if app.project.pending_trust_command.is_some() {
-                                "Choose a decision to continue opening this project, or close to cancel."
-                            } else if backend.is_some() {
-                                "Restart Farcaster after changing this decision."
-                            } else {
-                                "This decision controls Farcaster's repository commands."
-                            }),
+                            .child(
+                                if app.project.pending_trust_command.is_some()
+                                    || app.project.pending_trust_action.is_some()
+                                {
+                                    "Choose a decision to continue, or close to cancel."
+                                } else if backend.is_some() {
+                                    "Restart Farcaster after changing this decision."
+                                } else {
+                                    "This decision controls Farcaster's repository commands."
+                                },
+                            ),
                     ),
             )
         },

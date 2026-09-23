@@ -40,7 +40,7 @@ pub(in crate::app) struct CodeContext {
     pub modified: bool,
 }
 
-pub(super) enum EditorTarget {
+pub(in crate::app) enum EditorTarget {
     Resume,
     File(PathBuf, Option<u64>),
     Diff(PathBuf, Option<u64>),

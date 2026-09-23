@@ -861,6 +861,34 @@ fn explicit_missing_submission_id_never_uses_legacy_target_fallback() {
 }
 
 #[test]
+fn a_submission_id_cannot_settle_a_different_chat() {
+    let mut pending = HashMap::from([(
+        "id".into(),
+        PendingSubmission {
+            id: "id".into(),
+            submitted_at: std::time::Instant::now(),
+            submitted_target: "session:one".into(),
+            mode: crate::protocol::PromptMode::Normal,
+            text: "first chat".into(),
+            images: Vec::new(),
+            pastes: Vec::new(),
+            append_on_failure: true,
+            result: None,
+        },
+    )]);
+
+    record_pending_prompt_result_for_submission(
+        &mut pending,
+        Some("id"),
+        "session:two",
+        crate::agents::PromptOutcome::Accepted,
+        None,
+    );
+
+    assert!(pending["id"].result.is_none());
+}
+
+#[test]
 fn legacy_prompt_result_without_id_resolves_one_unambiguous_target() {
     let target = "session:one";
     let mut pending = HashMap::from([(

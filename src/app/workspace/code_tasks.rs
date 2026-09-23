@@ -25,11 +25,26 @@ struct TaskNotice {
 
 #[derive(Default)]
 pub(in crate::app) struct CodeTasks {
+    // More than one message may be in flight for the same chat.
     pending: HashMap<String, TaskChat>,
     notice: Option<TaskNotice>,
 }
 
 impl CodeTasks {
+    fn track(&mut self, chat: TaskChat) {
+        self.pending.insert(chat.submission_id.clone(), chat);
+    }
+
+    fn finish(&mut self, submission_id: Option<&str>, target: &str) -> Option<TaskChat> {
+        let id = submission_id.map(str::to_owned).or_else(|| {
+            let mut matches = self.pending.values().filter(|chat| chat.target == target);
+            let only = matches.next()?;
+            matches.next().is_none().then(|| only.submission_id.clone())
+        })?;
+        self.pending.get(&id).filter(|chat| chat.target == target)?;
+        self.pending.remove(&id)
+    }
+
     pub(in crate::app) fn notice_message(&self) -> Option<&'static str> {
         let notice = self.notice.as_ref()?;
         Some(match (notice.chat.new_task, notice.result) {
@@ -44,7 +59,11 @@ impl CodeTasks {
 
     pub(in crate::app) fn associate(&mut self, target: &str, session: Option<&std::path::Path>) {
         let Some(session) = session else { return };
-        if let Some(chat) = self.pending.get_mut(target) {
+        for chat in self
+            .pending
+            .values_mut()
+            .filter(|chat| chat.target == target)
+        {
             chat.session = Some(session.to_path_buf());
         }
         if let Some(notice) = &mut self.notice
@@ -64,21 +83,17 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let target = destination.target;
-        if crate::app::composer::submissions::has_pending_submission(
-            &self.composer.pending_submissions,
-            &target,
-        ) {
-            self.send_to_chat_error(
-                "A message is still being sent to this chat. Try again shortly.".into(),
-                cx,
-            );
-            return;
-        }
+        let target = destination.target.clone();
         if destination
             .harness
             .is_some_and(|harness| !self.ensure_backend_trust(harness, &project, window, cx))
         {
+            self.project.pending_trust_action =
+                Some(crate::app::project::trust::PendingTrustAction::SendToChat {
+                    destination,
+                    project,
+                    message,
+                });
             return;
         }
         let chat = TaskChat {
@@ -124,6 +139,9 @@ impl FarcasterApp {
         if settings.harness.is_some_and(|harness| {
             !self.ensure_backend_trust(harness, &settings.project, window, cx)
         }) {
+            self.project.pending_trust_action = Some(
+                crate::app::project::trust::PendingTrustAction::StartCodeTask { settings, message },
+            );
             return;
         }
         let draft =
@@ -184,25 +202,50 @@ impl FarcasterApp {
                 result: None,
             },
         );
-        self.workspace
-            .code_tasks
-            .pending
-            .insert(target.clone(), chat.clone());
+        self.workspace.code_tasks.track(chat.clone());
         self.show_code_task_notice(chat, None, cx);
     }
 
     pub(in crate::app) fn code_task_result(
         &mut self,
+        submission_id: Option<&str>,
         target: &str,
         accepted: bool,
         session: Option<&std::path::Path>,
         cx: &mut Context<Self>,
     ) {
         self.workspace.code_tasks.associate(target, session);
-        let Some(chat) = self.workspace.code_tasks.pending.remove(target) else {
+        let Some(chat) = self.workspace.code_tasks.finish(submission_id, target) else {
             return;
         };
-        self.show_code_task_notice(chat, Some(accepted), cx);
+        if self
+            .workspace
+            .code_tasks
+            .notice
+            .as_ref()
+            .is_some_and(|notice| notice.chat.submission_id == chat.submission_id)
+        {
+            self.show_code_task_notice(chat, Some(accepted), cx);
+        }
+    }
+
+    pub(in crate::app) fn code_tasks_stopped(
+        &mut self,
+        target: &str,
+        session: Option<&std::path::Path>,
+        cx: &mut Context<Self>,
+    ) {
+        let ids = self
+            .workspace
+            .code_tasks
+            .pending
+            .values()
+            .filter(|chat| chat.target == target)
+            .map(|chat| chat.submission_id.clone())
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.code_task_result(Some(&id), target, false, session, cx);
+        }
     }
 
     fn show_code_task_notice(
@@ -247,3 +290,7 @@ impl FarcasterApp {
         self.show_chat_surface(window, cx);
     }
 }
+
+#[cfg(test)]
+#[path = "code_tasks_tests.rs"]
+mod tests;

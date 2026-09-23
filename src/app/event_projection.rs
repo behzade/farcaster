@@ -627,7 +627,13 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         let accepted = outcome == crate::agents::PromptOutcome::Accepted;
-        self.code_task_result(&target, accepted, session.as_deref(), cx);
+        self.code_task_result(
+            submission_id.as_deref(),
+            &target,
+            accepted,
+            session.as_deref(),
+            cx,
+        );
         self.record_draft_submission(&target, accepted, session.clone());
         if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
             self.activity
@@ -846,8 +852,10 @@ impl FarcasterApp {
             } => {
                 if status == "Stopped" {
                     let session_key = session.as_deref().map(session_target);
-                    for (key, pending) in &mut self.composer.pending_submissions {
-                        if pending.submitted_target == target || Some(key) == session_key.as_ref() {
+                    for pending in self.composer.pending_submissions.values_mut() {
+                        if pending.submitted_target == target
+                            || Some(&pending.submitted_target) == session_key.as_ref()
+                        {
                             pending.result.get_or_insert((
                                 crate::agents::PromptOutcome::RejectedBeforeAcceptance,
                                 session.clone(),
@@ -876,7 +884,7 @@ impl FarcasterApp {
                     .associate(&target, session.as_deref());
                 dirty.root |= self.workspace.code_tasks.notice_message().is_some();
                 if status == "Stopped" {
-                    self.code_task_result(&target, false, session.as_deref(), cx);
+                    self.code_tasks_stopped(&target, session.as_deref(), cx);
                 }
                 self.record_session_status(target, session, status);
                 dirty.rail |= self.reconcile_submitted_drafts(cx);
@@ -969,7 +977,10 @@ pub(in crate::app) fn record_pending_prompt_result_for_submission(
     // An uncertain send remains in the visible saved-message queue. It is no
     // longer active work and must not keep the quit warning on screen.
     let key = match submission_id {
-        Some(id) => pending.contains_key(id).then(|| id.to_owned()),
+        Some(id) => pending
+            .get(id)
+            .is_some_and(|row| row.submitted_target == target)
+            .then(|| id.to_owned()),
         None => {
             let mut matches = pending.iter().filter(|(_, pending)| {
                 pending.submitted_target == target && pending.result.is_none()

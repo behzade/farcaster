@@ -15,7 +15,7 @@ use super::{
 };
 use crate::reviews::{Review, resolve_path};
 
-pub(super) enum EditorRequest {
+pub(in crate::app) enum EditorRequest {
     Project(PathBuf),
     File {
         project: PathBuf,
@@ -205,7 +205,7 @@ impl FarcasterApp {
         );
     }
 
-    fn open_editor_request(
+    pub(in crate::app) fn open_editor_request(
         &mut self,
         request: EditorRequest,
         window: &mut Window,
@@ -218,9 +218,10 @@ impl FarcasterApp {
         };
         let choice = effective_editor_choice(self.settings.editor_choice, project);
         if !self.project.repository.execution_allowed {
-            self.notify_workspace_error(
-                choice.label(),
-                format!("Trust this project before opening {}.", choice.label()),
+            self.request_project_trust_for_action(
+                project.clone(),
+                crate::app::project::trust::PendingTrustAction::Editor(request),
+                window,
                 cx,
             );
             return;
@@ -230,7 +231,7 @@ impl FarcasterApp {
         }
     }
 
-    pub(super) fn activate_editor_tab(
+    pub(in crate::app) fn activate_editor_tab(
         &mut self,
         project: PathBuf,
         editor_target: EditorTarget,
@@ -238,9 +239,13 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         if !self.project.repository.execution_allowed {
-            self.notify_workspace_error(
-                "Neovim",
-                "Trust this project before opening Neovim.".to_owned(),
+            self.request_project_trust_for_action(
+                project.clone(),
+                crate::app::project::trust::PendingTrustAction::EditorTab {
+                    project,
+                    target: editor_target,
+                },
+                window,
                 cx,
             );
             return;
