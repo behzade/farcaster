@@ -18,7 +18,7 @@ pub(crate) use farcaster_storage as storage;
 pub(crate) use farcaster_utility as utility;
 
 fn main() -> std::process::ExitCode {
-    if let Err(error) = app::infrastructure::neovim_launch::run_if_requested() {
+    if let Err(error) = app::infrastructure::editor_launch::run_if_requested() {
         return fail(error);
     }
 

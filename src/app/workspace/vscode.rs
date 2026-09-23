@@ -1,15 +1,10 @@
-use std::{
-    io::Write as _,
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
-
-use crate::repository::git_head_contents;
 use gpui::{Context, Window};
+use std::path::{Path, PathBuf};
 
 use super::{
     FarcasterApp,
     editor::{EditorBackend, EditorRequest},
+    external_editor,
 };
 
 pub(super) struct VsCodeBackend;
@@ -19,8 +14,8 @@ impl EditorBackend for VsCodeBackend {
         "VS Code"
     }
 
-    fn program(&self) -> PathBuf {
-        PathBuf::from("code")
+    fn program(&self, project: &Path) -> PathBuf {
+        farcaster_editors::EditorChoice::VsCode.program(project, None)
     }
 
     fn open(
@@ -71,18 +66,7 @@ fn open_locations(project: &Path, locations: &[(PathBuf, Option<u64>)]) -> Resul
 }
 
 fn open_diff(project: &Path, path: &Path) -> Result<(), String> {
-    let suffix = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| format!(".{extension}"))
-        .unwrap_or_default();
-    let mut base = tempfile::Builder::new()
-        .prefix("farcaster-head-")
-        .suffix(&suffix)
-        .tempfile()
-        .map_err(|error| format!("prepare VS Code diff: {error}"))?;
-    base.write_all(&git_head_contents(path)?)
-        .map_err(|error| format!("prepare VS Code diff: {error}"))?;
+    let base = external_editor::head_tempfile(path, "VS Code")?;
     let arguments = [
         "--wait".to_owned(),
         "--diff".to_owned(),
@@ -97,27 +81,5 @@ fn launch(
     arguments: &[String],
     temporary: Option<tempfile::NamedTempFile>,
 ) -> Result<(), String> {
-    let mut child = Command::new("code")
-        .args(arguments)
-        .current_dir(project)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| {
-            format!("start VS Code (`code`): {error}. Install its shell command in PATH.")
-        })?;
-    std::thread::spawn(move || {
-        match child.wait() {
-            Ok(status) if !status.success() => {
-                zlog::warn!("VS Code command exited with {status}");
-            }
-            Err(error) => {
-                zlog::warn!("VS Code command failed: {error}");
-            }
-            _ => {}
-        }
-        drop(temporary);
-    });
-    Ok(())
+    external_editor::launch(Path::new("code"), "VS Code", project, arguments, temporary)
 }

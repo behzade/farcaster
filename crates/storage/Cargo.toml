@@ -13,6 +13,7 @@ test-support = []
 farcaster-access = { path = "../access" }
 farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-agents = { path = "../agents" }
+farcaster-editors = { path = "../editors" }
 farcaster-projects = { path = "../projects" }
 farcaster-repository = { path = "../repository" }
 farcaster-sessions = { path = "../sessions" }

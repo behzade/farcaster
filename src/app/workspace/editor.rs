@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsStr,
+    ffi::OsString,
     path::{Path, PathBuf},
 };
 
@@ -7,9 +7,12 @@ use gpui::{AppContext as _, Context, Window};
 
 use super::{
     AppSurface, FarcasterApp,
+    helix::HelixBackend,
+    helix::HelixEditor,
     neovim::{EditorTarget, NvimEditor, new_session_tab},
     neovim_adapter::NeovimBackend,
     vscode::VsCodeBackend,
+    zed::ZedBackend,
 };
 use crate::reviews::{Review, resolve_path};
 
@@ -30,10 +33,10 @@ pub(super) enum EditorRequest {
 
 pub(super) trait EditorBackend {
     fn name(&self) -> &'static str;
-    fn program(&self) -> PathBuf;
+    fn program(&self, project: &Path) -> PathBuf;
     fn available(&self, project: &Path) -> bool {
-        executable_available(
-            &self.program(),
+        farcaster_editors::executable_available(
+            &self.program(project),
             project,
             std::env::var_os("PATH").as_deref(),
         )
@@ -50,9 +53,13 @@ pub(super) trait EditorBackend {
 fn backend(choice: crate::storage::EditorChoice) -> &'static dyn EditorBackend {
     static NEOVIM: NeovimBackend = NeovimBackend;
     static VSCODE: VsCodeBackend = VsCodeBackend;
+    static ZED: ZedBackend = ZedBackend;
+    static HELIX: HelixBackend = HelixBackend;
     match choice {
         crate::storage::EditorChoice::Neovim => &NEOVIM,
         crate::storage::EditorChoice::VsCode => &VSCODE,
+        crate::storage::EditorChoice::Zed => &ZED,
+        crate::storage::EditorChoice::Helix => &HELIX,
     }
 }
 
@@ -67,14 +74,10 @@ pub(in crate::app) fn effective_editor_choice(
     choice: crate::storage::EditorChoice,
     project: &Path,
 ) -> crate::storage::EditorChoice {
-    [
-        choice,
-        crate::storage::EditorChoice::Neovim,
-        crate::storage::EditorChoice::VsCode,
-    ]
-    .into_iter()
-    .find(|candidate| editor_available(*candidate, project))
-    .unwrap_or(choice)
+    std::iter::once(choice)
+        .chain(crate::storage::EditorChoice::ALL)
+        .find(|candidate| editor_available(*candidate, project))
+        .unwrap_or(choice)
 }
 
 fn selected_backend(
@@ -82,40 +85,6 @@ fn selected_backend(
     project: &Path,
 ) -> &'static dyn EditorBackend {
     backend(effective_editor_choice(choice, project))
-}
-
-fn executable_available(program: &Path, project: &Path, search_path: Option<&OsStr>) -> bool {
-    if program.is_absolute() {
-        return is_executable(program);
-    }
-    if program.components().count() > 1 {
-        return is_executable(&project.join(program));
-    }
-    search_path.is_some_and(|path| {
-        std::env::split_paths(path).any(|directory| {
-            let directory = if directory.is_absolute() {
-                directory
-            } else {
-                project.join(directory)
-            };
-            is_executable(&directory.join(program))
-        })
-    })
-}
-
-fn is_executable(path: &Path) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        metadata.is_file()
-    }
 }
 
 impl FarcasterApp {
@@ -328,6 +297,7 @@ impl FarcasterApp {
             EditorTarget::Review(_) | EditorTarget::ReviewLocation { .. }
         );
         self.workspace.editor.view = Some(editor.clone());
+        self.workspace.editor.helix_view = None;
         self.hide_terminal(cx);
         // Startup prompts can block remote requests until the user responds.
         // Show the terminal before waiting so those prompts remain accessible.
@@ -457,8 +427,78 @@ impl FarcasterApp {
         }
     }
 
+    pub(super) fn activate_helix_editor(
+        &mut self,
+        project: PathBuf,
+        title: String,
+        arguments: Vec<OsString>,
+        temporary: Option<tempfile::NamedTempFile>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let project = project.canonicalize().unwrap_or(project);
+        let key = (
+            project.clone(),
+            self.composer.sessions.current_target().to_owned(),
+        );
+        let existing = self.workspace.editor.helix_editors.get(&key).cloned();
+        let editor = existing
+            .clone()
+            .unwrap_or_else(|| cx.new(|_| HelixEditor::new(project)));
+        editor.update(cx, |editor, cx| {
+            editor.open(arguments, title, temporary, window, cx)
+        })?;
+        if existing.is_none() {
+            self.workspace
+                .editor
+                .helix_editors
+                .insert(key.clone(), editor.clone());
+            let monitored = editor.clone();
+            self.monitor_native_process(window, cx, move |this, _window, cx| {
+                if this.workspace.editor.helix_editors.get(&key) != Some(&monitored) {
+                    return false;
+                }
+                if monitored.update(cx, |editor, cx| editor.retain_alive(cx)) {
+                    return true;
+                }
+                this.workspace.editor.helix_editors.remove(&key);
+                if this.workspace.editor.helix_view.as_ref() == Some(&monitored) {
+                    if this.workspace.surface == AppSurface::Editor {
+                        this.close_editor(cx);
+                    } else {
+                        this.workspace.editor.helix_view = None;
+                        this.workspace.editor.ready = false;
+                        this.workspace.editor.return_focus = None;
+                        this.request_repository_refresh(cx);
+                    }
+                }
+                false
+            });
+        }
+        self.retain_workspace_draft(cx);
+        let switching = self.workspace.editor.helix_view.as_ref() != Some(&editor);
+        if switching {
+            self.hide_editor(cx);
+        }
+        if switching || self.workspace.surface != AppSurface::Editor {
+            self.workspace.editor.return_focus = window.focused(cx);
+        }
+        self.workspace.editor.view = None;
+        self.workspace.editor.helix_view = Some(editor);
+        self.workspace.editor.active_review = None;
+        self.hide_terminal(cx);
+        self.workspace.editor.ready = true;
+        self.reveal_native_center_surface(AppSurface::Editor, window, cx);
+        self.notify_run_panel(cx);
+        cx.notify();
+        Ok(())
+    }
+
     pub(in crate::app) fn hide_editor(&self, cx: &mut Context<Self>) {
         if let Some(editor) = self.workspace.editor.view.as_ref() {
+            editor.update(cx, |editor, cx| editor.set_visible(false, cx));
+        }
+        if let Some(editor) = self.workspace.editor.helix_view.as_ref() {
             editor.update(cx, |editor, cx| editor.set_visible(false, cx));
         }
     }
@@ -469,12 +509,18 @@ impl FarcasterApp {
             && let Some(editor) = self.workspace.editor.view.as_ref()
         {
             editor.update(cx, |editor, cx| editor.set_visible(true, cx));
+        } else if self.workspace.surface == AppSurface::Editor
+            && self.workspace.editor.ready
+            && let Some(editor) = self.workspace.editor.helix_view.as_ref()
+        {
+            editor.update(cx, |editor, cx| editor.set_visible(true, cx));
         }
     }
 
     pub(in crate::app) fn close_editor(&mut self, cx: &mut Context<Self>) {
         self.hide_editor(cx);
         self.workspace.editor.view = None;
+        self.workspace.editor.helix_view = None;
         self.workspace.editor.ready = false;
         let focus = self
             .workspace

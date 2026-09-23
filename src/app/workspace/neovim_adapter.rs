@@ -14,7 +14,7 @@ impl EditorBackend for NeovimBackend {
         "Neovim"
     }
 
-    fn program(&self) -> PathBuf {
+    fn program(&self, _project: &std::path::Path) -> PathBuf {
         super::neovim::nvim_executable()
     }
 

@@ -1901,6 +1901,7 @@ dependencies = [
  "farcaster-agents",
  "farcaster-contracts",
  "farcaster-conversation",
+ "farcaster-editors",
  "farcaster-mcp-server",
  "farcaster-projects",
  "farcaster-repository",
@@ -2003,6 +2004,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "farcaster-editors"
+version = "0.1.0"
+
+[[package]]
 name = "farcaster-mcp-server"
 version = "0.1.0"
 dependencies = [
@@ -2087,6 +2092,7 @@ dependencies = [
  "farcaster-access",
  "farcaster-agent-protocol",
  "farcaster-agents",
+ "farcaster-editors",
  "farcaster-projects",
  "farcaster-repository",
  "farcaster-sessions",

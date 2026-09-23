@@ -53,6 +53,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState, TextareaState};
 use workspace::Terminal;
+use workspace::helix::HelixEditor;
 use workspace::neovim::NvimEditor;
 
 use crate::{

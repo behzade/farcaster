@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 55] = [
+const ICON_PATHS: [&str; 57] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -57,10 +57,12 @@ const ICON_PATHS: [&str; 55] = [
     "icons/workbench/codex.svg",
     "icons/workbench/cursor.svg",
     "icons/workbench/ghostty.svg",
+    "icons/workbench/helix.svg",
     "icons/workbench/neovim.svg",
     "icons/workbench/opencode.svg",
     "icons/workbench/pi.svg",
     "icons/workbench/vscode.svg",
+    "icons/workbench/zed.svg",
 ];
 
 pub(crate) struct AppAssets;
@@ -275,6 +277,9 @@ impl AssetSource for AppAssets {
             "icons/workbench/ghostty.svg" => Some(include_bytes!(
                 "../../../assets/workbench-icons/ghostty.svg"
             )),
+            "icons/workbench/helix.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/helix.svg"))
+            }
             "icons/workbench/neovim.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/neovim.svg"))
             }
@@ -286,6 +291,9 @@ impl AssetSource for AppAssets {
             }
             "icons/workbench/vscode.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/vscode.svg"))
+            }
+            "icons/workbench/zed.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/zed.svg"))
             }
             _ => None,
         };
@@ -327,6 +335,7 @@ pub(crate) enum AppIcon {
     Folder,
     FolderPlus,
     Ghostty,
+    Helix,
     GitFork,
     Hourglass,
     Key,
@@ -343,6 +352,7 @@ pub(crate) enum AppIcon {
     Trash,
     WarningCircle,
     VsCode,
+    Zed,
     X,
     XCircle,
 }
@@ -389,6 +399,7 @@ impl IconNamed for AppIcon {
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
             Self::Ghostty => return "icons/workbench/ghostty.svg".into(),
+            Self::Helix => return "icons/workbench/helix.svg".into(),
             Self::GitFork => "git-fork",
             Self::Hourglass => "hourglass",
             Self::Key => "key",
@@ -405,6 +416,7 @@ impl IconNamed for AppIcon {
             Self::Trash => "trash",
             Self::WarningCircle => "warning-circle",
             Self::VsCode => return "icons/workbench/vscode.svg".into(),
+            Self::Zed => return "icons/workbench/zed.svg".into(),
             Self::X => "x",
             Self::XCircle => "x-circle",
         };

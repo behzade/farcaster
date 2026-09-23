@@ -194,16 +194,30 @@ impl FarcasterApp {
         if !self.workspace.native_surface_covered {
             self.workspace.native_surface_covered = match self.workspace.surface {
                 AppSurface::Editor => {
-                    self.workspace.editor.ready && self.workspace.editor.view.is_some()
+                    self.workspace.editor.ready
+                        && (self.workspace.editor.view.is_some()
+                            || self.workspace.editor.helix_view.is_some())
                 }
                 AppSurface::Terminal => self.workspace.terminal.view.is_some(),
                 AppSurface::Chat | AppSurface::Work => false,
             };
             if self.workspace.native_surface_covered {
                 self.workspace.native_surface_snapshot = match self.workspace.surface {
-                    AppSurface::Editor => self.workspace.editor.view.as_ref().and_then(|editor| {
-                        editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()
-                    }),
+                    AppSurface::Editor => self
+                        .workspace
+                        .editor
+                        .view
+                        .as_ref()
+                        .and_then(|editor| editor.update(cx, |editor, cx| editor.snapshot(cx)).ok())
+                        .or_else(|| {
+                            self.workspace
+                                .editor
+                                .helix_view
+                                .as_ref()
+                                .and_then(|editor| {
+                                    editor.update(cx, |editor, cx| editor.snapshot(cx)).ok()
+                                })
+                        }),
                     AppSurface::Terminal => {
                         self.workspace.terminal.view.as_ref().and_then(|terminal| {
                             terminal.update(cx, |terminal, _| terminal.snapshot()).ok()
@@ -366,6 +380,10 @@ impl FarcasterApp {
                     AppSurface::Editor => {
                         if self.workspace.editor.ready
                             && let Some(editor) = self.workspace.editor.view.as_ref()
+                        {
+                            editor.update(cx, |editor, cx| editor.focus(window, cx));
+                        } else if self.workspace.editor.ready
+                            && let Some(editor) = self.workspace.editor.helix_view.as_ref()
                         {
                             editor.update(cx, |editor, cx| editor.focus(window, cx));
                         }

@@ -1,20 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum EditorChoice {
-    #[default]
-    Neovim,
-    VsCode,
-}
-
-impl EditorChoice {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Neovim => "neovim",
-            Self::VsCode => "vscode",
-        }
-    }
-}
+pub use farcaster_editors::EditorChoice;
 
 impl StateStore {
     pub fn load_editor_choice(&self) -> Result<EditorChoice, String> {
@@ -28,9 +14,9 @@ impl StateStore {
             .optional()
             .map_err(|error| format!("load editor setting: {error}"))?;
         match value.as_deref() {
-            None | Some("neovim") => Ok(EditorChoice::Neovim),
-            Some("vscode") => Ok(EditorChoice::VsCode),
-            Some(value) => Err(format!("unknown saved editor: {value}")),
+            None => Ok(EditorChoice::Neovim),
+            Some(value) => EditorChoice::from_str(value)
+                .ok_or_else(|| format!("unknown saved editor: {value}")),
         }
     }
 

@@ -45,6 +45,7 @@ farcaster-access = { path = "crates/access" }
 farcaster-agent-protocol = { path = "crates/agent-protocol" }
 farcaster-agents = { path = "crates/agents" }
 farcaster-conversation = { path = "crates/conversation" }
+farcaster-editors = { path = "crates/editors" }
 farcaster-mcp-server = { path = "crates/mcp-server" }
 farcaster-projects = { path = "crates/projects" }
 farcaster-repository = { path = "crates/repository" }

@@ -14,7 +14,7 @@ use gpui_libghostty::TerminalOptions;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use super::Terminal;
-use crate::app::infrastructure::neovim_launch;
+use crate::app::infrastructure::editor_launch;
 
 static NEXT_TAB: AtomicU64 = AtomicU64::new(1);
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -158,7 +158,7 @@ impl NvimEditor {
             })
             .ok();
         let launch_file = socket_dir.path().join("launch.json");
-        neovim_launch::prepare(
+        editor_launch::prepare(
             &launch_file,
             executable.clone(),
             vec![
@@ -179,7 +179,7 @@ impl NvimEditor {
                 &std::env::current_exe()
                     .map_err(|error| format!("resolve Neovim launcher: {error}"))?
             ),
-            neovim_launch::ARGUMENT,
+            editor_launch::ARGUMENT,
             shell_quote(&launch_file),
         );
         let terminal = Terminal::spawn(TerminalOptions::new(command, project.clone()), window, cx)?;
@@ -260,9 +260,7 @@ impl Render for NvimEditor {
 }
 
 pub(super) fn nvim_executable() -> PathBuf {
-    std::env::var_os("FARCASTER_NVIM")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("nvim"))
+    farcaster_editors::EditorChoice::Neovim.program(Path::new("."), None)
 }
 
 fn shell_quote(path: &Path) -> String {

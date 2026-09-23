@@ -8,6 +8,7 @@ impl FarcasterApp {
             .size_full()
             .min_h_0()
             .children(self.workspace.editor.view.clone())
+            .children(self.workspace.editor.helix_view.clone())
             .into_any_element()
     }
 }

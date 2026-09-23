@@ -6,11 +6,15 @@ fn editor_choice_survives_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let database = temporary.path().join("state.sqlite3");
     let store = StateStore::open_at(&database)?;
     assert_eq!(store.load_editor_choice()?, EditorChoice::Neovim);
-    store.save_editor_choice(EditorChoice::VsCode)?;
+    for choice in EditorChoice::ALL {
+        store.save_editor_choice(choice)?;
+        assert_eq!(store.load_editor_choice()?, choice);
+    }
+    store.save_editor_choice(EditorChoice::Helix)?;
     drop(store);
     assert_eq!(
         StateStore::open_at(&database)?.load_editor_choice()?,
-        EditorChoice::VsCode
+        EditorChoice::Helix
     );
     Ok(())
 }

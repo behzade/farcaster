@@ -194,8 +194,10 @@ fn editor_setting(
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
     let selected = effective_editor_choice(choice, project);
-    let neovim_available = editor_available(EditorChoice::Neovim, project);
-    let vscode_available = editor_available(EditorChoice::VsCode, project);
+    let available: Vec<_> = EditorChoice::ALL
+        .into_iter()
+        .filter(|choice| editor_available(*choice, project))
+        .collect();
     div()
         .flex()
         .items_center()
@@ -209,29 +211,18 @@ fn editor_setting(
             div()
                 .flex()
                 .gap(THEME.space.xs)
-                .when(neovim_available, |options| {
-                    options.child(editor_option(
-                        "editor-neovim",
-                        "Neovim",
-                        AppIcon::Neovim,
-                        EditorChoice::Neovim,
-                        selected,
-                        entity.clone(),
-                    ))
-                })
-                .when(vscode_available, |options| {
-                    options.child(editor_option(
-                        "editor-vscode",
-                        "VS Code",
-                        AppIcon::VsCode,
-                        EditorChoice::VsCode,
-                        selected,
-                        entity,
-                    ))
-                })
-                .when(!neovim_available && !vscode_available, |options| {
+                .when(available.is_empty(), |options| {
                     options.child("No editor is available")
-                }),
+                })
+                .children(available.into_iter().map(|option| {
+                    let (id, label, icon) = match option {
+                        EditorChoice::Neovim => ("editor-neovim", "Neovim", AppIcon::Neovim),
+                        EditorChoice::VsCode => ("editor-vscode", "VS Code", AppIcon::VsCode),
+                        EditorChoice::Zed => ("editor-zed", "Zed", AppIcon::Zed),
+                        EditorChoice::Helix => ("editor-helix", "Helix", AppIcon::Helix),
+                    };
+                    editor_option(id, label, icon, option, selected, entity.clone())
+                })),
         )
         .into_any_element()
 }

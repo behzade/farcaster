@@ -8,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const ARGUMENT: &str = "--internal-neovim-launch";
+pub(crate) const ARGUMENT: &str = "--internal-editor-launch";
 
 #[derive(Serialize, Deserialize)]
 struct Launch {
@@ -44,17 +44,17 @@ fn write_launch(path: &Path, launch: &Launch) -> Result<(), String> {
         .create_new(true)
         .mode(0o600)
         .open(path)
-        .map_err(|error| format!("create Neovim launch file: {error}"))?;
+        .map_err(|error| format!("create editor launch file: {error}"))?;
     serde_json::to_writer(file, launch)
-        .map_err(|error| format!("write Neovim launch file: {error}"))
+        .map_err(|error| format!("write editor launch file: {error}"))
 }
 
 fn take_command(path: &Path) -> Result<Command, String> {
     let file =
-        std::fs::File::open(path).map_err(|error| format!("open Neovim launch file: {error}"))?;
+        std::fs::File::open(path).map_err(|error| format!("open editor launch file: {error}"))?;
     let launch: Launch = serde_json::from_reader(file)
-        .map_err(|error| format!("read Neovim launch file: {error}"))?;
-    std::fs::remove_file(path).map_err(|error| format!("remove Neovim launch file: {error}"))?;
+        .map_err(|error| format!("read editor launch file: {error}"))?;
+    std::fs::remove_file(path).map_err(|error| format!("remove editor launch file: {error}"))?;
     let mut command = Command::new(launch.program);
     command
         .args(launch.arguments)
@@ -76,11 +76,11 @@ pub(crate) fn run_if_requested() -> Result<(), String> {
     if arguments.next().as_deref() != Some(std::ffi::OsStr::new(ARGUMENT)) {
         return Ok(());
     }
-    let path = arguments.next().ok_or("missing Neovim launch file")?;
+    let path = arguments.next().ok_or("missing editor launch file")?;
     let error = take_command(Path::new(&path))?.exec();
-    Err(format!("launch Neovim: {error}"))
+    Err(format!("launch editor: {error}"))
 }
 
 #[cfg(test)]
-#[path = "neovim_launch_tests.rs"]
+#[path = "editor_launch_tests.rs"]
 mod tests;
