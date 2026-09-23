@@ -74,6 +74,60 @@ fn late_delivery_receipt_acks_only_its_pending_outbox_row() -> Result<(), Box<dy
 }
 
 #[test]
+fn native_history_acks_only_the_dispatched_row_after_restart()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session");
+    let store = StateStore::open_at(&database)?;
+    let first = store.enqueue_prompt(
+        "session:replay",
+        Backend::Codex,
+        temp.path(),
+        Some(&session),
+        PromptMode::Normal,
+        "same text",
+        &[],
+    )?;
+    let second = store.enqueue_prompt(
+        "session:replay",
+        Backend::Codex,
+        temp.path(),
+        Some(&session),
+        PromptMode::Normal,
+        "same text",
+        &[],
+    )?;
+    store.record_prompt_dispatch(first, "codex-cli-first")?;
+    store.record_prompt_dispatch(second, "codex-cli-second")?;
+    drop(store);
+
+    let mut store = StateStore::open_at(&database)?;
+    store.reconcile_prompt_deliveries(
+        &session,
+        &crate::sessions::PromptDeliveryReconciliation {
+            delivered: vec!["codex-cli-first".into()],
+            pending: Vec::new(),
+            absence_is_not_delivered: false,
+        },
+    )?;
+    let queued = store.queued_prompts()?;
+    assert_eq!(
+        queued.iter().map(|prompt| prompt.id).collect::<Vec<_>>(),
+        [second]
+    );
+    let states = store
+        .connection
+        .prepare("SELECT state FROM outbox ORDER BY id")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(states, ["acked", "pending"]);
+    store.record_prompt_receipt_delivered("codex-cli-second", None)?;
+    assert!(store.queued_prompts()?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn delivered_prompt_completion_rolls_back_acceptance_if_delivery_write_fails()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;

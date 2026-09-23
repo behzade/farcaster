@@ -93,6 +93,7 @@ fn authoritative_delivery_evidence_resolves_saved_receipts_by_exact_id()
                     "deliveryStatus": "delivered",
                 })],
                 prompt_deliveries: Some(crate::sessions::PromptDeliveryReconciliation {
+                    absence_is_not_delivered: true,
                     delivered: vec!["receipt:delivered".into()],
                     pending: vec!["receipt:pending".into()],
                 }),

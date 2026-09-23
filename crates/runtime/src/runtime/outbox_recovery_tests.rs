@@ -324,6 +324,48 @@ fn startup_replays_normal_prompts_in_order_after_delivery_and_settlement() -> Re
 }
 
 #[test]
+fn native_history_acks_recovered_prompt_before_it_can_replay() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let session = temp.path().join("session.jsonl");
+    let store = StateStore::open_at(&database)?;
+    let outbox_id = store.enqueue_prompt(
+        "session:recovered",
+        Backend::Codex,
+        temp.path(),
+        Some(&session),
+        PromptMode::Normal,
+        "delivered before restart",
+        &[],
+    )?;
+    store.record_prompt_dispatch(outbox_id, "codex-cli-prior-request")?;
+    let prompt = store.queued_prompts()?.remove(0);
+    let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+    owner.state = Some(store.into());
+    owner.startup_history_loaded = false;
+    owner.deliver_queued(prompt);
+    assert!(sent_messages(&sent).is_empty());
+
+    owner.apply_response(crate::agents::SessionResponse::success(
+        Some("history-request".into()),
+        crate::agents::SessionResponsePayload::LoadHistory(
+            crate::agents::SessionHistory::Replace {
+                messages: Vec::new(),
+                prompt_deliveries: Some(crate::sessions::PromptDeliveryReconciliation {
+                    delivered: vec!["codex-cli-prior-request".into()],
+                    pending: Vec::new(),
+                    absence_is_not_delivered: false,
+                }),
+            },
+        ),
+    ));
+    owner.maybe_send_deferred_prompt();
+    assert!(sent_messages(&sent).is_empty());
+    assert!(StateStore::open_at(&database)?.queued_prompts()?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn operational_rejection_rolls_back_the_transcript_but_retains_pending_work() -> Result<(), String>
 {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;

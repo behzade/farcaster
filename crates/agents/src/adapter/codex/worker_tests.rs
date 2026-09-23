@@ -2,6 +2,18 @@ use super::*;
 use crate::{AccountUsage, AccountUsageWindow, Backend};
 
 #[test]
+fn native_client_id_keeps_farcaster_request_identity() {
+    assert_eq!(
+        client_message_id(NORMAL_CLIENT_ID_PREFIX, 7, Some("codex-cli-run-9")),
+        "farcaster-normal-codex-cli-run-9"
+    );
+    assert_eq!(
+        client_message_id(NORMAL_CLIENT_ID_PREFIX, 7, Some("fixture-id")),
+        "farcaster-normal-7"
+    );
+}
+
+#[test]
 fn worker_factory_resumes_the_saved_thread_and_accepts_a_new_prompt() -> Result<(), String> {
     const SCRIPT: &str = r#"#!/bin/sh
 while IFS= read -r line; do

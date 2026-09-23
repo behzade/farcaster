@@ -82,6 +82,7 @@ fn prompt_delivery_reconciliation(
     inbox: &[Value],
 ) -> farcaster_sessions::PromptDeliveryReconciliation {
     farcaster_sessions::PromptDeliveryReconciliation {
+        absence_is_not_delivered: true,
         delivered: messages
             .iter()
             .filter(|message| {

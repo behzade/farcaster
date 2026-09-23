@@ -2173,6 +2173,7 @@ fn resumed_transport_returns_persisted_history() {
         model: Some(("openai".into(), "gpt-test".into())),
         thinking_level: Some("high".into()),
         prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
+            absence_is_not_delivered: true,
             delivered: vec!["receipt:delivered".into()],
             pending: vec!["receipt:pending".into()],
         }),

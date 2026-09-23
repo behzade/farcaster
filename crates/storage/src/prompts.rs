@@ -103,6 +103,20 @@ impl StateStore {
         self.prompts_in_state("pending")
     }
 
+    /// Keep the exact outbox/request link so native history can settle a
+    /// delivery that outlives this process.
+    pub fn record_prompt_dispatch(&self, outbox_id: i64, receipt_id: &str) -> Result<(), String> {
+        self.connection.execute(
+            "INSERT INTO session_events(session_id,seq,t,schema_version,body)
+             SELECT o.session_id,
+                    (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
+                    ?3,1,json_object('type','prompt_dispatch','outboxId',o.id,'submissionId',?2)
+               FROM outbox o WHERE o.id=?1 AND o.state='pending'",
+            params![outbox_id, receipt_id, now_ms()],
+        ).map_err(|error| format!("save prompt dispatch {outbox_id}: {error}"))?;
+        Ok(())
+    }
+
     pub fn cancel_queued_prompts(&self, ids: &[i64]) -> Result<(), String> {
         let transaction = self
             .connection
@@ -343,21 +357,42 @@ impl StateStore {
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
+        for submission_id in &delivered {
+            transaction
+                .execute(
+                    "UPDATE outbox SET state='acked', error=NULL
+                  WHERE session_id=?1 AND state='pending' AND id IN (
+                    SELECT json_extract(body,'$.outboxId') FROM session_events
+                     WHERE session_id=?1 AND json_extract(body,'$.type')='prompt_dispatch'
+                       AND json_extract(body,'$.submissionId')=?2
+                  )",
+                    params![session_id, submission_id],
+                )
+                .map_err(|error| format!("ack native prompt delivery {submission_id}: {error}"))?;
+        }
         for submission_id in unresolved {
             let (event_type, status) = if delivered.contains(submission_id.as_str()) {
                 ("prompt_delivery_receipt", "delivered")
             } else if pending.contains(submission_id.as_str()) {
                 continue;
-            } else {
+            } else if evidence.absence_is_not_delivered {
                 ("prompt_delivery_resolution", "not_delivered")
+            } else {
+                continue;
             };
             transaction
                 .execute(
                     "INSERT INTO session_events(session_id,seq,t,schema_version,body)
-                     VALUES(?1,
+                     SELECT ?1,
                             (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=?1),
                             ?2,1,
-                            json_object('type',?3,'submissionId',?4,'status',?5))",
+                            json_object('type',?3,'submissionId',?4,'status',?5)
+                      WHERE NOT EXISTS (
+                        SELECT 1 FROM session_events WHERE session_id=?1
+                          AND json_extract(body,'$.submissionId')=?4
+                          AND json_extract(body,'$.type') IN
+                              ('prompt_delivery_receipt','prompt_delivery_resolution')
+                      )",
                     params![session_id, now_ms(), event_type, submission_id, status],
                 )
                 .map_err(|error| {
@@ -437,7 +472,7 @@ impl StateStore {
              SELECT o.session_id,
                     (SELECT COALESCE(MAX(seq),0)+1 FROM session_events WHERE session_id=o.session_id),
                     o.created_ms, 1,
-                    json_object('type','accepted_prompt','submissionId',?2,
+                    json_object('type','accepted_prompt','submissionId',?2,'outboxId',o.id,
                                 'deliveryStatus','accepted',
                                 'deliveryTracked',json(CASE WHEN ?3 THEN 'true' ELSE 'false' END),
                                 'promptMode',o.mode,'message',o.message,
@@ -503,6 +538,23 @@ impl StateStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start prompt delivery receipt: {error}"))?;
+        let outbox_id = match outbox_id {
+            Some(id) => Some(id),
+            None => transaction
+                .query_row(
+                    "SELECT json_extract(body,'$.outboxId') FROM session_events
+                  WHERE json_extract(body,'$.submissionId')=?1
+                    AND json_extract(body,'$.type') IN ('prompt_dispatch','accepted_prompt')
+                    AND json_extract(body,'$.outboxId') IS NOT NULL
+                  ORDER BY t DESC, seq DESC LIMIT 1",
+                    [receipt_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!("find outbox for delivery receipt {receipt_id}: {error}")
+                })?,
+        };
         let session_id = transaction
             .query_row(
                 "SELECT session_id FROM outbox WHERE id=?2

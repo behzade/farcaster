@@ -253,6 +253,8 @@ pub struct LoadedHistory {
 pub struct PromptDeliveryReconciliation {
     pub delivered: Vec<String>,
     pub pending: Vec<String>,
+    /// Whether a missing ID proves that the native session no longer holds it.
+    pub absence_is_not_delivered: bool,
 }
 
 #[cfg(test)]

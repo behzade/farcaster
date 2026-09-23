@@ -2291,7 +2291,11 @@ impl CodexWorkerSession {
                 .current_turn
                 .as_deref()
                 .ok_or_else(|| "Codex worker has not reported its active turn".to_owned())?;
-            let client_id = format!("{STEER_CLIENT_ID_PREFIX}{}", self.next_id.saturating_add(1));
+            let client_id = client_message_id(
+                STEER_CLIENT_ID_PREFIX,
+                self.next_id.saturating_add(1),
+                submission_id,
+            );
             let id = self.submission_request(
                 "turn/steer",
                 json!({
@@ -2328,7 +2332,11 @@ impl CodexWorkerSession {
             return Ok(());
         }
         if mode == WorkerSendMode::Queue && self.native_queue {
-            let client_id = format!("{QUEUE_CLIENT_ID_PREFIX}{}", self.next_id.saturating_add(1));
+            let client_id = client_message_id(
+                QUEUE_CLIENT_ID_PREFIX,
+                self.next_id.saturating_add(1),
+                submission_id,
+            );
             let id = self.submission_request(
                 "thread/queue/add",
                 json!({
@@ -2368,9 +2376,10 @@ impl CodexWorkerSession {
         }
         self.output.clear();
         self.reasoning_started = false;
-        let client_id = format!(
-            "{NORMAL_CLIENT_ID_PREFIX}{}",
-            self.next_id.saturating_add(1)
+        let client_id = client_message_id(
+            NORMAL_CLIENT_ID_PREFIX,
+            self.next_id.saturating_add(1),
+            submission_id,
         );
         self.caller_identity.begin_execution(submission_id);
         let id = self.submission_request(
@@ -2542,6 +2551,15 @@ const STEER_CLIENT_ID_PREFIX: &str = "farcaster-steer-";
 const QUEUE_CLIENT_ID_PREFIX: &str = "farcaster-queue-";
 const HANDOFF_CLIENT_ID_PREFIX: &str = "farcaster-handoff-";
 const NORMAL_CLIENT_ID_PREFIX: &str = "farcaster-normal-";
+
+fn client_message_id(prefix: &str, next_id: i64, submission_id: Option<&str>) -> String {
+    // The native user item retains this ID in thread/read. Encode the request
+    // ID so a new process can match that item to its durable outbox dispatch.
+    match submission_id.filter(|id| id.starts_with("codex-cli-")) {
+        Some(id) => format!("{prefix}{id}"),
+        None => format!("{prefix}{next_id}"),
+    }
+}
 
 fn queue_submission_id(result: &Value) -> Result<String, String> {
     result

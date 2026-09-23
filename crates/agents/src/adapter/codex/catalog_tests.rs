@@ -193,6 +193,32 @@ fn translates_thread_messages() {
 }
 
 #[test]
+fn native_history_recovers_only_exact_farcaster_delivery_ids() {
+    let delivered = json!({
+        "type":"userMessage",
+        "clientId":"farcaster-normal-codex-cli-session-17",
+        "content":[{"type":"text","text":"same text"}]
+    });
+    assert_eq!(
+        delivered_submission_id(&delivered),
+        Some("codex-cli-session-17")
+    );
+    assert_eq!(
+        delivered_submission_id(&json!({
+            "type":"userMessage", "clientId":"farcaster-normal-17",
+            "content":[{"type":"text","text":"same text"}]
+        })),
+        None
+    );
+    assert_eq!(
+        delivered_submission_id(&json!({
+            "type":"agentMessage", "clientId":"farcaster-normal-codex-cli-session-17"
+        })),
+        None
+    );
+}
+
+#[test]
 fn translates_historical_command_calls_and_output() {
     let messages = history_messages(&json!({
         "type": "commandExecution",

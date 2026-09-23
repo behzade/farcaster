@@ -181,6 +181,7 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
         let response: Value = connection.wait_response(&id)?;
         let thread = response.get("thread").unwrap_or(&response);
         let mut messages = Vec::new();
+        let mut delivered = Vec::new();
         for turn in thread
             .get("turns")
             .and_then(Value::as_array)
@@ -193,6 +194,9 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
                 .into_iter()
                 .flatten()
             {
+                if let Some(id) = delivered_submission_id(item) {
+                    delivered.push(id.to_owned());
+                }
                 messages.extend(history_messages(item));
             }
         }
@@ -204,9 +208,24 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
             messages,
             model,
             thinking_level,
-            prompt_deliveries: None,
+            prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
+                delivered,
+                pending: Vec::new(),
+                absence_is_not_delivered: false,
+            }),
         })
     })
+}
+
+fn delivered_submission_id(item: &Value) -> Option<&str> {
+    if item.get("type").and_then(Value::as_str) != Some("userMessage") {
+        return None;
+    }
+    let client_id = item.get("clientId").and_then(Value::as_str)?;
+    ["farcaster-normal-", "farcaster-steer-", "farcaster-queue-"]
+        .iter()
+        .find_map(|prefix| client_id.strip_prefix(prefix))
+        .filter(|id| id.starts_with("codex-cli-"))
 }
 
 type CatalogConnection = CodexConnection<BufReader<ChildStdout>, ChildStdin>;

@@ -144,6 +144,7 @@ impl RuntimeOwner {
                     });
                 match dispatch {
                     Ok(request_id) => {
+                        self.save_prompt_dispatch(outbox_id, &request_id);
                         self.pending_queued_prompts.insert(
                             request_id,
                             super::PendingQueuedPrompt {
@@ -433,6 +434,9 @@ impl RuntimeOwner {
         self.pending_outbox_id = outbox_id;
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
+                if let Some(outbox_id) = outbox_id {
+                    self.save_prompt_dispatch(outbox_id, &id);
+                }
                 if let Some(item) = self.pending_prompt_item.clone() {
                     let delivery_tracked = self.pending_prompt_delivery_tracked;
                     conversation_mut(self.active_snapshot_mut())
@@ -467,6 +471,15 @@ impl RuntimeOwner {
                     self.publish();
                 }
             }
+        }
+    }
+
+    fn save_prompt_dispatch(&self, outbox_id: i64, request_id: &str) {
+        if let Some(state) = self.state.as_ref()
+            && let Err(error) =
+                state.with(|store| store.record_prompt_dispatch(outbox_id, request_id))
+        {
+            zlog::error!("Save prompt dispatch {outbox_id}: {error}");
         }
     }
 
