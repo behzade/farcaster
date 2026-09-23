@@ -326,7 +326,7 @@ fn update_selected_configuration(
     command: &RuntimeCommand,
 ) -> bool {
     match command {
-        RuntimeCommand::SetModel(model) => {
+        RuntimeCommand::SetModel(model) | RuntimeCommand::SetModelWithAccessMode { model, .. } => {
             configurations.set_model(snapshot.harness, model.clone())
         }
         RuntimeCommand::SetThinking(effort) => {

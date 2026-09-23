@@ -104,6 +104,29 @@ impl PickerDelegate {
             },
         )
     }
+
+    pub(crate) fn replace_rows(&mut self, rows: Vec<PickerRow>) -> Option<IndexPath> {
+        let selected_id = self
+            .selected_index
+            .and_then(|index| self.visible_rows.get(index.row))
+            .map(|row| row.id.clone());
+        self.all_rows = rows;
+        let query = self.query.borrow();
+        self.visible_rows = self
+            .all_rows
+            .iter()
+            .filter(|row| row.matches(query.trim()))
+            .cloned()
+            .collect();
+        self.selected_index = selected_id
+            .and_then(|id| self.visible_rows.iter().position(|row| row.id == id))
+            .or_else(|| (!self.visible_rows.is_empty()).then_some(0))
+            .map(|row| IndexPath {
+                row,
+                ..Default::default()
+            });
+        self.selected_index
+    }
 }
 
 impl ListDelegate for PickerDelegate {

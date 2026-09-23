@@ -63,7 +63,7 @@ fn access_modes_reject_unsupported_and_recheck_queued_changes() {
 }
 
 #[test]
-fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
+fn access_modes_queue_safe_mode_before_switching_an_auto_session_model() {
     struct NoCommands;
     impl SessionTransport for NoCommands {
         fn send(&mut self, _: SessionCommand) -> Result<String, String> {
@@ -89,9 +89,10 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
     }))
     .expect("test operation should succeed");
     owner.set_model(model.clone());
-    assert!(owner.pending_session_controls.is_empty());
-    assert!(owner.snapshot.prefill_model.is_none());
+    assert!(owner.pending_session_controls.model_pending());
+    assert_eq!(owner.snapshot.prefill_model, Some(model.clone()));
     assert_eq!(owner.process_command.access_mode, HarnessAccessMode::Auto);
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Sandboxed);
     owner.process = None;
     owner.snapshot.selected_session = None;
     owner.set_model(model.clone());
@@ -100,6 +101,70 @@ fn access_modes_prevent_switching_an_auto_session_to_an_unsupported_model() {
         owner.process_command.access_mode,
         HarnessAccessMode::Sandboxed
     );
+}
+
+#[test]
+fn chosen_full_mode_queues_model_and_effort_until_restart() {
+    struct NoCommands;
+    impl SessionTransport for NoCommands {
+        fn send(&mut self, _: SessionCommand) -> Result<String, String> {
+            panic!("model and effort must wait for the mode change")
+        }
+        fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
+            Ok(())
+        }
+        fn poll(&mut self) -> Option<SessionEvent> {
+            None
+        }
+        fn close(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+    let (mut owner, _) = owner_without_process(std::env::temp_dir());
+    owner.harness = Some(Backend::Claude);
+    owner.process_command.access_mode = HarnessAccessMode::Sandboxed;
+    owner.process = Some(Box::new(NoCommands));
+    let model: Model = serde_json::from_value(json!({
+        "id":"full-only", "name":"Full only", "provider":"claude",
+        "access_modes":["full"]
+    }))
+    .expect("decode model");
+
+    owner.set_model_with_access_mode(model.clone(), HarnessAccessMode::Full);
+    owner.set_thinking("high".into());
+
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Full);
+    assert_eq!(
+        owner.process_command.access_mode,
+        HarnessAccessMode::Sandboxed
+    );
+    assert_eq!(owner.snapshot.prefill_model, Some(model));
+    assert!(owner.pending_session_controls.model_pending());
+    assert!(!owner.pending_session_controls.is_empty());
+}
+
+#[test]
+fn chosen_mode_overrides_a_stale_fallback_for_an_unstarted_session() {
+    let (mut owner, _) = owner_without_process(std::env::temp_dir());
+    owner.harness = Some(Backend::Claude);
+    owner.snapshot.harness = Some(Backend::Claude);
+    owner.process_command.access_mode = HarnessAccessMode::Auto;
+    let model: Model = serde_json::from_value(json!({
+        "id":"full-only", "name":"Full only", "provider":"claude",
+        "access_modes":["full"]
+    }))
+    .expect("decode model");
+    assert_eq!(
+        owner
+            .access_mode_changes
+            .resolve_available(HarnessAccessMode::Auto, &[HarnessAccessMode::Sandboxed],),
+        Some(HarnessAccessMode::Sandboxed)
+    );
+
+    owner.set_model_with_access_mode(model, HarnessAccessMode::Full);
+
+    assert_eq!(owner.process_command.access_mode, HarnessAccessMode::Full);
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Full);
 }
 
 #[test]

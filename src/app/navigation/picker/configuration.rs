@@ -93,21 +93,19 @@ impl FarcasterApp {
                         ConfigurationStatus::Failed(error) => {
                             format!("Models unavailable: {error}")
                         }
-                        ConfigurationStatus::Loading => {
-                            "Models are loading. Reopen this picker to refresh.".into()
-                        }
+                        ConfigurationStatus::Loading => "Models are loading…".into(),
                         ConfigurationStatus::Loaded => {
                             "No models were advertised by this harness.".into()
                         }
                     };
-                    return vec![PickerRow::new(
-                        "runtime:status",
-                        AppIcon::List,
+                    return configuration_status_rows(
+                        commands,
                         label,
-                        None,
-                        None,
-                        "",
-                    )];
+                        matches!(
+                            self.snapshot.configuration_status,
+                            ConfigurationStatus::Failed(_)
+                        ),
+                    );
                 }
                 let mut providers = self
                     .snapshot
@@ -119,11 +117,10 @@ impl FarcasterApp {
                 providers.dedup();
                 providers
                     .into_iter()
-                    .enumerate()
-                    .map(|(index, provider)| {
+                    .map(|provider| {
                         picker_row(
                             commands,
-                            &format!("provider:{index}"),
+                            &format!("provider:{provider}"),
                             PickerCommand::OpenScope(PickerScope::Models(provider.clone())),
                             AppIcon::List,
                             &provider,
@@ -136,43 +133,86 @@ impl FarcasterApp {
                     })
                     .collect()
             }
-            PickerScope::Models(provider) => self
-                .snapshot
-                .models
-                .iter()
-                .filter(|model| model.provider == provider)
-                .enumerate()
-                .map(|(index, model)| {
-                    let command = if model_efforts(model, &self.snapshot.thinking_levels).is_empty()
-                    {
-                        PickerCommand::SetRuntime {
-                            model: model.clone(),
-                            effort: None,
+            PickerScope::Models(provider) => {
+                let models = self
+                    .snapshot
+                    .models
+                    .iter()
+                    .filter(|model| model.provider == provider)
+                    .collect::<Vec<_>>();
+                if models.is_empty() {
+                    let status = match &self.snapshot.configuration_status {
+                        ConfigurationStatus::Loading => "Models are loading…".to_owned(),
+                        ConfigurationStatus::Failed(error) => {
+                            format!("Models unavailable: {error}")
                         }
-                    } else {
-                        PickerCommand::OpenScope(PickerScope::Efforts(model.clone()))
+                        ConfigurationStatus::Loaded => format!("No models from {provider}."),
                     };
-                    picker_row(
+                    return configuration_status_rows(
                         commands,
-                        &format!("model:{index}"),
-                        command,
-                        AppIcon::List,
-                        &model.name,
-                        Some(
-                            if current_model.is_some_and(|current| {
+                        status,
+                        matches!(
+                            self.snapshot.configuration_status,
+                            ConfigurationStatus::Failed(_)
+                        ),
+                    );
+                }
+                models
+                    .into_iter()
+                    .map(|model| {
+                        let command =
+                            if model_efforts(model, &self.snapshot.thinking_levels).is_empty() {
+                                PickerCommand::SetRuntime {
+                                    model: model.clone(),
+                                    effort: None,
+                                }
+                            } else {
+                                PickerCommand::OpenScope(PickerScope::Efforts(model.clone()))
+                            };
+                        let available = crate::agents::available_access_modes(
+                            self.snapshot.harness,
+                            Some(self.snapshot.catalog_model(model)),
+                            self.snapshot.sandbox_adapter.as_deref(),
+                        );
+                        picker_row(
+                            commands,
+                            &format!("model:{}:{}", model.provider, model.id),
+                            command,
+                            AppIcon::List,
+                            &model.name,
+                            Some(if available.is_empty() {
+                                "No access mode available".into()
+                            } else if current_model.is_some_and(|current| {
                                 current.id == model.id && current.provider == model.provider
                             }) {
                                 format!("{} · Current", model.id)
                             } else {
                                 model.id.clone()
-                            },
-                        ),
+                            }),
+                            None,
+                            &provider,
+                        )
+                        .disabled(available.is_empty())
+                    })
+                    .collect()
+            }
+            PickerScope::Efforts(model) => {
+                if !self.snapshot.models.iter().any(|candidate| {
+                    candidate.provider == model.provider && candidate.id == model.id
+                }) {
+                    return vec![picker_row(
+                        commands,
+                        "runtime:back-to-models",
+                        PickerCommand::OpenScope(PickerScope::Models(model.provider)),
+                        AppIcon::List,
+                        "Model no longer available · Back to models",
                         None,
-                        &provider,
-                    )
-                })
-                .collect(),
-            PickerScope::Efforts(model) => effort_picker_rows(&self.snapshot, &model, commands),
+                        None,
+                        "model removed back",
+                    )];
+                }
+                effort_picker_rows(&self.snapshot, &model, commands)
+            }
             PickerScope::ArchivedSessions => {
                 let mut sessions = self
                     .sessions
@@ -213,6 +253,30 @@ impl FarcasterApp {
     }
 }
 
+fn configuration_status_rows(
+    commands: &mut HashMap<String, PickerCommand>,
+    label: String,
+    retry: bool,
+) -> Vec<PickerRow> {
+    let mut rows = Vec::new();
+    if retry {
+        rows.push(picker_row(
+            commands,
+            "runtime:retry",
+            PickerCommand::RetryConfiguration,
+            AppIcon::List,
+            "Retry loading models",
+            None,
+            None,
+            "reload retry models",
+        ));
+    }
+    rows.push(
+        PickerRow::new("runtime:status", AppIcon::List, label, None, None, "").disabled(true),
+    );
+    rows
+}
+
 fn effort_picker_rows(
     snapshot: &crate::runtime::RuntimeSnapshot,
     model: &Model,
@@ -223,14 +287,16 @@ fn effort_picker_rows(
     snapshot
         .effort_choices(model)
         .into_iter()
-        .enumerate()
-        .map(|(index, effort)| {
+        .map(|effort| {
             let selected = identity.model.is_some_and(|current| {
                 current.id == model.id && current.provider == model.provider
             }) && identity.effort == effort.as_deref();
             picker_row(
                 commands,
-                &format!("effort:{index}"),
+                &effort.as_ref().map_or_else(
+                    || "effort:<none>".to_owned(),
+                    |effort| format!("effort:some:{effort}"),
+                ),
                 PickerCommand::SetRuntime {
                     model: model.clone(),
                     effort: effort.clone(),

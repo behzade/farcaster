@@ -70,3 +70,20 @@ fn disabled_rows_cannot_be_confirmed_after_search(cx: &mut gpui::TestAppContext)
         });
     });
 }
+#[test]
+fn replacing_picker_rows_keeps_search_and_selected_row() {
+    use super::*;
+
+    let row = |id: &str, label: &str| PickerRow::new(id, AppIcon::List, label, None, None, "");
+    let (mut picker, handles) =
+        PickerDelegate::new(vec![row("one", "First"), row("two", "Second")]);
+    *handles.query.borrow_mut() = "sec".into();
+    picker.replace_rows(vec![row("one", "First"), row("two", "Second")]);
+    assert_eq!(picker.visible_rows.len(), 1);
+    assert_eq!(picker.visible_rows[0].id, "two");
+    assert_eq!(picker.selected_index.map(|index| index.row), Some(0));
+
+    picker.replace_rows(vec![row("three", "Second choice")]);
+    assert_eq!(picker.visible_rows[0].id, "three");
+    assert_eq!(picker.selected_index.map(|index| index.row), Some(0));
+}

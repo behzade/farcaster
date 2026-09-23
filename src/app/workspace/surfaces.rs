@@ -996,6 +996,8 @@ impl FarcasterApp {
             || self.overlays.view.settings
         {
             self.close_sheet(window, cx);
+        } else if self.navigation.pending_model_access.is_some() {
+            self.close_model_access_confirmation(window, cx);
         } else if self.navigation.picker.is_some() {
             self.close_picker(window, cx);
         } else if self.workspace.runtime_picker.open

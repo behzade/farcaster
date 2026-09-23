@@ -365,6 +365,9 @@ impl RuntimeOwner {
                 self.refresh_session_document(path, project)
             }
             RuntimeCommand::SetModel(model) => self.set_model(model),
+            RuntimeCommand::SetModelWithAccessMode { model, access_mode } => {
+                self.set_model_with_access_mode(model, access_mode)
+            }
             RuntimeCommand::SetThinking(level) => self.set_thinking(level),
             RuntimeCommand::ResetThinking => self.reset_thinking(),
             RuntimeCommand::SetServiceTier(tier) => self.set_service_tier(tier),

@@ -156,6 +156,12 @@ impl FarcasterApp {
             .when(self.project.repository.edits.pending.is_some(), |root| {
                 root.child(dialogs::repository_edit::render(self, entity.clone(), cx))
             })
+            .when(self.navigation.pending_model_access.is_some(), |root| {
+                root.child(dialogs::model_access_confirmation::render(
+                    self,
+                    entity.clone(),
+                ))
+            })
             .when_some(
                 dialogs::image_preview::render(self, entity.clone()),
                 |root, preview| root.child(preview),

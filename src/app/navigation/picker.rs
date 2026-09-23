@@ -115,6 +115,7 @@ enum PickerCommand {
     OpenScope(PickerScope),
     SetSandbox(crate::runtime::HarnessAccessMode),
     SetHarness(Backend),
+    RetryConfiguration,
     SetRuntime {
         model: crate::protocol::Model,
         effort: Option<String>,
@@ -143,6 +144,39 @@ impl PickerState {
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn refresh_configuration_picker(&mut self, cx: &mut Context<Self>) {
+        let Some(scope) = self
+            .navigation
+            .picker
+            .as_ref()
+            .map(|picker| picker.scope.clone())
+        else {
+            return;
+        };
+        if !matches!(
+            scope,
+            PickerScope::Providers | PickerScope::Models(_) | PickerScope::Efforts(_)
+        ) {
+            return;
+        }
+        let (rows, commands) = self.picker_rows(scope);
+        let picker = self.navigation.picker.as_mut().expect("picker is open");
+        picker.commands = commands;
+        let list = picker.list.clone();
+        let selected = list.update(cx, |list, cx| {
+            let selected = list.delegate_mut().replace_rows(rows);
+            cx.notify();
+            selected
+        });
+        cx.defer(move |cx| {
+            if let Some(window_handle) = cx.active_window() {
+                let _ = cx.update_window(window_handle, |_, window, cx| {
+                    list.update(cx, |list, cx| list.set_selected_index(selected, window, cx));
+                });
+            }
+        });
+    }
+
     pub(in crate::app) fn picker_focus(&self, cx: &gpui::App) -> Option<gpui::FocusHandle> {
         self.navigation
             .picker
@@ -420,6 +454,17 @@ impl FarcasterApp {
             return;
         };
         match command {
+            PickerCommand::RetryConfiguration => {
+                if let Some(harness) = self.snapshot.harness {
+                    self.send(
+                        RuntimeCommand::LoadConfiguration {
+                            harness,
+                            project: self.snapshot.project.clone(),
+                        },
+                        cx,
+                    );
+                }
+            }
             PickerCommand::StartCodeTask => {
                 self.close_picker(window, cx);
                 self.start_task_from_code(window, cx);
@@ -459,12 +504,8 @@ impl FarcasterApp {
                 self.set_access_mode(mode, cx);
             }
             PickerCommand::SetRuntime { model, effort } => {
-                self.close_picker(window, cx);
-                self.select_model(&model, cx);
-                if effort.is_some()
-                    || crate::agents::supports_reasoning_reset(self.snapshot.harness)
-                {
-                    self.set_thinking_level(effort, cx);
+                if self.select_model_with_effort(&model, effort, true, window, cx) {
+                    self.close_picker(window, cx);
                 }
             }
             PickerCommand::RestoreSession(path) => {

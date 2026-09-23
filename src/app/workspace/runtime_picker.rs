@@ -312,7 +312,7 @@ impl FarcasterApp {
                         _ => current,
                     };
                     if key == "enter" {
-                        app.select_model(&keyboard_models[current], cx);
+                        app.select_model_from_ui(&keyboard_models[current], window, cx);
                     }
                     app.workspace.runtime_picker.scroll.scroll_to_item(
                         app.workspace.runtime_picker.highlighted,
@@ -399,9 +399,10 @@ impl FarcasterApp {
                                 ("runtime-model", index),
                                 label,
                                 index == highlighted,
-                                move |_, cx| {
-                                    let _ =
-                                        entity.update(cx, |app, cx| app.select_model(&model, cx));
+                                move |window, cx| {
+                                    let _ = entity.update(cx, |app, cx| {
+                                        app.select_model_from_ui(&model, window, cx)
+                                    });
                                 },
                             )
                             .into_any_element()

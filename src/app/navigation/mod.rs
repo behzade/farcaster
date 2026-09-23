@@ -1,7 +1,7 @@
 use super::*;
 
 mod app_state;
-pub(in crate::app) use app_state::NavigationState;
+pub(in crate::app) use app_state::{NavigationState, PendingModelAccess};
 
 mod picker;
 

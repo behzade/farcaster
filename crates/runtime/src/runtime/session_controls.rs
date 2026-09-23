@@ -218,6 +218,22 @@ impl SessionControl {
 
 impl RuntimeOwner {
     pub(super) fn set_model(&mut self, model: Model) {
+        self.set_model_selection(model, None);
+    }
+
+    pub(super) fn set_model_with_access_mode(
+        &mut self,
+        model: Model,
+        access_mode: crate::agents::HarnessAccessMode,
+    ) {
+        self.set_model_selection(model, Some(access_mode));
+    }
+
+    fn set_model_selection(
+        &mut self,
+        model: Model,
+        selected_mode: Option<crate::agents::HarnessAccessMode>,
+    ) {
         let available = crate::agents::available_access_modes(
             self.harness,
             Some(self.snapshot.catalog_model(&model)),
@@ -225,19 +241,63 @@ impl RuntimeOwner {
         );
         let current = self.process_command.access_mode;
         let requested = self.access_mode_changes.requested_mode(current);
+        if selected_mode.is_some_and(|mode| !available.contains(&mode)) {
+            self.command_not_sent(
+                "set_model",
+                "The chosen access mode is unavailable for this model",
+            );
+            return;
+        }
         if self.process.is_some() {
-            if !available.contains(&current) || !available.contains(&requested) {
+            let mode_change = selected_mode.filter(|mode| *mode != current).or_else(|| {
+                if available.contains(&current) {
+                    None
+                } else {
+                    available
+                        .iter()
+                        .copied()
+                        .find(|mode| *mode != crate::agents::HarnessAccessMode::Full)
+                }
+            });
+            if let Some(mode) = mode_change {
+                let replacement_effort = super::session_identity::replacement_effort(
+                    &model,
+                    self.snapshot.session_identity().effort,
+                );
+                self.remember_requested_model(&model, replacement_effort.as_deref());
+                self.pending_session_controls.set(SessionControl::Model(
+                    model.provider.clone(),
+                    model.id.clone(),
+                ));
+                if let Some(effort) = replacement_effort {
+                    self.pending_session_controls
+                        .set(SessionControl::Thinking(Some(effort)));
+                }
+                self.access_mode_changes.queue(mode, current);
+                self.publish();
+                return;
+            }
+            if !available.contains(&current) {
                 self.command_not_sent(
                     "set_model",
-                    "Change the sandbox mode before selecting this model",
+                    "This model requires Full access; choose it in the model picker",
                 );
                 return;
             }
+            if !available.contains(&requested) {
+                self.access_mode_changes.queue(current, current);
+            }
         } else {
-            let Some(mode) = self
-                .access_mode_changes
-                .resolve_available(current, &available)
-            else {
+            let mode = if let Some(selected_mode) = selected_mode {
+                Some(
+                    self.access_mode_changes
+                        .choose_available_mode(selected_mode),
+                )
+            } else {
+                self.access_mode_changes
+                    .resolve_available(current, &available)
+            };
+            let Some(mode) = mode else {
                 self.command_not_sent("set_model", "No access mode is available for this model");
                 return;
             };
@@ -287,10 +347,20 @@ impl RuntimeOwner {
     }
 
     pub(super) fn set_thinking(&mut self, level: String) {
+        if self.pending_session_controls.model.is_some() {
+            self.pending_session_controls
+                .set(SessionControl::Thinking(Some(level)));
+            return;
+        }
         self.send_session_control(SessionControl::Thinking(Some(level)));
     }
 
     pub(super) fn reset_thinking(&mut self) {
+        if self.pending_session_controls.model.is_some() {
+            self.pending_session_controls
+                .set(SessionControl::Thinking(None));
+            return;
+        }
         self.send_session_control(SessionControl::Thinking(None));
     }
 

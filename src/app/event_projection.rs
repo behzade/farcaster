@@ -290,7 +290,17 @@ impl FarcasterApp {
                 self.extensions.dialog_return_focus = None;
             }
         }
+        let picker_choices_changed = self.snapshot.harness != snapshot.harness
+            || self.snapshot.models != snapshot.models
+            || self.snapshot.configuration_status != snapshot.configuration_status
+            || self.snapshot.thinking_levels != snapshot.thinking_levels
+            || self.snapshot.sandbox_adapter != snapshot.sandbox_adapter
+            || self.snapshot.access_mode != snapshot.access_mode
+            || self.snapshot.session_identity() != snapshot.session_identity();
         self.snapshot = snapshot;
+        if picker_choices_changed {
+            self.refresh_configuration_picker(cx);
+        }
         dirty.transcript |= self.apply_transcript_rows(row_update, cx);
         self.sync_restored_dialog();
         self.sync_composer_history();

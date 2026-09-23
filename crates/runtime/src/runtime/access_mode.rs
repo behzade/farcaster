@@ -18,7 +18,7 @@ impl AccessModeChangeState {
         self.queued.is_none() && !self.restart_pending
     }
 
-    fn queue(&mut self, requested: HarnessAccessMode, effective: HarnessAccessMode) {
+    pub(super) fn queue(&mut self, requested: HarnessAccessMode, effective: HarnessAccessMode) {
         self.queued = (requested != effective).then_some(requested);
         self.apply_due = self
             .queued
@@ -76,6 +76,13 @@ impl AccessModeChangeState {
     ) -> HarnessAccessMode {
         self.apply_due = None;
         self.queued.take().unwrap_or(effective)
+    }
+
+    pub(super) fn choose_available_mode(&mut self, mode: HarnessAccessMode) -> HarnessAccessMode {
+        self.queued = None;
+        self.apply_due = None;
+        self.fallback_preference = None;
+        mode
     }
 }
 

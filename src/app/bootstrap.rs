@@ -206,6 +206,7 @@ impl FarcasterApp {
             },
             navigation: navigation::NavigationState {
                 picker: None,
+                pending_model_access: None,
                 picker_return_focus: None,
                 search: inputs.search,
                 search_focus: inputs.search_focus,

@@ -115,6 +115,10 @@ pub enum RuntimeCommand {
         harness: Option<Backend>,
     },
     SetModel(Model),
+    SetModelWithAccessMode {
+        model: Model,
+        access_mode: HarnessAccessMode,
+    },
     SetThinking(String),
     ResetThinking,
     SetServiceTier(String),
