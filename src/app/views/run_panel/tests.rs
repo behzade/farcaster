@@ -1,7 +1,8 @@
 use super::{
     agents::{AgentSection, agent_section, lifecycle_label},
+    ordered_worker_rows,
     resize::clamped_run_panel_width,
-    run_panel_agent_rows,
+    run_panel_agent_rows, worker_navigation_rows,
 };
 use crate::agents::Backend;
 use crate::{
@@ -172,6 +173,67 @@ fn production_rows_include_restored_children_from_an_empty_activity_map() {
     assert_eq!(rows[0].2.path, child.path);
     assert_eq!(rows[0].0.session_path, child.path);
     assert_eq!(rows[0].3, AgentSection::Completed);
+}
+
+#[test]
+fn worker_navigation_keeps_creation_order_when_statuses_differ() {
+    let root = crate::sessions::SessionSummary::from_cached(
+        "root".into(),
+        "/project/root".into(),
+        "/project".into(),
+        "root".into(),
+        String::new(),
+        String::new(),
+        None,
+        SystemTime::now(),
+        0,
+        crate::sessions::UsageSummary::default(),
+        false,
+        false,
+        String::new(),
+    );
+    let children = (0..7)
+        .map(|index| {
+            let mut child = crate::sessions::SessionSummary::from_cached(
+                format!("child-{index}"),
+                format!("/project/child-{index}").into(),
+                "/project".into(),
+                "worker".into(),
+                String::new(),
+                format!("2026-09-23T00:00:0{index}Z"),
+                Some("root".into()),
+                SystemTime::now(),
+                0,
+                crate::sessions::UsageSummary::default(),
+                false,
+                index == 0,
+                String::new(),
+            );
+            child.harness = Backend::Codex;
+            child
+        })
+        .collect::<Vec<_>>();
+    let sessions = std::iter::once(root).chain(children).collect::<Vec<_>>();
+    let mut limited = AgentActivity::limited_fallback(&sessions[2]);
+    limited.lifecycle = AgentLifecycle::Unknown;
+    let activities = std::collections::HashMap::from([(
+        crate::agent_activity::agent_activity_key(&sessions[2].path),
+        limited,
+    )]);
+    let rows = worker_navigation_rows(&sessions, &activities, Some(Path::new("/project/child-3")));
+    let ids = rows
+        .iter()
+        .map(|session| session.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        [
+            "root", "child-6", "child-5", "child-4", "child-3", "child-2", "child-1", "child-0"
+        ]
+    );
+    let ordered = ordered_worker_rows(&sessions, &activities, Some(Path::new("/project/root")));
+    assert_eq!(ordered[5].3, AgentSection::Limited);
+    assert_eq!(ordered[6].3, AgentSection::Active);
 }
 
 #[test]

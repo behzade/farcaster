@@ -6,7 +6,10 @@ use super::{
     FarcasterApp, VisibleSessionTarget, rendering::INACTIVE_PREVIEW_LIMIT, session_rail_lists,
 };
 use crate::{
-    app::AppSurface,
+    app::{
+        AppSurface,
+        views::run_panel::{RECENT_WORKERS, worker_navigation_rows},
+    },
     sessions::{SessionSummary, root_session_for_path},
 };
 
@@ -45,7 +48,67 @@ fn session_step(
     }
 }
 
+fn worker_step(count: usize, selected: Option<usize>, direction: isize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let current = selected.unwrap_or(if direction > 0 { count - 1 } else { 0 });
+    Some((current as isize + direction).rem_euclid(count as isize) as usize)
+}
+
+fn visible_worker_indices(total: usize, selected: Option<usize>, older_open: bool) -> Vec<usize> {
+    let recent_end = (RECENT_WORKERS + 1).min(total);
+    if older_open {
+        (recent_end..total).collect()
+    } else {
+        (0..recent_end)
+            .chain(selected.filter(|index| *index >= recent_end))
+            .collect()
+    }
+}
+
 impl FarcasterApp {
+    pub(in crate::app) fn switch_worker(
+        &mut self,
+        direction: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.surface != AppSurface::Chat
+            || self.keyboard_overlay_focus(window, cx).is_some()
+        {
+            return;
+        }
+        let selected = self
+            .lifecycle
+            .pending_session_switch
+            .as_ref()
+            .map(|(path, _)| path.as_path())
+            .or(self.snapshot.selected_session.as_deref());
+        let rows = worker_navigation_rows(&self.sessions.all, &self.activity.agents, selected);
+        let Some(root) = rows.first() else { return };
+        let older_open = self
+            .views
+            .run_panel
+            .read(cx)
+            .older_workers_open_for(&root.path);
+        let selected_index = rows
+            .iter()
+            .position(|session| Some(session.path.as_path()) == selected);
+        let visible = visible_worker_indices(rows.len(), selected_index, older_open);
+        let current = visible
+            .iter()
+            .position(|index| Some(*index) == selected_index);
+        let Some(index) = worker_step(visible.len(), current, direction) else {
+            return;
+        };
+        let session = rows[visible[index]];
+        let path = session.path.clone();
+        let project = session.project.clone();
+        self.select_session_restoring_center(path, project, false, window, cx);
+        self.recover_keyboard_focus(window, cx);
+    }
+
     pub(super) fn selected_rail_root(&self) -> Option<&SessionSummary> {
         selected_root(
             &self.sessions.visible,

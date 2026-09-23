@@ -424,6 +424,26 @@ impl CallerRegistry {
         ))
     }
 
+    pub fn session_worker_profile(
+        &self,
+        project: &Path,
+        backend: Backend,
+        session: &str,
+    ) -> Option<String> {
+        self.callers.lock().ok()?.values().find_map(|caller| {
+            (caller.project == project
+                && caller.backend == backend
+                && caller.session.as_deref() == Some(session))
+            .then(|| {
+                caller
+                    .assignment
+                    .as_ref()
+                    .map(|assignment| assignment.profile.clone())
+            })
+            .flatten()
+        })
+    }
+
     pub fn session_parent(&self, backend: Backend, session: &str) -> Option<String> {
         let callers = self.callers.lock().ok()?;
         let child = callers.values().find(|caller| {

@@ -380,7 +380,7 @@ fn workspace_shortcuts_route_by_context_on_both_platforms() {
 }
 
 #[test]
-fn modified_jk_navigates_chat_sessions_with_composer_focus() {
+fn modified_jk_navigates_chat_sessions_and_workers_with_composer_focus() {
     use crate::app::{APP_INPUT_CONTEXT, CHAT_INPUT_CONTEXT, NATIVE_INPUT_CONTEXT};
     let keymap = gpui::Keymap::new(bindings());
     let contexts = |names: &[&str]| {
@@ -398,6 +398,14 @@ fn modified_jk_navigates_chat_sessions_with_composer_focus() {
             (
                 "k",
                 Box::new(crate::app::PreviousTranscriptSession) as Box<dyn gpui::Action>,
+            ),
+            (
+                "shift-j",
+                Box::new(crate::app::NextWorker) as Box<dyn gpui::Action>,
+            ),
+            (
+                "shift-k",
+                Box::new(crate::app::PreviousWorker) as Box<dyn gpui::Action>,
             ),
         ] {
             let stroke =

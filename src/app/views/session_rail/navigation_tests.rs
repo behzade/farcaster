@@ -2,6 +2,36 @@ use super::*;
 use crate::agents::Backend;
 
 #[test]
+fn worker_shortcuts_wrap_through_parent_and_workers() {
+    assert_eq!(worker_step(0, Some(0), 1), None);
+    assert_eq!(worker_step(1, None, 1), Some(0));
+    assert_eq!(worker_step(3, Some(0), 1), Some(1));
+    assert_eq!(worker_step(3, Some(0), -1), Some(2));
+    assert_eq!(worker_step(3, Some(2), 1), Some(0));
+}
+
+#[test]
+fn worker_shortcuts_follow_the_visible_sidebar_view() {
+    let recent = visible_worker_indices(9, Some(0), false);
+    let older = visible_worker_indices(9, None, true);
+    assert_eq!(recent.first(), Some(&0));
+    assert_eq!(
+        recent.iter().chain(&older).copied().collect::<Vec<_>>(),
+        (0..9).collect::<Vec<_>>()
+    );
+
+    let selected_older = older[1];
+    assert_eq!(
+        visible_worker_indices(9, Some(selected_older), false),
+        recent
+            .into_iter()
+            .chain([selected_older])
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(visible_worker_indices(9, Some(selected_older), true), older);
+}
+
+#[test]
 fn navigation_can_leave_and_return_to_an_unsubmitted_draft() {
     use crate::app::views::session_rail::folders;
     let drafts = [(30, false), (20, true), (10, false)].map(|(id, submitted)| {

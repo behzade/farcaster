@@ -121,6 +121,14 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
             this.switch_transcript_session(-1, window, cx);
         },
     ))
+    .on_action(cx.listener(|this, _: &crate::app::NextWorker, window, cx| {
+        this.switch_worker(1, window, cx);
+    }))
+    .on_action(
+        cx.listener(|this, _: &crate::app::PreviousWorker, window, cx| {
+            this.switch_worker(-1, window, cx);
+        }),
+    )
     .on_action(cx.listener(|this, _: &NextSession, window, cx| {
         this.switch_relative_session(1, window, cx);
     }))

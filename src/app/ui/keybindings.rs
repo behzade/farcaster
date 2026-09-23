@@ -521,6 +521,22 @@ fn registry_for_platform(prefix: &str) -> Vec<Shortcut> {
                 crate::app::PreviousTranscriptSession,
                 Some(crate::app::CHAT_SHORTCUT_CONTEXT)
             ),
+            shortcut!(
+                "Workers",
+                "Next worker or parent chat",
+                format!("{modifier}-shift-j"),
+                crate::app::NextWorker,
+                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
+            )
+            .in_picker(modifier == platform_key("cmd", "ctrl")),
+            shortcut!(
+                "Workers",
+                "Previous worker or parent chat",
+                format!("{modifier}-shift-k"),
+                crate::app::PreviousWorker,
+                Some(crate::app::CHAT_SHORTCUT_CONTEXT)
+            )
+            .in_picker(modifier == platform_key("cmd", "ctrl")),
         ]);
     }
     shortcuts

@@ -125,6 +125,8 @@ actions!(
         NextSession,
         NextTranscriptSession,
         PreviousTranscriptSession,
+        NextWorker,
+        PreviousWorker,
         ToggleArchivedSessions,
         SubmitPrompt,
         AbortRun,

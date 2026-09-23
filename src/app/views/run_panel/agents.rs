@@ -1,18 +1,58 @@
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Role,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    AnyElement, Div, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    ScrollAnchor, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _, px,
 };
 
-use super::super::super::{FarcasterApp, RunPanelView};
+use super::super::super::FarcasterApp;
 use super::super::session_rail::{session_hover_details, session_hover_panel, status_visual};
+use super::WorkerProfileNames;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
-    app::ui::primitives::{AppIconSize, activates_button, app_icon, disclosure_button},
+    app::ui::primitives::{AppIconSize, activates_button, app_icon},
     app::ui::theme::THEME,
 };
 
-pub(super) const MAX_VISIBLE_COMPLETED_AGENTS: usize = 5;
+pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui::Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_selected(selected)
+        .tab_index(0)
+        .relative()
+        .flex()
+        .items_center()
+        .min_w_0()
+        .px(THEME.space.sm)
+        .py(px(4.0))
+        .rounded(THEME.radius)
+        .bg(if selected {
+            THEME.colors.session_selection
+        } else {
+            THEME.colors.inspector
+        })
+        .hover(move |row| {
+            row.bg(if selected {
+                THEME.colors.session_selection
+            } else {
+                THEME.colors.surface
+            })
+        })
+        .when(selected, |row| {
+            row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(THEME.space.xs)
+                    .bottom(THEME.space.xs)
+                    .w(px(2.0))
+                    .bg(THEME.colors.accent),
+            )
+        })
+        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .cursor_pointer()
+}
 
 impl FarcasterApp {
     pub(super) fn agent_card(
@@ -20,6 +60,9 @@ impl FarcasterApp {
         activity: &AgentActivity,
         session: &crate::sessions::SessionSummary,
         depth: usize,
+        selected: bool,
+        anchor: &ScrollAnchor,
+        saved_profiles: &WorkerProfileNames,
         entity: WeakEntity<Self>,
     ) -> Option<AnyElement> {
         let activity_key = crate::agent_activity::agent_activity_key(&session.path);
@@ -43,6 +86,32 @@ impl FarcasterApp {
                 )
             });
         let mut hover_details = session_hover_details(session, state, "", 0);
+        let profile_name = registry
+            .session_worker_profile(&session.project, session.harness, &session.id)
+            .or_else(|| {
+                registry.session_worker_profile(
+                    &session.project,
+                    session.harness,
+                    &session.path.to_string_lossy(),
+                )
+            })
+            .or_else(|| {
+                saved_profiles
+                    .get(&(session.project.clone(), session.harness, session.id.clone()))
+                    .or_else(|| {
+                        saved_profiles.get(&(
+                            session.project.clone(),
+                            session.harness,
+                            session.path.to_string_lossy().into_owned(),
+                        ))
+                    })
+                    .cloned()
+            });
+        if let Some(profile) = &profile_name {
+            hover_details
+                .rows
+                .insert(0, ("Profile".into(), profile.clone()));
+        }
         hover_details.rows.insert(
             0,
             (
@@ -58,25 +127,19 @@ impl FarcasterApp {
             session.model.as_ref(),
             session.thinking_level.as_deref(),
         );
-        let card = div()
-            .id(format!("agent-card-{activity_key}"))
+        let identity = profile_name
+            .or_else(|| caller.as_ref().map(|(name, _)| name.clone()))
+            .unwrap_or_else(|| role.clone());
+        let card = conversation_row(format!("agent-card-{activity_key}"), selected)
+            .anchor_scroll(selected.then(|| anchor.clone()))
             .debug_selector(move || format!("agent-card-{activity_key}"))
             .track_focus(&focus)
-            .role(Role::Button)
-            .aria_label(format!("Show {role} transcript: {state}"))
-            .tab_index(0)
+            .aria_label(format!("Show {identity} transcript: {state}"))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 crate::app::ui::primitives::preserve_pointer_focus,
             )
-            .ml(px(depth.saturating_sub(1) as f32 * 8.0))
-            .px(px(2.0))
-            .py(px(3.0))
-            .flex()
-            .items_stretch()
-            .hover(|card| card.bg(THEME.colors.surface))
-            .focus(|card| card.bg(THEME.colors.surface))
-            .cursor_pointer()
+            .ml(px(depth as f32 * 8.0))
             .on_click(move |_, window, cx| {
                 let _ = entity.update(cx, |this, cx| {
                     this.select_session_and_focus(path.clone(), project.clone(), window, cx);
@@ -122,9 +185,30 @@ impl FarcasterApp {
                         div()
                             .min_w_0()
                             .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(execution),
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap(THEME.space.xs)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .max_w(px(90.0))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_color(THEME.colors.text)
+                                    .child(identity),
+                            )
+                            .child(
+                                div()
+                                    .w_0()
+                                    .min_w_0()
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(format!("· {execution}")),
+                            ),
                     ),
             )
             .into_any_element();
@@ -203,30 +287,6 @@ pub(in crate::app) fn agent_section(
             AgentSection::Hidden
         }
     }
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum RunDisclosure {
-    Completed,
-    Limited,
-}
-
-pub(super) fn disclosure_control(
-    id: &'static str,
-    label: &'static str,
-    expanded: bool,
-    disclosure: RunDisclosure,
-    entity: WeakEntity<RunPanelView>,
-) -> AnyElement {
-    disclosure_button(id, expanded, label, move |_, cx| {
-        let _ = entity.update(cx, |view, cx| {
-            match disclosure {
-                RunDisclosure::Completed => view.toggle_completed_agents(),
-                RunDisclosure::Limited => view.toggle_limited_agents(),
-            }
-            cx.notify();
-        });
-    })
 }
 
 pub(super) fn lifecycle_label(lifecycle: AgentLifecycle) -> &'static str {

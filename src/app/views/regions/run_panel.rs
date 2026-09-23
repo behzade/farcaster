@@ -1,6 +1,6 @@
 use gpui::{
-    AppContext as _, Context, Entity, IntoElement as _, Pixels, Render, ScrollHandle, Subscription,
-    WeakEntity,
+    AppContext as _, Context, Entity, IntoElement as _, Pixels, Render, ScrollAnchor, ScrollHandle,
+    Subscription, WeakEntity,
 };
 use gpui_component::input::{InputEvent, InputState};
 
@@ -16,15 +16,24 @@ pub(crate) struct RunPanelView {
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
     scroll: ScrollHandle,
+    activity_scroll: ScrollHandle,
+    activity_anchor: ScrollAnchor,
     review_scroll: ScrollHandle,
+    older_workers_scroll: ScrollHandle,
+    older_workers_anchor: ScrollAnchor,
     pub(crate) review_tree: super::super::run_panel::change_tree::ChangeTreeState,
     review_id: Option<u64>,
-    completed_agents_expanded: bool,
-    limited_agents_expanded: bool,
+    older_workers_root: Option<std::path::PathBuf>,
+    last_selected: Option<std::path::PathBuf>,
+    reveal_selected: bool,
+    worker_profiles_generation: Option<u64>,
+    saved_worker_profiles: super::super::run_panel::WorkerProfileNames,
 }
 
 impl RunPanelView {
     pub(crate) fn new(app: WeakEntity<FarcasterApp>) -> Self {
+        let activity_scroll = ScrollHandle::new();
+        let older_workers_scroll = ScrollHandle::new();
         Self {
             app,
             changes: Default::default(),
@@ -34,11 +43,18 @@ impl RunPanelView {
             width: THEME.layout.run_panel,
             resize_start: None,
             scroll: ScrollHandle::new(),
+            activity_anchor: ScrollAnchor::for_handle(activity_scroll.clone()),
+            activity_scroll,
             review_scroll: ScrollHandle::new(),
+            older_workers_anchor: ScrollAnchor::for_handle(older_workers_scroll.clone()),
+            older_workers_scroll,
             review_tree: Default::default(),
             review_id: None,
-            completed_agents_expanded: false,
-            limited_agents_expanded: false,
+            older_workers_root: None,
+            last_selected: None,
+            reveal_selected: false,
+            worker_profiles_generation: None,
+            saved_worker_profiles: Default::default(),
         }
     }
 
@@ -73,12 +89,20 @@ impl RunPanelView {
         self.resize_start.take().is_some()
     }
 
-    pub(crate) fn toggle_completed_agents(&mut self) {
-        self.completed_agents_expanded = !self.completed_agents_expanded;
+    pub(crate) fn show_older_workers(&mut self, root: std::path::PathBuf, selected_is_older: bool) {
+        self.older_workers_root = Some(root);
+        self.reveal_selected = selected_is_older;
+        self.older_workers_scroll
+            .set_offset(gpui::point(gpui::px(0.0), gpui::px(0.0)));
     }
 
-    pub(crate) fn toggle_limited_agents(&mut self) {
-        self.limited_agents_expanded = !self.limited_agents_expanded;
+    pub(crate) fn close_older_workers(&mut self) {
+        self.older_workers_root = None;
+        self.reveal_selected = true;
+    }
+
+    pub(crate) fn older_workers_open_for(&self, root: &std::path::Path) -> bool {
+        self.older_workers_root.as_deref() == Some(root)
     }
 }
 
@@ -92,6 +116,24 @@ impl Render for RunPanelView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
+        let generation = app.read(cx).sessions.generation;
+        if self.worker_profiles_generation != Some(generation) {
+            self.worker_profiles_generation = Some(generation);
+            if let Ok(families) =
+                crate::app::persistence::open().and_then(|store| store.load_worker_routes())
+            {
+                self.saved_worker_profiles = families
+                    .into_iter()
+                    .filter_map(|family| {
+                        let profile = family.routing?.assignment.profile;
+                        Some((
+                            (family.project, family.child_backend, family.child_session),
+                            profile,
+                        ))
+                    })
+                    .collect();
+            }
+        }
         if let Some(review) = app.read(cx).visible_review() {
             if self.review_id != Some(review.id) {
                 self.review_id = Some(review.id);
@@ -106,6 +148,42 @@ impl Render for RunPanelView {
                 self.app.clone(),
                 cx.entity().downgrade(),
             );
+        }
+        let selected = app
+            .read(cx)
+            .lifecycle
+            .pending_session_switch
+            .as_ref()
+            .map(|(path, _)| path.clone())
+            .or_else(|| app.read(cx).snapshot.selected_session.clone());
+        let root =
+            crate::sessions::root_session_for_path(&app.read(cx).sessions.all, selected.as_deref())
+                .map(|session| session.path.clone());
+        if self.older_workers_root.as_ref() != root.as_ref() {
+            self.older_workers_root = None;
+        }
+        if self.last_selected != selected || self.reveal_selected {
+            self.last_selected = selected;
+            self.reveal_selected = false;
+            if root.is_some() && self.last_selected.is_some() {
+                if self.older_workers_root.is_some() {
+                    self.older_workers_anchor.scroll_to(window, cx);
+                } else {
+                    self.activity_anchor.scroll_to(window, cx);
+                }
+            }
+        }
+        if self.older_workers_root.is_some() {
+            return app
+                .read(cx)
+                .render_older_workers_panel(
+                    self.app.clone(),
+                    cx.entity().downgrade(),
+                    &self.older_workers_scroll,
+                    &self.older_workers_anchor,
+                    &self.saved_worker_profiles,
+                )
+                .into_any_element();
         }
         if self.search.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files…"));
@@ -146,8 +224,9 @@ impl Render for RunPanelView {
             .render_run_panel(
                 self.app.clone(),
                 cx.entity().downgrade(),
-                self.completed_agents_expanded,
-                self.limited_agents_expanded,
+                &self.activity_scroll,
+                &self.activity_anchor,
+                &self.saved_worker_profiles,
                 &super::super::run_panel::RepositoryView {
                     state: &self.changes,
                     search,

@@ -373,6 +373,10 @@ fn foreign_parents_keep_farcaster_links_but_not_native_ancestry() -> Result<(), 
         .expect("persisted worker routing");
     assert_eq!(routed.name, "inspect");
     assert_eq!(routed.assignment.profile, "fast");
+    assert_eq!(
+        registry.session_worker_profile(Path::new("/project"), Backend::OpenCode, "opencode-child"),
+        Some("fast".into())
+    );
     child.select_model("opencode-go", "glm-5.3-flash");
     child.select_effort("high");
     let saved = links

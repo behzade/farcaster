@@ -177,11 +177,25 @@ impl Render for WorkGraphSidebarView {
         let _timing =
             crate::app::infrastructure::performance::Timing::new("render.workgraph_sidebar");
         let entity = cx.entity().downgrade();
+        let title = match &self.state {
+            PlanLoadState::Ready(data) => data
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.plan.title.trim())
+                .filter(|title| !title.is_empty())
+                .map(|title| format!("Plan · {title}"))
+                .unwrap_or_else(|| "Plan".into()),
+            PlanLoadState::Loading | PlanLoadState::Failed(_) => "Plan".into(),
+        };
         let header = div()
             .flex()
             .items_center()
             .justify_between()
-            .child(section_heading("Current plan"));
+            .min_w_0()
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .child(section_heading(title));
         let visible = sidebar_visible(&self.state, self.session_id.is_some());
         div()
             .when(!visible, |sidebar| sidebar.hidden())
