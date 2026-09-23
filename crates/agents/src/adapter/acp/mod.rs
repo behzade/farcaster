@@ -17,7 +17,9 @@ pub(super) type MainSession = (
     Option<crate::DiscoveredHistory>,
 );
 
-pub use catalog::{list_sessions, load_configuration, load_history};
+pub use catalog::{
+    list_sessions, load_configuration, load_configuration_with_cleanup, load_history,
+};
 pub use worker::{AcpWorkerFactory, spawn_main};
 
 #[derive(Clone, Debug)]

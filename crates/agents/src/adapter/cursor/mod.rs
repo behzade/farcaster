@@ -112,8 +112,11 @@ pub(super) use catalog::{delete as delete_session, rename as rename_session};
 pub(super) fn load_configuration(
     project: &Path,
 ) -> Result<super::main_session::MainSessionMetadata, String> {
-    let (metadata, session_id) = super::acp::load_configuration(&PROFILE, project)?;
-    let _ = catalog::delete(&session_id);
+    let (metadata, _) = super::acp::load_configuration_with_cleanup(&PROFILE, project, |id| {
+        if let Err(error) = catalog::delete(id) {
+            zlog::warn!("Could not remove temporary Cursor catalog session: {error}");
+        }
+    })?;
     Ok(metadata)
 }
 

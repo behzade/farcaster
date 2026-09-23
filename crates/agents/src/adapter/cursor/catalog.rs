@@ -241,6 +241,10 @@ fn listed_session(
     if !query.is_empty() && !search.to_ascii_lowercase().contains(query) {
         return None;
     }
+    // Model discovery can leave an empty backend session with no store.
+    if matches!(inspect(&id), Ok((_, true))) {
+        return None;
+    }
     let timestamp = value
         .get("updatedAt")
         .and_then(serde_json::Value::as_str)

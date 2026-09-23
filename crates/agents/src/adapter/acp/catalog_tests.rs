@@ -4,6 +4,48 @@ use std::path::Path;
 use super::*;
 use crate::adapter::acp::events::AcpInbound;
 
+#[cfg(unix)]
+#[test]
+fn failed_cursor_catalog_read_closes_and_cleans_up_its_empty_session() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"authMethods":[]}' ;;
+    *'"method":"session/new"'*) result='{"sessionId":"catalog-only","configOptions":[]}' ;;
+    *'"method":"cursor/list_available_models"'*) printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"models unavailable"}}\n' "$id"; continue ;;
+    *'"method":"session/close"'*) result='{}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("fake-cursor");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    let mut profile = super::super::super::cursor::PROFILE;
+    profile.command = Box::leak(executable.to_string_lossy().into_owned().into_boxed_str());
+    profile.path_environment = "FARCASTER_UNUSED_CATALOG_TEST_PATH";
+    let (sender, receiver) = mpsc::channel();
+    let result = load_configuration_with_cleanup(&profile, project.path(), move |id| {
+        let _ = sender.send(id.to_owned());
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        receiver.recv().map_err(|error| error.to_string())?,
+        "catalog-only"
+    );
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert!(requests.contains("\"method\":\"session/close\""));
+    Ok(())
+}
+
 #[test]
 fn catalog_exchange_times_out_when_agent_stalls() {
     let (release, stalled) = mpsc::channel::<()>();

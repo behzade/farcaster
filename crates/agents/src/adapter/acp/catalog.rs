@@ -61,10 +61,18 @@ pub fn load_configuration(
     profile: &AcpProfile,
     project: &Path,
 ) -> Result<(main_session::MainSessionMetadata, String), String> {
+    load_configuration_with_cleanup(profile, project, |_| {})
+}
+
+pub fn load_configuration_with_cleanup(
+    profile: &AcpProfile,
+    project: &Path,
+    cleanup: impl FnOnce(&str) + Send + 'static,
+) -> Result<(main_session::MainSessionMetadata, String), String> {
     with_connection(
         profile,
         project,
-        |connection, profile, project, catalog_key| {
+        move |connection, profile, project, catalog_key| {
             let response = connection.request_blocking(
                 "session/new",
                 json!({"cwd": project.to_string_lossy(), "mcpServers": []}),
@@ -73,18 +81,23 @@ pub fn load_configuration(
                 .get("sessionId")
                 .and_then(Value::as_str)
                 .ok_or_else(|| format!("{} did not provide an ACP session id", profile.name))?;
-            let catalog = super::configuration::model_catalog(connection, profile, catalog_key)?;
-            let (mut metadata, _) = super::configuration::metadata(profile, &response, catalog);
-            if let Some(commands) = connection
-                .drain_queued()?
-                .iter()
-                .filter_map(|message| commands_from_update(message, session_id))
-                .next_back()
-            {
-                metadata.commands = commands;
-            }
+            let result = (|| {
+                let catalog =
+                    super::configuration::model_catalog(connection, profile, catalog_key)?;
+                let (mut metadata, _) = super::configuration::metadata(profile, &response, catalog);
+                if let Some(commands) = connection
+                    .drain_queued()?
+                    .iter()
+                    .filter_map(|message| commands_from_update(message, session_id))
+                    .next_back()
+                {
+                    metadata.commands = commands;
+                }
+                Ok::<_, String>(metadata)
+            })();
             close_session(connection, session_id);
-            Ok((metadata, session_id.to_owned()))
+            cleanup(session_id);
+            result.map(|metadata| (metadata, session_id.to_owned()))
         },
     )
 }
