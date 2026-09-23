@@ -20,5 +20,18 @@ fn command_sets_app_proxy_without_a_captured_environment() -> Result<(), String>
             actual == name && value.as_deref() == Some(std::ffi::OsStr::new(proxy))
         }));
     }
+    for name in ["no_proxy", "NO_PROXY"] {
+        let value = environment
+            .iter()
+            .find(|(actual, _)| actual == name)
+            .and_then(|(_, value)| value.as_ref())
+            .expect("local bypass is set");
+        assert!(
+            value
+                .to_string_lossy()
+                .split(',')
+                .any(|host| host == "127.0.0.1")
+        );
+    }
     Ok(())
 }

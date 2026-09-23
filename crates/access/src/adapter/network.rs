@@ -45,8 +45,29 @@ pub fn append_app_proxy_environment(
     let Some(proxy) = configuration.app_proxy.as_ref() else {
         return;
     };
+    // The built-in MCP server uses loopback. A proxy that is down must not
+    // prevent an agent from connecting to this local server at startup.
+    let mut bypass = OsString::new();
+    for (_, value) in environment
+        .iter()
+        .filter(|(name, _)| name == "no_proxy" || name == "NO_PROXY")
+    {
+        if !value.is_empty() {
+            if !bypass.is_empty() {
+                bypass.push(",");
+            }
+            bypass.push(value);
+        }
+    }
+    if !bypass.is_empty() {
+        bypass.push(",");
+    }
+    bypass.push("127.0.0.1,localhost,::1");
+    environment.retain(|(name, _)| name != "no_proxy" && name != "NO_PROXY");
     environment.push((OsString::from("http_proxy"), OsString::from(proxy)));
     environment.push((OsString::from("https_proxy"), OsString::from(proxy)));
+    environment.push((OsString::from("no_proxy"), bypass.clone()));
+    environment.push((OsString::from("NO_PROXY"), bypass));
 }
 
 #[cfg(test)]

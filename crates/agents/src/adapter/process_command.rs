@@ -44,8 +44,12 @@ impl AgentLaunchConfig {
         command.args(&self.prefix_args).current_dir(project);
         if let Some(environment) = environment {
             command.env_clear().envs(environment);
-        } else if let Some(proxy) = network.app_proxy {
-            command.env("http_proxy", &proxy).env("https_proxy", proxy);
+        } else if network.app_proxy.is_some() {
+            let mut proxy_environment = std::env::vars_os()
+                .filter(|(name, _)| name == "no_proxy" || name == "NO_PROXY")
+                .collect();
+            farcaster_access::append_app_proxy_environment(&mut proxy_environment, &network);
+            command.envs(proxy_environment);
         }
         command.env_remove("FARCASTER_PROMPT_BOUNDARY_URL");
         if let Some(url) = &self.prompt_boundary_url {

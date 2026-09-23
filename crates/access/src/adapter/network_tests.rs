@@ -18,12 +18,15 @@ fn environment_proxy_takes_precedence_without_rewriting_environment() {
 
 #[test]
 fn app_proxy_is_used_only_when_environment_has_none() {
-    let configuration = configuration(None, Some("http://127.0.0.1:8080"));
+    let mut environment = environment(&[
+        ("no_proxy", "internal.example"),
+        ("NO_PROXY", "other.example"),
+    ]);
+    let configuration = configuration(Some(&environment), Some("http://127.0.0.1:8080"));
     assert_eq!(
         configuration.app_proxy.as_deref(),
         Some("http://127.0.0.1:8080")
     );
-    let mut environment = Vec::new();
     append_app_proxy_environment(&mut environment, &configuration);
     assert_eq!(
         environment,
@@ -35,6 +38,14 @@ fn app_proxy_is_used_only_when_environment_has_none() {
             (
                 OsString::from("https_proxy"),
                 OsString::from("http://127.0.0.1:8080")
+            ),
+            (
+                OsString::from("no_proxy"),
+                OsString::from("internal.example,other.example,127.0.0.1,localhost,::1")
+            ),
+            (
+                OsString::from("NO_PROXY"),
+                OsString::from("internal.example,other.example,127.0.0.1,localhost,::1")
             ),
         ]
     );
