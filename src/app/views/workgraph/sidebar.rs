@@ -181,9 +181,12 @@ impl Render for WorkGraphSidebarView {
             PlanLoadState::Ready(data) => data
                 .snapshot
                 .as_ref()
-                .map(|snapshot| snapshot.plan.title.trim())
-                .filter(|title| !title.is_empty())
-                .map(|title| format!("Plan · {title}"))
+                .and_then(|snapshot| {
+                    let title = snapshot.plan.title.trim();
+                    (!title.is_empty()
+                        && !snapshot.nodes.iter().any(|node| node.title.trim() == title))
+                    .then(|| format!("Plan · {title}"))
+                })
                 .unwrap_or_else(|| "Plan".into()),
             PlanLoadState::Loading | PlanLoadState::Failed(_) => "Plan".into(),
         };
