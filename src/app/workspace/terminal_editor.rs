@@ -14,9 +14,9 @@ use super::{
     editor::{EditorBackend, EditorRequest},
     external_editor,
 };
-use crate::app::infrastructure::editor_launch;
+use crate::{app::infrastructure::editor_launch, storage::EditorChoice};
 
-pub(super) struct TerminalBackend(pub(super) crate::storage::EditorChoice);
+pub(super) struct TerminalBackend(pub(super) EditorChoice);
 
 impl EditorBackend for TerminalBackend {
     fn open(
@@ -27,9 +27,10 @@ impl EditorBackend for TerminalBackend {
         cx: &mut Context<FarcasterApp>,
     ) -> Result<(), String> {
         let choice = self.0;
+        let vim = choice == EditorChoice::Vim;
         let (project, title, args, temporary) = match request {
             EditorRequest::Project(project) => {
-                let args = if choice == crate::storage::EditorChoice::Vim {
+                let args = if vim {
                     vec![project.clone().into_os_string()]
                 } else {
                     vec![]
@@ -48,15 +49,11 @@ impl EditorBackend for TerminalBackend {
                     .unwrap_or_else(|| "File".into());
                 if diff {
                     let base = external_editor::head_tempfile(&path, choice.label())?;
-                    let mut args = vec![if choice == crate::storage::EditorChoice::Vim {
-                        "-d".into()
-                    } else {
-                        "--vsplit".into()
-                    }];
+                    let mut args = vec![if vim { "-d".into() } else { "--vsplit".into() }];
                     args.extend([base.path().as_os_str().to_owned(), path.into_os_string()]);
                     (project, format!("Diff: {title}"), args, Some(base))
                 } else {
-                    let args = if choice == crate::storage::EditorChoice::Vim {
+                    let args = if vim {
                         let mut args = Vec::new();
                         if let Some(line) = line {
                             args.push(format!("+{}", line.max(1)).into());
@@ -72,7 +69,7 @@ impl EditorBackend for TerminalBackend {
             EditorRequest::Review {
                 project, locations, ..
             } => {
-                let args = if choice == crate::storage::EditorChoice::Vim {
+                let args = if vim {
                     let lines = locations
                         .iter()
                         .map(|(_, line)| line.unwrap_or(1).max(1).to_string())
@@ -112,14 +109,14 @@ struct TerminalTab {
 
 pub(in crate::app) struct TerminalEditor {
     project: PathBuf,
-    choice: crate::storage::EditorChoice,
+    choice: EditorChoice,
     tabs: Vec<TerminalTab>,
     active: usize,
     visible: bool,
 }
 
 impl TerminalEditor {
-    pub(super) fn new(project: PathBuf, choice: crate::storage::EditorChoice) -> Self {
+    pub(super) fn new(project: PathBuf, choice: EditorChoice) -> Self {
         Self {
             project,
             choice,
@@ -199,10 +196,10 @@ impl TerminalEditor {
 
     pub(super) fn retain_alive(&mut self, cx: &mut Context<Self>) -> bool {
         let previous_count = self.tabs.len();
-        let active = self.tabs.get(self.active).map(|tab| tab.key.clone());
+        let active = self.tabs.get(self.active).map(|tab| tab.terminal.clone());
         self.tabs.retain(|tab| tab.terminal.read(cx).is_alive());
         self.active = active
-            .and_then(|key| self.tabs.iter().position(|tab| tab.key == key))
+            .and_then(|terminal| self.tabs.iter().position(|tab| tab.terminal == terminal))
             .unwrap_or_else(|| self.tabs.len().saturating_sub(1));
         if self.tabs.len() != previous_count {
             self.apply_visibility(cx);
