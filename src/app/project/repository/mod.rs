@@ -334,6 +334,67 @@ impl FarcasterApp {
         .detach();
     }
 
+    /// Reads the working copies of the other known projects one at a time, so
+    /// switching to one shows its changes right away instead of an empty panel.
+    pub(in crate::app) fn warm_repository_observations(&mut self, cx: &mut Context<Self>) {
+        let repository = &mut self.project.repository;
+        let current = repository.project.clone();
+        let mut projects = self.project.registered.clone();
+        projects.extend(
+            self.sessions
+                .visible
+                .iter()
+                .map(|session| session.project.clone()),
+        );
+        projects.sort();
+        projects.dedup();
+        projects.retain(|project| project != &current && !repository.warmed.contains(project));
+        repository.warmed.extend(projects.iter().cloned());
+        let preferences = repository.preferences.clone();
+        cx.spawn(async move |weak, cx| {
+            for project in projects {
+                let preference = preference_for(&preferences, &project);
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let target = project.clone();
+                let scanned = cx
+                    .background_spawn(async move { observe_project(&target, preference) })
+                    .await;
+                let _ = weak.update(cx, |this, _| {
+                    if let Some(observation) = RepositoryObservation::from_scan(preference, scanned)
+                    {
+                        this.project.repository.remember(project, observation);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    pub(in crate::app) fn prefetch_repository_observation(
+        &mut self,
+        project: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if project == self.project.repository.project {
+            return;
+        }
+        let preference = preference_for(&self.project.repository.preferences, &project);
+        let target = project.clone();
+        cx.spawn(async move |weak, cx| {
+            let scanned = cx
+                .background_spawn(async move { observe_project(&target, preference) })
+                .await;
+            let _ = weak.update(cx, |this, _| {
+                if let Some(observation) = RepositoryObservation::from_scan(preference, scanned) {
+                    this.project.repository.remember(project, observation);
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(in crate::app) fn request_repository_sync(
         &mut self,
         action: RepositorySyncAction,

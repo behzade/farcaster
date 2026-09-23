@@ -100,6 +100,7 @@ pub(super) fn folder_header(
     let scope_entity = entity.clone();
     let delete_entity = entity.clone();
     let scope_project = project.clone();
+    let hover_entity = entity.clone();
     let cancel_entity = entity;
     let section = div().w_full().flex().flex_col();
     let mut row = session_section_header()
@@ -109,6 +110,11 @@ pub(super) fn folder_header(
         .pr(theme().space.sm)
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
+        .on_hover(move |hovered: &bool, _, cx| {
+            if *hovered {
+                let _ = hover_entity.update(cx, |this, cx| this.prefetch_folder(id, cx));
+            }
+        })
         .on_click(move |_, _, cx| {
             let Some(project) = scope_project.clone() else {
                 return;

@@ -136,6 +136,46 @@ impl FarcasterApp {
         target
     }
 
+    pub(in crate::app) fn prefetch_session(
+        &mut self,
+        path: PathBuf,
+        project: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        self.prefetch_repository_observation(project.clone(), cx);
+        if crate::app::runtime::history_cache::history_is_fresh(&path) {
+            return;
+        }
+        let Some((harness, _)) = crate::agents::external_session_identity(&path) else {
+            return;
+        };
+        cx.background_spawn(async move {
+            let _ =
+                crate::app::runtime::history_cache::load_cached_history(harness, &path, &project);
+        })
+        .detach();
+    }
+
+    pub(in crate::app) fn prefetch_folder(&mut self, folder: u64, cx: &mut Context<Self>) {
+        let folders = self.sessions.folders.clone();
+        let targets = self
+            .sessions
+            .all
+            .iter()
+            .filter(|session| {
+                folders.folder_for_session(session.app_session_id, &session.project) == Some(folder)
+            })
+            .map(|session| (session.path.clone(), session.project.clone()))
+            .collect::<Vec<_>>();
+        let project = targets.first().map(|(_, project)| project.clone());
+        for (path, project) in targets {
+            self.prefetch_session(path, project, cx);
+        }
+        if let Some(project) = project {
+            self.prefetch_repository_observation(project, cx);
+        }
+    }
+
     pub(in crate::app) fn select_session(
         &mut self,
         path: PathBuf,
