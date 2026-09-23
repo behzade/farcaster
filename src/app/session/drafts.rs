@@ -197,7 +197,7 @@ impl FarcasterApp {
             return;
         }
         let project = draft.project.clone();
-        self.save_session_draft(&id);
+        self.save_session_state(cx);
         self.send_project_command(
             &project,
             RuntimeCommand::NewSession {
@@ -265,7 +265,7 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn sync_current_draft(&mut self, target: &str) {
+    pub(in crate::app) fn sync_current_draft(&mut self, target: &str, cx: &mut Context<Self>) {
         let Some(id) = self.sessions.selected_draft.as_deref() else {
             return;
         };
@@ -298,11 +298,41 @@ impl FarcasterApp {
             self.snapshot.harness,
         );
         if changed {
-            self.save_session_draft(id);
+            self.save_session_state(cx);
         }
     }
 
-    pub(in crate::app) fn begin_draft_submission(&mut self, target: &str, prompt: &str) {
+    /// Filing a chat away is a property of the chat itself, so a chat that was
+    /// never messaged is archived and restored exactly like one that was. A
+    /// chat that already writes into a session takes the session with it.
+    pub(in crate::app) fn request_draft_archive(
+        &mut self,
+        id: String,
+        archived: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.sessions.drafts.iter().position(|draft| draft.id == id) else {
+            return;
+        };
+        if !self.sessions.drafts[index].set_archived(archived) {
+            return;
+        }
+        let session = self.sessions.drafts[index].session_path.clone();
+        self.save_session_state(cx);
+        if let Some(path) = session {
+            self.set_session_archived(path, archived, cx);
+        }
+        self.notify_session_rail(cx);
+        cx.notify();
+    }
+
+    pub(in crate::app) fn begin_draft_submission(
+        &mut self,
+        target: &str,
+        prompt: &str,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = draft_id(target) else {
             return;
         };
@@ -338,7 +368,7 @@ impl FarcasterApp {
         if draft.title.is_none() {
             draft.title = provisional_session_title(prompt);
         }
-        self.save_session_draft(id);
+        self.save_session_state(cx);
     }
 
     pub(in crate::app) fn record_draft_submission(
@@ -346,6 +376,7 @@ impl FarcasterApp {
         target: &str,
         accepted: bool,
         session: Option<PathBuf>,
+        cx: &mut Context<Self>,
     ) {
         let session = session.map(|path| normalize_session_path(&path));
         let Some(id) = establish_submission(
@@ -358,7 +389,7 @@ impl FarcasterApp {
         };
         let association = self.sessions.submitted_drafts.get(&id).cloned().flatten();
         if update_persisted_submission(&mut self.sessions.drafts, &id, association.as_deref()) {
-            self.save_session_draft(&id);
+            self.save_session_state(cx);
         }
         if let Some(path) = association {
             self.canonicalize_draft_status(&id, &path);
@@ -370,6 +401,7 @@ impl FarcasterApp {
         target: String,
         session: Option<PathBuf>,
         mut status: String,
+        cx: &mut Context<Self>,
     ) {
         if status == "Done"
             && self
@@ -413,7 +445,7 @@ impl FarcasterApp {
                 associated_path.as_deref(),
             )
         {
-            self.save_session_draft(id);
+            self.save_session_state(cx);
         }
 
         if let Some(path) = associated_path.or_else(|| {
@@ -470,7 +502,7 @@ impl FarcasterApp {
         self.sessions.draft_session_ids.remove(id);
         self.sessions.drafts.retain(|draft| draft.id != id);
         clear_promoted_selection(&mut self.sessions.selected_draft, id);
-        self.remove_session_draft(id);
+        self.save_session_state(cx);
     }
 
     pub(in crate::app) fn promote_composer_images(&mut self, from: &str, to: &str) {

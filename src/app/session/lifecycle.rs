@@ -340,6 +340,7 @@ impl FarcasterApp {
         if let Some(folder) = folder {
             self.assign_session_folder(draft.app_session_id, Some(folder), cx);
         }
+        self.save_session_state(cx);
         self.send_project_command(
             &project,
             RuntimeCommand::NewSession {
@@ -516,7 +517,7 @@ impl FarcasterApp {
             let current = self.composer.sessions.current_target().to_owned();
             let _ = self.composer.sessions.discard_and_switch(&target, current);
         }
-        self.remove_session_draft(id);
+        self.save_session_state(cx);
         self.notify_session_rail(cx);
         self.notify_composer(cx);
         self.notify_run_panel(cx);

@@ -1,6 +1,7 @@
 use gpui::{Context, Window};
 
 use super::FarcasterApp;
+use crate::sessions::DraftSession;
 #[cfg(test)]
 pub(crate) use crate::sessions::SessionFolder;
 pub(crate) use crate::sessions::{FolderDestination, SessionFolders};
@@ -53,18 +54,9 @@ impl FarcasterApp {
         next: SessionFolders,
         cx: &mut Context<Self>,
     ) -> bool {
-        match crate::app::persistence::open().and_then(|store| store.save_session_folders(&next)) {
-            Ok(()) => {
-                self.sessions.folders = next;
-                self.notify_session_rail(cx);
-                true
-            }
-            Err(error) => {
-                self.sessions.error = Some(error);
-                self.notify_session_rail(cx);
-                false
-            }
-        }
+        self.sessions.folders = next;
+        self.save_session_state(cx);
+        true
     }
 
     pub(in crate::app) fn begin_folder_edit(

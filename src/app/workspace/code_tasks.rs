@@ -188,7 +188,7 @@ impl FarcasterApp {
 
     fn track_code_submission(&mut self, chat: TaskChat, message: String, cx: &mut Context<Self>) {
         let target = &chat.target;
-        self.begin_draft_submission(target, &message);
+        self.begin_draft_submission(target, &message, cx);
         self.composer.sessions.record_submission(target, &message);
         let submission_id = chat.submission_id.clone();
         self.composer.pending_submissions.insert(

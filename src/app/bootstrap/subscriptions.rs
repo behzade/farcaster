@@ -17,7 +17,7 @@ pub(super) fn create(
         this.capture_composer_session(cx);
         let target = this.composer.sessions.current_target().to_owned();
         // Materialize the open draft only after quit is confirmed.
-        this.sync_current_draft(&target);
+        this.sync_current_draft(&target, cx);
         async {}
     })
     .detach();

@@ -463,9 +463,7 @@ impl FarcasterApp {
             {
                 self.sessions.selected_draft = None;
             }
-            for id in &deleted_draft_ids {
-                self.remove_session_draft(id);
-            }
+            self.save_session_state(cx);
         }
         self.activity
             .system_notification_targets
@@ -507,6 +505,7 @@ impl FarcasterApp {
                     .draft_session_ids
                     .insert(draft.id.clone(), draft.app_session_id);
                 self.sessions.drafts.push(draft.clone());
+                self.save_session_state(cx);
                 self.send(
                     RuntimeCommand::NewSession {
                         id: draft.id,
@@ -611,7 +610,7 @@ impl FarcasterApp {
                 cx,
             );
         }
-        self.save_project_registry();
+        self.save_session_state(cx);
     }
     fn project_extension_ui(
         &mut self,
@@ -645,7 +644,7 @@ impl FarcasterApp {
             session.as_deref(),
             cx,
         );
-        self.record_draft_submission(&target, accepted, session.clone());
+        self.record_draft_submission(&target, accepted, session.clone(), cx);
         if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance {
             self.activity
                 .run_statuses
@@ -897,7 +896,7 @@ impl FarcasterApp {
                 if status == "Stopped" {
                     self.code_tasks_stopped(&target, session.as_deref(), cx);
                 }
-                self.record_session_status(target, session, status);
+                self.record_session_status(target, session, status, cx);
                 dirty.rail |= self.reconcile_submitted_drafts(cx);
             }
             RuntimeEvent::ImportPreview {
