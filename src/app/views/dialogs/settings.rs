@@ -1,10 +1,11 @@
 mod worker_tasks;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, img,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::{
-    Sizable as _, Size,
+    IconNamed as _, Sizable as _, Size,
     button::{Button, ButtonVariants as _},
     input::Input,
 };
@@ -236,17 +237,23 @@ fn editor_option(
     selected: EditorChoice,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    Button::new(id)
-        .icon(icon)
-        .label(label)
+    let button = Button::new(id)
         .with_size(Size::Small)
         .toggled(option == selected)
         .when(option == selected, |button| button.primary())
         .when(option != selected, |button| button.secondary())
         .on_click(move |_, _, cx| {
             let _ = entity.update(cx, |this, cx| this.select_editor(option, cx));
-        })
-        .into_any_element()
+        });
+    if option == EditorChoice::Vim {
+        button
+            .accessibility_label(label)
+            .child(img(icon.path()).size(THEME.icons.inline).flex_none())
+            .child(label)
+            .into_any_element()
+    } else {
+        button.icon(icon).label(label).into_any_element()
+    }
 }
 
 fn toggle_setting(
