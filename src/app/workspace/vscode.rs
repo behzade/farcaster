@@ -108,7 +108,9 @@ fn launch(
             Ok(status) if !status.success() => {
                 zlog::warn!("VS Code command exited with {status}");
             }
-            Err(error) => zlog::warn!("VS Code command failed: {error}"),
+            Err(error) => {
+                zlog::warn!("VS Code command failed: {error}");
+            }
             _ => {}
         }
         drop(temporary);

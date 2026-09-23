@@ -30,7 +30,7 @@ use composer::submissions::PendingSubmission;
 use composer::{completion as composer_completion, file_mentions};
 pub(crate) use navigation::{PICKER_KEY_CONTEXT, PickerScope, ProjectPickerIntent};
 use project::{registry as project_registry, repository};
-use session::{archive, drafts, status::roots_waiting_for_descendants};
+use session::{archive, status::roots_waiting_for_descendants};
 pub(crate) use views::OVERLAY_KEY_CONTEXT;
 pub(crate) use views::transcript::list::TRANSCRIPT_SELECTION_KEY_CONTEXT;
 pub(crate) use views::workgraph::{WORKGRAPH_KEY_CONTEXT, WORKGRAPH_NAV_KEY_CONTEXT};
@@ -66,6 +66,7 @@ use crate::{
     projects,
     protocol::{BackgroundJob, Model},
     runtime::{RuntimeCommand, RuntimeEvent, RuntimeHandle, RuntimeSnapshot},
+    sessions,
     sessions::{
         SessionRootIndex, SessionSummary, SessionTarget, descendant_sessions_for_root,
         root_session_for_path,

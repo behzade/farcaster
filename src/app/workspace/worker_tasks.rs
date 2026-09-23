@@ -607,13 +607,13 @@ impl FarcasterApp {
                     .parse::<usize>()
                     .ok()
                     .filter(|limit| *limit > 0)
-                    .ok_or("Enter a positive worker limit.");
+                    .ok_or_else(|| "Enter a positive worker limit.".to_owned());
                 limit.and_then(|limit| {
                     if let Some(index) = profile {
                         let mut saved = editor.saved.clone();
                         saved
                             .get_mut(index)
-                            .ok_or("Profile no longer exists")?
+                            .ok_or_else(|| "Profile no longer exists".to_owned())?
                             .limit = limit;
                         editor.persist(saved)?;
                         editor.profiles[index].limit = limit;
