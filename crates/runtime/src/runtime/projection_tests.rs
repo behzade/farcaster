@@ -224,3 +224,68 @@ fn cancelled_startup_query_resolves_pending_control_failure() {
         assert!(!owner.active_snapshot().conversation.items.is_empty());
     }
 }
+
+#[test]
+fn failed_effort_change_rejects_the_waiting_prompt() {
+    let (mut owner, events) = owner_without_process(std::env::temp_dir());
+    owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+        mode: PromptMode::Normal,
+        message: "first message".into(),
+        display_message: None,
+        invocation: None,
+        images: Vec::new(),
+        outbox_id: None,
+    });
+    owner.pending_prompt_target = Some("session:one".into());
+    owner.pending_submission_id = Some("composer:one".into());
+    owner
+        .pending_session_controls
+        .thinking_sent("effort-request".into(), Some("high".into()));
+
+    owner.apply_response(SessionResponse::failure(
+        Some("effort-request".into()),
+        SessionOperation::SelectReasoning,
+        "effort unavailable".into(),
+    ));
+
+    assert!(owner.deferred_prompt.is_none());
+    assert!(owner.pending_prompt_target.is_none());
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::PromptResult {
+            submission_id: Some(id),
+            outcome: crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            ..
+        } if id == "composer:one"
+    )));
+}
+
+#[test]
+fn stale_model_failure_does_not_reject_a_newer_startup_choice() {
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.snapshot.pending_initial_model = true;
+    owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+        mode: PromptMode::Normal,
+        message: "first message".into(),
+        display_message: None,
+        invocation: None,
+        images: Vec::new(),
+        outbox_id: None,
+    });
+    owner
+        .pending_session_controls
+        .model_sent("older".into(), ("openai".into(), "old-model".into()));
+    owner
+        .pending_session_controls
+        .model_sent("newer".into(), ("openai".into(), "new-model".into()));
+
+    owner.apply_response(SessionResponse::failure(
+        Some("older".into()),
+        SessionOperation::SelectModel,
+        "old model unavailable".into(),
+    ));
+
+    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.snapshot.pending_initial_model);
+    assert!(owner.pending_session_controls.model_pending());
+}

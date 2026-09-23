@@ -54,20 +54,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         command.access_mode = launch.access_mode;
         command.app_proxy = launch.app_proxy.clone();
         let mut prepared = command.command(&launch.project)?;
-        if let Some(tier) = launch.service_tier.as_deref() {
-            if !matches!(tier, "standard" | "fast") {
-                return Err(format!("Codex service tier {tier} is unavailable"));
-            }
-            let value = if tier == "standard" {
-                "default"
-            } else {
-                "fast"
-            };
-            prepared.arg("-c").arg(format!("service_tier=\"{value}\""));
-            if tier == "fast" {
-                prepared.arg("-c").arg("features.fast_mode=true");
-            }
-        }
+        configure_service_tier(&mut prepared, launch.service_tier.as_deref())?;
         let caller_identity = crate::core::CallerRegistry::shared().issue_as_with_access(
             &launch.project,
             crate::core::CallerProfile {
@@ -225,6 +212,7 @@ pub fn spawn_main(
     String,
 > {
     let mut prepared = command.command(&launch.project)?;
+    configure_service_tier(&mut prepared, launch.service_tier.as_deref())?;
     let caller_identity = crate::core::CallerRegistry::shared().issue_with_access(
         &launch.project,
         crate::core::CallerProfile {
@@ -248,15 +236,16 @@ pub fn spawn_main(
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-main-session")?;
     let setup = setup_main_connection(&mut child, launch, command.access_mode);
-    let ((mut reader, writer, queued, next_id, thread, codex_home), metadata, skills) = match setup
-    {
-        Ok(setup) => setup,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
-    };
+    let ((mut reader, writer, queued, next_id, thread, codex_home), mut metadata, skills) =
+        match setup {
+            Ok(setup) => setup,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+    metadata.service_tier = launch.service_tier.clone();
     let (sender, incoming) = mpsc::channel();
     let thread_id = thread.id.clone();
     let reader_name = thread_id.clone();
@@ -340,6 +329,26 @@ pub fn spawn_main(
         .pending
         .insert(goal_request, PendingRequest::LoadGoal);
     Ok((Box::new(session), thread_id, metadata))
+}
+
+fn configure_service_tier(
+    command: &mut std::process::Command,
+    tier: Option<&str>,
+) -> Result<(), String> {
+    let Some(tier) = tier else { return Ok(()) };
+    if !matches!(tier, "standard" | "fast") {
+        return Err(format!("Codex service tier {tier} is unavailable"));
+    }
+    let value = if tier == "standard" {
+        "default"
+    } else {
+        "fast"
+    };
+    command.arg("-c").arg(format!("service_tier=\"{value}\""));
+    if tier == "fast" {
+        command.arg("-c").arg("features.fast_mode=true");
+    }
+    Ok(())
 }
 
 fn send_and_wake<T>(

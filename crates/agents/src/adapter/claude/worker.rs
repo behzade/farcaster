@@ -140,9 +140,10 @@ pub fn spawn_main(
         Some(caller.token()),
         launch.wake.clone(),
         true,
-        None,
+        launch.service_tier.as_deref(),
     )?;
-    let (worker, metadata) = attach(process, caller, &id, command.access_mode)?;
+    let (worker, mut metadata) = attach(process, caller, &id, command.access_mode)?;
+    metadata.service_tier = launch.service_tier.clone();
     Ok((Box::new(worker), id, metadata))
 }
 

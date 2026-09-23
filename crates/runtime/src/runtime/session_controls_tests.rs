@@ -1,6 +1,38 @@
 use super::*;
 use crate::agents::Backend;
 
+struct IdleTransport;
+impl crate::agents::SessionTransport for IdleTransport {
+    fn send(&mut self, _: SessionCommand) -> Result<String, String> {
+        panic!("unexpected session command")
+    }
+    fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
+        Ok(())
+    }
+    fn poll(&mut self) -> Option<crate::agents::SessionEvent> {
+        None
+    }
+    fn close(&mut self) -> Result<(), String> {
+        panic!("unexpected session restart")
+    }
+}
+
+struct AckTransport;
+impl crate::agents::SessionTransport for AckTransport {
+    fn send(&mut self, _: SessionCommand) -> Result<String, String> {
+        Ok("refresh".into())
+    }
+    fn respond(&mut self, _: ExtensionUiResponse) -> Result<(), String> {
+        Ok(())
+    }
+    fn poll(&mut self) -> Option<crate::agents::SessionEvent> {
+        None
+    }
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[test]
 fn pending_controls_coalesce_and_apply_model_before_effort() {
     let mut pending = PendingSessionControls::default();
@@ -45,6 +77,274 @@ fn pending_controls_coalesce_and_apply_model_before_effort() {
                 tier: "priority".into()
             },
         ]
+    );
+}
+
+#[test]
+fn launch_only_tier_does_not_queue_a_second_live_change() {
+    let mut pending = PendingSessionControls::default();
+    pending.set(SessionControl::Model("openai".into(), "gpt-6-sol".into()));
+    pending.set(SessionControl::ServiceTier("fast".into()));
+    pending.launched_service_tier("fast");
+    assert!(!pending.service_tier_pending());
+    assert_eq!(
+        pending
+            .take()
+            .into_iter()
+            .map(SessionControl::into_request)
+            .collect::<Vec<_>>(),
+        [SessionCommand::SelectModel {
+            provider: "openai".into(),
+            model_id: "gpt-6-sol".into(),
+        }]
+    );
+}
+
+#[test]
+fn tier_restart_requeues_unconfirmed_effort_instead_of_the_old_effort() {
+    let mut pending = PendingSessionControls::default();
+    pending.thinking_sent("effort-request".into(), Some("high".into()));
+    assert!(pending.thinking_pending());
+    pending.set(SessionControl::ServiceTier("fast".into()));
+    pending.reset_transport();
+    assert_eq!(pending.thinking, Some(Some("high".into())));
+    assert!(pending.selection_pending());
+}
+
+#[test]
+fn acknowledged_effort_is_visible_before_the_followup_state_query() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.process = Some(Box::new(AckTransport));
+    owner.snapshot.session = Some(
+        serde_json::from_value(serde_json::json!({
+            "thinkingLevel":"low","isStreaming":false,"isCompacting":false,
+            "sessionId":"session","autoCompactionEnabled":true,
+            "messageCount":0,"pendingMessageCount":0
+        }))
+        .expect("decode state"),
+    );
+    owner
+        .pending_session_controls
+        .thinking_sent("effort-request".into(), Some("high".into()));
+
+    owner.apply_response(crate::agents::SessionResponse::success(
+        Some("effort-request".into()),
+        crate::agents::SessionResponsePayload::SelectReasoning,
+    ));
+
+    assert_eq!(owner.snapshot.session_identity().effort, Some("high"));
+    assert!(!owner.pending_session_controls.thinking_pending());
+}
+
+#[test]
+fn tier_restart_reapplies_confirmed_model_and_effort() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Codex);
+    owner.snapshot.harness = Some(Backend::Codex);
+    owner.snapshot.session = Some(
+        serde_json::from_value(serde_json::json!({
+            "model":{"id":"selected","name":"Selected","provider":"openai"},
+            "thinkingLevel":"high","isStreaming":false,"isCompacting":false,
+            "sessionId":"session","autoCompactionEnabled":true,
+            "messageCount":0,"pendingMessageCount":0
+        }))
+        .expect("decode selected state"),
+    );
+    owner.process = Some(Box::new(IdleTransport));
+
+    owner.queue_launch_only_service_tier("fast".into());
+
+    assert_eq!(
+        owner.pending_session_controls.model.as_ref(),
+        Some(&("openai".into(), "selected".into()))
+    );
+    assert_eq!(
+        owner.pending_session_controls.thinking,
+        Some(Some("high".into()))
+    );
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("fast"));
+}
+
+#[test]
+fn tier_only_resume_replaces_history_preview_after_startup() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.snapshot.history_preview = true;
+    owner.snapshot.selected_session = Some("/saved".into());
+    owner.active_session = Some("/saved".into());
+    owner.parked_snapshot = Some(RuntimeSnapshot {
+        selected_session: Some("/saved".into()),
+        connected: true,
+        ..RuntimeSnapshot::default()
+    });
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.pending_session_controls.restore_preview = true;
+
+    owner.maybe_send_pending_session_controls();
+
+    assert!(!owner.snapshot.history_preview);
+    assert!(owner.snapshot.connected);
+    assert!(owner.parked_snapshot.is_none());
+}
+
+#[test]
+fn model_reselection_during_history_resume_updates_the_loading_snapshot() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Codex);
+    owner.snapshot.harness = Some(Backend::Codex);
+    owner.snapshot.history_preview = true;
+    owner.snapshot.selected_session = Some("/saved".into());
+    owner.active_session = Some("/saved".into());
+    owner.snapshot.models = ["b", "c"]
+        .map(|id| {
+            serde_json::from_value(serde_json::json!({
+                "id":id,"name":id,"provider":"openai",
+                "serviceTiers":["standard","fast"]
+            }))
+            .expect("decode model")
+        })
+        .to_vec();
+    let first = owner.snapshot.models[0].clone();
+    let later = owner.snapshot.models[1].clone();
+    owner.snapshot.prefill_model = Some(first.clone());
+    owner.snapshot.pending_initial_model = true;
+    owner.parked_snapshot = Some(RuntimeSnapshot {
+        selected_session: Some("/saved".into()),
+        models: owner.snapshot.models.clone(),
+        prefill_model: Some(first.clone()),
+        pending_initial_model: true,
+        ..RuntimeSnapshot::default()
+    });
+    owner.process = Some(Box::new(AckTransport));
+    owner
+        .pending_session_controls
+        .set(SessionControl::Model(first.provider, first.id));
+
+    owner.set_model(later);
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.pending_session_controls.restore_preview = true;
+    owner.maybe_send_pending_session_controls();
+
+    assert!(!owner.snapshot.history_preview);
+    assert_eq!(
+        owner
+            .snapshot
+            .session_identity()
+            .model
+            .map(|model| model.id.as_str()),
+        Some("c")
+    );
+    assert_eq!(
+        owner
+            .pending_session_controls
+            .sent_model
+            .as_ref()
+            .map(|(_, id)| id.as_str()),
+        Some("c")
+    );
+}
+
+#[test]
+fn replacing_model_during_startup_updates_the_requested_identity() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Codex);
+    owner.snapshot.harness = Some(Backend::Codex);
+    owner.snapshot.models = ["a", "b"]
+        .map(|id| {
+            serde_json::from_value(serde_json::json!({
+                "id":id,"name":id,"provider":"openai","serviceTiers":["standard","fast"]
+            }))
+            .expect("decode model")
+        })
+        .to_vec();
+    owner.process = Some(Box::new(AckTransport));
+    owner.set_model(owner.snapshot.models[0].clone());
+    owner.set_model(owner.snapshot.models[1].clone());
+    assert_eq!(
+        owner
+            .snapshot
+            .session_identity()
+            .model
+            .map(|m| m.id.as_str()),
+        Some("b")
+    );
+    assert!(owner.snapshot.pending_initial_model);
+
+    owner.pending_session_controls = Default::default();
+    owner.apply_response(crate::agents::SessionResponse::success(
+        None,
+        crate::agents::SessionResponsePayload::LoadState(Box::new(
+            serde_json::from_value(serde_json::json!({
+                "model":{"id":"b","name":"b","provider":"openai"},
+                "isStreaming":false,"isCompacting":false,"sessionId":"session",
+                "autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0
+            }))
+            .expect("decode state"),
+        )),
+    ));
+    assert!(!owner.snapshot.pending_initial_model);
+    assert_eq!(
+        owner
+            .snapshot
+            .session_identity()
+            .model
+            .map(|m| m.id.as_str()),
+        Some("b")
+    );
+}
+
+#[test]
+fn launch_only_tier_change_waits_for_an_active_reply() {
+    for backend in [Backend::Codex, Backend::Claude] {
+        let (mut owner, _) =
+            super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+        owner.harness = Some(backend);
+        owner.snapshot.models = vec![
+            serde_json::from_value(serde_json::json!({
+                "id":"model", "name":"Model", "provider":backend.as_str(),
+                "serviceTiers":["standard", "fast"]
+            }))
+            .expect("decode model"),
+        ];
+        owner.snapshot.prefill_model = owner.snapshot.models.first().cloned();
+        owner.active_session = Some("/session".into());
+        owner.process = Some(Box::new(IdleTransport));
+        conversation_mut(owner.active_snapshot_mut()).running = true;
+
+        owner.set_service_tier("fast".into());
+
+        assert!(owner.process.is_some());
+        assert!(!owner.pending_session_controls.service_tier_pending());
+    }
+}
+
+#[test]
+fn codex_draft_can_choose_tier_before_choosing_a_model() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Codex);
+    owner.snapshot.models = vec![
+        serde_json::from_value(serde_json::json!({
+            "id":"default", "name":"Default", "provider":"openai",
+            "serviceTiers":["standard", "fast"]
+        }))
+        .expect("decode default model"),
+    ];
+
+    owner.set_service_tier("fast".into());
+
+    assert!(owner.process.is_none());
+    assert!(owner.snapshot.prefill_model.is_none());
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("fast"));
+    assert_eq!(
+        owner.pending_session_controls.service_tier.as_deref(),
+        Some("fast")
     );
 }
 

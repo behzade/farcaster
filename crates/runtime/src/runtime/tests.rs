@@ -1243,6 +1243,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
             project: temp.path().to_path_buf(),
             start: SessionStart::New,
             wake: None,
+            service_tier: None,
         },
     )?;
     let (mut owner, events) = owner_without_process(temp.path().to_path_buf());
@@ -2357,6 +2358,7 @@ fn history_preview_keeps_running_pi_until_a_prompt_resumes_the_session() -> Resu
             project: temp.path().to_path_buf(),
             start: SessionStart::New,
             wake: None,
+            service_tier: None,
         },
     )?;
     let (mut owner, event_rx) = owner_without_process(temp.path().to_path_buf());

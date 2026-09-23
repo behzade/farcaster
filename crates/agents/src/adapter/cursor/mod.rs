@@ -100,6 +100,7 @@ pub(super) fn spawn_main(
                 project: launch.project.clone(),
                 start: crate::SessionStart::New,
                 wake: launch.wake.clone(),
+                service_tier: launch.service_tier.clone(),
             };
             return super::acp::spawn_main(command, &PROFILE, &fresh);
         }

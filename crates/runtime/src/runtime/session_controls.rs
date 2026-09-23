@@ -10,15 +10,48 @@ pub(super) struct PendingSessionControls {
     model_requests: std::collections::HashSet<String>,
     sent_model: Option<(String, String)>,
     model_error: Option<String>,
+    thinking_requests: std::collections::HashSet<String>,
+    sent_thinking: Option<Option<String>>,
+    thinking_error: Option<String>,
+    tier_requests: std::collections::HashSet<String>,
+    sent_tier: Option<String>,
+    tier_error: Option<String>,
+    pub(super) restore_preview: bool,
 }
 
 impl PendingSessionControls {
+    fn clear_service_tier(&mut self) {
+        self.service_tier = None;
+        self.tier_error = None;
+    }
+
+    pub(super) fn launched_service_tier(&mut self, tier: &str) {
+        if self.service_tier.as_deref() == Some(tier) {
+            self.clear_service_tier();
+        }
+    }
+
     pub(super) fn model_pending(&self) -> bool {
         self.model.is_some() || !self.model_requests.is_empty()
     }
 
-    pub(super) fn model_error(&self) -> Option<&str> {
-        self.model_error.as_deref()
+    pub(super) fn service_tier_pending(&self) -> bool {
+        self.service_tier.is_some() || !self.tier_requests.is_empty()
+    }
+
+    pub(super) fn thinking_pending(&self) -> bool {
+        self.thinking.is_some() || !self.thinking_requests.is_empty()
+    }
+
+    pub(super) fn selection_pending(&self) -> bool {
+        self.model_pending() || self.thinking_pending() || self.service_tier_pending()
+    }
+
+    pub(super) fn selection_error(&self) -> Option<&str> {
+        self.model_error
+            .as_deref()
+            .or(self.thinking_error.as_deref())
+            .or(self.tier_error.as_deref())
     }
 
     pub(super) fn model_sent(&mut self, id: String, model: (String, String)) {
@@ -27,12 +60,36 @@ impl PendingSessionControls {
         self.model_error = None;
     }
 
+    pub(super) fn tier_sent(&mut self, id: String, tier: String) {
+        self.tier_requests.insert(id);
+        self.sent_tier = Some(tier);
+        self.tier_error = None;
+    }
+
+    pub(super) fn thinking_sent(&mut self, id: String, level: Option<String>) {
+        self.thinking_requests.insert(id);
+        self.sent_thinking = Some(level);
+        self.thinking_error = None;
+    }
+
     pub(super) fn reset_transport(&mut self) {
         if !self.model_requests.is_empty() {
             if self.model.is_none() {
                 self.model = self.sent_model.take();
             }
             self.model_requests.clear();
+        }
+        if !self.thinking_requests.is_empty() {
+            if self.thinking.is_none() {
+                self.thinking = self.sent_thinking.take();
+            }
+            self.thinking_requests.clear();
+        }
+        if !self.tier_requests.is_empty() {
+            if self.service_tier.is_none() {
+                self.service_tier = self.sent_tier.take();
+            }
+            self.tier_requests.clear();
         }
     }
 
@@ -47,6 +104,37 @@ impl PendingSessionControls {
             .map(|error| error.message.clone());
     }
 
+    pub(super) fn tier_response(&mut self, response: &crate::agents::SessionResponse) {
+        if let Some(id) = &response.id {
+            self.tier_requests.remove(id);
+        }
+        self.tier_error = response
+            .result
+            .as_ref()
+            .err()
+            .map(|error| error.message.clone());
+    }
+
+    pub(super) fn thinking_response(
+        &mut self,
+        response: &crate::agents::SessionResponse,
+    ) -> Option<Option<String>> {
+        let matched = response
+            .id
+            .as_ref()
+            .is_some_and(|id| self.thinking_requests.remove(id));
+        self.thinking_error = response
+            .result
+            .as_ref()
+            .err()
+            .map(|error| error.message.clone());
+        if matched && self.thinking_requests.is_empty() && response.result.is_ok() {
+            self.sent_thinking.clone()
+        } else {
+            None
+        }
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.model.is_none() && self.thinking.is_none() && self.service_tier.is_none()
     }
@@ -57,8 +145,14 @@ impl PendingSessionControls {
                 self.model = Some((provider, model_id));
                 self.model_error = None;
             }
-            SessionControl::Thinking(level) => self.thinking = Some(level),
-            SessionControl::ServiceTier(tier) => self.service_tier = Some(tier),
+            SessionControl::Thinking(level) => {
+                self.thinking = Some(level);
+                self.thinking_error = None;
+            }
+            SessionControl::ServiceTier(tier) => {
+                self.service_tier = Some(tier);
+                self.tier_error = None;
+            }
         }
     }
 
@@ -168,9 +262,27 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
+        self.remember_requested_model(&model, replacement_effort.as_deref());
         self.send_session_control(control);
         if let Some(effort) = replacement_effort {
             self.send_session_control(SessionControl::Thinking(Some(effort)));
+        }
+    }
+
+    fn remember_requested_model(&mut self, model: &Model, effort: Option<&str>) {
+        let update = |snapshot: &mut RuntimeSnapshot| {
+            snapshot.prefill_model = Some(model.clone());
+            snapshot.pending_initial_model = true;
+            if let Some(effort) = effort {
+                snapshot.prefill_thinking_level = Some(effort.to_owned());
+            }
+        };
+        update(&mut self.snapshot);
+        if self.snapshot.history_preview
+            && self.active_session.as_ref() == self.snapshot.selected_session.as_ref()
+            && let Some(loading) = self.parked_snapshot.as_mut()
+        {
+            update(loading);
         }
     }
 
@@ -183,19 +295,67 @@ impl RuntimeOwner {
     }
 
     pub(super) fn set_service_tier(&mut self, tier: String) {
-        if !self
-            .snapshot
-            .session
-            .as_ref()
-            .is_some_and(|state| state.service_tiers.contains(&tier))
-        {
+        if !self.snapshot.available_service_tiers().contains(&tier) {
             self.command_not_sent(
                 "set_service_tier",
                 "Service tier is not available for this model",
             );
             return;
         }
+        if matches!(self.harness, Some(Backend::Codex | Backend::Claude))
+            && (self.process.is_some() || self.snapshot.selected_session.is_some())
+        {
+            if self.process.is_some() && !self.access_mode_change_ready() {
+                self.command_not_sent(
+                    "set_service_tier",
+                    "Wait for the current response to finish before changing service tier",
+                );
+                return;
+            }
+            let session = if self.snapshot.history_preview {
+                self.snapshot.selected_session.clone()
+            } else {
+                self.active_session
+                    .clone()
+                    .or_else(|| self.snapshot.selected_session.clone())
+            };
+            let Some(session) = session else {
+                self.command_not_sent("set_service_tier", "No session is selected");
+                return;
+            };
+            self.queue_launch_only_service_tier(tier);
+            let preserve_transcript = self.process.is_some() && !self.snapshot.history_preview;
+            self.start_process_from(Some(session), None, preserve_transcript);
+            return;
+        }
         self.send_session_control(SessionControl::ServiceTier(tier));
+    }
+
+    fn queue_launch_only_service_tier(&mut self, tier: String) {
+        if self.process.is_some() && !self.snapshot.history_preview {
+            let model = self.active_snapshot().session_identity().model.cloned();
+            let effort = self
+                .active_snapshot()
+                .session_identity()
+                .effort
+                .map(str::to_owned);
+            if !self.pending_session_controls.model_pending()
+                && let Some(model) = model
+            {
+                self.pending_session_controls
+                    .set(SessionControl::Model(model.provider, model.id));
+            }
+            if !self.pending_session_controls.thinking_pending()
+                && let Some(effort) = effort
+            {
+                self.pending_session_controls
+                    .set(SessionControl::Thinking(Some(effort)));
+            }
+        }
+        self.snapshot.prefill_service_tier = Some(tier.clone());
+        self.snapshot.pending_initial_service_tier = true;
+        self.pending_session_controls
+            .set(SessionControl::ServiceTier(tier));
     }
 
     fn send_session_control(&mut self, control: SessionControl) {
@@ -224,7 +384,10 @@ impl RuntimeOwner {
                 SessionControl::Thinking(level) => {
                     self.snapshot.prefill_thinking_level = level.clone();
                 }
-                SessionControl::ServiceTier(_) => {}
+                SessionControl::ServiceTier(tier) => {
+                    self.snapshot.prefill_service_tier = Some(tier.clone());
+                    self.snapshot.pending_initial_service_tier = true;
+                }
             }
             self.pending_session_controls.set(control);
             self.publish();
@@ -242,18 +405,21 @@ impl RuntimeOwner {
     }
 
     pub(super) fn maybe_send_pending_session_controls(&mut self) {
-        if !self.startup_state_loaded
-            || !self.startup_history_loaded
-            || self.pending_session_controls.is_empty()
-        {
+        if !self.startup_state_loaded || !self.startup_history_loaded {
+            return;
+        }
+        let resuming_preview = self.snapshot.history_preview
+            && self.parked_snapshot.is_some()
+            && self.pending_session_controls.restore_preview;
+        if self.pending_session_controls.is_empty() && !resuming_preview {
+            self.pending_session_controls.restore_preview = false;
             return;
         }
         let controls = self.pending_session_controls.take();
-        if self.snapshot.history_preview
-            && let Some(snapshot) = self.parked_snapshot.take()
-        {
+        if resuming_preview && let Some(snapshot) = self.parked_snapshot.take() {
             self.snapshot = snapshot;
         }
+        self.pending_session_controls.restore_preview = false;
         for control in controls {
             if self.process.is_none() {
                 break;

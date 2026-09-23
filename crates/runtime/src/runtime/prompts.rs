@@ -63,11 +63,13 @@ impl RuntimeOwner {
             );
             return;
         };
-        if let Some(error) = self.pending_session_controls.model_error() {
+        if let Some(error) = self.pending_session_controls.selection_error() {
             self.reject_prompt(
                 &submission_id,
                 &target,
-                format!("Select a working model before sending: {error}"),
+                format!(
+                    "Check the selected model, effort, or service tier before sending: {error}"
+                ),
             );
             return;
         }
@@ -126,7 +128,7 @@ impl RuntimeOwner {
                 && self.startup_state_loaded
                 && self.startup_history_loaded
                 && self.active_session.is_some()
-                && !self.pending_session_controls.model_pending();
+                && !self.pending_session_controls.selection_pending();
             if can_dispatch_now {
                 let dispatch = self
                     .state
@@ -402,7 +404,7 @@ impl RuntimeOwner {
     ) {
         if let Some(error) = self
             .pending_session_controls
-            .model_error()
+            .selection_error()
             .map(str::to_owned)
         {
             self.pending_outbox_id = outbox_id;
@@ -410,7 +412,9 @@ impl RuntimeOwner {
             if let Some(target) = self.pending_prompt_target.take() {
                 self.reject_pending_prompt(
                     &target,
-                    format!("Select a working model before sending: {error}"),
+                    format!(
+                        "Check the selected model, effort, or service tier before sending: {error}"
+                    ),
                 );
             }
             return;
@@ -419,7 +423,7 @@ impl RuntimeOwner {
         if start_process
             || !self.startup_state_loaded
             || !self.startup_history_loaded
-            || self.pending_session_controls.model_pending()
+            || self.pending_session_controls.selection_pending()
         {
             self.pending_outbox_id = outbox_id;
             self.deferred_prompt = Some(DeferredPrompt {
@@ -588,8 +592,8 @@ impl RuntimeOwner {
     pub(super) fn maybe_send_deferred_prompt(&mut self) {
         if !self.startup_state_loaded
             || !self.startup_history_loaded
-            || self.pending_session_controls.model_pending()
-            || self.pending_session_controls.model_error().is_some()
+            || self.pending_session_controls.selection_pending()
+            || self.pending_session_controls.selection_error().is_some()
         {
             return;
         }

@@ -1735,6 +1735,7 @@ fn resume_locator_comes_from_the_external_session_path_when_the_runtime_has_no_i
         project: "/project".into(),
         start: crate::SessionStart::Resume(path),
         wake: None,
+        service_tier: None,
     };
 
     assert_eq!(

@@ -284,3 +284,15 @@ fn available_access_modes_use_fresh_catalog_support_for_selected_model() {
         assert_eq!(snapshot.available_access_modes(), [Sandboxed, Full]);
     }
 }
+
+#[test]
+fn native_drafts_keep_standard_visible_without_a_fast_default_model() {
+    for harness in [Backend::Codex, Backend::Claude] {
+        let draft = RuntimeSnapshot {
+            harness: Some(harness),
+            models: vec![model("plain", false, None)],
+            ..RuntimeSnapshot::default()
+        };
+        assert_eq!(draft.available_service_tiers(), ["standard"]);
+    }
+}

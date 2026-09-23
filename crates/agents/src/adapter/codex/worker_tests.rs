@@ -2,6 +2,23 @@ use super::*;
 use crate::{AccountUsage, AccountUsageWindow, Backend};
 
 #[test]
+fn main_and_child_launches_share_service_tier_settings() {
+    for (tier, expected) in [("standard", "default"), ("fast", "fast")] {
+        let mut command = std::process::Command::new("codex");
+        configure_service_tier(&mut command, Some(tier)).expect("valid tier");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.contains(&format!("service_tier=\"{expected}\"")));
+        assert_eq!(
+            args.contains(&"features.fast_mode=true".into()),
+            tier == "fast"
+        );
+    }
+}
+
+#[test]
 fn native_client_id_keeps_farcaster_request_identity() {
     assert_eq!(
         client_message_id(NORMAL_CLIENT_ID_PREFIX, 7, Some("codex-cli-run-9")),

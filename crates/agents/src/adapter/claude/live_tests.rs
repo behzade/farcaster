@@ -28,6 +28,7 @@ fn setup(project: &Path, access_mode: HarnessAccessMode) -> (AgentLaunchConfig, 
             project: project.into(),
             start: SessionStart::New,
             wake: None,
+            service_tier: None,
         },
     )
 }

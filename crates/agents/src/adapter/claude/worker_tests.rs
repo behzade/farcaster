@@ -192,6 +192,7 @@ exit 1
             project: directory.path().to_owned(),
             start: SessionStart::New,
             wake: None,
+            service_tier: None,
         };
         let error = spawn_main(&command, &launch)
             .err()
@@ -487,6 +488,7 @@ fn catalog_probe_and_main_resume_launch_without_sending_a_prompt() {
             id,
         )),
         wake: None,
+        service_tier: None,
     };
     let (mut worker, locator, _) =
         spawn_main(&command, &launch).expect("test operation should succeed");
@@ -503,6 +505,31 @@ fn catalog_probe_and_main_resume_launch_without_sending_a_prompt() {
     let requests = std::fs::read_to_string(directory.path().join("claude-fixture.requests"))
         .expect("test operation should succeed");
     assert!(!requests.contains("\"type\":\"user\""));
+}
+
+#[test]
+fn main_new_session_applies_selected_service_tier_at_launch() {
+    let (directory, command) = setup();
+    let launch = SessionLaunch {
+        harness: BACKEND,
+        session_id: None,
+        project: directory.path().into(),
+        start: SessionStart::New,
+        wake: None,
+        service_tier: Some("fast".into()),
+    };
+    let (mut worker, _, metadata) = spawn_main(&command, &launch).expect("launch Claude");
+    assert_eq!(metadata.service_tier.as_deref(), Some("fast"));
+    worker.close().expect("close Claude");
+    let args = std::fs::read_to_string(directory.path().join("claude-fixture.args"))
+        .expect("read launch args");
+    let values = args.lines().collect::<Vec<_>>();
+    let settings = values
+        .windows(2)
+        .find(|pair| pair[0] == "--settings")
+        .expect("settings argument");
+    let settings: Value = serde_json::from_str(settings[1]).expect("decode settings");
+    assert_eq!(settings["fastMode"], true);
 }
 
 #[test]

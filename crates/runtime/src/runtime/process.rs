@@ -144,18 +144,36 @@ impl RuntimeOwner {
         let preserved_prompt_item = preserved_conversation
             .as_ref()
             .and(self.pending_prompt_item.clone());
+        let use_visible_snapshot = self.snapshot.selected_session == session;
         let sandbox_adapter = self.selected_sandbox_adapter();
-        let available_access_modes = self.available_access_modes();
-        let configuration = (self.snapshot.selected_session == session
+        let target_snapshot = if use_visible_snapshot {
+            &self.snapshot
+        } else {
+            self.active_snapshot()
+        };
+        let available_access_modes = agents::available_access_modes(
+            self.harness,
+            target_snapshot.access_mode_model(),
+            sandbox_adapter.as_deref(),
+        );
+        let configuration = (use_visible_snapshot
             || fork
                 .as_ref()
                 .is_some_and(|source| self.snapshot.selected_session.as_ref() == Some(source)))
         .then(|| {
-            let snapshot = self.active_snapshot();
+            let snapshot = if use_visible_snapshot {
+                &self.snapshot
+            } else {
+                self.active_snapshot()
+            };
             (
                 snapshot.models.clone(),
                 snapshot.thinking_levels.clone(),
                 snapshot.session_identity().model.cloned(),
+                snapshot.pending_initial_model,
+                snapshot.prefill_thinking_level.clone(),
+                snapshot.selected_service_tier().map(str::to_owned),
+                snapshot.pending_initial_service_tier,
             )
         });
         // This prompt belongs to the process we are starting, not the one being
@@ -165,6 +183,7 @@ impl RuntimeOwner {
             .as_ref()
             .and(self.pending_submission_id.clone());
         self.reset_process_runtime();
+        self.pending_session_controls.restore_preview = keep_preview;
         self.pending_submission_id = deferred_submission_id;
         // Missing backend metadata must never make a resume or fork eligible for a title.
         self.title_generation.new_session = session.is_none() && fork.is_none();
@@ -209,11 +228,24 @@ impl RuntimeOwner {
         }
         // Startup still needs the catalog that validated the launch mode. Clearing it
         // here makes the loading snapshot treat supported modes as unavailable.
-        if let Some((models, thinking_levels, selected_model)) = configuration {
+        if let Some((
+            models,
+            thinking_levels,
+            selected_model,
+            pending_model,
+            effort,
+            tier,
+            pending_tier,
+        )) = configuration
+        {
             let snapshot = self.active_snapshot_mut();
             snapshot.models = models;
             snapshot.thinking_levels = thinking_levels;
             snapshot.prefill_model = selected_model;
+            snapshot.pending_initial_model = pending_model;
+            snapshot.prefill_thinking_level = effort;
+            snapshot.prefill_service_tier = tier;
+            snapshot.pending_initial_service_tier = pending_tier;
         }
         self.snapshot.sandbox_adapter = sandbox_adapter;
         self.access_mode_changes.applying = true;
@@ -229,6 +261,10 @@ impl RuntimeOwner {
         } else {
             SessionStart::New
         };
+        let launch_tier = self
+            .active_snapshot()
+            .selected_service_tier()
+            .map(str::to_owned);
         let process = self
             .harness
             .ok_or_else(|| "Choose a backend before launching a session.".to_owned())
@@ -241,12 +277,20 @@ impl RuntimeOwner {
                         project: self.project.clone(),
                         start,
                         wake: Some(thread::current()),
+                        service_tier: launch_tier.clone(),
                     },
                 )
             });
         self.access_mode_changes.applying = false;
         match process {
             Ok(process) => {
+                if matches!(
+                    self.harness,
+                    Some(agents::Backend::Codex | agents::Backend::Claude)
+                ) && let Some(tier) = launch_tier.as_deref()
+                {
+                    self.pending_session_controls.launched_service_tier(tier);
+                }
                 if let Some(mode) = process.sandbox_mode() {
                     self.process_command.access_mode = mode;
                     self.access_mode_changes = Default::default();
@@ -296,11 +340,24 @@ impl RuntimeOwner {
             }
             _ => None,
         };
+        let selected_tier = match &request {
+            SessionCommand::SelectServiceTier { tier } => Some(tier.clone()),
+            _ => None,
+        };
+        let selected_thinking = match &request {
+            SessionCommand::SelectReasoning { level } => Some(Some(level.clone())),
+            SessionCommand::ResetReasoning => Some(None),
+            _ => None,
+        };
         let operation = request.operation();
         match self.process.as_mut().map(|process| process.send(request)) {
             Some(Ok(id)) => {
                 if let Some(model) = selected_model {
                     self.pending_session_controls.model_sent(id, model);
+                } else if let Some(tier) = selected_tier {
+                    self.pending_session_controls.tier_sent(id, tier);
+                } else if let Some(level) = selected_thinking {
+                    self.pending_session_controls.thinking_sent(id, level);
                 }
             }
             Some(Err(error)) => self.fail(error),

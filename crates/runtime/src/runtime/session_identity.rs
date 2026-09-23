@@ -1,10 +1,12 @@
 use crate::agents::Backend;
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, sync::LazyLock};
 
 use crate::agents::effort_rank;
 use crate::protocol::Model;
 
 use super::{ConfigurationStatus, RuntimeSnapshot};
+
+static STANDARD_SERVICE_TIER: LazyLock<Vec<String>> = LazyLock::new(|| vec!["standard".to_owned()]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionIdentity<'a> {
@@ -84,11 +86,14 @@ impl RuntimeSnapshot {
     }
 
     pub fn session_identity(&self) -> SessionIdentity<'_> {
-        let model = self
-            .session
-            .as_ref()
-            .and_then(|session| session.model.as_ref())
-            .or(self.prefill_model.as_ref());
+        let model = if self.pending_initial_model {
+            self.prefill_model.as_ref()
+        } else {
+            self.session
+                .as_ref()
+                .and_then(|session| session.model.as_ref())
+                .or(self.prefill_model.as_ref())
+        };
         // A live session's unset effort is authoritative, not a missing draft value.
         let effort = match &self.session {
             Some(session) => session.thinking_level.as_deref(),
@@ -99,6 +104,61 @@ impl RuntimeSnapshot {
             provider: model.map(|model| model.provider.as_str()),
             model,
             effort,
+        }
+    }
+
+    pub fn selected_service_tier(&self) -> Option<&str> {
+        if self.pending_initial_service_tier {
+            self.prefill_service_tier.as_deref()
+        } else {
+            match &self.session {
+                Some(session) => session.service_tier.as_deref(),
+                None => self.prefill_service_tier.as_deref(),
+            }
+        }
+    }
+
+    pub fn available_service_tiers(&self) -> &[String] {
+        if let Some(selected) = self.session_identity().model {
+            let tiers = self.catalog_model(selected).service_tiers.as_slice();
+            if !tiers.is_empty() {
+                return tiers;
+            }
+            if self.pending_initial_model {
+                return self.fallback_service_tiers();
+            }
+            if let Some(session) = &self.session
+                && session.model.as_ref().is_some_and(|model| {
+                    model.provider == selected.provider && model.id == selected.id
+                })
+                && !session.service_tiers.is_empty()
+            {
+                return &session.service_tiers;
+            }
+            return self.fallback_service_tiers();
+        }
+        let tiers = self
+            .session
+            .as_ref()
+            .map(|session| session.service_tiers.as_slice())
+            .or_else(|| {
+                self.models
+                    .first()
+                    .map(|model| model.service_tiers.as_slice())
+            })
+            .unwrap_or(&[]);
+        if tiers.is_empty() {
+            self.fallback_service_tiers()
+        } else {
+            tiers
+        }
+    }
+
+    fn fallback_service_tiers(&self) -> &[String] {
+        if matches!(self.harness, Some(Backend::Codex | Backend::Claude)) {
+            &STANDARD_SERVICE_TIER
+        } else {
+            &[]
         }
     }
 

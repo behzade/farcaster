@@ -196,6 +196,7 @@ fn resumed_worker_keeps_model_limits_and_effort_in_sync() -> Result<(), String> 
             project: project.path().to_owned(),
             start: crate::SessionStart::Resume(project.path().join("session")),
             wake: None,
+            service_tier: None,
         };
         let open = || {
             let (worker, locator, metadata) = spawn_main(&command, &launch)?;

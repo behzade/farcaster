@@ -410,6 +410,7 @@ pub struct SessionLaunch {
     pub project: PathBuf,
     pub start: SessionStart,
     pub wake: Option<thread::Thread>,
+    pub service_tier: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

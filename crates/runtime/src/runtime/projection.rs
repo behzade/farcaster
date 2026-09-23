@@ -144,6 +144,20 @@ pub(super) fn update_tokens_from_event(stats: &mut Value, event: &Value) -> bool
 }
 
 impl RuntimeOwner {
+    fn reject_deferred_selection(&mut self, reason: &str) {
+        if self.deferred_prompt.take().is_none() {
+            return;
+        }
+        self.rollback_failed_prompt(reason);
+        if let Some(target) = self.pending_prompt_target.take() {
+            self.emit_prompt_result(
+                self.pending_submission_id.as_deref(),
+                &target,
+                crate::agents::PromptOutcome::RejectedBeforeAcceptance,
+            );
+        }
+    }
+
     pub(super) fn apply_response(&mut self, response: crate::agents::SessionResponse) {
         if matches!(response.operation(), SessionOperation::Prompt(_))
             && let Some(id) = response.id.as_deref()
@@ -236,17 +250,29 @@ impl RuntimeOwner {
         }
         if operation == SessionOperation::SelectModel {
             self.pending_session_controls.model_response(&response);
-            if !success {
-                if self.deferred_prompt.take().is_some() {
-                    self.rollback_failed_prompt("The selected model could not be applied");
-                    if let Some(target) = self.pending_prompt_target.take() {
-                        self.emit_prompt_result(
-                            self.pending_submission_id.as_deref(),
-                            &target,
-                            crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-                        );
-                    }
-                }
+            if !success && !self.pending_session_controls.model_pending() {
+                self.active_snapshot_mut().pending_initial_model = false;
+                self.reject_deferred_selection("The selected model could not be applied");
+                self.send(SessionCommand::LoadState);
+            }
+        }
+        if operation == SessionOperation::SelectServiceTier {
+            self.pending_session_controls.tier_response(&response);
+            if !success && !self.pending_session_controls.service_tier_pending() {
+                self.active_snapshot_mut().pending_initial_service_tier = false;
+                self.reject_deferred_selection("The selected service tier could not be applied");
+                self.send(SessionCommand::LoadState);
+            }
+        }
+        if operation == SessionOperation::SelectReasoning {
+            let selected = self.pending_session_controls.thinking_response(&response);
+            if let Some(level) = selected
+                && let Some(state) = self.active_snapshot_mut().session.as_mut()
+            {
+                state.thinking_level = level;
+            }
+            if !success && !self.pending_session_controls.thinking_pending() {
+                self.reject_deferred_selection("The selected effort could not be applied");
                 self.send(SessionCommand::LoadState);
             }
         }
@@ -448,6 +474,8 @@ impl RuntimeOwner {
         let Ok(payload) = response.result else { return };
         match payload {
             Payload::LoadState(state) => {
+                let model_change_sent = !self.pending_session_controls.model_pending();
+                let tier_change_sent = !self.pending_session_controls.service_tier_pending();
                 let normal_prompt_in_flight = self.normal_prompt_in_flight;
                 let selected_session = state
                     .session_file
@@ -460,6 +488,28 @@ impl RuntimeOwner {
                 snapshot.selected_session = selected_session;
                 conversation_mut(snapshot).running = state.is_streaming || normal_prompt_in_flight;
                 snapshot.session = Some(*state);
+                let model_confirmed = snapshot
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.model.as_ref())
+                    .zip(snapshot.prefill_model.as_ref())
+                    .is_some_and(|(current, requested)| {
+                        let current = snapshot.catalog_model(current);
+                        current.provider == requested.provider && current.id == requested.id
+                    });
+                if snapshot.pending_initial_model && model_change_sent && model_confirmed {
+                    snapshot.pending_initial_model = false;
+                }
+                if snapshot.pending_initial_service_tier
+                    && tier_change_sent
+                    && snapshot
+                        .session
+                        .as_ref()
+                        .and_then(|session| session.service_tier.as_ref())
+                        == snapshot.prefill_service_tier.as_ref()
+                {
+                    snapshot.pending_initial_service_tier = false;
+                }
                 snapshot.status = "Ready".into();
                 self.startup_state_loaded = true;
                 self.publish_session_metadata();

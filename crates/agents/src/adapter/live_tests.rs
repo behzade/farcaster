@@ -178,6 +178,7 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
         project: project.clone(),
         start,
         wake: Some(thread::current()),
+        service_tier: None,
     };
     let mut session = spawn_session(&config, launch(SessionStart::New, None))?;
     let path = session_path(&mut *session)?;
@@ -323,6 +324,7 @@ fn exercise_live_move(
                     project: project.into(),
                     start: SessionStart::Resume(current.path.clone()),
                     wake: Some(thread::current()),
+                    service_tier: None,
                 },
             )?;
             let check = (|| {
@@ -1552,6 +1554,7 @@ pub mod support {
                     project,
                     start: SessionStart::New,
                     wake: Some(thread::current()),
+                    service_tier: None,
                 },
             )?;
             let mut live = Self {
@@ -2351,6 +2354,7 @@ pub mod support {
                     project: self.project().into(),
                     start: SessionStart::Resume(self.path.clone()),
                     wake: Some(thread::current()),
+                    service_tier: None,
                 },
             )?;
             let reopened_path = self.session_path()?;
