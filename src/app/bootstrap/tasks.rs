@@ -55,18 +55,7 @@ pub(super) fn spawn(
         }
     });
     let worker_notices = cx.spawn(async move |weak, cx| {
-        loop {
-            let update = notice_updates.recv();
-            let tick = cx
-                .background_executor()
-                .timer(std::time::Duration::from_secs(30));
-            futures::pin_mut!(update, tick);
-            if matches!(
-                futures::future::select(update, tick).await,
-                futures::future::Either::Left((Err(_), _))
-            ) {
-                break;
-            }
+        while notice_updates.recv().await.is_ok() {
             if weak.update(cx, |_, cx| cx.notify()).is_err() {
                 break;
             }
