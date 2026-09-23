@@ -1038,6 +1038,10 @@ impl Platform for MacPlatform {
             let actions = &mut state.menu_actions;
             let menu = self.create_menu_bar(&menus, NSWindow::delegate(app), actions, keymap);
             drop(state);
+            // A detached Help menu suppresses Spotlight for Help, whose search
+            // field crashes while opening a menu on macOS 26.1.
+            let detached_help_menu = NSMenu::new(nil).autorelease();
+            let _: () = msg_send![app, setHelpMenu: detached_help_menu];
             app.setMainMenu_(menu);
         }
         self.0.lock().menus = Some(menus.into_iter().map(|menu| menu.owned()).collect());
