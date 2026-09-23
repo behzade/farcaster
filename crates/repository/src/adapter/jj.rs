@@ -2,8 +2,8 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
 use super::super::{
     ChangeKind, ChangeLayer, DiffResult, DiffTarget, JujutsuIdentity, RepositoryBackend,
-    RepositoryEdit, RepositoryEditReview, RepositoryError, RepositoryKind, SnapshotIdentity,
-    SnapshotToken, WorkingCopySnapshot, change, command_failed,
+    RepositoryEdit, RepositoryEditReview, RepositoryError, RepositoryKind, RepositorySyncAction,
+    SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change, command_failed,
     core::port::{CommandOutput, RepositoryOperations},
     diff_result, require_complete_stdout,
 };
@@ -11,6 +11,54 @@ use super::super::{
 pub(super) struct JujutsuOperations;
 
 impl RepositoryOperations for JujutsuOperations {
+    fn working_copy_totals(
+        &self,
+        backend: &RepositoryBackend,
+        snapshot: &mut WorkingCopySnapshot,
+    ) -> Result<(Option<u64>, Option<u64>), RepositoryError> {
+        let SnapshotIdentity::Jujutsu(identity) = &snapshot.identity else {
+            return Err(RepositoryError::TargetMismatch(
+                "Git snapshot used with Jujutsu".into(),
+            ));
+        };
+        let arguments = vec![
+            OsString::from("--no-pager"),
+            OsString::from("--color=never"),
+            OsString::from("--at-operation"),
+            OsString::from(&identity.operation_id),
+            OsString::from("diff"),
+            OsString::from("-r"),
+            OsString::from("@"),
+            OsString::from("--git"),
+            OsString::from("--"),
+            backend.project_pathspec().into_os_string(),
+        ];
+        let output = backend.run_success(&arguments)?;
+        require_complete_stdout(backend.executable(), &output)?;
+        let file_counts = crate::core::parse_file_counts(&String::from_utf8_lossy(&output.stdout))
+            .into_iter()
+            .map(|(path, counts)| ((ChangeLayer::JujutsuWorkingCopy, path), counts))
+            .collect();
+        Ok(crate::core::finish_working_copy_totals(
+            snapshot,
+            &file_counts,
+            &output.stdout,
+        ))
+    }
+
+    fn sync_arguments(
+        &self,
+        identity: &SnapshotIdentity,
+        action: RepositorySyncAction,
+    ) -> Result<Vec<OsString>, RepositoryError> {
+        let SnapshotIdentity::Jujutsu(identity) = identity else {
+            return Err(RepositoryError::TargetMismatch(
+                "Git snapshot used with Jujutsu".into(),
+            ));
+        };
+        sync_arguments(identity, action)
+    }
+
     fn edit(
         &self,
         backend: &RepositoryBackend,
@@ -55,6 +103,36 @@ impl RepositoryOperations for JujutsuOperations {
         backend: &RepositoryBackend,
     ) -> Result<Vec<String>, RepositoryError> {
         list_project_files(backend)
+    }
+}
+
+pub(crate) fn sync_arguments(
+    identity: &JujutsuIdentity,
+    action: RepositorySyncAction,
+) -> Result<Vec<OsString>, RepositoryError> {
+    match action {
+        RepositorySyncAction::PullOrFetch => Ok(["--no-pager", "--color=never", "git", "fetch"]
+            .map(OsString::from)
+            .to_vec()),
+        RepositorySyncAction::Push => {
+            let [bookmark] = identity.bookmarks.as_slice() else {
+                let detail = if identity.bookmarks.is_empty() {
+                    "Current JJ change has no bookmark"
+                } else {
+                    "Current JJ change has multiple bookmarks; choose one in a terminal"
+                };
+                return Err(RepositoryError::SyncUnavailable(detail.to_owned()));
+            };
+            Ok([
+                OsString::from("--no-pager"),
+                OsString::from("--color=never"),
+                OsString::from("git"),
+                OsString::from("push"),
+                OsString::from("--bookmark"),
+                OsString::from(format!("exact:{bookmark}")),
+            ]
+            .to_vec())
+        }
     }
 }
 

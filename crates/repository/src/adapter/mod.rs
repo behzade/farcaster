@@ -9,13 +9,22 @@ use std::{ffi::OsString, path::Path, sync::Arc, time::Duration};
 use self::process::ProcessExecutor;
 use super::{
     BackendPreference, RepositoryBackend, RepositoryError, RepositoryKind, RepositoryLocation,
-    command_failed,
+    RepositorySyncAction, SnapshotIdentity, command_failed,
     core::{
         discover_location, executable_available, marker_exists,
         port::{CommandExecutor as _, CommandMode, RepositoryOperations},
         repository_operation,
     },
 };
+
+impl RepositorySyncAction {
+    pub fn is_available_for(self, identity: &SnapshotIdentity) -> bool {
+        match identity {
+            SnapshotIdentity::Git(identity) => git::sync_arguments(identity, self).is_ok(),
+            SnapshotIdentity::Jujutsu(identity) => jj::sync_arguments(identity, self).is_ok(),
+        }
+    }
+}
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(8);
 const DEFAULT_SYNC_TIMEOUT: Duration = Duration::from_secs(120);

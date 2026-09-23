@@ -1,7 +1,8 @@
 use std::{ffi::OsString, process::ExitStatus};
 
 use super::super::{
-    DiffResult, DiffTarget, RepositoryBackend, RepositoryError, WorkingCopySnapshot,
+    DiffResult, DiffTarget, RepositoryBackend, RepositoryError, RepositorySyncAction,
+    SnapshotIdentity, WorkingCopySnapshot,
 };
 
 #[derive(Debug)]
@@ -30,6 +31,18 @@ pub trait CommandExecutor: Send + Sync {
 }
 
 pub trait RepositoryOperations: Send + Sync {
+    fn working_copy_totals(
+        &self,
+        backend: &RepositoryBackend,
+        snapshot: &mut WorkingCopySnapshot,
+    ) -> Result<(Option<u64>, Option<u64>), RepositoryError>;
+
+    fn sync_arguments(
+        &self,
+        identity: &SnapshotIdentity,
+        action: RepositorySyncAction,
+    ) -> Result<Vec<OsString>, RepositoryError>;
+
     fn edit(
         &self,
         backend: &RepositoryBackend,

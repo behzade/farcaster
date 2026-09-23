@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn parse(patch: &str) -> BTreeMap<PathBuf, Option<(usize, usize)>> {
+pub(crate) fn parse(patch: &str) -> BTreeMap<PathBuf, Option<(usize, usize)>> {
     let mut files = BTreeMap::new();
     for section in patch.split("\ndiff --git ") {
         let mut old = None;

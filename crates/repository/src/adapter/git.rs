@@ -2,8 +2,8 @@ use std::{ffi::OsString, path::PathBuf, sync::Arc, time::SystemTime};
 
 use super::super::{
     ChangeKind, ChangeLayer, DiffResult, DiffTarget, GitIdentity, RepositoryBackend,
-    RepositoryError, RepositoryKind, SnapshotIdentity, SnapshotToken, WorkingCopySnapshot, change,
-    command_failed,
+    RepositoryError, RepositoryKind, RepositorySyncAction, SnapshotIdentity, SnapshotToken,
+    WorkingCopySnapshot, change, command_failed,
     core::port::{CommandOutput, RepositoryOperations},
     diff_result, require_complete_stdout,
 };
@@ -11,6 +11,88 @@ use super::super::{
 pub(super) struct GitOperations;
 
 impl RepositoryOperations for GitOperations {
+    fn working_copy_totals(
+        &self,
+        backend: &RepositoryBackend,
+        snapshot: &mut WorkingCopySnapshot,
+    ) -> Result<(Option<u64>, Option<u64>), RepositoryError> {
+        if !matches!(snapshot.identity, SnapshotIdentity::Git(_)) {
+            return Err(RepositoryError::TargetMismatch(
+                "Jujutsu snapshot used with Git".into(),
+            ));
+        }
+        let mut file_counts = std::collections::BTreeMap::new();
+        let mut patch = Vec::new();
+        for staged in [true, false] {
+            let mut arguments = [
+                "--no-pager",
+                "--no-optional-locks",
+                "--literal-pathspecs",
+                "-c",
+                "core.fsmonitor=false",
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--find-renames",
+                "--src-prefix=a/",
+                "--dst-prefix=b/",
+            ]
+            .map(OsString::from)
+            .to_vec();
+            if staged {
+                arguments.push(OsString::from("--cached"));
+            }
+            arguments.push(OsString::from("--"));
+            arguments.push(backend.project_pathspec().into_os_string());
+            let output = backend.run_success(&arguments)?;
+            require_complete_stdout(backend.executable(), &output)?;
+            let layer = if staged {
+                ChangeLayer::GitIndex
+            } else {
+                ChangeLayer::GitWorkingTree
+            };
+            file_counts.extend(
+                crate::core::parse_file_counts(&String::from_utf8_lossy(&output.stdout))
+                    .into_iter()
+                    .map(|(path, counts)| ((layer, path), counts)),
+            );
+            patch.extend(output.stdout);
+        }
+        for change in snapshot
+            .changes
+            .iter()
+            .filter(|change| change.layer == ChangeLayer::GitUntracked)
+        {
+            let diff = self.load_diff(backend, change.target.clone())?;
+            file_counts.insert(
+                (change.layer, change.relative_path.clone()),
+                diff.additions
+                    .zip(diff.deletions)
+                    .map(|(a, d)| (a as usize, d as usize)),
+            );
+            patch.extend(diff.patch.into_bytes());
+        }
+        Ok(crate::core::finish_working_copy_totals(
+            snapshot,
+            &file_counts,
+            &patch,
+        ))
+    }
+
+    fn sync_arguments(
+        &self,
+        identity: &SnapshotIdentity,
+        action: RepositorySyncAction,
+    ) -> Result<Vec<OsString>, RepositoryError> {
+        let SnapshotIdentity::Git(identity) = identity else {
+            return Err(RepositoryError::TargetMismatch(
+                "Jujutsu snapshot used with Git".into(),
+            ));
+        };
+        sync_arguments(identity, action)
+    }
+
     fn edit(
         &self,
         backend: &RepositoryBackend,
@@ -41,6 +123,37 @@ impl RepositoryOperations for GitOperations {
         backend: &RepositoryBackend,
     ) -> Result<Vec<String>, RepositoryError> {
         list_project_files(backend)
+    }
+}
+
+pub(crate) fn sync_arguments(
+    identity: &GitIdentity,
+    action: RepositorySyncAction,
+) -> Result<Vec<OsString>, RepositoryError> {
+    let branch = identity
+        .branch
+        .as_deref()
+        .ok_or_else(|| RepositoryError::SyncUnavailable("Git HEAD is detached".to_owned()))?;
+    let upstream = identity.upstream.as_deref().ok_or_else(|| {
+        RepositoryError::SyncUnavailable(format!("Git branch {branch} has no upstream"))
+    })?;
+    let (remote, remote_branch) = upstream
+        .split_once('/')
+        .filter(|(remote, branch)| !remote.is_empty() && !branch.is_empty())
+        .ok_or_else(|| RepositoryError::InvalidOutput {
+            backend: RepositoryKind::Git,
+            detail: format!("invalid upstream name: {upstream}"),
+        })?;
+    match action {
+        RepositorySyncAction::PullOrFetch => Ok(["pull", "--ff-only", "--", remote, remote_branch]
+            .map(OsString::from)
+            .to_vec()),
+        RepositorySyncAction::Push => Ok(vec![
+            "push".into(),
+            "--".into(),
+            remote.into(),
+            format!("{branch}:{remote_branch}").into(),
+        ]),
     }
 }
 

@@ -10,13 +10,14 @@ pub use preferences::{PreferenceStore, load as load_preferences, save as save_pr
 use super::{
     contract::{
         BackendPreference, ChangeKind, ChangeLayer, DiffResult, DiffTarget, DiffTargetKey,
-        RepositoryError, RepositoryKind, RepositoryLocation, SnapshotIdentity, WorkingCopyChange,
+        RepositoryError, RepositoryKind, RepositoryLocation, WorkingCopyChange,
         WorkingCopySnapshot,
     },
     domain::SnapshotToken,
 };
 
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     path::{Component, Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard, OnceLock},
@@ -25,6 +26,22 @@ use std::{
 use port::{CommandExecutor, CommandMode, CommandOutput, RepositoryOperations};
 
 static REPOSITORY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+pub(crate) use file_counts::parse as parse_file_counts;
+
+pub(crate) fn finish_working_copy_totals(
+    snapshot: &mut WorkingCopySnapshot,
+    file_counts: &BTreeMap<(ChangeLayer, PathBuf), Option<(usize, usize)>>,
+    patch: &[u8],
+) -> (Option<u64>, Option<u64>) {
+    for change in &mut snapshot.changes {
+        change.counts = file_counts
+            .get(&(change.layer, change.relative_path.clone()))
+            .copied()
+            .flatten();
+    }
+    patch_counts(&String::from_utf8_lossy(patch))
+}
 
 #[derive(Clone)]
 pub struct RepositoryBackend {
@@ -74,93 +91,7 @@ impl RepositoryBackend {
             ));
         }
         let _operation = repository_operation()?;
-        let mut file_counts = std::collections::BTreeMap::new();
-        let output = match &snapshot.identity {
-            SnapshotIdentity::Git(_) => {
-                let mut patch = Vec::new();
-                for staged in [true, false] {
-                    let mut arguments = [
-                        "--no-pager",
-                        "--no-optional-locks",
-                        "--literal-pathspecs",
-                        "-c",
-                        "core.fsmonitor=false",
-                        "diff",
-                        "--no-color",
-                        "--no-ext-diff",
-                        "--no-textconv",
-                        "--find-renames",
-                        "--src-prefix=a/",
-                        "--dst-prefix=b/",
-                    ]
-                    .map(OsString::from)
-                    .to_vec();
-                    if staged {
-                        arguments.push(OsString::from("--cached"));
-                    }
-                    arguments.push(OsString::from("--"));
-                    arguments.push(self.project_pathspec().into_os_string());
-                    let output = self.run_success(&arguments)?;
-                    require_complete_stdout(self.executable(), &output)?;
-                    let layer = if staged {
-                        ChangeLayer::GitIndex
-                    } else {
-                        ChangeLayer::GitWorkingTree
-                    };
-                    file_counts.extend(
-                        file_counts::parse(&String::from_utf8_lossy(&output.stdout))
-                            .into_iter()
-                            .map(|(path, counts)| ((layer, path), counts)),
-                    );
-                    patch.extend(output.stdout);
-                }
-                for change in snapshot
-                    .changes
-                    .iter()
-                    .filter(|change| change.layer == ChangeLayer::GitUntracked)
-                {
-                    let diff = self.operations.load_diff(self, change.target.clone())?;
-                    file_counts.insert(
-                        (change.layer, change.relative_path.clone()),
-                        diff.additions
-                            .zip(diff.deletions)
-                            .map(|(a, d)| (a as usize, d as usize)),
-                    );
-                    patch.extend(diff.patch.into_bytes());
-                }
-                patch
-            }
-            SnapshotIdentity::Jujutsu(identity) => {
-                let arguments = vec![
-                    OsString::from("--no-pager"),
-                    OsString::from("--color=never"),
-                    OsString::from("--at-operation"),
-                    OsString::from(&identity.operation_id),
-                    OsString::from("diff"),
-                    OsString::from("-r"),
-                    OsString::from("@"),
-                    OsString::from("--git"),
-                    OsString::from("--"),
-                    self.project_pathspec().into_os_string(),
-                ];
-                let output = self.run_success(&arguments)?;
-                require_complete_stdout(self.executable(), &output)?;
-                file_counts.extend(
-                    file_counts::parse(&String::from_utf8_lossy(&output.stdout))
-                        .into_iter()
-                        .map(|(path, counts)| ((ChangeLayer::JujutsuWorkingCopy, path), counts)),
-                );
-                output.stdout
-            }
-        };
-        let patch = String::from_utf8_lossy(&output);
-        for change in &mut snapshot.changes {
-            change.counts = file_counts
-                .get(&(change.layer, change.relative_path.clone()))
-                .copied()
-                .flatten();
-        }
-        Ok(patch_counts(&patch))
+        self.operations.working_copy_totals(self, snapshot)
     }
 
     #[cfg(test)]

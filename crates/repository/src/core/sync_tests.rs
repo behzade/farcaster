@@ -1,4 +1,5 @@
 use super::*;
+use crate::{GitIdentity, JujutsuIdentity, SnapshotIdentity};
 
 #[test]
 fn git_sync_preserves_branch_and_upstream_mapping() {
@@ -55,7 +56,11 @@ fn jj_identity(bookmarks: Vec<String>) -> SnapshotIdentity {
 }
 
 fn strings(identity: &SnapshotIdentity, action: RepositorySyncAction) -> Vec<String> {
-    arguments(identity, action)
+    let arguments = match identity {
+        SnapshotIdentity::Git(identity) => crate::adapter::git::sync_arguments(identity, action),
+        SnapshotIdentity::Jujutsu(identity) => crate::adapter::jj::sync_arguments(identity, action),
+    };
+    arguments
         .expect("sync arguments")
         .into_iter()
         .map(|argument| argument.to_string_lossy().into_owned())
