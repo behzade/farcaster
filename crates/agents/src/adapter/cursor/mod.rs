@@ -1,3 +1,5 @@
+mod backend;
+pub(super) use backend::CursorAdapter;
 mod catalog;
 
 use std::{path::Path, time::Instant};

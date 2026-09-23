@@ -1,5 +1,7 @@
+mod backend;
 use super::acp::AcpProfile;
 use crate::Backend;
+pub(super) use backend::AntigravityAdapter;
 
 pub(super) const PROFILE: AcpProfile = AcpProfile {
     backend: Backend::Antigravity,

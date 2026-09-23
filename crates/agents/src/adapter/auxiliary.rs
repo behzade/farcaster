@@ -19,7 +19,7 @@ pub fn supports_auto_title_generation(harness: impl Into<Option<Backend>>) -> bo
     let Some(harness) = harness.into() else {
         return false;
     };
-    matches!(harness, Backend::Pi | Backend::Codex)
+    super::backend::for_backend(harness).supports_auto_title_generation()
 }
 
 pub fn generate_session_title(
@@ -40,30 +40,17 @@ pub fn generate_session_title(
         .map(|model| format!("{}/{}", model.provider, model.id))
         .unwrap_or_else(|| "backend-default".into());
     zlog::info!("Generating {harness} session title with {selected}");
-    let output = match harness {
-        Backend::Pi => generate_pi_title(
-            &super::pi::launch_configuration(config),
-            project,
-            first_prompt,
-            selection.as_ref(),
-            effort.as_deref(),
-        ),
-        Backend::Codex => generate_worker_title(
-            config,
-            harness,
-            project,
-            first_prompt,
-            selection.as_ref(),
-            effort,
-        ),
-        Backend::Cursor | Backend::OpenCode | Backend::Claude | Backend::Antigravity => {
-            unreachable!("unsupported title backend was rejected above")
-        }
-    }?;
+    let output = super::backend::for_backend(harness).generate_title(
+        config,
+        project,
+        first_prompt,
+        selection.as_ref(),
+        effort,
+    )?;
     normalize_title(&output)
 }
 
-fn generate_worker_title(
+pub(super) fn generate_worker_title(
     config: &AgentLaunchConfig,
     harness: Backend,
     project: &Path,
@@ -120,7 +107,7 @@ fn generate_worker_title(
     }
 }
 
-fn generate_pi_title(
+pub(super) fn generate_pi_title(
     config: &AgentLaunchConfig,
     project: &Path,
     first_prompt: &str,
@@ -224,11 +211,16 @@ fn title_model(
     catalog: &ConfigurationCatalog,
     active_model: Option<&crate::extensions::Model>,
 ) -> Option<crate::extensions::Model> {
-    let override_name = match harness {
-        Backend::Pi => "FARCASTER_PI_TITLE_MODEL",
-        Backend::Codex => "FARCASTER_CODEX_TITLE_MODEL",
-        _ => return None,
-    };
+    super::backend::for_backend(harness).title_model(catalog, active_model)
+}
+
+pub(super) fn select_title_model(
+    catalog: &ConfigurationCatalog,
+    active_model: Option<&crate::extensions::Model>,
+    override_name: &str,
+    preferences: &[&str],
+    same_provider: bool,
+) -> Option<crate::extensions::Model> {
     if let Some(requested) =
         std::env::var_os(override_name).and_then(|value| value.into_string().ok())
         && let Some(model) = catalog.models.iter().find(|model| {
@@ -237,23 +229,11 @@ fn title_model(
     {
         return Some(model.clone());
     }
-    let preferences: &[&str] = match harness {
-        Backend::Pi => match active_model.map(|model| model.provider.as_str()) {
-            Some("openai-codex" | "openai") => &["gpt-5.6-luna", "luna", "nano", "mini"],
-            Some("anthropic") => &["haiku"],
-            Some("google") => &["flash-lite", "flash"],
-            Some(_) => &["nano", "mini", "small", "lite", "flash"],
-            None => &[],
-        },
-        Backend::Codex => &["gpt-5.6-luna", "luna", "nano", "mini"],
-        _ => &[],
-    };
     let selected = catalog
         .models
         .iter()
         .filter(|model| {
-            harness != Backend::Pi
-                || active_model.is_some_and(|active| model.provider == active.provider)
+            !same_provider || active_model.is_some_and(|active| model.provider == active.provider)
         })
         .filter(|model| {
             let id = model.id.to_ascii_lowercase();
@@ -270,11 +250,7 @@ fn title_model(
         })
         .min_by_key(|(rank, _)| *rank)
         .map(|(_, model)| model.clone());
-    selected.or_else(|| {
-        (harness == Backend::Pi)
-            .then(|| active_model.cloned())
-            .flatten()
-    })
+    selected.or_else(|| same_provider.then(|| active_model.cloned()).flatten())
 }
 
 fn lowest_effort(

@@ -1,3 +1,5 @@
+mod backend;
+pub(super) use backend::CodexAdapter;
 mod catalog;
 mod connection;
 #[cfg(test)]

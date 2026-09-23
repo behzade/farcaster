@@ -1,3 +1,5 @@
+mod backend;
+pub(super) use backend::PiAdapter;
 pub(super) mod deletion;
 mod delivery;
 mod framing;

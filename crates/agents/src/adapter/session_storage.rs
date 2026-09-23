@@ -1,27 +1,16 @@
 use crate::Backend;
 use std::path::{Path, PathBuf};
 
-use farcaster_sessions::{
-    LoadedHistory, SessionSummary, SessionTarget, SessionTransfer, TransferMember,
-};
+use farcaster_sessions::{LoadedHistory, SessionSummary, SessionTarget, SessionTransfer};
 
-use super::{codex, cursor, main_session::external_session_locator, opencode, pi};
+use super::{backend::for_backend, pi};
 
 pub(super) fn validate_session_locator(harness: Backend, path: &Path) -> Result<(), String> {
     validated_locator(harness, path).map(|_| ())
 }
 
 fn validated_locator(harness: Backend, path: &Path) -> Result<Option<String>, String> {
-    match harness {
-        Backend::Pi => pi::session_files::validate_session_file(path).map(|_| None),
-        Backend::Codex
-        | Backend::Cursor
-        | Backend::OpenCode
-        | Backend::Claude
-        | Backend::Antigravity => external_session_locator(harness, path)
-            .map(Some)
-            .ok_or_else(|| format!("session locator does not belong to {harness}")),
-    }
+    for_backend(harness).validate_locator(path)
 }
 
 pub fn validate_session_target(target: &SessionTarget) -> Result<(), String> {
@@ -67,25 +56,7 @@ pub fn move_session_family(
 ) -> Result<SessionTransfer, String> {
     validate_session_move(family)?;
     let root = &family[0];
-    match root.harness {
-        Backend::Pi => {
-            let members = family
-                .iter()
-                .map(|session| TransferMember {
-                    path: session.path.clone(),
-                    id: session.id.clone(),
-                    parent_id: session.parent_session.clone(),
-                })
-                .collect::<Vec<_>>();
-            pi::transfer::move_to_project(&members, &root.id, target_project, &root.path)
-        }
-        Backend::OpenCode => opencode::move_family(family, target_project),
-        Backend::Codex => codex::move_family(family, target_project),
-        Backend::Cursor | Backend::Claude | Backend::Antigravity => Err(format!(
-            "unsupported session move harness: {}",
-            root.harness
-        )),
-    }
+    for_backend(root.harness).move_family(family, target_project)
 }
 
 pub fn delete_session_family(targets: &[SessionTarget]) -> Result<Vec<(PathBuf, String)>, String> {
@@ -94,8 +65,12 @@ pub fn delete_session_family(targets: &[SessionTarget]) -> Result<Vec<(PathBuf, 
     }
     for target in targets {
         validate_session_target(target)?;
-        if target.harness == Backend::Claude
-            || super::external_acp_profile(target.harness).is_some()
+        if for_backend(target.harness)
+            .descriptor()
+            .capabilities
+            .sessions
+            .delete
+            != crate::contract::CapabilitySupport::Available
         {
             return Err(format!(
                 "Session deletion is not supported for {}",
@@ -105,14 +80,8 @@ pub fn delete_session_family(targets: &[SessionTarget]) -> Result<Vec<(PathBuf, 
     }
     let mut pi_paths = Vec::new();
     for target in targets.iter().rev() {
-        match target.harness {
-            Backend::Pi => pi_paths.push(target.path.clone()),
-            Backend::Codex => codex::delete_session(&target.id)?,
-            Backend::Cursor => cursor::delete_session(&target.id)?,
-            Backend::OpenCode => opencode::delete_session(&target.id)?,
-            Backend::Claude | Backend::Antigravity => {
-                unreachable!("all session targets were validated")
-            }
+        if let Some(path) = for_backend(target.harness).delete_session(&target.id, &target.path)? {
+            pi_paths.push(path);
         }
     }
     if pi_paths.is_empty() {
@@ -128,21 +97,7 @@ pub fn load_session_history(
     project: &Path,
 ) -> Result<LoadedHistory, String> {
     validate_session_locator(harness, path)?;
-    let history = match harness {
-        Backend::Pi => return pi::session_files::load_history(path),
-        Backend::Codex => codex::load_history(path)?,
-        Backend::Cursor => cursor::load_history(path)?,
-        Backend::OpenCode => opencode::load_history(path)?,
-        Backend::Antigravity => super::antigravity::load_history(path, project)?,
-        Backend::Claude => super::claude::load_history(path)?,
-    };
-    Ok(LoadedHistory {
-        messages: history.messages,
-        model: history.model,
-        thinking_level: history.thinking_level,
-        pending_question: None,
-        prompt_deliveries: history.prompt_deliveries,
-    })
+    for_backend(harness).load_history(path, project)
 }
 
 pub fn discover_sessions_for(
@@ -150,14 +105,10 @@ pub fn discover_sessions_for(
     locator_root: Option<&Path>,
     query: &str,
 ) -> Result<Vec<SessionSummary>, String> {
-    if harness == Backend::Pi {
-        return Ok(pi::session_files::discover(query)?.sessions);
-    }
-    super::discover_external_sessions_for(harness, locator_root, query)
-        .map(|sessions| sessions.into_iter().map(import_session).collect())
+    for_backend(harness).discover_sessions(locator_root, query)
 }
 
-fn import_session(session: crate::DiscoveredSession) -> SessionSummary {
+pub(super) fn import_session(session: crate::DiscoveredSession) -> SessionSummary {
     let mut summary = SessionSummary::import(farcaster_sessions::SessionImport {
         id: session.id,
         harness: session.harness,
