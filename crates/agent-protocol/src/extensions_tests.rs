@@ -10,6 +10,7 @@ fn worker_model_request_survives_worker_input_projection() {
             id: "model-id".into(),
             name: "Model name".into(),
             efforts: vec!["medium".into()],
+            service_tiers: Vec::new(),
         }],
     };
     let input = crate::WorkerInput {

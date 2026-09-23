@@ -88,6 +88,16 @@ fn cursor_service_tier(value: &Value) -> Option<String> {
         .map(|(tier, _)| (*tier).to_owned())
 }
 
+fn cursor_service_tiers(option: &Value) -> Vec<String> {
+    option
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| value.get("value").and_then(cursor_service_tier))
+        .collect()
+}
+
 #[derive(Clone)]
 pub(super) struct ModelSelection {
     pub model: String,
@@ -113,13 +123,7 @@ pub(super) fn metadata(
             .find(|option| option.get("id").and_then(Value::as_str) == Some("fast"))
     {
         ids.service_tier = Some("fast".into());
-        metadata.service_tiers = fast
-            .get("options")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|option| option.get("value").and_then(cursor_service_tier))
-            .collect();
+        metadata.service_tiers = cursor_service_tiers(fast);
         metadata.service_tier = fast.get("currentValue").and_then(cursor_service_tier);
         ids.selected_service_tier = metadata.service_tier.clone();
         ids.service_tiers = metadata.service_tiers.clone();
@@ -156,6 +160,14 @@ pub(super) fn metadata(
             .unwrap_or_default();
         let (parameters_metadata, _) = super::translate::metadata_from_options(profile, options);
         let efforts = parameters_metadata.efforts;
+        let service_tiers = options
+            .iter()
+            .find(|option| {
+                profile.backend == Backend::Cursor
+                    && option.get("id").and_then(Value::as_str) == Some("fast")
+            })
+            .map(cursor_service_tiers)
+            .unwrap_or_default();
         let mut combinations: Vec<Vec<(String, String)>> = vec![Vec::new()];
         for option in options {
             if profile.backend == Backend::Cursor
@@ -217,7 +229,7 @@ pub(super) fn metadata(
                 })
                 .unwrap_or(0);
             models.push(json!({"id":id,"name":if suffix.is_empty() {name.to_owned()} else {format!("{name} · {suffix}")},
-                "provider":profile.backend,"contextWindow":context_window,"reasoning":!efforts.is_empty(),"efforts":efforts}));
+                "provider":profile.backend,"contextWindow":context_window,"reasoning":!efforts.is_empty(),"efforts":efforts,"serviceTiers":service_tiers}));
             ids.selections.insert(
                 id,
                 ModelSelection {

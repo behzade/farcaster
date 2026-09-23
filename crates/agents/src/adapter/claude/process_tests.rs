@@ -11,6 +11,7 @@ fn shared_queue_hook_preserves_sandbox_and_waits_for_the_whole_tool_batch() {
         None,
         true,
         Some("http://127.0.0.1:1234/session-secret"),
+        None,
     );
     let args = command
         .get_args()
@@ -37,6 +38,30 @@ fn shared_queue_hook_preserves_sandbox_and_waits_for_the_whole_tool_batch() {
             .iter()
             .any(|arg| arg == "--allow-dangerously-skip-permissions")
     );
+}
+
+#[test]
+fn worker_tier_sets_fast_mode_in_session_settings() {
+    for (tier, fast) in [("standard", false), ("fast", true)] {
+        let mut command = std::process::Command::new("claude");
+        configure_with_boundary(
+            &mut command,
+            HarnessAccessMode::Sandboxed,
+            "worker",
+            false,
+            None,
+            true,
+            None,
+            Some(tier),
+        );
+        let args = command.get_args().collect::<Vec<_>>();
+        let settings = args
+            .windows(2)
+            .find(|args| args[0] == "--settings")
+            .unwrap();
+        let settings: Value = serde_json::from_str(settings[1].to_str().unwrap()).unwrap();
+        assert_eq!(settings["fastMode"], fast);
+    }
 }
 
 #[test]
@@ -125,6 +150,7 @@ fn close_allows_the_cli_to_flush_after_stdin_eof() {
         None,
         None,
         true,
+        None,
     )
     .expect("spawn fixture process");
 
@@ -157,6 +183,7 @@ fn close_reaps_a_cli_that_writes_valid_frames_continuously() {
         None,
         None,
         true,
+        None,
     )
     .expect("spawn fixture process");
 

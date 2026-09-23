@@ -37,6 +37,7 @@ fn failed_catalog_responses_preserve_last_valid_values_and_report_error() {
         reasoning: true,
         efforts: Some(vec!["high".into()]),
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
     }];
     let modes = vec![AgentMode {

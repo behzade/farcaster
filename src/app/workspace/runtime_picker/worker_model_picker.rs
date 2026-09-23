@@ -1,6 +1,57 @@
 use super::*;
 use crate::protocol::{WorkerModelChoice, WorkerModelSelection};
 
+fn worker_option_row(
+    id: &'static str,
+    label: &'static str,
+    options: &[String],
+    selected: Option<&str>,
+    entity: gpui::WeakEntity<FarcasterApp>,
+    set: fn(&mut WorkerModelPicker, Option<String>),
+) -> gpui::AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(THEME.space.sm)
+        .p(THEME.space.sm)
+        .border_t(THEME.border)
+        .border_color(THEME.colors.border)
+        .child(div().text_color(THEME.colors.muted).child(label))
+        .child(
+            div().flex().flex_wrap().gap(THEME.space.xs).children(
+                std::iter::once(None)
+                    .chain(options.iter().cloned().map(Some))
+                    .enumerate()
+                    .map(|(index, option)| {
+                        let entity = entity.clone();
+                        let chosen = selected == option.as_deref();
+                        button(
+                            (id, index),
+                            option.clone().unwrap_or_else(|| "Default".into()),
+                            if chosen {
+                                ButtonTone::Accent
+                            } else {
+                                ButtonTone::Quiet
+                            },
+                            true,
+                            move |_, cx| {
+                                let _ = entity.update(cx, |app, cx| {
+                                    if let Some(worker) =
+                                        app.workspace.runtime_picker.worker.as_mut()
+                                    {
+                                        set(worker, option.clone());
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        )
+                    }),
+            ),
+        )
+        .into_any_element()
+}
+
 impl FarcasterApp {
     fn choose_worker_picker_harness(
         &mut self,
@@ -21,6 +72,7 @@ impl FarcasterApp {
             worker.provider.clone_from(&first.provider);
             worker.selected = None;
             worker.effort = None;
+            worker.service_tier = None;
         }
         self.reset_worker_model_search(window, cx);
     }
@@ -35,6 +87,7 @@ impl FarcasterApp {
             worker.provider = provider;
             worker.selected = None;
             worker.effort = None;
+            worker.service_tier = None;
         }
         self.reset_worker_model_search(window, cx);
     }
@@ -68,7 +121,8 @@ impl FarcasterApp {
             self.extensions.active.dialog.as_ref(),
             Some(crate::protocol::ExtensionUiRequest::WorkerModel { id: active, choices, .. })
                 if active == &id && choices.get(choice).is_some_and(|item|
-                    worker.effort.as_ref().is_none_or(|effort| item.efforts.contains(effort)))
+                    worker.effort.as_ref().is_none_or(|effort| item.efforts.contains(effort))
+                    && worker.service_tier.as_ref().is_none_or(|tier| item.service_tiers.contains(tier)))
         );
         if !valid {
             return;
@@ -76,6 +130,7 @@ impl FarcasterApp {
         let Ok(value) = serde_json::to_string(&WorkerModelSelection {
             choice,
             effort: worker.effort.clone(),
+            service_tier: worker.service_tier.clone(),
             save,
         }) else {
             return;
@@ -142,10 +197,13 @@ impl FarcasterApp {
             f32::from(window.viewport_size().height),
             models.len(),
         );
+        let option_rows = selected.map_or(0, |choice| {
+            usize::from(!choice.efforts.is_empty()) + usize::from(!choice.service_tiers.is_empty())
+        });
+        let list_height = list_height.min((height - 190.0 - option_rows as f32 * 55.0).max(32.0));
         let keyboard_models = models.clone();
         let selected_index = worker.selected;
         let highlighted = self.workspace.runtime_picker.highlighted;
-        let selected_effort = worker.effort.clone();
         let focus = search.read(cx).focus_handle(cx);
         let keyboard_entity = entity.clone();
         let harness_entity = entity.clone();
@@ -187,6 +245,7 @@ impl FarcasterApp {
                     {
                         worker.selected = Some(keyboard_models[current].0);
                         worker.effort = None;
+                        worker.service_tier = None;
                     }
                     app.workspace.runtime_picker.scroll.scroll_to_item(
                         app.workspace.runtime_picker.highlighted,
@@ -311,6 +370,7 @@ impl FarcasterApp {
                                         {
                                             worker.selected = Some(index);
                                             worker.effort = None;
+                                            worker.service_tier = None;
                                         }
                                         cx.notify();
                                     });
@@ -328,51 +388,27 @@ impl FarcasterApp {
             .when_some(
                 selected.filter(|choice| !choice.efforts.is_empty()),
                 |panel, choice| {
-                    panel.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(THEME.space.sm)
-                            .p(THEME.space.sm)
-                            .border_t(THEME.border)
-                            .border_color(THEME.colors.border)
-                            .child(div().text_color(THEME.colors.muted).child("Effort"))
-                            .child(
-                                div().flex().flex_wrap().gap(THEME.space.xs).children(
-                                    std::iter::once(None)
-                                        .chain(choice.efforts.iter().cloned().map(Some))
-                                        .enumerate()
-                                        .map(|(index, effort)| {
-                                            let entity = entity.clone();
-                                            let chosen = selected_effort == effort;
-                                            button(
-                                                ("worker-effort", index),
-                                                effort.clone().unwrap_or_else(|| "Default".into()),
-                                                if chosen {
-                                                    ButtonTone::Accent
-                                                } else {
-                                                    ButtonTone::Quiet
-                                                },
-                                                true,
-                                                move |_, cx| {
-                                                    let _ = entity.update(cx, |app, cx| {
-                                                        if let Some(worker) = app
-                                                            .workspace
-                                                            .runtime_picker
-                                                            .worker
-                                                            .as_mut()
-                                                        {
-                                                            worker.effort = effort.clone();
-                                                        }
-                                                        cx.notify();
-                                                    });
-                                                },
-                                            )
-                                        }),
-                                ),
-                            ),
-                    )
+                    panel.child(worker_option_row(
+                        "worker-effort",
+                        "Effort",
+                        &choice.efforts,
+                        worker.effort.as_deref(),
+                        entity.clone(),
+                        |worker, value| worker.effort = value,
+                    ))
+                },
+            )
+            .when_some(
+                selected.filter(|choice| !choice.service_tiers.is_empty()),
+                |panel, choice| {
+                    panel.child(worker_option_row(
+                        "worker-service-tier",
+                        "Service tier",
+                        &choice.service_tiers,
+                        worker.service_tier.as_deref(),
+                        entity.clone(),
+                        |worker, value| worker.service_tier = value,
+                    ))
                 },
             )
             .child(

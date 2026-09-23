@@ -56,6 +56,12 @@ pub struct Model {
     pub reasoning: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub efforts: Option<Vec<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        rename = "serviceTiers"
+    )]
+    pub service_tiers: Vec<String>,
     /// Concrete model ID behind a selectable alias, when reported by the backend.
     #[serde(
         default,
@@ -75,6 +81,8 @@ pub struct WorkerModelChoice {
     pub id: String,
     pub name: String,
     pub efforts: Vec<String>,
+    #[serde(default)]
+    pub service_tiers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -87,6 +95,8 @@ pub struct WorkerModelRequest {
 pub struct WorkerModelSelection {
     pub choice: usize,
     pub effort: Option<String>,
+    #[serde(default)]
+    pub service_tier: Option<String>,
     pub save: bool,
 }
 

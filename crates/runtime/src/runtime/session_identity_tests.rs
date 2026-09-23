@@ -9,6 +9,7 @@ fn model(id: &str, reasoning: bool, efforts: Option<&[&str]>) -> Model {
         context_window: 0,
         reasoning,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: efforts.map(|efforts| efforts.iter().map(|effort| (*effort).into()).collect()),
     }

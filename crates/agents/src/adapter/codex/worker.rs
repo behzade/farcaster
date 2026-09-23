@@ -54,6 +54,20 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         command.access_mode = launch.access_mode;
         command.app_proxy = launch.app_proxy.clone();
         let mut prepared = command.command(&launch.project)?;
+        if let Some(tier) = launch.service_tier.as_deref() {
+            if !matches!(tier, "standard" | "fast") {
+                return Err(format!("Codex service tier {tier} is unavailable"));
+            }
+            let value = if tier == "standard" {
+                "default"
+            } else {
+                "fast"
+            };
+            prepared.arg("-c").arg(format!("service_tier=\"{value}\""));
+            if tier == "fast" {
+                prepared.arg("-c").arg("features.fast_mode=true");
+            }
+        }
         let caller_identity = crate::core::CallerRegistry::shared().issue_as_with_access(
             &launch.project,
             crate::core::CallerProfile {
@@ -504,6 +518,14 @@ fn load_main_metadata(
                     .unwrap_or(0),
                 "reasoning": model.get("supportedReasoningEfforts").is_some(),
                 "efforts": efforts_known.then_some(model_efforts),
+                "serviceTiers": if id.starts_with("gpt-5.4")
+                    || id.starts_with("gpt-5.5")
+                    || id.starts_with("gpt-5.6")
+                    || id.starts_with("gpt-6") {
+                    vec!["standard", "fast"]
+                } else {
+                    Vec::new()
+                },
             }))
         })
         .collect();

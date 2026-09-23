@@ -167,7 +167,7 @@ fn session(command: &AgentLaunchConfig, project: &Path) -> ClaudeSession {
         None,
     );
     let id = TEST_SESSION_ID;
-    let process = Process::spawn(command, project, id, false, None, None, true)
+    let process = Process::spawn(command, project, id, false, None, None, true, None)
         .expect("test operation should succeed");
     attach(process, caller, id, command.access_mode)
         .expect("test operation should succeed")
@@ -594,6 +594,23 @@ fn access_modes_preserve_claude_model_auto_support() {
         assert!(modes.contains(&HarnessAccessMode::Sandboxed));
         assert!(modes.contains(&HarnessAccessMode::Full));
         session.close().expect("test operation should succeed");
+    }
+}
+
+#[test]
+fn only_fast_capable_claude_models_advertise_worker_tiers() {
+    for (id, expected) in [
+        ("claude-opus-5-5", vec!["standard", "fast"]),
+        ("claude-sonnet-5", vec![]),
+    ] {
+        let (directory, command) = setup();
+        let script = SCRIPT.replace("\"value\":\"fixture\"", &format!("\"value\":\"{id}\""));
+        std::fs::write(directory.path().join("claude-fixture"), script).unwrap();
+        let mut session = session(&command, directory.path());
+        let model: crate::extensions::Model =
+            serde_json::from_value(session.models[0].clone()).unwrap();
+        assert_eq!(model.service_tiers, expected);
+        session.close().unwrap();
     }
 }
 

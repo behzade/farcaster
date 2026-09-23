@@ -58,7 +58,9 @@ pub(super) fn configure(
     caller: Option<&str>,
     persist: bool,
 ) {
-    configure_with_boundary(command, access, session_id, resume, caller, persist, None);
+    configure_with_boundary(
+        command, access, session_id, resume, caller, persist, None, None,
+    );
 }
 
 fn configure_with_boundary(
@@ -69,6 +71,7 @@ fn configure_with_boundary(
     caller: Option<&str>,
     persist: bool,
     boundary: Option<&str>,
+    service_tier: Option<&str>,
 ) {
     command.args([
         "-p",
@@ -95,6 +98,9 @@ fn configure_with_boundary(
     }});
     if let Some(url) = boundary {
         settings["hooks"] = json!({"PostToolBatch": [{"hooks": [{"type":"http", "url":url}]}]});
+    }
+    if let Some(tier) = service_tier {
+        settings["fastMode"] = json!(tier == "fast");
     }
     command.arg("--settings").arg(settings.to_string());
     if access == HarnessAccessMode::Full {
@@ -131,7 +137,13 @@ impl Process {
         caller: Option<&str>,
         wake: Option<thread::Thread>,
         persist: bool,
+        service_tier: Option<&str>,
     ) -> Result<Self, String> {
+        if let Some(tier) = service_tier
+            && !matches!(tier, "standard" | "fast")
+        {
+            return Err(format!("Claude service tier {tier} is unavailable"));
+        }
         let mut command = config.command(project)?;
         configure_with_boundary(
             &mut command,
@@ -141,6 +153,7 @@ impl Process {
             caller,
             persist,
             config.prompt_boundary_url.as_deref(),
+            service_tier,
         );
         let mut child = command
             .stdin(Stdio::piped())

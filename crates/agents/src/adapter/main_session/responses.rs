@@ -87,6 +87,7 @@ impl WorkerSessionTransport {
                 reasoning: true,
                 efforts: None,
                 resolved_model: None,
+                service_tiers: Vec::new(),
                 access_modes: None,
             });
         if model.context_window == 0 {

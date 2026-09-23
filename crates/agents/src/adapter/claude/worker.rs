@@ -70,6 +70,7 @@ impl WorkerSessionFactory for ClaudeWorkerFactory {
             None,
             None,
             !launch.ephemeral,
+            launch.service_tier.as_deref(),
         )?;
         let (mut worker, _) = attach(process, caller, &id, launch.access_mode)?;
         if let Some(model) = launch.model {
@@ -101,6 +102,7 @@ pub fn load_configuration(
         None,
         None,
         false,
+        None,
     )?;
     initialize(&mut process, command.access_mode)
 }
@@ -138,6 +140,7 @@ pub fn spawn_main(
         Some(caller.token()),
         launch.wake.clone(),
         true,
+        None,
     )?;
     let (worker, metadata) = attach(process, caller, &id, command.access_mode)?;
     Ok((Box::new(worker), id, metadata))
@@ -166,9 +169,19 @@ fn initialize(
                     efforts.push(level.to_owned());
                 }
             }
+            let resolved = value["resolvedModel"].as_str().unwrap_or(&model.value);
+            let service_tiers = if resolved == "opus"
+                || resolved.starts_with("claude-opus-5")
+                || resolved.starts_with("claude-opus-4-8")
+            {
+                vec!["standard", "fast"]
+            } else {
+                Vec::new()
+            };
             json!({"id":model.value, "name":model.display_name, "provider":BACKEND,
             "contextWindow":0, "reasoning":value["supportsEffort"].as_bool().unwrap_or(false),
             "resolvedModel":value["resolvedModel"], "efforts":levels,
+            "serviceTiers": service_tiers,
             "access_modes": if value["supportsAutoMode"].as_bool() == Some(true) {
                 vec![HarnessAccessMode::Sandboxed, HarnessAccessMode::Auto, HarnessAccessMode::Full]
             } else {

@@ -16,6 +16,7 @@ fn native_client_id_keeps_farcaster_request_identity() {
 #[test]
 fn worker_factory_resumes_the_saved_thread_and_accepts_a_new_prompt() -> Result<(), String> {
     const SCRIPT: &str = r#"#!/bin/sh
+printf '%s\n' "$@" > "$0.args"
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$0.requests"
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -47,7 +48,7 @@ done
         provider: None,
         model: None,
         effort: None,
-        service_tier: None,
+        service_tier: Some("fast".into()),
         access_mode: crate::HarnessAccessMode::Sandboxed,
         app_proxy: None,
         ephemeral: false,
@@ -77,6 +78,10 @@ done
         "{requests}"
     );
     assert!(requests.contains("after restart"), "{requests}");
+    let args = std::fs::read_to_string(script.with_extension("sh.args"))
+        .map_err(|error| error.to_string())?;
+    assert!(args.contains("service_tier=\"fast\""), "{args}");
+    assert!(args.contains("features.fast_mode=true"), "{args}");
     Ok(())
 }
 

@@ -14,6 +14,7 @@ fn model_from(provider: &str, id: &str, reasoning: bool) -> Model {
         context_window: 0,
         reasoning,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     }

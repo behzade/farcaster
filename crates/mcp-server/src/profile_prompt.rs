@@ -89,7 +89,10 @@ pub(super) fn configure(
             "Effort ID (leave blank for default)".into(),
             Vec::new(),
         )?;
-        let service_tier = if harness == agents::Backend::Cursor {
+        let service_tier = if matches!(
+            harness,
+            agents::Backend::Cursor | agents::Backend::Codex | agents::Backend::Claude
+        ) {
             choose(
                 caller,
                 "Service tier ID (leave blank for default)".into(),
@@ -124,6 +127,7 @@ pub(super) fn configure(
                     } else {
                         Vec::new()
                     },
+                    service_tiers: model.service_tiers.clone(),
                 })
                 .collect(),
         };
@@ -148,13 +152,20 @@ pub(super) fn configure(
         {
             return Err("worker effort choice is unavailable".into());
         }
+        if selected.service_tier.as_ref().is_some_and(|tier| {
+            !request.choices[selected.choice]
+                .service_tiers
+                .contains(tier)
+        }) {
+            return Err("worker service tier choice is unavailable".into());
+        }
         (
             agents::WorkerExecution {
                 harness: *harness,
                 provider: model.provider.clone(),
                 model: model.id.clone(),
                 effort: selected.effort,
-                service_tier: None,
+                service_tier: selected.service_tier,
             },
             Some(selected.save),
         )

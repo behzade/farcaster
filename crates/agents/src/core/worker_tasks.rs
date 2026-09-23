@@ -36,8 +36,19 @@ impl WorkerExecution {
                 ));
             }
         }
-        if self.service_tier.is_some() && self.harness != Backend::Cursor {
-            return Err("service tier is available only for Cursor workers".into());
+        if let Some(tier) = self.service_tier.as_deref() {
+            let valid = match self.harness {
+                Backend::Cursor => matches!(tier, "standard" | "priority"),
+                Backend::Codex => matches!(tier, "standard" | "fast"),
+                Backend::Claude => matches!(tier, "standard" | "fast"),
+                _ => false,
+            };
+            if !valid {
+                return Err(format!(
+                    "service tier {tier} is unavailable for {} workers",
+                    self.harness
+                ));
+            }
         }
         Ok(())
     }

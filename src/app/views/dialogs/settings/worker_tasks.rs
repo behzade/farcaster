@@ -416,6 +416,20 @@ fn route(
             )
         })
         .collect();
+    let tiers = std::iter::once(String::new())
+        .chain(
+            selected_model
+                .into_iter()
+                .flat_map(|model| model.service_tiers.iter().cloned()),
+        )
+        .map(|tier| {
+            (
+                selected(&tier, "Default"),
+                route.service_tier.as_deref().unwrap_or_default() == tier,
+                WorkerRouteChoice::ServiceTier(tier),
+            )
+        })
+        .collect();
     let custom = entity.clone();
     let label = format!("Model {}", target.model + 1);
     let explanation =
@@ -514,6 +528,18 @@ fn route(
                 }),
             ),
         );
+    if (selected_model.is_some_and(|model| !model.service_tiers.is_empty())
+        || route.service_tier.is_some())
+    {
+        row = row.child(route_menu(
+            "worker-service-tier",
+            selected(route.service_tier.as_deref().unwrap_or_default(), "Default"),
+            tiers,
+            target,
+            enabled && selected_model.is_some(),
+            entity.clone(),
+        ));
+    }
     if catalog.models.is_empty() {
         row = row.child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.subtle)
             .child("No catalog yet. Open a session with this harness, then reload choices, or use custom IDs."));
@@ -542,6 +568,7 @@ fn route_menu(
         "worker-harness" => "Harness",
         "worker-provider" => "Provider",
         "worker-model" => "Model",
+        "worker-service-tier" => "Service tier",
         _ => "Effort",
     };
     div()
@@ -630,7 +657,7 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
         }
         WorkerProfileEdit::Custom { inputs, .. } => {
             form = form.child(div().child("Custom IDs"))
-                .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child("Use exact IDs for models not listed by the harness. Leave effort blank for its default. Service tier is available for Cursor."))
+                .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child("Use exact IDs for models not listed by the harness. Leave effort and service tier blank for their defaults."))
                 .child(div().flex().gap(THEME.space.sm).children(["Provider ID", "Model ID", "Effort", "Service tier"].into_iter().zip(inputs).map(|(label, input)| {
                     div().flex_1().min_w_0().flex().flex_col().gap(THEME.space.xs)
                         .child(div().text_size(THEME.type_scale.caption).text_color(THEME.colors.muted).child(label))

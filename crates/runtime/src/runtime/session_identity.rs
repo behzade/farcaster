@@ -445,6 +445,7 @@ impl HarnessConfigurationStore {
                     context_window: 0,
                     reasoning: false,
                     resolved_model: None,
+                    service_tiers: Vec::new(),
                     access_modes: None,
                     efforts: None,
                 })

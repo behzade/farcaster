@@ -10,6 +10,7 @@ fn runtime_selection_matches_model_identity_and_effort() {
         context_window: 0,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -48,6 +49,7 @@ fn effort_choices_respect_each_models_limits() {
         context_window: 0,
         reasoning: false,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };

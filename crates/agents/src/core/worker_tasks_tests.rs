@@ -11,6 +11,22 @@ fn execution(model: &str) -> WorkerExecution {
 }
 
 #[test]
+fn worker_tiers_follow_the_selected_harness() {
+    for (harness, accepted, rejected) in [
+        (Backend::Cursor, "priority", "fast"),
+        (Backend::Codex, "fast", "priority"),
+        (Backend::Claude, "standard", "priority"),
+    ] {
+        let mut route = execution("model");
+        route.harness = harness;
+        route.service_tier = Some(accepted.into());
+        assert!(route.validate().is_ok());
+        route.service_tier = Some(rejected.into());
+        assert!(route.validate().is_err());
+    }
+}
+
+#[test]
 fn built_ins_have_limits_and_no_default_models() {
     let profiles = WorkerProfiles::default();
     assert_eq!(

@@ -53,6 +53,7 @@ pub(in crate::app) enum WorkerRouteChoice {
     Provider(String),
     Model { provider: String, id: String },
     Effort(String),
+    ServiceTier(String),
 }
 
 impl WorkerProfileEditor {
@@ -254,6 +255,9 @@ fn apply_choice(route: &mut WorkerExecution, choice: WorkerRouteChoice) {
             route.service_tier = None;
         }
         WorkerRouteChoice::Effort(effort) => route.effort = (!effort.is_empty()).then_some(effort),
+        WorkerRouteChoice::ServiceTier(tier) => {
+            route.service_tier = (!tier.is_empty()).then_some(tier);
+        }
         _ => {}
     }
 }

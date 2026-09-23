@@ -452,6 +452,7 @@ fn history_model_identity_survives_an_unavailable_catalog_entry() {
             context_window: 0,
             reasoning: false,
             resolved_model: None,
+            service_tiers: Vec::new(),
             access_modes: None,
             efforts: None,
         })
@@ -667,6 +668,7 @@ fn history_uses_latest_assistant_usage_for_context() {
         context_window: 200,
         reasoning: false,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     }];
@@ -1389,6 +1391,7 @@ fn cold_draft_model_selection_is_deferred_without_starting_the_harness() {
         context_window: 1,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1417,6 +1420,7 @@ fn cold_model_selection_replaces_an_unsupported_effort() {
         context_window: 0,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: Some(vec!["low".into(), "medium".into()]),
     }));
@@ -1687,6 +1691,7 @@ fn starting_session_prefills_controls_from_the_last_ready_session() {
         context_window: 200_000,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1738,6 +1743,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         context_window: 200_000,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1748,6 +1754,7 @@ fn history_identity_overrides_draft_defaults_without_changing_them() {
         context_window: 200_000,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1805,6 +1812,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         context_window: 200_000,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1815,6 +1823,7 @@ fn viewing_a_subagent_does_not_change_new_session_defaults() {
         context_window: 200_000,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1871,6 +1880,7 @@ fn cold_drafts_reuse_only_their_own_harness_catalog() {
         context_window: 1,
         reasoning: false,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     };
@@ -1952,6 +1962,7 @@ fn process_replacement_clears_all_session_owned_snapshot_state() {
             context_window: 0,
             reasoning: false,
             resolved_model: None,
+            service_tiers: Vec::new(),
             access_modes: None,
             efforts: None,
         }],
@@ -2015,6 +2026,7 @@ fn model_change_from_history_reconnects_without_hiding_history() -> Result<(), S
         context_window: 0,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     }));
@@ -2092,6 +2104,7 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
         context_window: 0,
         reasoning: true,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     }));
@@ -2124,6 +2137,7 @@ fn failed_resume_publishes_no_state_from_the_previous_process() {
         context_window: 0,
         reasoning: false,
         resolved_model: None,
+        service_tiers: Vec::new(),
         access_modes: None,
         efforts: None,
     }];

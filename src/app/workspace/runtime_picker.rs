@@ -20,6 +20,7 @@ pub(in crate::app) struct WorkerModelPicker {
     provider: String,
     selected: Option<usize>,
     effort: Option<String>,
+    service_tier: Option<String>,
 }
 
 #[derive(Default)]
@@ -88,6 +89,7 @@ impl FarcasterApp {
                 provider: first.provider.clone(),
                 selected: None,
                 effort: None,
+                service_tier: None,
             });
         }
         self.set_runtime_picker_open(open, window, cx);
