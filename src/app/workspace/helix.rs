@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use gpui::{
     Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window, div,
@@ -19,14 +16,6 @@ use crate::app::infrastructure::editor_launch;
 pub(super) struct HelixBackend;
 
 impl EditorBackend for HelixBackend {
-    fn name(&self) -> &'static str {
-        "Helix"
-    }
-
-    fn program(&self, project: &Path) -> PathBuf {
-        farcaster_editors::EditorChoice::Helix.program(project, None)
-    }
-
     fn open(
         &self,
         app: &mut FarcasterApp,
@@ -55,7 +44,12 @@ impl EditorBackend for HelixBackend {
                     ];
                     (project, format!("Diff: {title}"), args, Some(base))
                 } else {
-                    (project, title, vec![location(&path, line).into()], None)
+                    (
+                        project,
+                        title,
+                        vec![external_editor::location(&path, line).into()],
+                        None,
+                    )
                 }
             }
             EditorRequest::Review {
@@ -63,19 +57,12 @@ impl EditorBackend for HelixBackend {
             } => {
                 let args = locations
                     .iter()
-                    .map(|(path, line)| location(path, *line).into())
+                    .map(|(path, line)| external_editor::location(path, *line).into())
                     .collect();
                 (project, "Review".into(), args, None)
             }
         };
         app.activate_helix_editor(project, title, args, temporary, window, cx)
-    }
-}
-
-fn location(path: &Path, line: Option<u64>) -> String {
-    match line {
-        Some(line) => format!("{}:{}", path.display(), line.max(1)),
-        None => path.to_string_lossy().into_owned(),
     }
 }
 

@@ -1,5 +1,3 @@
-use std::path::{Path, PathBuf};
-
 use gpui::{Context, Window};
 
 use super::{
@@ -11,14 +9,6 @@ use super::{
 pub(super) struct ZedBackend;
 
 impl EditorBackend for ZedBackend {
-    fn name(&self) -> &'static str {
-        "Zed"
-    }
-
-    fn program(&self, project: &Path) -> PathBuf {
-        farcaster_editors::EditorChoice::Zed.program(project, std::env::var_os("PATH").as_deref())
-    }
-
     fn open(
         &self,
         _app: &mut FarcasterApp,
@@ -31,7 +21,8 @@ impl EditorBackend for ZedBackend {
             | EditorRequest::File { project, .. }
             | EditorRequest::Review { project, .. } => project,
         };
-        let program = self.program(project);
+        let program = farcaster_editors::EditorChoice::Zed
+            .program(project, std::env::var_os("PATH").as_deref());
         match request {
             EditorRequest::Project(project) => external_editor::launch(
                 &program,
@@ -62,7 +53,7 @@ impl EditorBackend for ZedBackend {
                         &project,
                         &[
                             project.to_string_lossy().into_owned(),
-                            location(&path, line),
+                            external_editor::location(&path, line),
                         ],
                         None,
                     )
@@ -72,16 +63,13 @@ impl EditorBackend for ZedBackend {
                 project, locations, ..
             } => {
                 let mut args = vec![project.to_string_lossy().into_owned()];
-                args.extend(locations.iter().map(|(path, line)| location(path, *line)));
+                args.extend(
+                    locations
+                        .iter()
+                        .map(|(path, line)| external_editor::location(path, *line)),
+                );
                 external_editor::launch(&program, "Zed", &project, &args, None)
             }
         }
-    }
-}
-
-fn location(path: &Path, line: Option<u64>) -> String {
-    match line {
-        Some(line) => format!("{}:{}", path.display(), line.max(1)),
-        None => path.to_string_lossy().into_owned(),
     }
 }

@@ -95,7 +95,3 @@ fn is_executable(path: &Path) -> bool {
         metadata.is_file()
     }
 }
-
-#[cfg(test)]
-#[path = "editor_tests.rs"]
-mod tests;

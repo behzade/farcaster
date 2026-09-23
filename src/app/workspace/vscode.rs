@@ -10,14 +10,6 @@ use super::{
 pub(super) struct VsCodeBackend;
 
 impl EditorBackend for VsCodeBackend {
-    fn name(&self) -> &'static str {
-        "VS Code"
-    }
-
-    fn program(&self, project: &Path) -> PathBuf {
-        farcaster_editors::EditorChoice::VsCode.program(project, None)
-    }
-
     fn open(
         &self,
         _app: &mut FarcasterApp,
@@ -58,10 +50,11 @@ fn open_locations(project: &Path, locations: &[(PathBuf, Option<u64>)]) -> Resul
     if locations.iter().any(|(_, line)| line.is_some()) {
         arguments.push("--goto".to_owned());
     }
-    arguments.extend(locations.iter().map(|(path, line)| match line {
-        Some(line) => format!("{}:{}", path.display(), (*line).max(1)),
-        None => path.to_string_lossy().into_owned(),
-    }));
+    arguments.extend(
+        locations
+            .iter()
+            .map(|(path, line)| external_editor::location(path, *line)),
+    );
     launch(project, &arguments, None)
 }
 

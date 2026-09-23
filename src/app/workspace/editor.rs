@@ -32,15 +32,6 @@ pub(super) enum EditorRequest {
 }
 
 pub(super) trait EditorBackend {
-    fn name(&self) -> &'static str;
-    fn program(&self, project: &Path) -> PathBuf;
-    fn available(&self, project: &Path) -> bool {
-        farcaster_editors::executable_available(
-            &self.program(project),
-            project,
-            std::env::var_os("PATH").as_deref(),
-        )
-    }
     fn open(
         &self,
         app: &mut FarcasterApp,
@@ -67,7 +58,7 @@ pub(in crate::app) fn editor_available(
     choice: crate::storage::EditorChoice,
     project: &Path,
 ) -> bool {
-    backend(choice).available(project)
+    choice.available(project, std::env::var_os("PATH").as_deref())
 }
 
 pub(in crate::app) fn effective_editor_choice(
@@ -78,13 +69,6 @@ pub(in crate::app) fn effective_editor_choice(
         .chain(crate::storage::EditorChoice::ALL)
         .find(|candidate| editor_available(*candidate, project))
         .unwrap_or(choice)
-}
-
-fn selected_backend(
-    choice: crate::storage::EditorChoice,
-    project: &Path,
-) -> &'static dyn EditorBackend {
-    backend(effective_editor_choice(choice, project))
 }
 
 impl FarcasterApp {
@@ -119,7 +103,7 @@ impl FarcasterApp {
             self.close_sheet(window, cx);
         }
         let project = self.workspace_project();
-        let editor_name = selected_backend(self.settings.editor_choice, &project).name();
+        let editor_name = effective_editor_choice(self.settings.editor_choice, &project).label();
         let path = match resolve_editor_path(&project, &path) {
             Ok(path) => path,
             Err(error) => {
@@ -231,17 +215,17 @@ impl FarcasterApp {
             | EditorRequest::File { project, .. }
             | EditorRequest::Review { project, .. } => project,
         };
-        let backend = selected_backend(self.settings.editor_choice, project);
+        let choice = effective_editor_choice(self.settings.editor_choice, project);
         if !self.project.repository.execution_allowed {
             self.notify_workspace_error(
-                backend.name(),
-                format!("Trust this project before opening {}.", backend.name()),
+                choice.label(),
+                format!("Trust this project before opening {}.", choice.label()),
                 cx,
             );
             return;
         }
-        if let Err(error) = backend.open(self, request, window, cx) {
-            self.notify_workspace_error(backend.name(), error, cx);
+        if let Err(error) = backend(choice).open(self, request, window, cx) {
+            self.notify_workspace_error(choice.label(), error, cx);
         }
     }
 

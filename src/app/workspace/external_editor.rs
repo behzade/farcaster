@@ -6,6 +6,13 @@ use std::{
 
 use crate::repository::git_head_contents;
 
+pub(super) fn location(path: &Path, line: Option<u64>) -> String {
+    match line {
+        Some(line) => format!("{}:{}", path.display(), line.max(1)),
+        None => path.to_string_lossy().into_owned(),
+    }
+}
+
 pub(super) fn head_tempfile(path: &Path, editor: &str) -> Result<tempfile::NamedTempFile, String> {
     let suffix = path
         .extension()
