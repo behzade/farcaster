@@ -398,3 +398,90 @@ fn resetting_a_draft_clears_prefill_and_queues_an_explicit_reset() {
         [SessionCommand::ResetReasoning]
     );
 }
+
+#[test]
+fn cursor_draft_keeps_model_and_tier_through_first_start() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Cursor);
+    let selected: Model = serde_json::from_value(serde_json::json!({
+        "id":"chosen", "name":"Chosen", "provider":"cursor",
+        "serviceTiers":["standard", "priority"]
+    }))
+    .expect("decode selected model");
+    owner.snapshot.models = vec![selected.clone()];
+
+    owner.set_model(selected.clone());
+    owner.set_service_tier("priority".into());
+    assert_eq!(owner.snapshot.session_identity().model, Some(&selected));
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+    assert!(owner.process.is_none());
+    assert_eq!(
+        owner.pending_session_controls.model.as_ref(),
+        Some(&("cursor".into(), "chosen".into()))
+    );
+    assert_eq!(
+        owner.pending_session_controls.service_tier.as_deref(),
+        Some("priority")
+    );
+
+    // The missing test agent fails after startup resets the snapshot. The
+    // draft choice must remain visible and ready for a retry.
+    owner.start_process(None);
+    assert_eq!(owner.snapshot.session_identity().model, Some(&selected));
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+    assert!(owner.snapshot.pending_initial_model);
+    assert!(owner.snapshot.pending_initial_service_tier);
+    assert_eq!(
+        owner
+            .pending_session_controls
+            .take()
+            .into_iter()
+            .map(SessionControl::into_request)
+            .collect::<Vec<_>>(),
+        [
+            SessionCommand::SelectModel {
+                provider: "cursor".into(),
+                model_id: "chosen".into(),
+            },
+            SessionCommand::SelectServiceTier {
+                tier: "priority".into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn cursor_draft_model_change_clears_an_unsupported_tier() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Cursor);
+    let fast: Model = serde_json::from_value(serde_json::json!({
+        "id":"fast", "name":"Fast", "provider":"cursor",
+        "serviceTiers":["standard", "priority"]
+    }))
+    .expect("decode fast model");
+    let plain: Model = serde_json::from_value(serde_json::json!({
+        "id":"plain", "name":"Plain", "provider":"cursor"
+    }))
+    .expect("decode plain model");
+    owner.snapshot.models = vec![fast.clone(), plain.clone()];
+    owner.set_model(fast);
+    owner.set_service_tier("priority".into());
+    owner.set_model(plain);
+
+    assert!(owner.snapshot.available_service_tiers().is_empty());
+    assert_eq!(owner.snapshot.selected_service_tier(), None);
+    assert_eq!(
+        owner
+            .pending_session_controls
+            .take()
+            .into_iter()
+            .map(SessionControl::into_request)
+            .collect::<Vec<_>>(),
+        [SessionCommand::SelectModel {
+            provider: "cursor".into(),
+            model_id: "plain".into(),
+        }]
+    );
+}

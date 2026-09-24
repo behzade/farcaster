@@ -29,6 +29,80 @@ fn available_thinking_levels_follow_the_selected_model() {
 }
 
 #[test]
+fn pending_cursor_choice_stays_visible_over_saved_startup_state() {
+    let saved = model("saved", false, None);
+    let mut chosen = model("chosen", false, None);
+    chosen.service_tiers = vec!["standard".into(), "priority".into()];
+    let mut snapshot = RuntimeSnapshot {
+        harness: Some(Backend::Cursor),
+        prefill_model: Some(chosen.clone()),
+        pending_initial_model: true,
+        prefill_service_tier: Some("priority".into()),
+        pending_initial_service_tier: true,
+        session: Some(
+            serde_json::from_value(serde_json::json!({
+                "model": saved, "serviceTier":"standard",
+                "serviceTiers":["standard", "priority"],
+                "isStreaming": false, "isCompacting": false,
+                "sessionId":"new-session", "autoCompactionEnabled": true,
+                "messageCount": 0, "pendingMessageCount": 0
+            }))
+            .expect("decode startup state"),
+        ),
+        models: vec![chosen.clone()],
+        ..RuntimeSnapshot::default()
+    };
+    assert_eq!(snapshot.session_identity().model, Some(&chosen));
+    assert_eq!(snapshot.selected_service_tier(), Some("priority"));
+    assert_eq!(snapshot.available_service_tiers(), ["standard", "priority"]);
+
+    let mut store = HarnessConfigurationStore::default();
+    store.set_model(Backend::Cursor, chosen.clone());
+    assert!(!store.reconcile_snapshot(&mut snapshot, true));
+    assert_eq!(store.model(Backend::Cursor), Some(&chosen));
+
+    snapshot.pending_initial_model = false;
+    snapshot.pending_initial_service_tier = false;
+    assert_eq!(
+        snapshot
+            .session_identity()
+            .model
+            .map(|model| model.id.as_str()),
+        Some("saved")
+    );
+    assert_eq!(snapshot.selected_service_tier(), Some("standard"));
+}
+
+#[test]
+fn new_draft_uses_default_model_tiers_until_a_model_is_selected() {
+    for (harness, tier) in [
+        (Backend::Cursor, "priority"),
+        (Backend::Codex, "fast"),
+        (Backend::Claude, "fast"),
+    ] {
+        let mut default = model("default", false, None);
+        default.service_tiers = vec!["standard".into(), tier.into()];
+        let draft = RuntimeSnapshot {
+            harness: Some(harness),
+            models: vec![default, model("plain", false, None)],
+            ..RuntimeSnapshot::default()
+        };
+        assert_eq!(draft.available_service_tiers(), ["standard", tier]);
+
+        let plain = RuntimeSnapshot {
+            prefill_model: Some(draft.models[1].clone()),
+            ..draft
+        };
+        let expected: &[&str] = if harness == Backend::Cursor {
+            &[]
+        } else {
+            &["standard"]
+        };
+        assert_eq!(plain.available_service_tiers(), expected);
+    }
+}
+
+#[test]
 fn available_thinking_levels_use_the_first_model_for_a_new_draft() {
     let snapshot = RuntimeSnapshot {
         models: vec![model("default", true, Some(&["minimal", "low"]))],

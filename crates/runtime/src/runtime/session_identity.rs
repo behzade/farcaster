@@ -457,6 +457,9 @@ impl HarnessConfigurationStore {
             if !adopt_identity {
                 return false;
             }
+            if snapshot.pending_initial_model {
+                return false;
+            }
             let model = session.model.as_ref().map(|model| {
                 snapshot
                     .models

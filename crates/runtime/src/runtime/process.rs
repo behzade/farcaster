@@ -580,7 +580,9 @@ impl RuntimeOwner {
             self.fail_session_control_resume("Failed", &label, details);
             return;
         }
-        self.pending_session_controls = PendingSessionControls::default();
+        if !starting || self.snapshot.selected_session.is_some() {
+            self.pending_session_controls = PendingSessionControls::default();
+        }
         if let Some(mut process) = self.process.take() {
             let _ = process.close();
         }

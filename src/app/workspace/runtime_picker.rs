@@ -256,17 +256,8 @@ impl FarcasterApp {
             .filter(|model| model.reasoning && Some(&model.provider) == provider.as_ref())
             .map(|model| self.snapshot.effort_choices(model))
             .unwrap_or_default();
-        let service_tiers = self
-            .snapshot
-            .session
-            .as_ref()
-            .map(|session| session.service_tiers.as_slice())
-            .unwrap_or(&[]);
-        let selected_tier = self
-            .snapshot
-            .session
-            .as_ref()
-            .and_then(|session| session.service_tier.as_deref());
+        let service_tiers = self.snapshot.available_service_tiers();
+        let selected_tier = self.snapshot.selected_service_tier();
         let provider_entity = entity.clone();
         let keyboard_entity = entity.clone();
         let keyboard_models = models.clone();

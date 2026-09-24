@@ -373,6 +373,28 @@ fn service_tier_changes_refresh_controls_without_changing_model_identity() {
 }
 
 #[test]
+fn draft_service_tier_selection_refreshes_the_composer() {
+    let previous = RuntimeSnapshot {
+        models: vec![
+            serde_json::from_value(serde_json::json!({
+                "id":"default", "name":"Default", "provider":"openai",
+                "serviceTiers":["standard", "fast"]
+            }))
+            .expect("decode draft model"),
+        ],
+        ..RuntimeSnapshot::default()
+    };
+    let next = RuntimeSnapshot {
+        prefill_service_tier: Some("fast".into()),
+        pending_initial_service_tier: true,
+        ..previous.clone()
+    };
+
+    assert_eq!(previous.session_identity(), next.session_identity());
+    assert!(composer_snapshot_changed(&previous, &next));
+}
+
+#[test]
 fn restored_questions_invalidate_the_composer() {
     let previous = RuntimeSnapshot::default();
     let next = RuntimeSnapshot {

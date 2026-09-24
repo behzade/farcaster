@@ -312,10 +312,22 @@ impl RuntimeOwner {
             && self.process.is_none()
             && self.snapshot.selected_session.is_none()
         {
-            self.snapshot.prefill_model = Some(model);
+            if self
+                .snapshot
+                .prefill_service_tier
+                .as_ref()
+                .is_some_and(|tier| !model.service_tiers.contains(tier))
+            {
+                self.snapshot.prefill_service_tier = None;
+                self.snapshot.pending_initial_service_tier = false;
+                self.pending_session_controls.clear_service_tier();
+            } else if let Some(tier) = self.snapshot.prefill_service_tier.clone() {
+                self.pending_session_controls
+                    .set(SessionControl::ServiceTier(tier));
+            }
+            self.remember_requested_model(&model, replacement_effort.as_deref());
             self.pending_session_controls.set(control);
             if let Some(effort) = replacement_effort {
-                self.snapshot.prefill_thinking_level = Some(effort.clone());
                 self.pending_session_controls
                     .set(SessionControl::Thinking(Some(effort)));
             }

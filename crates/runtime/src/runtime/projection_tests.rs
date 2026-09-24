@@ -118,6 +118,79 @@ fn failed_startup_payload_does_not_mark_state_or_history_loaded() {
 }
 
 #[test]
+fn startup_state_keeps_requested_cursor_controls_until_state_confirms_them() {
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.harness = Some(crate::agents::Backend::Cursor);
+    let chosen: Model = serde_json::from_value(json!({
+        "id":"chosen", "name":"Chosen", "provider":"cursor",
+        "serviceTiers":["standard", "priority"]
+    }))
+    .expect("decode chosen model");
+    owner.snapshot.models = vec![chosen.clone()];
+    owner.set_model(chosen.clone());
+    owner.set_service_tier("priority".into());
+    let state = |model: &str, tier: &str| {
+        serde_json::from_value(json!({
+            "model":{"id":model,"name":model,"provider":"cursor"},
+            "serviceTier":tier,"serviceTiers":["standard", "priority"],
+            "isStreaming":false,"isCompacting":false,
+            "sessionId":"new-session","autoCompactionEnabled":true,
+            "messageCount":0,"pendingMessageCount":0
+        }))
+        .expect("decode Cursor state")
+    };
+
+    owner.apply_response(SessionResponse::success(
+        None,
+        Payload::LoadState(Box::new(state("saved", "standard"))),
+    ));
+    assert_eq!(owner.snapshot.session_identity().model, Some(&chosen));
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+    assert!(owner.snapshot.pending_initial_model);
+    assert!(owner.snapshot.pending_initial_service_tier);
+
+    owner.pending_session_controls = Default::default();
+    owner.apply_response(SessionResponse::success(
+        None,
+        Payload::LoadState(Box::new(state("chosen", "priority"))),
+    ));
+    assert!(!owner.snapshot.pending_initial_model);
+    assert!(!owner.snapshot.pending_initial_service_tier);
+    assert_eq!(
+        owner
+            .snapshot
+            .session_identity()
+            .model
+            .map(|model| model.id.as_str()),
+        Some("chosen")
+    );
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+}
+
+#[test]
+fn first_prompt_waits_for_cursor_service_tier_acknowledgement() {
+    let (mut owner, _events) = owner_without_process(std::env::temp_dir());
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.deferred_prompt = Some(super::prompts::DeferredPrompt {
+        mode: crate::protocol::PromptMode::Normal,
+        message: "first message".into(),
+        display_message: None,
+        invocation: None,
+        images: Vec::new(),
+        outbox_id: None,
+    });
+    owner
+        .pending_session_controls
+        .tier_sent("tier-request".into(), "priority".into());
+
+    owner.maybe_send_deferred_prompt();
+
+    assert!(owner.deferred_prompt.is_some());
+    assert!(owner.pending_prompt_id.is_none());
+}
+
+#[test]
 fn cancelled_background_refreshes_preserve_transcript_and_status() {
     let (mut owner, _events) = owner_without_process(std::env::temp_dir());
     let status = owner.active_snapshot().status.clone();
