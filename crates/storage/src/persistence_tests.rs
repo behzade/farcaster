@@ -2104,7 +2104,12 @@ fn fresh_state_store_has_no_custom_worker_profiles() -> Result<(), String> {
     let store = StateStore::open_at(&temp.path().join("settings.sqlite3"))?;
     let profiles = store.load_worker_profiles()?;
     assert_eq!(profiles.profiles.len(), 4);
-    assert!(profiles.profiles.iter().all(|profile| profile.models.is_empty()));
+    assert!(
+        profiles
+            .profiles
+            .iter()
+            .all(|profile| profile.models.is_empty())
+    );
     Ok(())
 }
 
@@ -2123,9 +2128,17 @@ fn worker_tasks_customization_and_deletion_survive_reopen() -> Result<(), String
         StateStore::open_at(&database)?.load_worker_profiles()?,
         tasks
     );
-    tasks.profiles.retain(|profile| matches!(profile.name.as_str(), "smartest" | "smart" | "standard" | "light"));
+    tasks.profiles.retain(|profile| {
+        matches!(
+            profile.name.as_str(),
+            "smartest" | "smart" | "standard" | "light"
+        )
+    });
     store.save_worker_profiles(&tasks)?;
-    assert_eq!(StateStore::open_at(&database)?.load_worker_profiles()?, tasks);
+    assert_eq!(
+        StateStore::open_at(&database)?.load_worker_profiles()?,
+        tasks
+    );
     Ok(())
 }
 
@@ -2166,7 +2179,8 @@ fn test_worker_profiles() -> crate::agents::WorkerProfiles {
     crate::agents::WorkerProfiles::from_saved(
         serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
             .expect("historical worker profiles"),
-    ).expect("migrated worker profiles")
+    )
+    .expect("migrated worker profiles")
 }
 
 #[test]

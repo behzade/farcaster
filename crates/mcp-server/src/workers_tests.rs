@@ -4,7 +4,8 @@ fn configured_profiles() -> crate::agents::WorkerProfiles {
     crate::agents::WorkerProfiles::from_saved(
         serde_json::from_str(include_str!("../../../tests/fixtures/worker_profiles.json"))
             .expect("configured test profiles"),
-    ).expect("migrated test profiles")
+    )
+    .expect("migrated test profiles")
 }
 use crate::agents::Backend;
 use crate::agents::{CallerIdentity, CallerProfile};
@@ -785,7 +786,12 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
         &[],
         &catalogs
     ));
-    let preferred_pi = &profiles.profiles.iter().find(|profile| profile.name == "cheap_2").unwrap().models[0];
+    let preferred_pi = &profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.name == "cheap_2")
+        .unwrap()
+        .models[0];
     assert!(!model_available(
         preferred_pi,
         project,

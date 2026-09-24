@@ -31,9 +31,9 @@ use crate::{
 mod backend;
 mod composer;
 mod composer_worker;
-mod editor_setting;
 #[path = "drafts.rs"]
 mod draft_storage;
+mod editor_setting;
 mod identity;
 mod images;
 mod migrate_legacy;
@@ -58,8 +58,8 @@ mod traits;
 mod transcript;
 
 pub use composer_worker::ComposerPersistenceWorker;
-pub use editor_setting::EditorChoice;
 use draft_storage::{remove_draft_row, save_draft};
+pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
 const SCHEMA_VERSION: i64 = 21;
