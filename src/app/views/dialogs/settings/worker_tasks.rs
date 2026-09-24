@@ -552,8 +552,8 @@ fn route(
                 }),
             ),
         );
-    if (selected_model.is_some_and(|model| !model.service_tiers.is_empty())
-        || route.service_tier.is_some())
+    if selected_model.is_some_and(|model| !model.service_tiers.is_empty())
+        || route.service_tier.is_some()
     {
         row = row.child(route_menu(
             "worker-service-tier",

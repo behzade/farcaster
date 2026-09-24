@@ -10,7 +10,7 @@ pub(in crate::app) struct WorkerProfileEditor {
     pub(in crate::app) selected_model: usize,
     pub(in crate::app) edit: Option<WorkerProfileEdit>,
     pub(in crate::app) error: Option<String>,
-    loaded: bool,
+    pub(in crate::app) loaded: bool,
     saved: Vec<WorkerProfile>,
     pub(in crate::app) inherit_limit: usize,
     pub(in crate::app) inherit_enabled: bool,
