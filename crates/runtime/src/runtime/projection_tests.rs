@@ -226,7 +226,7 @@ fn cancelled_undelivered_prompt_returns_ownership_without_command_error() {
 
     assert!(owner.pending_prompt_id.is_none());
     assert!(owner.pending_prompt_target.is_none());
-    assert_eq!(owner.active_snapshot().status, "Stopping");
+    assert_eq!(owner.active_snapshot().status, "Stopped");
     assert!(owner.active_snapshot().conversation.items.is_empty());
     assert!(events.try_iter().any(|event| matches!(
         event,

@@ -110,6 +110,275 @@ impl SupervisorFixture {
     }
 }
 
+fn catalog_session(path: &Path, project: &Path, running: bool) -> crate::sessions::SessionSummary {
+    crate::sessions::SessionSummary::from_cached(
+        "session".into(),
+        path.to_path_buf(),
+        project.to_path_buf(),
+        "Session".into(),
+        String::new(),
+        String::new(),
+        None,
+        std::time::SystemTime::now(),
+        1,
+        crate::sessions::UsageSummary::default(),
+        false,
+        running,
+        String::new(),
+    )
+}
+
+#[test]
+fn settled_snapshot_clears_stale_catalog_running_for_selected_and_background_sessions() {
+    for selected in [true, false] {
+        let project = PathBuf::from("/project");
+        let path = PathBuf::from("/project/session");
+        let key = format!("session:{}", path.display());
+        let mut fixture =
+            SupervisorFixture::new(if selected { &key } else { "other" }, project.clone(), None);
+        fixture
+            .supervisor
+            .catalog_sessions
+            .push(catalog_session(&path, &project, true));
+        let mut conversation = crate::conversation::ConversationState::default();
+        conversation.reduce(&serde_json::json!({"type":"agent_start"}));
+        conversation.reduce(&serde_json::json!({"type":"agent_settled"}));
+        let settled = Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Codex),
+            project,
+            live_session: Some(path.clone()),
+            selected_session: Some(path.clone()),
+            conversation: Arc::new(conversation),
+            ..RuntimeSnapshot::default()
+        });
+        fixture.supervisor.handle_actor_event(
+            key.clone(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: settled.clone(),
+            },
+        );
+
+        assert!(!fixture.supervisor.catalog_sessions[0].is_running);
+        assert!(fixture.drain().iter().any(|event| {
+            matches!(event, RuntimeEvent::SessionUpdated(session)
+                if session.path == path && !session.is_running)
+        }));
+
+        fixture.supervisor.handle_actor_event(
+            key.clone(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: settled,
+            },
+        );
+        assert!(
+            !fixture
+                .drain()
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::SessionUpdated(_)))
+        );
+
+        let mut delayed = fixture.supervisor.catalog_sessions[0].clone();
+        delayed.is_running = true;
+        fixture
+            .supervisor
+            .handle_actor_event("catalog".into(), RuntimeEvent::SessionUpdated(delayed));
+        assert!(!fixture.supervisor.catalog_sessions[0].is_running);
+        assert!(
+            !fixture
+                .drain()
+                .iter()
+                .any(|event| matches!(event, RuntimeEvent::SessionUpdated(_)))
+        );
+
+        let mut conversation = crate::conversation::ConversationState::default();
+        conversation.reduce(&serde_json::json!({"type":"agent_start"}));
+        fixture.supervisor.handle_actor_event(
+            key,
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    harness: Some(Backend::Codex),
+                    project: PathBuf::from("/project"),
+                    live_session: Some(path),
+                    conversation: Arc::new(conversation),
+                    ..RuntimeSnapshot::default()
+                }),
+            },
+        );
+        assert!(fixture.supervisor.catalog_sessions[0].is_running);
+    }
+}
+
+#[test]
+fn first_catalog_load_uses_live_running_snapshot() {
+    for selected in [true, false] {
+        let project = PathBuf::from("/project");
+        let path = PathBuf::from("/project/session");
+        let key = format!("session:{}", path.display());
+        let mut fixture =
+            SupervisorFixture::new(if selected { &key } else { "other" }, project.clone(), None);
+        let mut conversation = crate::conversation::ConversationState::default();
+        conversation.reduce(&serde_json::json!({"type":"agent_start"}));
+        fixture.supervisor.handle_actor_event(
+            key,
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    harness: Some(Backend::Codex),
+                    project: project.clone(),
+                    live_session: Some(path.clone()),
+                    connected: true,
+                    conversation: Arc::new(conversation),
+                    ..RuntimeSnapshot::default()
+                }),
+            },
+        );
+        fixture.drain();
+        let session = catalog_session(&path, &project, false);
+        fixture.supervisor.handle_actor_event(
+            "catalog".into(),
+            RuntimeEvent::Sessions {
+                generation: 1,
+                sessions: vec![session.clone()],
+                all_sessions: vec![session],
+                activities: None,
+            },
+        );
+        assert!(fixture.supervisor.catalog_sessions[0].is_running);
+        assert!(fixture.drain().iter().any(|event| {
+            matches!(event, RuntimeEvent::Sessions { sessions, .. }
+                if sessions[0].is_running)
+        }));
+    }
+}
+
+#[test]
+fn terminal_snapshot_without_settlement_clears_optimistic_running() {
+    for status in ["Done", "Stopped", "Failed", "Ready", "Command failed"] {
+        let project = PathBuf::from("/project");
+        let path = PathBuf::from("/project/session");
+        let key = format!("session:{}", path.display());
+        let mut fixture = SupervisorFixture::new(&key, project.clone(), None);
+        fixture
+            .supervisor
+            .catalog_sessions
+            .push(catalog_session(&path, &project, true));
+        fixture.supervisor.handle_actor_event(
+            key,
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    harness: Some(Backend::Codex),
+                    project,
+                    live_session: Some(path.clone()),
+                    status: status.into(),
+                    ..RuntimeSnapshot::default()
+                }),
+            },
+        );
+        assert!(
+            !fixture.supervisor.catalog_sessions[0].is_running,
+            "{status}"
+        );
+        assert!(fixture.drain().iter().any(|event| {
+            matches!(event, RuntimeEvent::SessionUpdated(session)
+                if session.path == path && !session.is_running)
+        }));
+    }
+}
+
+#[test]
+fn compaction_and_retry_keep_a_settled_session_active_in_catalog() {
+    let project = PathBuf::from("/project");
+    let path = PathBuf::from("/project/session");
+    let key = format!("session:{}", path.display());
+    let mut fixture = SupervisorFixture::new(&key, project.clone(), None);
+    fixture
+        .supervisor
+        .catalog_sessions
+        .push(catalog_session(&path, &project, false));
+    let mut conversation = crate::conversation::ConversationState::default();
+    conversation.reduce(&serde_json::json!({"type":"agent_start"}));
+    conversation.reduce(&serde_json::json!({"type":"agent_settled"}));
+    for (event, active) in [
+        ("compaction_start", true),
+        ("compaction_end", false),
+        ("auto_retry_start", true),
+        ("auto_retry_end", false),
+    ] {
+        conversation.reduce(&serde_json::json!({"type": event}));
+        fixture.supervisor.handle_actor_event(
+            key.clone(),
+            RuntimeEvent::Snapshot {
+                generation: 0,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    harness: Some(Backend::Pi),
+                    project: project.clone(),
+                    live_session: Some(path.clone()),
+                    conversation: Arc::new(conversation.clone()),
+                    ..RuntimeSnapshot::default()
+                }),
+            },
+        );
+        assert_eq!(
+            fixture.supervisor.catalog_sessions[0].is_running, active,
+            "{event}"
+        );
+    }
+}
+
+#[test]
+fn history_preview_reconciles_the_parked_live_status() {
+    let project = PathBuf::from("/project");
+    let path = PathBuf::from("/project/session");
+    let key = format!("session:{}", path.display());
+    let mut fixture = SupervisorFixture::new(&key, project.clone(), None);
+    fixture
+        .supervisor
+        .catalog_sessions
+        .push(catalog_session(&path, &project, true));
+    let preview = |live_status: &str| {
+        Arc::new(RuntimeSnapshot {
+            harness: Some(Backend::Codex),
+            project: project.clone(),
+            live_session: Some(path.clone()),
+            selected_session: Some(path.clone()),
+            history_preview: true,
+            live_status: live_status.into(),
+            ..RuntimeSnapshot::default()
+        })
+    };
+    fixture.supervisor.handle_actor_event(
+        key.clone(),
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: preview("Done"),
+        },
+    );
+    assert!(!fixture.supervisor.catalog_sessions[0].is_running);
+
+    let mut delayed = fixture.supervisor.catalog_sessions[0].clone();
+    delayed.is_running = true;
+    fixture
+        .supervisor
+        .handle_actor_event("catalog".into(), RuntimeEvent::SessionUpdated(delayed));
+    assert!(!fixture.supervisor.catalog_sessions[0].is_running);
+
+    fixture.supervisor.handle_actor_event(
+        key,
+        RuntimeEvent::Snapshot {
+            generation: 0,
+            snapshot: preview("Working"),
+        },
+    );
+    assert!(fixture.supervisor.catalog_sessions[0].is_running);
+    assert!(fixture.drain().iter().any(|event| {
+        matches!(event, RuntimeEvent::SessionStatus { status, .. } if status == "Working")
+    }));
+}
+
 #[test]
 fn capability_only_catalog_reaches_draft_once_without_snapshot_loop() {
     let project = PathBuf::from("/project");

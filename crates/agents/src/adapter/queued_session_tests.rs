@@ -171,6 +171,48 @@ fn stale_cancel_after_dispatch_does_not_cancel_or_reject_delivery() {
 }
 
 #[test]
+fn filtered_receipt_does_not_hide_a_queued_terminal_event() {
+    let (mut session, wire) = session(SteeringBoundary::Unsupported, true);
+    session.bookkeeping.record_reached_model("native-1".into());
+    wire.lock().expect("wire").events.extend([
+        activity(json!({
+            "type": "prompt_delivery",
+            "submissionId": "native-1",
+            "status": "delivered"
+        })),
+        activity(json!({"type": "agent_settled"})),
+    ]);
+
+    assert!(matches!(
+        session.poll(),
+        Some(SessionEvent::Activity(body)) if body.value()["type"] == "agent_settled"
+    ));
+    assert!(!session.running);
+    assert!(wire.lock().expect("wire").events.is_empty());
+}
+
+#[test]
+fn filtered_native_stream_yields_then_reaches_terminal_event() {
+    let (mut session, wire) = session(SteeringBoundary::Unsupported, true);
+    session.bookkeeping.record_reached_model("native-1".into());
+    let filtered = activity(json!({
+        "type": "prompt_delivery",
+        "submissionId": "native-1",
+        "status": "delivered"
+    }));
+    wire.lock().expect("wire").events.extend(
+        std::iter::repeat_n(filtered, MAX_FILTERED_EVENTS_PER_POLL)
+            .chain(std::iter::once(activity(json!({"type": "agent_settled"})))),
+    );
+
+    assert!(session.poll().is_none());
+    assert!(matches!(
+        session.poll(),
+        Some(SessionEvent::Activity(body)) if body.value()["type"] == "agent_settled"
+    ));
+}
+
+#[test]
 fn repeated_cancel_of_a_local_row_emits_one_cancellation() {
     let (mut session, wire) = session(SteeringBoundary::Held, true);
     let id = enqueue(&mut session, PromptMode::FollowUp);

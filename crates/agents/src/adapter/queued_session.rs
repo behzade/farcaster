@@ -11,6 +11,8 @@ use crate::{
     extensions::{ExtensionUiResponse, PromptImage, PromptMode},
 };
 
+const MAX_FILTERED_EVENTS_PER_POLL: usize = 256;
+
 #[derive(Clone, Copy)]
 pub(super) enum SteeringBoundary {
     /// The backend has no steering support; Enter becomes a follow-up.
@@ -601,9 +603,21 @@ impl SessionTransport for QueuedSession {
         if let Some(event) = self.pending.pop_front() {
             return Some(event);
         }
-        // Drain native state before deciding whether the session is idle.
-        if let Some(event) = self.inner.poll() {
-            return self.observe(event).or_else(|| self.pending.pop_front());
+        // A filtered native event may have more events behind it, including
+        // agent_settled. Keep draining so the caller does not stop polling
+        // while a terminal event is already queued.
+        let mut filtered = 0;
+        while let Some(event) = self.inner.poll() {
+            if let Some(event) = self.observe(event).or_else(|| self.pending.pop_front()) {
+                return Some(event);
+            }
+            filtered += 1;
+            if filtered == MAX_FILTERED_EVENTS_PER_POLL {
+                // Let the runtime handle commands before draining more native
+                // events. Wake it again: a terminal event may be behind these.
+                std::thread::current().unpark();
+                return None;
+            }
         }
         if let Some(boundary) = self.hook.as_ref().and_then(PromptBoundary::poll) {
             self.boundary(boundary);

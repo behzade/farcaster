@@ -875,6 +875,11 @@ fn inert_session() -> AcpWorkerSession {
         features: AcpFeatures { close: false },
         caller_identity: None,
         pending_prompt_result: None,
+        post_reply_frames: 0,
+        reply_deadline: None,
+        cancel_deadline: None,
+        cancel_overdue_frames: 0,
+        wake: None,
     }
 }
 
@@ -1733,6 +1738,174 @@ fn acp_prompt_delivery_precedes_the_first_execution_chunk() {
         }]));
     assert!(matches!(session.poll(), Some(WorkerEvent::Settled { .. })));
     assert!(session.poll_prompt_ack().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_abort_waits_for_terminal_reply_then_fails_if_it_never_arrives() {
+    let mut replied = inert_session();
+    replied.abort().expect("cancel prompt");
+    assert!(replied.cancel_deadline.is_some());
+    let prompt = replied.current_prompt.clone().expect("active prompt");
+    replied.cancel_deadline.as_mut().expect("deadline").1 = Instant::now();
+    replied
+        .connection
+        .restore_queued(VecDeque::from([AcpInbound::Response {
+            id: prompt,
+            result: json!({"stopReason":"cancelled"}),
+        }]));
+    assert!(matches!(replied.poll(), Some(WorkerEvent::Settled { .. })));
+    assert!(replied.cancel_deadline.is_none());
+
+    let mut unanswered = inert_session();
+    let mut prior_child = std::mem::replace(
+        &mut unanswered.child,
+        std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("start agent process"),
+    );
+    prior_child.wait().expect("reap fixture process");
+    unanswered.features.close = true;
+    unanswered.abort().expect("cancel prompt");
+    assert!(unanswered.poll().is_none());
+    unanswered.cancel_deadline.as_mut().expect("deadline").1 = Instant::now();
+    unanswered.connection.restore_queued(
+        (0..CANCEL_OVERDUE_FRAME_LIMIT)
+            .map(|_| agent_message_chunk("still working"))
+            .collect(),
+    );
+    for _ in 0..CANCEL_OVERDUE_FRAME_LIMIT {
+        assert!(matches!(
+            unanswered.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::TextDelta { .. }))
+        ));
+    }
+    assert!(matches!(
+        unanswered.poll(),
+        Some(WorkerEvent::Failed(error)) if error.contains("cancellation timed out")
+    ));
+    assert!(unanswered.cancel_deadline.is_none());
+    assert!(unanswered.child.try_wait().expect("check agent").is_some());
+    unanswered.close().expect("close terminated agent");
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_abort_timeout_keeps_delivery_evidence_before_failing() {
+    let mut session = inert_session();
+    track_inert_submission(&mut session, "submitted");
+    session.abort().expect("cancel prompt");
+    session.cancel_deadline.as_mut().expect("deadline").1 = Instant::now();
+    session
+        .connection
+        .restore_queued(VecDeque::from([agent_message_chunk("model output")]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::SubmittedInputDelivered { submission_id, .. }))
+            if submission_id == "submitted"
+    ));
+    assert_eq!(
+        session.poll_prompt_ack(),
+        Some(("submitted".into(), Ok(())))
+    );
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { .. }))
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error)) if error.contains("cancellation timed out")
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_abort_keeps_deadline_when_a_pending_input_reply_fails() {
+    let mut session = inert_session();
+    session.pending_inputs.insert(
+        "pending".into(),
+        PendingInput {
+            request: AcpRequestId::Number(99),
+            kind: PendingInputKind::CursorPlan,
+        },
+    );
+    assert!(session.abort().is_err());
+    assert!(session.cancel_deadline.is_some());
+    session.cancel_deadline.as_mut().expect("deadline").1 = Instant::now();
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error)) if error.contains("cancellation timed out")
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_prompt_reply_fails_closed_if_updates_never_stop() {
+    let mut session = inert_session();
+    let prompt = session.current_prompt.clone().expect("active prompt");
+    session.queued_prompts.push_back(PendingPrompt {
+        mode: WorkerSendMode::Queue,
+        message: "next prompt".into(),
+        images: Vec::new(),
+        submission_id: Some("next".into()),
+    });
+    let mut queued = VecDeque::from([AcpInbound::Response {
+        id: prompt,
+        result: json!({"stopReason":"cancelled"}),
+    }]);
+    queued.extend((0..POST_REPLY_DRAIN_LIMIT + 1).map(|_| agent_message_chunk("late")));
+    session.connection.restore_queued(queued);
+    for _ in 0..POST_REPLY_DRAIN_LIMIT {
+        assert!(matches!(
+            session.poll(),
+            Some(WorkerEvent::Activity(WorkerActivity::TextDelta { .. }))
+        ));
+    }
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error)) if error.contains("kept sending updates")
+    ));
+    assert_eq!(session.current_prompt, Some(AcpRequestId::Number(1)));
+    assert_eq!(session.queued_prompts.len(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn acp_prompt_reply_has_a_wall_deadline_under_slow_updates() {
+    let mut session = inert_session();
+    let prompt = session.current_prompt.clone().expect("active prompt");
+    session.queued_prompts.push_back(PendingPrompt {
+        mode: WorkerSendMode::Queue,
+        message: "next prompt".into(),
+        images: Vec::new(),
+        submission_id: Some("next".into()),
+    });
+    session.connection.restore_queued(VecDeque::from([
+        AcpInbound::Response {
+            id: prompt.clone(),
+            result: json!({"stopReason":"cancelled"}),
+        },
+        agent_message_chunk("first late update"),
+    ]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { .. }))
+    ));
+    session.reply_deadline = Some(Instant::now());
+    session
+        .connection
+        .restore_queued(VecDeque::from([agent_message_chunk("still updating")]));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::TextDelta { .. }))
+    ));
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Failed(error)) if error.contains("kept sending updates")
+    ));
+    assert_eq!(session.current_prompt, Some(prompt));
+    assert_eq!(session.queued_prompts.len(), 1);
 }
 
 #[cfg(unix)]

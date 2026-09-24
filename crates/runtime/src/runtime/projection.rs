@@ -411,6 +411,9 @@ impl RuntimeOwner {
                     .as_ref()
                     .is_some_and(|session| session.is_streaming);
                 conversation_mut(self.active_snapshot_mut()).running = running;
+                if !running {
+                    self.active_snapshot_mut().status = "Stopped".into();
+                }
                 self.maybe_send_deferred_prompt();
                 if self.parked_snapshot.is_none() {
                     self.publish();

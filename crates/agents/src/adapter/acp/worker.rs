@@ -3,6 +3,7 @@ use std::{
     collections::{HashMap, VecDeque},
     process::{Child, Stdio},
     thread,
+    time::{Duration, Instant},
 };
 
 use agent_client_protocol::schema::v1::ContentBlock;
@@ -26,6 +27,11 @@ use crate::{
         WorkerSendMode, WorkerSession, WorkerSessionFactory,
     },
 };
+
+const CANCEL_TIMEOUT: Duration = Duration::from_secs(30);
+const CANCEL_OVERDUE_FRAME_LIMIT: usize = 1024;
+const POST_REPLY_DRAIN_LIMIT: usize = 1024;
+const POST_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct AcpWorkerFactory {
@@ -201,7 +207,7 @@ fn spawn_session(
         project,
         resume,
         caller_token,
-        wake,
+        wake.clone(),
         &runtime_key,
     ) {
         Ok(setup) => setup,
@@ -264,6 +270,11 @@ fn spawn_session(
             features,
             caller_identity: None,
             pending_prompt_result: None,
+            post_reply_frames: 0,
+            reply_deadline: None,
+            cancel_deadline: None,
+            cancel_overdue_frames: 0,
+            wake,
         },
         metadata,
         history,
@@ -503,6 +514,11 @@ struct AcpWorkerSession {
     features: AcpFeatures,
     caller_identity: Option<crate::core::CallerIdentity>,
     pending_prompt_result: Option<AcpRequestId>,
+    post_reply_frames: usize,
+    reply_deadline: Option<Instant>,
+    cancel_deadline: Option<(AcpRequestId, Instant)>,
+    cancel_overdue_frames: usize,
+    wake: Option<thread::Thread>,
 }
 
 impl AcpWorkerSession {
@@ -1080,6 +1096,18 @@ impl AcpWorkerSession {
     }
 
     fn record_prompt_result(&mut self, id: AcpRequestId, result: Value) {
+        if self.pending_prompt_result.as_ref() == Some(&id) {
+            return;
+        }
+        if self
+            .cancel_deadline
+            .as_ref()
+            .is_some_and(|(cancelled, _)| cancelled == &id)
+        {
+            self.cancel_deadline = None;
+        }
+        self.post_reply_frames = 0;
+        self.reply_deadline = Some(Instant::now() + POST_REPLY_TIMEOUT);
         let stop_reason = result.get("stopReason").and_then(Value::as_str);
         match stop_reason {
             Some("cancelled") => self
@@ -1109,10 +1137,19 @@ impl AcpWorkerSession {
     }
 
     fn finish_current_prompt(&mut self, id: &AcpRequestId) {
+        if self
+            .cancel_deadline
+            .as_ref()
+            .is_some_and(|(cancelled, _)| cancelled == id)
+        {
+            self.cancel_deadline = None;
+        }
         self.current_prompt = None;
         self.current_inputs.clear();
         self.current_prompt_proven = false;
         self.pending_prompt_result = None;
+        self.post_reply_frames = 0;
+        self.reply_deadline = None;
         if self.handoff.is_some() {
             self.start_waiting_handoff(id);
         } else {
@@ -1126,6 +1163,35 @@ impl AcpWorkerSession {
         Some(WorkerEvent::Settled {
             output: self.output.clone(),
         })
+    }
+
+    fn cancel_is_overdue(&self) -> bool {
+        self.cancel_deadline.as_ref().is_some_and(|(id, deadline)| {
+            self.current_prompt.as_ref() == Some(id) && Instant::now() >= *deadline
+        })
+    }
+
+    fn fail_stalled_prompt(&mut self, reason: &str) -> WorkerEvent {
+        self.cancel_deadline = None;
+        let stopped = match self.child.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => self
+                .child
+                .kill()
+                .and_then(|_| self.child.wait().map(|_| ())),
+            Err(error) => Err(error),
+        };
+        let error = match stopped {
+            Ok(()) => format!(
+                "{} ACP {reason}; agent process terminated",
+                self.profile.name
+            ),
+            Err(error) => format!(
+                "{} ACP {reason}; could not terminate agent: {error}",
+                self.profile.name
+            ),
+        };
+        WorkerEvent::Failed(error)
     }
 }
 
@@ -1333,6 +1399,24 @@ impl WorkerSession for AcpWorkerSession {
             self.reject_inputs(handoff.inputs, "Prompt cancelled before delivery");
         }
         if self.current_prompt.is_some() {
+            if self.cancel_deadline.is_none() {
+                let deadline = Instant::now() + CANCEL_TIMEOUT;
+                self.cancel_deadline = self.current_prompt.clone().map(|id| (id, deadline));
+                self.cancel_overdue_frames = 0;
+                if let Some(wake) = self.wake.clone() {
+                    thread::Builder::new()
+                        .name("acp-cancel-deadline".into())
+                        .spawn(move || {
+                            while Instant::now() < deadline {
+                                thread::park_timeout(
+                                    deadline.saturating_duration_since(Instant::now()),
+                                );
+                            }
+                            wake.unpark();
+                        })
+                        .map_err(|error| format!("schedule ACP cancel deadline: {error}"))?;
+                }
+            }
             self.cancel_pending_inputs()?;
         }
         Ok(())
@@ -1477,12 +1561,38 @@ impl WorkerSession for AcpWorkerSession {
             });
         }
         loop {
+            if self.pending_prompt_result.is_some()
+                && self.post_reply_frames >= POST_REPLY_DRAIN_LIMIT
+            {
+                return Some(self.fail_stalled_prompt("kept sending updates after a prompt reply"));
+            }
+            if self.cancel_is_overdue() && self.cancel_overdue_frames >= CANCEL_OVERDUE_FRAME_LIMIT
+            {
+                return Some(self.fail_stalled_prompt("cancellation timed out"));
+            }
             let Some(incoming) = self.connection.poll() else {
+                if self.cancel_is_overdue() {
+                    return Some(self.fail_stalled_prompt("cancellation timed out"));
+                }
                 if let Some(event) = self.events.pop_front() {
                     return Some(event);
                 }
                 return self.settle_prompt_if_idle();
             };
+            if self.cancel_is_overdue() {
+                self.cancel_overdue_frames += 1;
+            }
+            if self.pending_prompt_result.is_some() {
+                self.post_reply_frames += 1;
+                if self
+                    .reply_deadline
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    // Apply this last frame, including any delivery receipt,
+                    // before failing a stream that never became idle.
+                    self.post_reply_frames = POST_REPLY_DRAIN_LIMIT;
+                }
+            }
             match incoming {
                 Ok(AcpInbound::Response { id, result })
                     if self.current_prompt.as_ref() == Some(&id) =>
@@ -1492,6 +1602,9 @@ impl WorkerSession for AcpWorkerSession {
                 }
                 Ok(AcpInbound::Response { .. }) => {}
                 Ok(AcpInbound::Error { id, message }) => {
+                    if self.pending_prompt_result.as_ref() == Some(&id) {
+                        continue;
+                    }
                     let rejected_current_prompt = self.current_prompt.as_ref() == Some(&id);
                     if rejected_current_prompt {
                         let inputs = std::mem::take(&mut self.current_inputs);

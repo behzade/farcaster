@@ -77,17 +77,30 @@ impl Supervisor {
                     catalog.send(RuntimeCommand::UpdateSessionMetadata(metadata));
                 }
             }
-            RuntimeEvent::SessionUpdated(session) => {
-                if let Some(previous) = self
+            RuntimeEvent::SessionUpdated(mut session) => {
+                if let Some(running) = self.live_catalog_running_for(&session.path) {
+                    // A catalog reply can describe an earlier point in the
+                    // same turn. The live actor owns its current run state.
+                    session.is_running = running;
+                }
+                let changed = if let Some(previous) = self
                     .catalog_sessions
                     .iter_mut()
                     .find(|s| s.path == session.path)
                 {
-                    *previous = session.clone();
+                    if *previous == session {
+                        false
+                    } else {
+                        *previous = session.clone();
+                        true
+                    }
                 } else {
                     self.catalog_sessions.push(session.clone());
+                    true
+                };
+                if changed {
+                    let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
                 }
-                let _ = self.event_tx.send(RuntimeEvent::SessionUpdated(session));
             }
             RuntimeEvent::AgentActivityUpdated(activity) => {
                 let _ = self
@@ -157,6 +170,19 @@ impl Supervisor {
                     } else {
                         self.needs_input.remove(&key);
                     }
+                }
+                if let Some(running) = live_catalog_running(&snapshot)
+                    && let Some(path) = snapshot.live_session.as_ref()
+                    && let Some(session) = self
+                        .catalog_sessions
+                        .iter_mut()
+                        .find(|session| &session.path == path)
+                    && session.is_running != running
+                {
+                    session.is_running = running;
+                    let _ = self
+                        .event_tx
+                        .send(RuntimeEvent::SessionUpdated(session.clone()));
                 }
                 let status = session_status(&self.needs_input, &key, &snapshot);
                 publish_session_status_if_changed(
@@ -316,7 +342,9 @@ impl Supervisor {
                         .map(|session| &session.path)
                         .collect();
                     for session in all_sessions.iter_mut().chain(sessions.iter_mut()) {
-                        session.is_running = running.contains(&session.path);
+                        session.is_running = self
+                            .live_catalog_running_for(&session.path)
+                            .unwrap_or_else(|| running.contains(&session.path));
                     }
                     self.catalog_generation = *next_generation;
                     self.catalog_sessions.clone_from(all_sessions);
@@ -354,15 +382,51 @@ impl Supervisor {
             | RuntimeEvent::HistoryReset { .. } => {}
         }
     }
+
+    fn live_catalog_running_for(&self, path: &Path) -> Option<bool> {
+        self.actor_paths
+            .get(path)
+            .and_then(|key| self.latest.get(key))
+            .filter(|snapshot| snapshot.live_session.as_deref() == Some(path))
+            .and_then(|snapshot| live_catalog_running(snapshot))
+    }
 }
 
-fn session_status(
+fn live_catalog_running(snapshot: &RuntimeSnapshot) -> Option<bool> {
+    if snapshot.history_preview {
+        match snapshot.live_status.as_str() {
+            "Working" | "Compacting" | "Retrying" | "Needs input" => Some(true),
+            "Done" | "Failed" | "Stopped" => Some(false),
+            _ => None,
+        }
+    } else if snapshot.conversation.running
+        || snapshot.conversation.compacting
+        || snapshot.conversation.retrying
+        || snapshot.conversation.settled
+        || matches!(
+            snapshot.status.as_str(),
+            "Done" | "Failed" | "Stopped" | "Ready" | "Command failed"
+        )
+    {
+        Some(
+            snapshot.conversation.running
+                || snapshot.conversation.compacting
+                || snapshot.conversation.retrying,
+        )
+    } else {
+        None
+    }
+}
+
+fn session_status<'a>(
     needs_input: &HashSet<String>,
     key: &str,
-    snapshot: &RuntimeSnapshot,
-) -> &'static str {
+    snapshot: &'a RuntimeSnapshot,
+) -> &'a str {
     if needs_input.contains(key) {
         "Needs input"
+    } else if snapshot.history_preview && !snapshot.live_status.is_empty() {
+        &snapshot.live_status
     } else {
         semantic_status(snapshot)
     }
