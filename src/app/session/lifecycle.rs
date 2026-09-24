@@ -136,8 +136,12 @@ impl FarcasterApp {
         target
     }
 
+    /// Reads a chat's history before it is clicked, so the selection serves what
+    /// the hover already paid for. The harness comes from the row: only session
+    /// layouts the external harnesses own are identifiable from a path alone.
     pub(in crate::app) fn prefetch_session(
         &mut self,
+        harness: crate::agents::Backend,
         path: PathBuf,
         project: PathBuf,
         cx: &mut Context<Self>,
@@ -146,9 +150,6 @@ impl FarcasterApp {
         if crate::app::runtime::history_cache::history_is_fresh(&path) {
             return;
         }
-        let Some((harness, _)) = crate::agents::external_session_identity(&path) else {
-            return;
-        };
         cx.background_spawn(async move {
             let _ =
                 crate::app::runtime::history_cache::load_cached_history(harness, &path, &project);
@@ -165,11 +166,17 @@ impl FarcasterApp {
             .filter(|session| {
                 folders.folder_for_session(session.app_session_id, &session.project) == Some(folder)
             })
-            .map(|session| (session.path.clone(), session.project.clone()))
+            .map(|session| {
+                (
+                    session.harness,
+                    session.path.clone(),
+                    session.project.clone(),
+                )
+            })
             .collect::<Vec<_>>();
-        let project = targets.first().map(|(_, project)| project.clone());
-        for (path, project) in targets {
-            self.prefetch_session(path, project, cx);
+        let project = targets.first().map(|(_, _, project)| project.clone());
+        for (harness, path, project) in targets {
+            self.prefetch_session(harness, path, project, cx);
         }
         if let Some(project) = project {
             self.prefetch_repository_observation(project, cx);

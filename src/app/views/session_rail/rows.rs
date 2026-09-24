@@ -322,6 +322,7 @@ impl RenderOnce for SessionRow {
             );
         let row = row.app_tooltip_element(move |_, _| session_tooltip_content(&hover_details));
         let hover_entity = entity.clone();
+        let hover_harness = session.harness;
         let hover_path = session.path.clone();
         let hover_project = session.project.clone();
         let context_menu =
@@ -334,7 +335,12 @@ impl RenderOnce for SessionRow {
             .on_hover(move |hovered: &bool, _, cx| {
                 if *hovered {
                     let _ = hover_entity.update(cx, |this, cx| {
-                        this.prefetch_session(hover_path.clone(), hover_project.clone(), cx);
+                        this.prefetch_session(
+                            hover_harness,
+                            hover_path.clone(),
+                            hover_project.clone(),
+                            cx,
+                        );
                     });
                 }
             })
