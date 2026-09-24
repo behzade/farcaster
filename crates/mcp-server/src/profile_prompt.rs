@@ -1,9 +1,42 @@
-use std::{sync::mpsc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock, mpsc},
+    time::Duration,
+};
 
 use crate::{SharedStore, agents, storage, with_store};
 use farcaster_agent_protocol::extensions::{
     WORKER_MODEL_REQUEST_PREFIX, WorkerModelChoice, WorkerModelRequest, WorkerModelSelection,
 };
+
+type Selection = Result<agents::WorkerExecution, String>;
+type Flight = Arc<OnceLock<Selection>>;
+type FlightKey = (String, String);
+
+fn flights() -> &'static Mutex<HashMap<FlightKey, Flight>> {
+    static FLIGHTS: OnceLock<Mutex<HashMap<FlightKey, Flight>>> = OnceLock::new();
+    FLIGHTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// One parent's concurrent sends share even a use-once choice or cancellation.
+// OnceLock waits for the first caller without holding the map lock during input.
+fn select_once(key: FlightKey, select: impl FnOnce() -> Selection) -> Selection {
+    let flight = flights()
+        .lock()
+        .map_err(|_| "worker selection is unavailable")?
+        .entry(key.clone())
+        .or_insert_with(|| Arc::new(OnceLock::new()))
+        .clone();
+    let selected = flight.get_or_init(select).clone();
+    if let Ok(mut active) = flights().lock()
+        && active
+            .get(&key)
+            .is_some_and(|current| Arc::ptr_eq(current, &flight))
+    {
+        active.remove(&key);
+    }
+    selected
+}
 
 fn choose(
     caller: &agents::CallerContext,
@@ -39,7 +72,40 @@ pub(super) fn configure(
     catalogs: &[storage::CachedConfigurationCatalog],
     backends: &[agents::Backend],
     store: &SharedStore,
-) -> Result<agents::WorkerExecution, String> {
+) -> Selection {
+    select_once((caller.worker_id.clone(), profile.to_owned()), || {
+        // Another request may have saved this profile after our caller loaded it.
+        let saved = with_store(store, |store| store.load_worker_profiles())?;
+        let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
+        if let Some(model) = saved
+            .profiles
+            .iter()
+            .find(|item| item.name == profile && item.enabled)
+            .and_then(|item| item.models.first())
+            .filter(|model| {
+                super::workers::child_access_mode(
+                    model,
+                    &caller.project,
+                    access,
+                    backends,
+                    catalogs,
+                )
+                .is_some()
+            })
+        {
+            return Ok(model.clone());
+        }
+        configure_model(profile, caller, catalogs, backends, store)
+    })
+}
+
+fn configure_model(
+    profile: &str,
+    caller: &agents::CallerContext,
+    catalogs: &[storage::CachedConfigurationCatalog],
+    backends: &[agents::Backend],
+    store: &SharedStore,
+) -> Selection {
     let choices = catalogs
         .iter()
         .filter(|entry| {
@@ -209,3 +275,7 @@ pub(super) fn configure(
     }
     Ok(execution)
 }
+
+#[cfg(test)]
+#[path = "profile_prompt_tests.rs"]
+mod tests;
