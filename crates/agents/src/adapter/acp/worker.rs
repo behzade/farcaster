@@ -561,6 +561,33 @@ impl AcpWorkerSession {
         Ok(())
     }
 
+    /// Cursor spends seconds on every set_config_option, even when the value is
+    /// already in effect, so unchanged values are never sent.
+    fn set_config_option(&mut self, config_id: &str, value: &str) -> Result<(), String> {
+        if self
+            .config_ids
+            .current
+            .get(config_id)
+            .is_some_and(|current| current == value)
+        {
+            return Ok(());
+        }
+        let response = self.connection.request_blocking(
+            "session/set_config_option",
+            json!({"sessionId": self.session_id, "configId": config_id, "value": value}),
+        )?;
+        if response.get("configOptions").is_some() {
+            self.refresh_configuration(&response);
+        } else {
+            // Without the updated options, dependent values may have changed.
+            self.config_ids.current.clear();
+            self.config_ids
+                .current
+                .insert(config_id.to_owned(), value.to_owned());
+        }
+        Ok(())
+    }
+
     fn refresh_configuration(&mut self, response: &Value) {
         let (metadata, ids) = super::configuration::metadata(
             &self.profile,
@@ -1361,16 +1388,10 @@ impl WorkerSession for AcpWorkerSession {
         let base = selection
             .as_ref()
             .map_or(model, |selection| selection.model.as_str());
-        self.request_and_wait(
-            "session/set_config_option",
-            json!({"sessionId": self.session_id, "configId": config_id, "value": base}),
-        )?;
+        self.set_config_option(&config_id, base)?;
         if let Some(selection) = selection {
             for (config_id, value) in selection.parameters {
-                self.request_and_wait(
-                    "session/set_config_option",
-                    json!({"sessionId":self.session_id,"configId":config_id,"value":value}),
-                )?;
+                self.set_config_option(&config_id, &value)?;
             }
         }
         if let Some(tier) = service_tier
@@ -1390,10 +1411,7 @@ impl WorkerSession for AcpWorkerSession {
                 self.profile.name
             )
         })?;
-        self.request_and_wait(
-            "session/set_config_option",
-            json!({"sessionId": self.session_id, "configId": config_id, "value": effort}),
-        )?;
+        self.set_config_option(&config_id, effort)?;
         if let Some(identity) = &self.caller_identity {
             identity.set_effort(Some(effort));
         }
@@ -1421,18 +1439,12 @@ impl WorkerSession for AcpWorkerSession {
             .find(|(candidate, _)| *candidate == tier)
             .map(|(_, value)| *value)
             .ok_or_else(|| format!("Unknown service tier: {tier}"))?;
-        self.request_and_wait(
-            "session/set_config_option",
-            json!({"sessionId":self.session_id,"configId":config_id,"value":value}),
-        )
+        self.set_config_option(&config_id, value)
     }
 
     fn select_mode(&mut self, mode: &str) -> Result<(), String> {
         if let Some(config_id) = self.config_ids.mode.clone() {
-            self.request_and_wait(
-                "session/set_config_option",
-                json!({"sessionId": self.session_id, "configId": config_id, "value": mode}),
-            )
+            self.set_config_option(&config_id, mode)
         } else {
             self.request_and_wait(
                 "session/set_mode",

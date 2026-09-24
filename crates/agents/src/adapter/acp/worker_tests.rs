@@ -1047,6 +1047,92 @@ fn model_and_service_tier_are_sent_independently() {
 
 #[cfg(unix)]
 #[test]
+fn config_options_already_in_effect_are_not_sent() {
+    use std::io::{BufRead as _, Write as _};
+    use std::os::unix::net::UnixStream;
+    let (client, peer) = UnixStream::pair().expect("test operation should succeed");
+    peer.set_read_timeout(Some(std::time::Duration::from_secs(3)))
+        .expect("test operation should succeed");
+    let peer = thread::spawn(move || {
+        let mut peer = std::io::BufReader::new(peer);
+        let mut received = Vec::new();
+        loop {
+            let mut line = String::new();
+            if peer.read_line(&mut line).unwrap_or(0) == 0 {
+                return received;
+            }
+            let request: Value =
+                serde_json::from_str(&line).expect("test operation should succeed");
+            received.push((
+                request["params"]["configId"].clone(),
+                request["params"]["value"].clone(),
+            ));
+            let response = json!({"jsonrpc":"2.0","id":request["id"],"result":{"configOptions":[
+                {"id":"model","category":"model","currentValue":"base","options":[{"value":"base"}]},
+                {"id":"context","category":"model_config","currentValue":"1m"},
+                {"id":"effort","category":"thought_level","currentValue":"max","options":[{"value":"high"},{"value":"max"}]},
+                {"id":"mode","category":"mode","currentValue":"agent","options":[{"value":"agent"}]}
+            ]}});
+            writeln!(peer.get_mut(), "{response}").expect("test operation should succeed");
+            peer.get_mut()
+                .flush()
+                .expect("test operation should succeed");
+        }
+    });
+    let shutdown = client.try_clone().expect("test operation should succeed");
+    let mut session = inert_session();
+    session.profile = super::super::super::cursor::PROFILE;
+    session.connection = AcpConnection::new(
+        blocking::Unblock::new(client.try_clone().expect("test operation should succeed")),
+        blocking::Unblock::new(client),
+        None,
+    )
+    .expect("test operation should succeed");
+    session.config_ids.model = Some("model".into());
+    session.config_ids.effort = Some("effort".into());
+    session.config_ids.mode = Some("mode".into());
+    session.config_ids.current = [
+        ("model", "base"),
+        ("context", "1m"),
+        ("effort", "high"),
+        ("mode", "agent"),
+    ]
+    .into_iter()
+    .map(|(id, value)| (id.to_owned(), value.to_owned()))
+    .collect();
+    session.config_ids.selections.insert(
+        "base[context=1m]".into(),
+        super::super::configuration::ModelSelection {
+            model: "base".into(),
+            parameters: vec![("context".into(), "1m".into())],
+        },
+    );
+    session
+        .select_model("cursor-cli", "base[context=1m]")
+        .expect("test operation should succeed");
+    session
+        .select_effort("high")
+        .expect("test operation should succeed");
+    session
+        .select_mode("agent")
+        .expect("test operation should succeed");
+    session
+        .select_effort("max")
+        .expect("test operation should succeed");
+    session
+        .select_effort("max")
+        .expect("test operation should succeed");
+    shutdown
+        .shutdown(std::net::Shutdown::Write)
+        .expect("test operation should succeed");
+    assert_eq!(
+        peer.join().expect("test operation should succeed"),
+        vec![(json!("effort"), json!("max"))]
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn metadata_and_plan_updates_stay_neutral_and_replace_prior_plan() {
     let mut session = inert_session();
     assert!(

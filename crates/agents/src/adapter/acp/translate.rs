@@ -14,6 +14,7 @@ pub(super) struct ConfigIds {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub mode: Option<String>,
+    pub current: std::collections::HashMap<String, String>,
 }
 
 pub(super) fn metadata_from_session(
@@ -83,6 +84,9 @@ pub(super) fn metadata_from_session(
             continue;
         };
         let id = option.get("id").and_then(Value::as_str);
+        if let Some(id) = id {
+            ids.current.insert(id.to_owned(), current.to_owned());
+        }
         if id == ids.model.as_deref() {
             ids.selected_model = Some(current.into());
             if let Some(index) = metadata
