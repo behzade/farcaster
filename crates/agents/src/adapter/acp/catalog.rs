@@ -115,32 +115,39 @@ pub fn load_history(
                 path.display()
             )
         })?;
-    with_connection(profile, project, move |connection, profile, project, _| {
-        let started = Instant::now();
-        let response = connection.request_blocking(
-            "session/load",
-            json!({
-                "sessionId": locator,
-                "cwd": project.to_string_lossy(),
-                "mcpServers": [],
-            }),
-        )?;
-        let queued = connection.drain_queued()?;
-        let queued_count = queued.len();
-        // cursor/list_available_models is a network round-trip that only
-        // refines the selected model id for the picker. The history preview
-        // uses the model session/load already reports, so skip it here.
-        let history = discovered_history(profile, queued, &response, &locator);
-        close_session(connection, &locator);
-        zlog::info!(
-            "PERF operation=history.acp_load agent={} queued={} messages={} elapsed_ms={:.2}",
-            profile.name,
-            queued_count,
-            history.messages.len(),
-            started.elapsed().as_secs_f64() * 1_000.0
-        );
-        Ok(history)
-    })
+    // History has its own connection so opening a session never waits behind a
+    // configuration load, which spends seconds in session/new and model listing.
+    with_connection_kind(
+        profile,
+        project,
+        "history",
+        move |connection, profile, project, _| {
+            let started = Instant::now();
+            let response = connection.request_blocking(
+                "session/load",
+                json!({
+                    "sessionId": locator,
+                    "cwd": project.to_string_lossy(),
+                    "mcpServers": [],
+                }),
+            )?;
+            let queued = connection.drain_queued()?;
+            let queued_count = queued.len();
+            // cursor/list_available_models is a network round-trip that only
+            // refines the selected model id for the picker. The history preview
+            // uses the model session/load already reports, so skip it here.
+            let history = discovered_history(profile, queued, &response, &locator);
+            close_session(connection, &locator);
+            zlog::info!(
+                "PERF operation=history.acp_load agent={} queued={} messages={} elapsed_ms={:.2}",
+                profile.name,
+                queued_count,
+                history.messages.len(),
+                started.elapsed().as_secs_f64() * 1_000.0
+            );
+            Ok(history)
+        },
+    )
 }
 
 struct CatalogProcess {
