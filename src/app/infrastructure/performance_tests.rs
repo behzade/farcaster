@@ -21,6 +21,24 @@ fn individual_timing_logs_only_slow_operations() {
 }
 
 #[test]
+fn tracing_every_operation_logs_phases_under_the_slow_operation_floor() {
+    let instant = Duration::from_micros(1);
+    assert!(!should_log_operation_with(instant, false));
+    assert!(should_log_operation_with(instant, true));
+    assert!(should_log_operation_with(SLOW_OPERATION, false));
+}
+
+#[test]
+fn only_truthy_trace_values_force_every_operation_to_log() {
+    for value in ["1", "true", "yes"] {
+        assert!(trace_from_env(Some(value)));
+    }
+    for value in [None, Some(""), Some("0"), Some("false"), Some("off")] {
+        assert!(!trace_from_env(value));
+    }
+}
+
+#[test]
 fn high_latency_requires_a_dropped_frame_or_long_render_queue() {
     let mut summary = PerformanceSummary {
         draw_max: HIGH_LATENCY_DRAW - Duration::from_millis(1),
