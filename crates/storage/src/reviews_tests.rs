@@ -7,6 +7,7 @@ fn caller(project: &Path, session: &str) -> crate::agents::CallerContext {
         worker_name: "Worker".into(),
         project: project.into(),
         session: session.into(),
+        session_locator: None,
         backend: Backend::Cursor,
         provider: None,
         model: None,
@@ -34,6 +35,100 @@ fn execution(
         .register_execution_for_caller(caller, &execution)
         .expect("register turn");
     execution
+}
+
+const CLAUDE_ID: &str = "d093cd84-7700-4ec2-be8f-8a1b079d6684";
+
+fn profiled_claude_path(project: &Path) -> PathBuf {
+    project.join(format!(
+        "session-locators/profiles/c9eeca98-4e3e-44d5-aabd-9ba354c24e7a/claude/{CLAUDE_ID}"
+    ))
+}
+
+fn live_claude_metadata(project: &Path) -> crate::agents::SessionMetadata {
+    crate::agents::SessionMetadata {
+        harness: Backend::Claude,
+        id: CLAUDE_ID.into(),
+        path: profiled_claude_path(project),
+        project: project.into(),
+        title: Some("Live Claude session".into()),
+        first_user_message: Some("prompt".into()),
+        parent_session: None,
+        message_count: Some(2),
+        model: None,
+        thinking_level: None,
+        service_tier: None,
+        access_mode: None,
+        usage: None,
+        is_running: false,
+    }
+}
+
+#[test]
+fn profiled_caller_uses_the_live_locator_and_archive_row() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let locator = profiled_claude_path(temp.path());
+    let mut caller = caller(temp.path(), CLAUDE_ID);
+    caller.backend = Backend::Claude;
+    caller.session_locator = Some(locator.clone());
+
+    let provisioned = store.register_caller_session(&caller)?;
+    let session = store.update_session_metadata(&live_claude_metadata(temp.path()))?;
+    assert_eq!(session.app_session_id, provisioned);
+    let turn = execution(&store, &caller, "profiled-turn");
+    assert_eq!(turn.session_record, provisioned);
+    store.save_review(&caller, &turn, &artifact(temp.path(), "profiled-review"))?;
+    store.set_session_archived(&locator, true)?;
+
+    let sessions = store.cached_sessions("")?;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].path, locator);
+    assert!(sessions[0].archived);
+    assert_eq!(sessions[0].message_count, 2);
+    caller.session_locator = Some(temp.path().join("session-locators/claude/different"));
+    assert!(store.register_caller_session(&caller).is_err());
+    assert_eq!(store.cached_sessions("")?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn old_profiled_caller_placeholder_moves_turns_without_archiving_live_session() -> Result<(), String>
+{
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    let locator = profiled_claude_path(temp.path());
+    let mut old_caller = caller(temp.path(), CLAUDE_ID);
+    old_caller.backend = Backend::Claude;
+    let real = store.update_session_metadata(&live_claude_metadata(temp.path()))?;
+    let turn = execution(&store, &old_caller, "legacy-turn");
+    assert_ne!(turn.session_record, real.app_session_id);
+    let ghost = store
+        .cached_sessions("")?
+        .into_iter()
+        .find(|session| session.app_session_id == turn.session_record)
+        .ok_or("missing old caller row")?;
+    store.set_session_archived(&ghost.path, true)?;
+    drop(store);
+
+    let store = StateStore::open_at(&database)?;
+    let sessions = store.cached_sessions("")?;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].app_session_id, real.app_session_id);
+    assert_eq!(sessions[0].path, locator);
+    assert_eq!(sessions[0].message_count, 2);
+    assert!(!sessions[0].archived);
+    let turn_owner: i64 = store
+        .connection
+        .query_row(
+            "SELECT session_id FROM session_turns WHERE id='legacy-turn'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    assert_eq!(turn_owner, real.app_session_id);
+    Ok(())
 }
 
 #[test]

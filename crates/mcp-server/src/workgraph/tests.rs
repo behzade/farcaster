@@ -57,6 +57,7 @@ fn caller(project: &Path, id: &str) -> CallerContext {
         worker_name: id.into(),
         project: project.to_owned(),
         session: format!("backend://{id}"),
+        session_locator: None,
         backend: Backend::Pi,
         provider: None,
         model: None,
@@ -261,6 +262,37 @@ fn duplicate_backend_ids_cannot_share_task_ownership() -> Result<(), String> {
             .expect_err("invalid test input must fail")
             .contains("ambiguous")
     );
+    Ok(())
+}
+
+#[test]
+fn profiled_caller_locator_resolves_duplicate_native_ids() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let id = "d093cd84-7700-4ec2-be8f-8a1b079d6684";
+    let base = temp.path().join("session-locators/claude").join(id);
+    let profile = temp
+        .path()
+        .join("session-locators/profiles/c9eeca98-4e3e-44d5-aabd-9ba354c24e7a/claude")
+        .join(id);
+    let mut base_row = caller(temp.path(), id);
+    base_row.backend = Backend::Claude;
+    base_row.worker_name = id.into();
+    base_row.session = base.to_string_lossy().into_owned();
+    let mut profile_row = base_row.clone();
+    profile_row.session = profile.to_string_lossy().into_owned();
+    index(&database, &[base_row, profile_row])?;
+
+    let mut authenticated = caller(temp.path(), id);
+    authenticated.backend = Backend::Claude;
+    authenticated.session = id.into();
+    authenticated.session_locator = Some(profile.clone());
+    assert_eq!(
+        session_identity(&database, &authenticated)?.1,
+        profile.to_string_lossy()
+    );
+    authenticated.session_locator = None;
+    assert!(session_identity(&database, &authenticated).is_err());
     Ok(())
 }
 

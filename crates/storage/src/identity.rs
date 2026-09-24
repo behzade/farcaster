@@ -160,6 +160,98 @@ pub(super) fn family_locator_root(locator_root: &Path, project: &Path) -> PathBu
     let digest = Sha256::digest(project.to_string_lossy().as_bytes());
     locator_root.join(format!("{digest:x}"))
 }
+
+// Old MCP callers registered a native ID under the project-hashed path.
+// Repair only that blank path when one profiled row owns the same native ID.
+pub(super) fn repair_profiled_caller_placeholders(
+    connection: &mut Connection,
+    locator_root: &Path,
+) -> Result<(), String> {
+    let possible: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions s JOIN sessions profile
+                 ON profile.project_id=s.project_id AND profile.harness=s.harness
+                AND profile.backend_id=s.backend_id AND profile.profile_id IS NOT NULL
+               WHERE s.profile_id IS NULL AND s.backend_id IS NOT NULL
+                 AND s.title='' AND s.first_user_message='' AND s.message_count=0)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("check caller session placeholders: {error}"))?;
+    if !possible {
+        return Ok(());
+    }
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("repair caller session identity: {error}"))?;
+    let placeholders = {
+        let mut statement = tx
+            .prepare(
+                "SELECT s.id,s.locator,s.backend_id,s.harness,s.project_id,p.path
+                   FROM sessions s JOIN projects p ON p.id=s.project_id
+                  WHERE s.profile_id IS NULL AND s.client_key IS NULL
+                    AND s.backend_id IS NOT NULL AND s.title='' AND s.first_user_message=''
+                    AND s.message_count=0 AND s.submitted=0
+                    AND NOT EXISTS(SELECT 1 FROM session_events e WHERE e.session_id=s.id)
+                    AND NOT EXISTS(SELECT 1 FROM composer_sessions c WHERE c.session_id=s.id)
+                    AND NOT EXISTS(SELECT 1 FROM outbox o WHERE o.session_id=s.id)
+                    AND NOT EXISTS(SELECT 1 FROM session_ops o WHERE o.session_id=s.id)
+                    AND NOT EXISTS(SELECT 1 FROM sessions c WHERE c.parent_id=s.id)",
+            )
+            .map_err(|error| format!("find caller session placeholders: {error}"))?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?
+    };
+    for (placeholder, locator, native_id, harness, project_id, project) in placeholders {
+        let encoded =
+            url::form_urlencoded::byte_serialize(native_id.as_bytes()).collect::<String>();
+        let expected = family_locator_root(locator_root, Path::new(&project))
+            .join(&harness)
+            .join(encoded);
+        if Path::new(&locator) != expected {
+            continue;
+        }
+        let targets = {
+            let mut statement = tx
+                .prepare(
+                    "SELECT id,archived_at FROM sessions
+                      WHERE project_id=?1 AND harness=?2 AND backend_id=?3
+                        AND profile_id IS NOT NULL",
+                )
+                .map_err(|error| error.to_string())?;
+            statement
+                .query_map(params![project_id, harness, native_id], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+                })
+                .map_err(|error| error.to_string())?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|error| error.to_string())?
+        };
+        if let [(target, archived_at)] = targets.as_slice() {
+            merge_session(&tx, *target, placeholder)?;
+            tx.execute(
+                "UPDATE sessions SET archived_at=?2 WHERE id=?1",
+                params![target, archived_at],
+            )
+            .map_err(|error| format!("restore profiled archive state: {error}"))?;
+        }
+    }
+    tx.commit()
+        .map_err(|error| format!("commit caller session repair: {error}"))
+}
+
 pub(super) fn ensure_locator_session(
     transaction: &Transaction<'_>,
     harness: Backend,

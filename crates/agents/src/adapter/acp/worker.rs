@@ -160,7 +160,8 @@ pub fn spawn_main(
         launch.wake.clone(),
     )?;
     let locator = session.session_id.clone();
-    caller_identity.bind(locator.clone());
+    let path = main_session::caller_session_path(command, profile.backend, &locator);
+    caller_identity.bind_with_locator(locator.clone(), path);
     Ok((
         Box::new(session.with_identity(caller_identity)),
         locator,

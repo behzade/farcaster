@@ -10,6 +10,7 @@ fn submission_uses_caller_project_and_returns_validated_artifact() {
         worker_name: "Worker".into(),
         project: project.path().into(),
         session: "session".into(),
+        session_locator: None,
         backend: Backend::Pi,
         provider: None,
         model: None,

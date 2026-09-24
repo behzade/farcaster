@@ -7,6 +7,7 @@ fn caller(id: &str, name: &str) -> CallerContext {
         worker_name: name.into(),
         project: "/project".into(),
         session: format!("session-{id}"),
+        session_locator: None,
         backend: Backend::Pi,
         provider: None,
         model: None,

@@ -72,6 +72,8 @@ pub struct CallerContext {
     pub worker_name: String,
     pub project: PathBuf,
     pub session: String,
+    /// The indexed Farcaster path, when known.
+    pub session_locator: Option<PathBuf>,
     pub backend: Backend,
     pub provider: Option<String>,
     pub model: Option<String>,
@@ -88,6 +90,7 @@ struct RegisteredCaller {
     worker_name: String,
     project: PathBuf,
     session: Option<String>,
+    session_locator: Option<PathBuf>,
     backend: Backend,
     provider: Option<String>,
     model: Option<String>,
@@ -260,6 +263,7 @@ impl CallerRegistry {
                     worker_name,
                     project,
                     session: None,
+                    session_locator: None,
                     backend: profile.backend,
                     provider: profile.provider,
                     model: profile.model,
@@ -350,6 +354,7 @@ impl CallerRegistry {
                 worker_name,
                 project,
                 session: None,
+                session_locator: None,
                 backend: profile.backend,
                 provider: profile.provider,
                 model: profile.model,
@@ -554,6 +559,7 @@ impl RegisteredCaller {
             worker_name: self.worker_name.clone(),
             project: self.project.clone(),
             session: self.session.clone()?,
+            session_locator: self.session_locator.clone(),
             backend: self.backend,
             provider: self.provider.clone(),
             model: self.model.clone(),
@@ -714,17 +720,23 @@ impl CallerIdentity {
     }
 
     pub fn bind(&self, session_locator: impl Into<String>) {
-        let session_locator = session_locator.into();
+        self.bind_with_locator(session_locator, None);
+    }
+
+    pub fn bind_with_locator(&self, session: impl Into<String>, locator: Option<PathBuf>) {
+        let session = session.into();
         let mut changed = false;
         let mut rebound = None;
         if let Ok(mut callers) = self.registry.callers.lock() {
             let session_key = if let Some(context) = callers.get_mut(&self.token) {
-                changed = context.session.as_deref() != Some(session_locator.as_str());
+                changed = context.session.as_deref() != Some(session.as_str())
+                    || context.session_locator != locator;
                 if changed {
                     context.session_record = None;
                     context.execution = None;
                 }
-                context.session = Some(session_locator);
+                context.session = Some(session);
+                context.session_locator = locator;
                 context.activity = WorkerActivityState::Idle;
                 (context.parent_worker_id.is_none()).then(|| {
                     (

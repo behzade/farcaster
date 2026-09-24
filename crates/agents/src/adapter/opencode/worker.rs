@@ -261,7 +261,8 @@ pub fn spawn_main(
         caller_identity.set_effort(selected.variant.as_deref());
     }
     metadata.session_name = session.title;
-    caller_identity.bind(session_id.clone());
+    let path = main_session::caller_session_path(command, Backend::OpenCode, &session_id);
+    caller_identity.bind_with_locator(session_id.clone(), path);
     Ok((
         Box::new(OpenCodeWorkerSession {
             caller_identity,

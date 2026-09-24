@@ -268,7 +268,8 @@ pub fn spawn_main(
             }
         })
         .map_err(|error| format!("read Codex main-session events: {error}"))?;
-    caller_identity.bind(thread_id.clone());
+    let path = super::super::main_session::caller_session_path(command, Backend::Codex, &thread_id);
+    caller_identity.bind_with_locator(thread_id.clone(), path);
     let collaboration_modes = metadata
         .modes
         .iter()

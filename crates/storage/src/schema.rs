@@ -74,11 +74,17 @@ impl StateStore {
                 .commit()
                 .map_err(|error| format!("commit GUI state schema migration: {error}"))?;
         }
-        Ok(Self {
+        let mut store = Self {
             connection,
             image_directory: std::path::absolute(parent.join("images"))
                 .map_err(|error| format!("resolve image directory: {error}"))?,
-        })
+        };
+        super::identity::repair_profiled_caller_placeholders(
+            &mut store.connection,
+            &std::path::absolute(parent.join("session-locators"))
+                .map_err(|error| format!("resolve session locator directory: {error}"))?,
+        )?;
+        Ok(store)
     }
 
     pub fn import_legacy_pi_gpui_state(&mut self, path: &Path) -> Result<(), String> {

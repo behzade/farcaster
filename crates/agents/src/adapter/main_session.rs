@@ -1215,6 +1215,16 @@ pub fn external_session_path(
     locator_root.join(harness.as_str()).join(encoded)
 }
 
+pub(super) fn caller_session_path(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    locator: &str,
+) -> Option<PathBuf> {
+    config
+        .locator_root()
+        .map(|root| external_session_path(&root, harness, locator))
+}
+
 pub fn external_session_locator(harness: Backend, path: &std::path::Path) -> Option<String> {
     (path.parent()?.file_name()?.to_str()? == harness.as_str())
         .then(|| percent_decode(path.file_name()?.to_str()?))

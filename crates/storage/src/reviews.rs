@@ -51,7 +51,9 @@ impl StateStore {
                 "INSERT INTO session_reviews(id,session_id,turn_id,artifact,created_ms)
             SELECT ?1,s.id,t.id,?3,?4 FROM sessions s JOIN projects p ON p.id=s.project_id
               JOIN session_turns t ON t.session_id=s.id AND t.id=?2
-            WHERE s.harness=?5 AND p.path=?6 AND (s.backend_id=?7 OR s.locator=?8)",
+            WHERE s.harness=?5 AND p.path=?6
+              AND ((?7 IS NOT NULL AND s.locator=?7)
+                OR (?7 IS NULL AND (s.backend_id=?8 OR s.locator=?9)))",
                 params![
                     id,
                     execution.turn_id,
@@ -59,6 +61,11 @@ impl StateStore {
                     now_ms(),
                     caller.backend.as_str(),
                     crate::sessions::normalize_session_path(&caller.project).to_string_lossy(),
+                    caller.session_locator.as_ref().map(|path| {
+                        crate::sessions::normalize_session_path(path)
+                            .to_string_lossy()
+                            .into_owned()
+                    }),
                     caller.session,
                     crate::sessions::normalize_session_path(Path::new(&caller.session))
                         .to_string_lossy()
@@ -77,12 +84,18 @@ fn register_caller_session_in(
     image_directory: &Path,
     caller: &crate::agents::CallerContext,
 ) -> Result<i64, String> {
+    if let Some(locator) = &caller.session_locator
+        && crate::agents::external_session_identity(locator)
+            != Some((caller.backend, caller.session.clone()))
+    {
+        return Err("caller session locator does not match its native identity".into());
+    }
     let project = ensure_project(tx, &caller.project, u64_to_i64(now_ms()))?;
     let root = image_directory
         .parent()
         .ok_or("session database has no parent")?
         .join("session-locators");
-    if !Path::new(&caller.session).is_absolute() {
+    if caller.session_locator.is_none() && !Path::new(&caller.session).is_absolute() {
         let encoded =
             url::form_urlencoded::byte_serialize(caller.session.as_bytes()).collect::<String>();
         let legacy = crate::sessions::normalize_session_path(
@@ -95,7 +108,12 @@ fn register_caller_session_in(
         &crate::sessions::normalize_session_path(&root),
         &caller.project,
     );
-    ensure_locator_session(tx, caller.backend, &caller.session, project, &root)
+    let identity = caller
+        .session_locator
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| caller.session.clone());
+    ensure_locator_session(tx, caller.backend, &identity, project, &root)
 }
 
 #[cfg(test)]

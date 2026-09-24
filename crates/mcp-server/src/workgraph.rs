@@ -58,21 +58,30 @@ fn session_identity_store(
     let sessions = store.cached_sessions("")?;
     let caller_project = crate::sessions::normalize_session_path(&caller.project);
     let caller_session = crate::sessions::normalize_session_path(Path::new(&caller.session));
+    let caller_locator = caller
+        .session_locator
+        .as_deref()
+        .map(crate::sessions::normalize_session_path);
     let session = sessions
         .iter()
         .find(|session| {
             session.project == caller_project
                 && session.harness == caller.backend
-                && (session.id == caller.session || session.path == caller_session)
+                && caller_locator.as_ref().map_or_else(
+                    || session.id == caller.session || session.path == caller_session,
+                    |locator| &session.path == locator && session.id == caller.session,
+                )
         })
         .ok_or_else(|| {
             "authenticated session is not indexed yet; retry after session discovery".to_owned()
         })?;
-    if sessions.iter().any(|other| {
-        other.project == session.project
-            && other.id == session.id
-            && (other.path != session.path || other.harness != session.harness)
-    }) {
+    if caller_locator.is_none()
+        && sessions.iter().any(|other| {
+            other.project == session.project
+                && other.id == session.id
+                && (other.path != session.path || other.harness != session.harness)
+        })
+    {
         return Err(
             "session ID is ambiguous across indexed sessions; cannot safely link workgraph".into(),
         );
