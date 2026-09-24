@@ -58,6 +58,7 @@ impl RuntimeHost for AppRuntimeHost {
         let name = match metric {
             RuntimeMetric::SelectDocument => "switch.select_document",
             RuntimeMetric::LoadHistory => "switch.load_history",
+            RuntimeMetric::ProjectHistory => "switch.project_history",
             RuntimeMetric::RuntimeRoute => "switch.runtime_route",
         };
         let operation = matches!(metric, RuntimeMetric::LoadHistory)
