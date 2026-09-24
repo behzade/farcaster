@@ -13,13 +13,13 @@ fn worker_option_row(
         .flex()
         .items_center()
         .justify_between()
-        .gap(THEME.space.sm)
-        .p(THEME.space.sm)
-        .border_t(THEME.border)
-        .border_color(THEME.colors.border)
-        .child(div().text_color(THEME.colors.muted).child(label))
+        .gap(theme().space.sm)
+        .p(theme().space.sm)
+        .border_t(theme().border)
+        .border_color(theme().colors.border)
+        .child(div().text_color(theme().colors.muted).child(label))
         .child(
-            div().flex().flex_wrap().gap(THEME.space.xs).children(
+            div().flex().flex_wrap().gap(theme().space.xs).children(
                 std::iter::once(None)
                     .chain(options.iter().cloned().map(Some))
                     .enumerate()
@@ -215,10 +215,10 @@ impl FarcasterApp {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .bg(THEME.colors.panel)
-            .border(THEME.border)
-            .border_color(THEME.colors.border)
-            .rounded(THEME.radius)
+            .bg(theme().colors.panel)
+            .border(theme().border)
+            .border_color(theme().colors.border)
+            .rounded(theme().radius)
             .capture_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
                 if event.keystroke.modifiers.modified()
                     || !focus.contains_focused(window, cx)
@@ -259,9 +259,9 @@ impl FarcasterApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap(THEME.space.sm)
-                    .p(THEME.space.sm)
-                    .child(div().text_color(THEME.colors.muted).child("Harness"))
+                    .gap(theme().space.sm)
+                    .p(theme().space.sm)
+                    .child(div().text_color(theme().colors.muted).child("Harness"))
                     .child(
                         dropdown_button(
                             "worker-harness",
@@ -297,10 +297,10 @@ impl FarcasterApp {
                     .flex()
                     .items_center()
                     .justify_between()
-                    .gap(THEME.space.sm)
-                    .px(THEME.space.sm)
-                    .pb(THEME.space.sm)
-                    .child(div().text_color(THEME.colors.muted).child("Provider"))
+                    .gap(theme().space.sm)
+                    .px(theme().space.sm)
+                    .pb(theme().space.sm)
+                    .child(div().text_color(theme().colors.muted).child("Provider"))
                     .child(
                         dropdown_button(
                             "worker-provider",
@@ -333,14 +333,14 @@ impl FarcasterApp {
             )
             .child(
                 div()
-                    .px(THEME.space.sm)
-                    .pb(THEME.space.sm)
+                    .px(theme().space.sm)
+                    .pb(theme().space.sm)
                     .child(Input::new(search)),
             )
             .child(if models.is_empty() {
                 div()
-                    .p(THEME.space.sm)
-                    .text_color(THEME.colors.muted)
+                    .p(theme().space.sm)
+                    .text_color(theme().colors.muted)
                     .child("No matching models.")
                     .into_any_element()
             } else {
@@ -415,10 +415,10 @@ impl FarcasterApp {
                 div()
                     .flex()
                     .justify_end()
-                    .gap(THEME.space.xs)
-                    .p(THEME.space.sm)
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
+                    .gap(theme().space.xs)
+                    .p(theme().space.sm)
+                    .border_t(theme().border)
+                    .border_color(theme().colors.border)
                     .child({
                         let entity = entity.clone();
                         button(

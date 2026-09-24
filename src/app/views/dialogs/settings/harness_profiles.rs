@@ -5,17 +5,17 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
     let mut content = div()
         .flex()
         .flex_col()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(
             div()
-                .text_size(THEME.type_scale.reading)
+                .text_size(theme().type_scale.reading)
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .child("Harness profiles"),
         )
         .child(
             div()
-                .text_size(THEME.type_scale.body_small)
-                .text_color(THEME.colors.muted)
+                .text_size(theme().type_scale.body_small)
+                .text_color(theme().colors.muted)
                 .child("Run another command with a supported harness protocol."),
         );
     for profile in profiles {
@@ -38,7 +38,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 .flex()
                 .flex_col()
                 .child(profile.name)
-                .child(div().text_color(THEME.colors.muted).child(detail))
+                .child(div().text_color(theme().colors.muted).child(detail))
                 .child(button(
                     format!("remove-profile-{profile_id}"),
                     "Remove",
@@ -52,7 +52,7 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 )),
         );
     }
-    let mut backends = div().flex().flex_wrap().gap(THEME.space.xs);
+    let mut backends = div().flex().flex_wrap().gap(theme().space.xs);
     for backend in crate::agents::Backend::ALL {
         let select = entity.clone();
         backends = backends.child(button(

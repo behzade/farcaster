@@ -7,7 +7,7 @@ use crate::app::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::primitives::{ButtonTone, button, modal},
-    app::ui::theme::{MONO_FONT_FAMILY, theme()},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     projects,
 };
 

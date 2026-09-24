@@ -14,7 +14,7 @@ use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
-    app::ui::theme::{MONO_FONT_FAMILY, theme()},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     runtime::RuntimeCommand,
 };
 

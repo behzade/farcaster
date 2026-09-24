@@ -27,7 +27,7 @@ pub(super) fn create(
     match crate::app::infrastructure::persistence::open().and_then(|store| {
         store.load_transcript_font_size_setting(
             &crate::app::ui::theme::TRANSCRIPT_FONT_SIZE_RANGE,
-            f32::from(crate::app::ui::theme::THEME.type_scale.reading),
+            f32::from(crate::app::ui::theme::theme().type_scale.reading),
         )
     }) {
         Ok(size) => transcript.update(cx, |view, _| view.font_size = gpui::px(size)),

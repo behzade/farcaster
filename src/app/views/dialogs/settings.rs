@@ -206,7 +206,7 @@ fn editor_setting(
         .flex()
         .items_center()
         .justify_between()
-        .gap(THEME.space.md)
+        .gap(theme().space.md)
         .child(setting_label(
             "Editor",
             "Open files, projects, and review locations in this editor. Chat code capture uses embedded Neovim.",
@@ -214,7 +214,7 @@ fn editor_setting(
         .child(
             div()
                 .flex()
-                .gap(THEME.space.xs)
+                .gap(theme().space.xs)
                 .when(available.is_empty(), |options| {
                     options.child("No editor is available")
                 })
