@@ -12,4 +12,7 @@ mod expiries;
 pub(in crate::app) mod import;
 pub(in crate::app) mod lifecycle;
 pub(in crate::app) mod status;
+#[cfg(test)]
+#[path = "switch_perf_tests.rs"]
+mod switch_perf_tests;
 mod titles;
