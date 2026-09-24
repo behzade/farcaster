@@ -2045,7 +2045,6 @@ dependencies = [
  "async-channel",
  "notify",
  "serde_json",
- "sha2",
 ]
 
 [[package]]

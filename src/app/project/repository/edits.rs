@@ -5,7 +5,7 @@ use gpui_component::input::TextareaState;
 
 use crate::{
     app::{FarcasterApp, ui::primitives::create_submit_textarea},
-    repository::{RepositoryEdit, RepositoryEditReview, WorkingCopySnapshot},
+    repository::{RepositoryBackend, RepositoryEdit, RepositoryEditReview, WorkingCopySnapshot},
 };
 
 #[derive(Default)]
@@ -50,6 +50,7 @@ pub(in crate::app) struct PendingRepositoryEdit {
     pub input: Entity<TextareaState>,
     pub action: RepositoryEdit,
     pub paths: Vec<PathBuf>,
+    selected: BTreeSet<PathBuf>,
     pub review: Option<RepositoryEditReview>,
     pub error: Option<String>,
     pub applying: bool,
@@ -99,12 +100,12 @@ impl FarcasterApp {
         {
             return;
         }
-        let (Some(backend), Some(snapshot)) = (
-            self.project.repository.backend.clone(),
-            self.project.repository.snapshot.clone(),
-        ) else {
+        let Some(backend) = self.project.repository.backend.clone() else {
             return;
         };
+        if self.project.repository.snapshot.is_none() {
+            return;
+        }
         let selected = path
             .map(|path| BTreeSet::from([path]))
             .unwrap_or_else(|| self.project.repository.edits.selection.paths.clone());
@@ -129,14 +130,12 @@ impl FarcasterApp {
         } else {
             focus.focus(window, cx);
         }
-        self.project.repository.edits.generation =
-            self.project.repository.edits.generation.saturating_add(1);
-        let generation = self.project.repository.edits.generation;
         self.project.repository.edits.pending = Some(PendingRepositoryEdit {
             focus,
             input,
             action,
             paths: selected.iter().cloned().collect(),
+            selected: selected.clone(),
             review: None,
             applying: false,
             error: None,
@@ -145,7 +144,25 @@ impl FarcasterApp {
         });
         self.notify_run_panel(cx);
         cx.notify();
-        let task = cx.background_spawn(async move { backend.prepare_edit(&snapshot, &selected) });
+        self.prepare_repository_edit(backend, selected, cx);
+    }
+
+    fn prepare_repository_edit(
+        &mut self,
+        backend: RepositoryBackend,
+        selected: BTreeSet<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.project.repository.edits.pending.as_mut() else {
+            return;
+        };
+        pending.review = None;
+        pending.error = None;
+        self.project.repository.edits.generation =
+            self.project.repository.edits.generation.saturating_add(1);
+        let generation = self.project.repository.edits.generation;
+        cx.notify();
+        let task = cx.background_spawn(async move { backend.prepare_edit(&selected) });
         cx.spawn(async move |weak, cx| {
             let result = task.await;
             let _ = weak.update(cx, |this, cx| {
@@ -161,9 +178,7 @@ impl FarcasterApp {
                         pending.review = Some(review);
                     }
                     Err(error) => {
-                        pending.error = Some(format!(
-                            "{error}\nClose this review and try again after the changes refresh."
-                        ));
+                        pending.error = Some(format!("{error}\nRefresh the review to try again."));
                         this.request_repository_refresh(cx);
                     }
                 }
@@ -171,6 +186,20 @@ impl FarcasterApp {
             });
         })
         .detach();
+    }
+
+    pub(in crate::app) fn refresh_repository_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.project.repository.edits.pending.as_mut() else {
+            return;
+        };
+        if pending.applying {
+            return;
+        }
+        let Some(backend) = self.project.repository.backend.clone() else {
+            return;
+        };
+        let selected = pending.selected.clone();
+        self.prepare_repository_edit(backend, selected, cx);
     }
 
     pub(in crate::app) fn close_repository_edit(
@@ -231,22 +260,29 @@ impl FarcasterApp {
         cx.spawn_in(window, async move |weak, cx| {
             let result = task.await;
             let _ = weak.update_in(cx, |this, window, cx| {
-                if this.project.repository.edits.generation != generation { return; }
-                let Some(pending) = this.project.repository.edits.pending.as_mut() else { return; };
+                if this.project.repository.edits.generation != generation {
+                    return;
+                }
+                let Some(pending) = this.project.repository.edits.pending.as_mut() else {
+                    return;
+                };
                 pending.applying = false;
                 match result {
                     Ok(()) => {
                         this.project.repository.edits.selection = Default::default();
                         this.close_repository_edit(window, cx);
                     }
-                    Err(error) => { pending.error = Some(format!("{error}\nClose this review and inspect the refreshed changes before trying again.")); }
+                    Err(error) => {
+                        pending.error = Some(format!("{error}\nRefresh the review to try again."));
+                    }
                 }
                 // A failed hook or command can still have changed repository state.
                 this.request_repository_refresh(cx);
                 this.notify_run_panel(cx);
                 cx.notify();
             });
-        }).detach();
+        })
+        .detach();
     }
 }
 

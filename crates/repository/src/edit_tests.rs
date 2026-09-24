@@ -76,12 +76,8 @@ impl EditRepo {
     }
 
     fn review(&self, paths: &[&str]) -> RepositoryEditReview {
-        let snapshot = self
-            .backend
-            .snapshot()
-            .expect("test operation should succeed");
         self.backend
-            .prepare_edit(&snapshot, &paths.iter().map(PathBuf::from).collect())
+            .prepare_edit(&paths.iter().map(PathBuf::from).collect())
             .expect("test operation should succeed")
     }
 
@@ -121,7 +117,7 @@ fn git_commit_selected_includes_working_contents_and_preserves_other_staging() {
 }
 
 #[test]
-fn git_review_rejects_same_status_binary_edits_and_empty_message() {
+fn git_commit_uses_current_binary_contents_and_rejects_empty_message() {
     let repo = EditRepo::new(RepositoryKind::Git);
     repo.base();
     repo.write("selected", b"\0one");
@@ -132,16 +128,29 @@ fn git_review_rejects_same_status_binary_edits_and_empty_message() {
             .is_err()
     );
     repo.write("selected", b"\0two");
-    for action in [RepositoryEdit::Commit, RepositoryEdit::Discard] {
-        assert!(matches!(
-            repo.backend.apply_edit(&review, action, "message"),
-            Err(RepositoryError::StaleSnapshot)
-        ));
-    }
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Commit, "binary change")
+        .expect("commit current binary contents");
     assert_eq!(
-        fs::read(repo.root().join("selected")).expect("test operation should succeed"),
+        repo.command(&["show", "HEAD:selected"]).into_bytes(),
         b"\0two"
     );
+}
+
+#[test]
+fn git_commit_ignores_intervening_selected_and_unrelated_changes() {
+    let repo = EditRepo::new(RepositoryKind::Git);
+    repo.base();
+    repo.write("selected", "first\n");
+    let review = repo.review(&["selected"]);
+    repo.write("selected", "latest\n");
+    repo.write("other", "unrelated\n");
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Commit, "latest change")
+        .expect("commit current selected file");
+    assert_eq!(repo.command(&["show", "HEAD:selected"]), "latest\n");
+    assert_eq!(repo.command(&["show", "HEAD:other"]), "base\n");
+    assert_eq!(repo.read("other"), "unrelated\n");
 }
 
 #[test]
@@ -164,6 +173,35 @@ fn git_discard_restores_both_layers_and_does_not_touch_other_files() {
         .apply_edit(&repo.review(&["selected"]), RepositoryEdit::Discard, "")
         .expect("test operation should succeed");
     assert_eq!(repo.read("selected"), "base\n");
+}
+
+#[test]
+fn git_discard_uses_current_file_after_review() {
+    let repo = EditRepo::new(RepositoryKind::Git);
+    repo.base();
+    repo.write("selected", "first\n");
+    let review = repo.review(&["selected"]);
+    repo.write("selected", "later\n");
+    repo.write("other", "keep\n");
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Discard, "")
+        .expect("discard current selected file");
+    assert_eq!(repo.read("selected"), "base\n");
+    assert_eq!(repo.read("other"), "keep\n");
+}
+
+#[test]
+fn git_discard_rechecks_untracked_status_at_apply_time() {
+    let repo = EditRepo::new(RepositoryKind::Git);
+    repo.base();
+    repo.write("new", "new\n");
+    let review = repo.review(&["new"]);
+    repo.command(&["add", "new"]);
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Discard, "")
+        .expect("discard file staged after review");
+    assert!(!repo.root().join("new").exists());
+    assert_eq!(repo.command(&["status", "--porcelain"]), "");
 }
 
 #[test]
@@ -217,12 +255,8 @@ fn git_initial_commit_selects_only_chosen_new_file() {
 fn review_rejects_empty_selection_and_paths_outside_project() {
     let repo = EditRepo::new(RepositoryKind::Git);
     repo.base();
-    let snapshot = repo
-        .backend
-        .snapshot()
-        .expect("test operation should succeed");
     for selected in [BTreeSet::new(), BTreeSet::from([PathBuf::from("../other")])] {
-        assert!(repo.backend.prepare_edit(&snapshot, &selected).is_err());
+        assert!(repo.backend.prepare_edit(&selected).is_err());
     }
 }
 
@@ -254,18 +288,16 @@ fn jj_commit_selected_and_discard_keep_other_changes() {
 }
 
 #[test]
-fn jj_review_rejects_changes_after_review() {
+fn jj_discard_uses_current_contents_after_review() {
     let repo = EditRepo::new(RepositoryKind::Jujutsu);
     repo.base();
     repo.write("selected", "reviewed\n");
     let review = repo.review(&["selected"]);
     repo.write("selected", "later\n");
-    assert!(matches!(
-        repo.backend
-            .apply_edit(&review, RepositoryEdit::Discard, ""),
-        Err(RepositoryError::StaleSnapshot)
-    ));
-    assert_eq!(repo.read("selected"), "later\n");
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Discard, "")
+        .expect("discard current contents");
+    assert_eq!(repo.read("selected"), "base\n");
 }
 
 #[cfg(unix)]
@@ -305,16 +337,9 @@ fn scoped_commit_leaves_the_outside_end_of_a_rename_staged() {
     fs::create_dir(repo.root().join("nested")).expect("test operation should succeed");
     repo.command(&["mv", "selected", "nested/selected"]);
     repo.backend.location.project_root = repo.root().join("nested");
-    let snapshot = repo
-        .backend
-        .snapshot()
-        .expect("test operation should succeed");
     let review = repo
         .backend
-        .prepare_edit(
-            &snapshot,
-            &BTreeSet::from([PathBuf::from("nested/selected")]),
-        )
+        .prepare_edit(&BTreeSet::from([PathBuf::from("nested/selected")]))
         .expect("test operation should succeed");
     assert_eq!(review.paths(), &[PathBuf::from("nested/selected")]);
     repo.backend
@@ -345,4 +370,33 @@ fn symlink_discard_does_not_follow_the_target() {
         "keep outside\n"
     );
     assert!(fs::symlink_metadata(repo.root().join("link")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_ancestor_added_after_review_is_rejected() {
+    let repo = EditRepo::new(RepositoryKind::Git);
+    repo.base();
+    fs::create_dir(repo.root().join("nested")).expect("create nested directory");
+    repo.write("nested/file", "base\n");
+    repo.command(&["add", "nested/file"]);
+    repo.command(&["commit", "-m", "nested base"]);
+    repo.write("nested/file", "first\n");
+    let review = repo.review(&["nested/file"]);
+    fs::rename(repo.root().join("nested"), repo.root().join("moved"))
+        .expect("move nested directory");
+    let outside = repo.temp.path().join("outside");
+    fs::create_dir(&outside).expect("create outside directory");
+    fs::write(outside.join("file"), "keep\n").expect("write outside file");
+    std::os::unix::fs::symlink(&outside, repo.root().join("nested"))
+        .expect("replace nested directory with symlink");
+    assert!(matches!(
+        repo.backend
+            .apply_edit(&review, RepositoryEdit::Discard, ""),
+        Err(RepositoryError::InvalidPath(_))
+    ));
+    assert_eq!(
+        fs::read_to_string(outside.join("file")).expect("read outside file"),
+        "keep\n"
+    );
 }

@@ -57,6 +57,7 @@ pub(in crate::app::views) fn render(
     };
     let dismiss = entity.clone();
     let cancel = entity.clone();
+    let refresh = entity.clone();
     modal(
         "repository-edit",
         title.clone(),
@@ -126,6 +127,19 @@ pub(in crate::app::views) fn render(
                                     });
                                 },
                             ))
+                            .when(pending.error.is_some(), |actions| {
+                                actions.child(button(
+                                    "refresh-repository-edit",
+                                    "Refresh review",
+                                    ButtonTone::Neutral,
+                                    !pending.applying,
+                                    move |_, cx| {
+                                        let _ = refresh.update(cx, |this, cx| {
+                                            this.refresh_repository_edit(cx)
+                                        });
+                                    },
+                                ))
+                            })
                             .child(button(
                                 "confirm-repository-edit",
                                 label,
