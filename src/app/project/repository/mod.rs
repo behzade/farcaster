@@ -864,3 +864,7 @@ fn preference_for(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "offscreen_perf_tests.rs"]
+mod offscreen_perf_tests;

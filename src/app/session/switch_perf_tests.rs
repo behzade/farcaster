@@ -292,6 +292,91 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
     );
 }
 
+#[gpui::test]
+fn hovering_a_chat_loads_the_history_a_click_would_wait_for(cx: &mut gpui::TestAppContext) {
+    let test_name = concat!(
+        module_path!(),
+        "::hovering_a_chat_loads_the_history_a_click_would_wait_for"
+    );
+    crate::app::test_support::with_runtime_app(
+        test_name,
+        cx,
+        |project| {
+            let script = project.join("fake-pi.sh");
+            fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
+                .expect("write fake pi");
+            RuntimeHandle::spawn_with(
+                project.to_path_buf(),
+                "prefetch-perf-draft".into(),
+                None,
+                AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
+            )
+        },
+        |cx, app, project| {
+            let canonical = project.canonicalize().expect("canonical project path");
+            let project = canonical.as_path();
+            trust::apply(project, TrustChoice::TrustProject).expect("trust the temp project");
+            let chat = crate::sessions::normalize_session_path(&write_session_file(
+                project,
+                "prefetch-chat",
+                SWITCH_MESSAGES,
+            ));
+            let bytes = fs::metadata(&chat).expect("measured session").len();
+
+            // What a click pays with no hover: the read itself.
+            let cold_started = Instant::now();
+            let cold = crate::agents::load_session_history(Backend::Pi, &chat, project)
+                .expect("cold read");
+            let cold_read = cold_started.elapsed();
+            assert!(
+                !history_cache::history_is_fresh(&chat),
+                "a plain read must not warm what the click reads"
+            );
+
+            // The hover does that read ahead of the click.
+            let hover_started = Instant::now();
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.prefetch_session(Backend::Pi, chat.clone(), project.to_path_buf(), cx);
+                });
+            });
+            let deadline = Instant::now() + SWITCH_TIMEOUT;
+            while !history_cache::history_is_fresh(&chat) {
+                assert!(
+                    Instant::now() < deadline,
+                    "a hover should load the history its click would wait for"
+                );
+                // The hover's read runs on the app's background executor.
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                });
+                thread::sleep(SWITCH_POLL);
+            }
+            let hover = hover_started.elapsed();
+
+            // What the click pays after the hover: the same load, in memory.
+            let warm_started = Instant::now();
+            let warm =
+                history_cache::load_cached_history(Backend::Pi, &chat, project).expect("warm read");
+            let hit = warm_started.elapsed();
+            assert_eq!(warm.messages.len(), cold.messages.len());
+
+            let items = projected_items(&chat, project);
+            let wall = switch_to(cx, app, &chat, project);
+            assert!(wall > Duration::ZERO);
+            eprintln!("PREFETCH_MEASURE bytes={bytes} items={items}");
+            eprintln!(
+                "PREFETCH_MEASURE cold_read_ms={:.2} hover_to_fresh_ms={:.2} warm_hit_ms={:.2} selection_wall_ms={:.2}",
+                millis(cold_read),
+                millis(hover),
+                millis(hit),
+                millis(wall),
+            );
+        },
+    );
+}
+
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
