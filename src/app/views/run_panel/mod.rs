@@ -170,7 +170,7 @@ impl FarcasterApp {
                                     });
                                 },
                             ))
-                            .child(section_heading("Older workers")),
+                            .child(section_heading("Workers")),
                     )
                     .child(
                         div()
@@ -215,11 +215,13 @@ impl FarcasterApp {
             .or(self.snapshot.selected_session.as_deref());
         let root = root_session_for_path(&self.sessions.all, selected);
         let workers = ordered_worker_rows(&self.sessions.all, &self.activity.agents, selected);
-        let older_count = workers.len().saturating_sub(RECENT_WORKERS);
         let selected_is_older = workers
             .iter()
             .skip(RECENT_WORKERS)
             .any(|(_, _, session, _)| selected == Some(session.path.as_path()));
+        let hidden_count = workers
+            .len()
+            .saturating_sub(RECENT_WORKERS + usize::from(selected_is_older));
         let root_path = root.map(|session| session.path.clone());
         let older_panel = run_panel.clone();
         let conversation = inspector_section()
@@ -284,10 +286,10 @@ impl FarcasterApp {
                         )
                     }),
             )
-            .when(older_count > 0, |section| {
+            .when(hidden_count > 0, |section| {
                 section.child(button(
                     "show-older-workers",
-                    format!("Show older workers ({older_count})"),
+                    format!("Show more (+{hidden_count})"),
                     ButtonTone::Quiet,
                     true,
                     move |_, cx| {
