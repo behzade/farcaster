@@ -1,0 +1,7 @@
+prefix_rule(
+    pattern = ["cargo"],
+    decision = "allow",
+    justification = "Allow Cargo commands in the trusted Farcaster project without repeated approval",
+    match = ["cargo check --bin farcaster", "cargo test -p farcaster"],
+    not_match = ["rustc --version"],
+)
