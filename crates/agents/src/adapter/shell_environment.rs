@@ -18,6 +18,19 @@ pub type Environment = Vec<(OsString, OsString)>;
 
 static SHELL_ENVIRONMENTS: OnceLock<Mutex<HashMap<PathBuf, Environment>>> = OnceLock::new();
 
+/// Supply an isolated fixture's environment without invoking the account shell.
+#[cfg(feature = "test-support")]
+pub fn set_test_project_environment(project: &Path, environment: Environment) {
+    SHELL_ENVIRONMENTS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .expect("shell environment cache")
+        .insert(
+            project.canonicalize().expect("fixture project"),
+            environment,
+        );
+}
+
 pub fn project_shell_environment(project: &Path) -> Result<Option<Environment>, String> {
     #[cfg(test)]
     {

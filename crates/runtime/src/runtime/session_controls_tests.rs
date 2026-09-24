@@ -353,6 +353,7 @@ fn pending_reset_survives_coalescing_and_is_not_an_empty_queue() {
     let mut pending = PendingSessionControls::default();
     pending.set(SessionControl::Thinking(Some("high".into())));
     pending.set(SessionControl::Thinking(None));
+    pending.restore_selection(None, Some("high"));
     assert!(!pending.is_empty());
     assert_eq!(
         pending

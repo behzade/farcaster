@@ -41,6 +41,8 @@ pub use trust::{
 };
 
 pub use auxiliary::{generate_session_title, supports_auto_title_generation};
+#[cfg(feature = "test-support")]
+pub use shell_environment::set_test_project_environment;
 pub use shell_environment::{
     app_shell_environment, default_login_shell, project_shell_environment,
 };

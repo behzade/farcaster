@@ -20,6 +20,24 @@ pub(super) struct PendingSessionControls {
 }
 
 impl PendingSessionControls {
+    pub(super) fn restore_selection(&mut self, model: Option<&Model>, effort: Option<&str>) {
+        // A new transport has not applied even an acknowledged selection from
+        // the old one. Newer queued or in-flight choices still take precedence.
+        if !self.model_pending()
+            && let Some(model) = model
+        {
+            self.set(SessionControl::Model(
+                model.provider.clone(),
+                model.id.clone(),
+            ));
+        }
+        if !self.thinking_pending()
+            && let Some(effort) = effort
+        {
+            self.set(SessionControl::Thinking(Some(effort.to_owned())));
+        }
+    }
+
     fn clear_service_tier(&mut self) {
         self.service_tier = None;
         self.tier_error = None;
@@ -421,18 +439,8 @@ impl RuntimeOwner {
                 .session_identity()
                 .effort
                 .map(str::to_owned);
-            if !self.pending_session_controls.model_pending()
-                && let Some(model) = model
-            {
-                self.pending_session_controls
-                    .set(SessionControl::Model(model.provider, model.id));
-            }
-            if !self.pending_session_controls.thinking_pending()
-                && let Some(effort) = effort
-            {
-                self.pending_session_controls
-                    .set(SessionControl::Thinking(Some(effort)));
-            }
+            self.pending_session_controls
+                .restore_selection(model.as_ref(), effort.as_deref());
         }
         self.snapshot.prefill_service_tier = Some(tier.clone());
         self.snapshot.pending_initial_service_tier = true;
