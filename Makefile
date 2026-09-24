@@ -13,8 +13,11 @@ SCRATCH := $(CARGO_TARGET_DIR)/scratch
 SANDBOX = rm -rf "$(SCRATCH)"; FARCASTER_DATA_DIR="$(SCRATCH)"
 MODEL ?= opencode/big-pickle
 FREE_MODEL = FARCASTER_OPENCODE_MODEL="$(MODEL)"
+# Detailed timings alone stay silent for phases under the slow-operation floor.
+PERF_TRACE ?= 1
+TRACE_ENV = DEBUG=true FARCASTER_PERF_TRACE="$(PERF_TRACE)"
 PRUNE = status=$$?; size=$$(du -sm "$(INCREMENTAL_DIR)" 2>/dev/null | cut -f1); if [ "$${size:-0}" -gt "$(INCREMENTAL_BUDGET)" ]; then echo "pruning the local incremental cache: $${size}MB of $(INCREMENTAL_BUDGET)MB"; cargo clean -p farcaster; fi; exit $$status
-CARGO_TARGETS := build run test e2e debug isolated release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
+CARGO_TARGETS := build run test e2e measure debug isolated release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
 
 .SILENT:
 .PHONY: $(CARGO_TARGETS) logs fmt check-flake clean prune-incremental libcxx build-nix
@@ -31,13 +34,15 @@ $(INCREMENTAL_STAMP): $(DEP_GRAPH)
 build:
 	cargo build; $(PRUNE)
 run debug:
-	$(if $(ISOLATED),$(FREE_MODEL) )DEBUG=$(if $(filter debug,$@),true) cargo run -- $(if $(ISOLATED),--isolated) "$(PROJECT)"; $(PRUNE)
+	$(if $(ISOLATED),$(FREE_MODEL) )DEBUG=$(if $(or $(filter debug,$@),$(ISOLATED)),true,) cargo run -- $(if $(ISOLATED),--isolated) "$(PROJECT)"; $(PRUNE)
 isolated: ISOLATED := 1
 isolated: run
 test:
 	$(SANDBOX) cargo test; $(PRUNE)
+measure:
+	$(SANDBOX) $(TRACE_ENV) cargo test --bin farcaster switch_perf_tests -- --nocapture; $(PRUNE)
 e2e:
-	$(SANDBOX) $(FREE_MODEL) HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh; $(PRUNE)
+	$(SANDBOX) $(FREE_MODEL) $(TRACE_ENV) HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh; $(PRUNE)
 release release-debug:
 	DEBUG=$(if $(filter release-debug,$@),true) cargo run --release -- "$(PROJECT)"
 release-local:
