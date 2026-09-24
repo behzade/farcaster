@@ -836,6 +836,8 @@ fn live_config(harness: Backend) -> Result<AgentLaunchConfig, String> {
         app_proxy: None,
         session_locator_root: Some(isolated_locator_root()?),
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     })
 }
 

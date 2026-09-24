@@ -483,6 +483,7 @@ impl FarcasterApp {
             let (next_target, next_draft) = match session::draft_store::new(
                 self.project.path.clone(),
                 self.sessions.preferred_harness,
+                self.sessions.preferred_profile_id.clone(),
             ) {
                 Ok(draft) => (draft_target(&draft.id), Some(draft)),
                 Err(error) => {

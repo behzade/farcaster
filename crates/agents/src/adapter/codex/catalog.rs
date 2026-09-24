@@ -34,6 +34,16 @@ pub fn discover(locator_root: &Path, query: &str) -> Result<Vec<DiscoveredSessio
     })
 }
 
+pub(super) fn discover_with_config(
+    config: &crate::AgentLaunchConfig,
+    locator_root: &Path,
+    query: &str,
+) -> Result<Vec<DiscoveredSession>, String> {
+    with_connection_and_home_using(Some(config), |connection, home| {
+        discover_with_client(connection, home, locator_root, query)
+    })
+}
+
 pub(super) fn discover_with_client<R: std::io::BufRead, W: std::io::Write>(
     connection: &mut CodexConnection<R, W>,
     home: &Path,
@@ -154,7 +164,23 @@ fn thread_list_params(archived: bool, query: &str, source_kinds: &[&str]) -> Val
 }
 
 pub fn rename_session(session_id: &str, name: &str) -> Result<(), String> {
-    with_connection(|connection| {
+    rename_session_using(None, session_id, name)
+}
+
+pub(super) fn rename_session_with_config(
+    config: &crate::AgentLaunchConfig,
+    session_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    rename_session_using(Some(config), session_id, name)
+}
+
+fn rename_session_using(
+    config: Option<&crate::AgentLaunchConfig>,
+    session_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    with_connection_and_home_using(config, |connection, _| {
         let id = connection.send_request(
             "thread/name/set",
             json!({"threadId": session_id, "name": name}),
@@ -164,16 +190,44 @@ pub fn rename_session(session_id: &str, name: &str) -> Result<(), String> {
 }
 
 pub fn delete_session(session_id: &str) -> Result<(), String> {
-    with_connection(|connection| {
+    delete_session_using(None, session_id)
+}
+
+pub(super) fn delete_session_with_config(
+    config: &crate::AgentLaunchConfig,
+    session_id: &str,
+) -> Result<(), String> {
+    delete_session_using(Some(config), session_id)
+}
+
+fn delete_session_using(
+    config: Option<&crate::AgentLaunchConfig>,
+    session_id: &str,
+) -> Result<(), String> {
+    with_connection_and_home_using(config, |connection, _| {
         let id = connection.send_request("thread/delete", json!({"threadId": session_id}))?;
         connection.wait_response::<Value>(&id).map(|_| ())
     })
 }
 
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
+    load_history_using(None, path)
+}
+
+pub(super) fn load_history_with_config(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+) -> Result<DiscoveredHistory, String> {
+    load_history_using(Some(config), path)
+}
+
+fn load_history_using(
+    config: Option<&crate::AgentLaunchConfig>,
+    path: &Path,
+) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
-    with_connection_and_home(|connection, codex_home| {
+    with_connection_and_home_using(config, |connection, codex_home| {
         let id = connection.send_request(
             "thread/read",
             json!({"threadId": locator, "includeTurns": true}),
@@ -239,10 +293,24 @@ fn with_connection<T>(
 fn with_connection_and_home<T>(
     operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    let program = std::env::var_os("FARCASTER_CODEX_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| "codex".into());
-    let mut command = Command::new(program);
+    with_connection_and_home_using(None, operation)
+}
+
+fn with_connection_and_home_using<T>(
+    config: Option<&crate::AgentLaunchConfig>,
+    operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut command = if let Some(config) = config.filter(|config| config.profile_id.is_some()) {
+        let project =
+            std::env::current_dir().map_err(|error| format!("Codex catalog project: {error}"))?;
+        config.command(&project)?
+    } else {
+        Command::new(
+            std::env::var_os("FARCASTER_CODEX_PATH")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| "codex".into()),
+        )
+    };
     command.args(["app-server", "--stdio"]);
     let mut child = command
         .stdin(Stdio::piped())

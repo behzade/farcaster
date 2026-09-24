@@ -15,6 +15,8 @@ pub struct DraftSession {
     // No selection while a draft waits for the user to choose a backend.
     #[serde(with = "draft_backend")]
     pub harness: Option<Backend>,
+    #[serde(default)]
+    pub profile_id: Option<String>,
     pub project: PathBuf,
     pub created_ms: u64,
     #[serde(default)]
@@ -46,6 +48,7 @@ impl DraftSession {
             id,
             app_session_id,
             harness,
+            profile_id: None,
             project,
             created_ms,
             submitted: false,
@@ -75,6 +78,19 @@ impl DraftSession {
             return false;
         }
         self.harness = harness;
+        self.profile_id = None;
+        true
+    }
+
+    pub fn change_profile(&mut self, harness: Backend, profile_id: String) -> bool {
+        if !self.can_change_project()
+            || (self.harness == Some(harness)
+                && self.profile_id.as_deref() == Some(profile_id.as_str()))
+        {
+            return false;
+        }
+        self.harness = Some(harness);
+        self.profile_id = Some(profile_id);
         true
     }
 }

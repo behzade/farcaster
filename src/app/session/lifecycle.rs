@@ -317,8 +317,11 @@ impl FarcasterApp {
             return;
         }
         self.reset_run_panel_scroll(cx);
-        let draft = match super::draft_store::new(project.clone(), self.sessions.preferred_harness)
-        {
+        let draft = match super::draft_store::new(
+            project.clone(),
+            self.sessions.preferred_harness,
+            self.sessions.preferred_profile_id.clone(),
+        ) {
             Ok(draft) => draft,
             Err(error) => {
                 self.sessions.error = Some(error);

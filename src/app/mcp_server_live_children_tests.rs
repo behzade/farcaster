@@ -500,6 +500,8 @@ impl LiveChildFixture {
             app_proxy: None,
             session_locator_root: Some(crate::agents::live_e2e_support::isolated_locator_root()?),
             prompt_boundary_url: None,
+            profiles: Default::default(),
+            profile_id: None,
         };
         let model = crate::agents::live_e2e_support::selected_live_worker_model(harness)?;
         let model_identity = format!("{}/{}", model.provider, model.model);

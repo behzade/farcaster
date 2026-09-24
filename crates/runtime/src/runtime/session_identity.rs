@@ -195,8 +195,8 @@ impl RuntimeSnapshot {
 
 #[derive(Default)]
 pub(super) struct HarnessConfigurationStore {
-    identities: HashMap<Backend, OwnedSessionIdentity>,
-    catalogs: HashMap<(Backend, PathBuf), HarnessCatalog>,
+    identities: HashMap<(Backend, Option<String>), OwnedSessionIdentity>,
+    catalogs: HashMap<(Backend, Option<String>, PathBuf), HarnessCatalog>,
 }
 
 #[derive(Default)]
@@ -221,7 +221,7 @@ impl HarnessConfigurationStore {
                 .effort
                 .filter(|_| crate::agents::supports_reasoning_effort(entry.harness));
             self.identities.insert(
-                entry.harness,
+                (entry.harness, entry.profile_id),
                 OwnedSessionIdentity {
                     model: entry.model,
                     effort,
@@ -240,48 +240,89 @@ impl HarnessConfigurationStore {
                     || identity.effort.is_some()
                     || identity.access_mode.is_some()
             })
-            .map(
-                |(harness, identity)| farcaster_storage::CachedSessionControlDefaults {
+            .map(|((harness, profile_id), identity)| {
+                farcaster_storage::CachedSessionControlDefaults {
                     harness: *harness,
+                    profile_id: profile_id.clone(),
                     model: identity.model.clone(),
                     effort: identity.effort.clone(),
                     access_mode: identity.access_mode,
-                },
-            )
+                }
+            })
             .collect::<Vec<_>>();
-        entries.sort_by_key(|entry| entry.harness);
+        entries.sort_by(|a, b| (a.harness, &a.profile_id).cmp(&(b.harness, &b.profile_id)));
         entries
     }
 
+    #[cfg(test)]
     pub fn model(&self, harness: impl Into<Option<Backend>>) -> Option<&Model> {
+        self.model_for(harness, None)
+    }
+
+    pub fn model_for(
+        &self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+    ) -> Option<&Model> {
         let harness = harness.into()?;
         self.identities
-            .get(&harness)
+            .get(&(harness, profile_id.map(str::to_owned)))
             .and_then(|identity| identity.model.as_ref())
     }
 
+    #[cfg(test)]
     pub fn effort(&self, harness: impl Into<Option<Backend>>) -> Option<&str> {
+        self.effort_for(harness, None)
+    }
+
+    pub fn effort_for(
+        &self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+    ) -> Option<&str> {
         let harness = harness.into()?;
         self.identities
-            .get(&harness)
+            .get(&(harness, profile_id.map(str::to_owned)))
             .and_then(|identity| identity.effort.as_deref())
     }
 
+    #[cfg(test)]
     pub fn access_mode(
         &self,
         harness: impl Into<Option<Backend>>,
     ) -> Option<crate::agents::HarnessAccessMode> {
+        self.access_mode_for(harness, None)
+    }
+
+    pub fn access_mode_for(
+        &self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+    ) -> Option<crate::agents::HarnessAccessMode> {
         let harness = harness.into()?;
         self.identities
-            .get(&harness)
+            .get(&(harness, profile_id.map(str::to_owned)))
             .and_then(|identity| identity.access_mode)
     }
 
+    #[cfg(test)]
     pub fn set_model(&mut self, harness: impl Into<Option<Backend>>, model: Model) -> bool {
+        self.set_model_for(harness, None, model)
+    }
+
+    pub fn set_model_for(
+        &mut self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+        model: Model,
+    ) -> bool {
         let Some(harness) = harness.into() else {
             return false;
         };
-        let identity = self.identities.entry(harness.to_owned()).or_default();
+        let identity = self
+            .identities
+            .entry((harness, profile_id.map(str::to_owned)))
+            .or_default();
         let replacement = replacement_effort(&model, identity.effort.as_deref());
         let changed = identity.model.as_ref() != Some(&model) || replacement.is_some();
         identity.model = Some(model);
@@ -291,14 +332,27 @@ impl HarnessConfigurationStore {
         changed
     }
 
+    #[cfg(test)]
     pub fn set_effort(&mut self, harness: impl Into<Option<Backend>>, effort: String) -> bool {
+        self.set_effort_for(harness, None, effort)
+    }
+
+    pub fn set_effort_for(
+        &mut self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+        effort: String,
+    ) -> bool {
         let Some(harness) = harness.into() else {
             return false;
         };
         if !crate::agents::supports_reasoning_effort(harness) {
             return false;
         }
-        let identity = self.identities.entry(harness.to_owned()).or_default();
+        let identity = self
+            .identities
+            .entry((harness, profile_id.map(str::to_owned)))
+            .or_default();
         if identity.effort.as_ref() == Some(&effort) {
             return false;
         }
@@ -306,7 +360,16 @@ impl HarnessConfigurationStore {
         true
     }
 
+    #[cfg(test)]
     pub fn reset_effort(&mut self, harness: impl Into<Option<Backend>>) -> bool {
+        self.reset_effort_for(harness, None)
+    }
+
+    pub fn reset_effort_for(
+        &mut self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+    ) -> bool {
         let Some(harness) = harness.into() else {
             return false;
         };
@@ -314,22 +377,35 @@ impl HarnessConfigurationStore {
             return false;
         }
         self.identities
-            .entry(harness.to_owned())
+            .entry((harness, profile_id.map(str::to_owned)))
             .or_default()
             .effort
             .take()
             .is_some()
     }
 
+    #[cfg(test)]
     pub fn set_access_mode(
         &mut self,
         harness: impl Into<Option<Backend>>,
         access_mode: crate::agents::HarnessAccessMode,
     ) -> bool {
+        self.set_access_mode_for(harness, None, access_mode)
+    }
+
+    pub fn set_access_mode_for(
+        &mut self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+        access_mode: crate::agents::HarnessAccessMode,
+    ) -> bool {
         let Some(harness) = harness.into() else {
             return false;
         };
-        let identity = self.identities.entry(harness).or_default();
+        let identity = self
+            .identities
+            .entry((harness, profile_id.map(str::to_owned)))
+            .or_default();
         if identity.access_mode == Some(access_mode) {
             return false;
         }
@@ -337,26 +413,56 @@ impl HarnessConfigurationStore {
         true
     }
 
+    #[cfg(test)]
     pub fn set_catalog(
         &mut self,
         harness: Backend,
         project: PathBuf,
         catalog: crate::agents::ConfigurationCatalog,
     ) {
-        let cached = self.catalogs.entry((harness, project)).or_default();
+        self.set_catalog_for_profile(harness, None, project, catalog);
+    }
+
+    pub fn set_catalog_for_profile(
+        &mut self,
+        harness: Backend,
+        profile_id: Option<String>,
+        project: PathBuf,
+        catalog: crate::agents::ConfigurationCatalog,
+    ) {
+        let cached = self
+            .catalogs
+            .entry((harness, profile_id, project))
+            .or_default();
         cached.models = catalog.models;
         cached.efforts = catalog.efforts;
         cached.sandbox_adapter = catalog.sandbox_adapter;
         cached.status = ConfigurationStatus::Loaded;
     }
 
-    pub fn set_catalog_loading(&mut self, harness: Backend, project: PathBuf) {
-        self.catalogs.entry((harness, project)).or_default().status = ConfigurationStatus::Loading;
+    pub fn set_catalog_loading(
+        &mut self,
+        harness: Backend,
+        profile_id: Option<String>,
+        project: PathBuf,
+    ) {
+        self.catalogs
+            .entry((harness, profile_id, project))
+            .or_default()
+            .status = ConfigurationStatus::Loading;
     }
 
-    pub fn set_catalog_error(&mut self, harness: Backend, project: PathBuf, error: String) {
-        self.catalogs.entry((harness, project)).or_default().status =
-            ConfigurationStatus::Failed(error);
+    pub fn set_catalog_error(
+        &mut self,
+        harness: Backend,
+        profile_id: Option<String>,
+        project: PathBuf,
+        error: String,
+    ) {
+        self.catalogs
+            .entry((harness, profile_id, project))
+            .or_default()
+            .status = ConfigurationStatus::Failed(error);
     }
 
     pub fn catalog_command(
@@ -364,10 +470,21 @@ impl HarnessConfigurationStore {
         harness: impl Into<Option<Backend>>,
         project: &std::path::Path,
     ) -> Option<super::RuntimeCommand> {
+        self.catalog_command_for_profile(harness, None, project)
+    }
+
+    pub fn catalog_command_for_profile(
+        &self,
+        harness: impl Into<Option<Backend>>,
+        profile_id: Option<&str>,
+        project: &std::path::Path,
+    ) -> Option<super::RuntimeCommand> {
         let harness = harness.into()?;
-        let catalog = self
-            .catalogs
-            .get(&(harness.to_owned(), project.to_owned()))?;
+        let catalog = self.catalogs.get(&(
+            harness.to_owned(),
+            profile_id.map(str::to_owned),
+            project.to_owned(),
+        ))?;
         if catalog.models.is_empty() && catalog.sandbox_adapter.is_none() {
             return None;
         }
@@ -390,7 +507,11 @@ impl HarnessConfigurationStore {
         if snapshot.connected {
             return None;
         }
-        let command = self.catalog_command(snapshot.harness, &snapshot.project)?;
+        let command = self.catalog_command_for_profile(
+            snapshot.harness,
+            snapshot.profile_id.as_deref(),
+            &snapshot.project,
+        )?;
         let super::RuntimeCommand::UpdateConfigurationCatalog { catalog, .. } = &command else {
             unreachable!("catalog_command returned a non-catalog command")
         };
@@ -405,7 +526,11 @@ impl HarnessConfigurationStore {
         let Some(harness) = snapshot.harness else {
             return;
         };
-        if let Some(catalog) = self.catalogs.get(&(harness, snapshot.project.clone())) {
+        if let Some(catalog) = self.catalogs.get(&(
+            harness,
+            snapshot.profile_id.clone(),
+            snapshot.project.clone(),
+        )) {
             snapshot.models.clone_from(&catalog.models);
             snapshot.thinking_levels.clone_from(&catalog.efforts);
             if !snapshot.connected {
@@ -427,7 +552,11 @@ impl HarnessConfigurationStore {
         };
         let catalog = self
             .catalogs
-            .entry((harness, snapshot.project.clone()))
+            .entry((
+                harness,
+                snapshot.profile_id.clone(),
+                snapshot.project.clone(),
+            ))
             .or_default();
         if snapshot.models.is_empty() || (!snapshot.connected && !catalog.models.is_empty()) {
             snapshot.models.clone_from(&catalog.models);
@@ -451,7 +580,10 @@ impl HarnessConfigurationStore {
                 .clone_from(&snapshot.sandbox_adapter);
         }
         snapshot.configuration_status.clone_from(&catalog.status);
-        let identity = self.identities.entry(harness).or_default();
+        let identity = self
+            .identities
+            .entry((harness, snapshot.profile_id.clone()))
+            .or_default();
 
         if let Some(session) = &snapshot.session {
             if !adopt_identity {

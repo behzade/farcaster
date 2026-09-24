@@ -10,6 +10,7 @@ pub(in crate::app) struct SessionImportDialog {
     pub(in crate::app) focus: FocusHandle,
     return_focus: Option<FocusHandle>,
     pub(in crate::app) harness: Option<Backend>,
+    pub(in crate::app) profile_id: Option<String>,
     preview_generation: u64,
     pub(in crate::app) candidates: Vec<SessionSummary>,
     pub(in crate::app) selected: HashSet<PathBuf>,
@@ -25,13 +26,24 @@ impl FarcasterApp {
     ) {
         self.cover_native_workspace_surface(cx);
         let available = import_harnesses();
-        let harness = available
-            .into_iter()
-            .find(|harness| Some(*harness) == self.sessions.preferred_harness);
+        let preferred_profile = self
+            .sessions
+            .preferred_profile_id
+            .as_deref()
+            .and_then(|id| self.settings.harness_profiles.get(id).ok());
+        let harness = preferred_profile
+            .as_ref()
+            .map(|profile| profile.backend)
+            .or_else(|| {
+                available
+                    .into_iter()
+                    .find(|harness| Some(*harness) == self.sessions.preferred_harness)
+            });
         let dialog = SessionImportDialog {
             focus: cx.focus_handle(),
             return_focus: window.focused(cx),
             harness,
+            profile_id: preferred_profile.map(|profile| profile.id),
             preview_generation: 0,
             candidates: Vec::new(),
             selected: HashSet::new(),
@@ -66,11 +78,34 @@ impl FarcasterApp {
             let Some(dialog) = self.sessions.import.as_mut() else {
                 return;
             };
-            if dialog.harness == Some(harness) && (dialog.loading || dialog.error.is_none()) {
+            if dialog.harness == Some(harness)
+                && dialog.profile_id.is_none()
+                && (dialog.loading || dialog.error.is_none())
+            {
                 return;
             }
             dialog.harness = Some(harness);
+            dialog.profile_id = None;
         }
+        self.preview_session_import(cx);
+    }
+
+    pub(in crate::app) fn select_session_import_profile(
+        &mut self,
+        harness: Backend,
+        profile_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.sessions.import.as_mut() else {
+            return;
+        };
+        if dialog.profile_id.as_deref() == Some(profile_id.as_str())
+            && (dialog.loading || dialog.error.is_none())
+        {
+            return;
+        }
+        dialog.harness = Some(harness);
+        dialog.profile_id = Some(profile_id);
         self.preview_session_import(cx);
     }
 
@@ -170,7 +205,7 @@ impl FarcasterApp {
 
     fn preview_session_import(&mut self, cx: &mut Context<Self>) {
         self.sessions.import_generation = self.sessions.import_generation.saturating_add(1);
-        let Some((harness, generation)) = self.sessions.import.as_mut().map(|dialog| {
+        let Some((harness, profile_id, generation)) = self.sessions.import.as_mut().map(|dialog| {
             dialog.preview_generation = self.sessions.import_generation;
             dialog.loading = dialog.harness.is_some();
             dialog.error = dialog
@@ -179,7 +214,11 @@ impl FarcasterApp {
                 .then(|| "Choose a backend to import sessions.".into());
             dialog.candidates.clear();
             dialog.selected.clear();
-            (dialog.harness, dialog.preview_generation)
+            (
+                dialog.harness,
+                dialog.profile_id.clone(),
+                dialog.preview_generation,
+            )
         }) else {
             return;
         };
@@ -189,6 +228,7 @@ impl FarcasterApp {
         self.send(
             RuntimeCommand::PreviewImport {
                 harness,
+                profile_id,
                 generation,
             },
             cx,

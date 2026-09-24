@@ -22,6 +22,6 @@ fn upgrades_v18_sessions_with_an_empty_access_mode() -> Result<(), Box<dyn std::
         [],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    assert_eq!(row, (None, 20));
+    assert_eq!(row, (None, crate::SCHEMA_VERSION));
     Ok(())
 }

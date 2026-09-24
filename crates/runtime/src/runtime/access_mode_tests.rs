@@ -176,7 +176,7 @@ fn unsupported_harness_never_promotes_auto_to_full() {
     owner.publish();
     assert_eq!(owner.process_command.access_mode, Auto);
     assert!(owner.snapshot.available_access_modes().is_empty());
-    owner.stage_draft(Some(Backend::Codex), std::env::temp_dir());
+    owner.stage_draft("test-draft", Some(Backend::Codex), std::env::temp_dir());
     assert_eq!(owner.snapshot.access_mode, Auto);
     assert_eq!(owner.process_command.access_mode, Auto);
     owner.set_access_mode(Sandboxed);

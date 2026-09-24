@@ -7,18 +7,23 @@ mod adapter;
 pub mod builtin_mcp;
 pub use farcaster_agent_protocol as contract;
 mod core;
+mod profiles;
+pub use profiles::{HarnessProfile, HarnessProfiles, profile_id_from_locator};
 
+pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
 pub use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,
-    discover_sessions_for, effort_label, external_session_identity, generate_session_title,
-    load_configuration_catalog, load_session_history, move_session_family, project_trust,
-    project_trust_description, rename_session, saved_project_trust, spawn_session,
-    supports_auto_title_generation, supports_individual_queue_cancellation,
-    supports_reasoning_effort, supports_reasoning_reset, supports_sandbox_discovery,
-    supports_session_fork, supports_session_move, supports_startup_command, supports_steering,
-    validate_launch, validate_session_move, worker_factories,
+    delete_session_family_with_config, discover_sessions_for, discover_sessions_for_profile,
+    effort_label, external_session_identity, generate_session_title, load_configuration_catalog,
+    load_session_history, load_session_history_for_profile, move_session_family,
+    move_session_family_with_config, project_trust, project_trust_description, rename_session,
+    saved_project_trust, spawn_session, supports_auto_title_generation,
+    supports_individual_queue_cancellation, supports_reasoning_effort, supports_reasoning_reset,
+    supports_sandbox_discovery, supports_session_fork, supports_session_move,
+    supports_startup_command, supports_steering, validate_launch, validate_session_move,
+    worker_factories,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use contract::WorkerStatus;
@@ -43,6 +48,8 @@ pub struct AgentLaunchConfig {
     pub session_locator_root: Option<std::path::PathBuf>,
     /// Session-scoped hook endpoint. Never inherited by separately launched workers.
     pub prompt_boundary_url: Option<String>,
+    pub profiles: std::sync::Arc<HarnessProfiles>,
+    pub profile_id: Option<String>,
 }
 pub use core::{
     CallerContext, CallerProfile, CallerRegistry, ChildSessionOutcome, CommonTool,

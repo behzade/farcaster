@@ -30,6 +30,78 @@ fn stored_family_identity(
 }
 
 impl StateStore {
+    pub fn harness_profile_in_use(&self, id: &str) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sessions WHERE profile_id=?1)",
+                [id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn load_harness_profiles(&self) -> Result<Vec<crate::agents::HarnessProfile>, String> {
+        let saved: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='harness_profiles'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("load harness profiles: {error}"))?;
+        let profiles: Vec<crate::agents::HarnessProfile> = saved
+            .map(|saved| serde_json::from_str(&saved))
+            .transpose()
+            .map_err(|error| format!("decode harness profiles: {error}"))?
+            .unwrap_or_default();
+        validate_harness_profiles(&profiles)?;
+        Ok(profiles)
+    }
+
+    pub fn save_harness_profiles(
+        &self,
+        profiles: &[crate::agents::HarnessProfile],
+    ) -> Result<(), String> {
+        validate_harness_profiles(profiles)?;
+        let saved = serde_json::to_string(profiles)
+            .map_err(|error| format!("encode harness profiles: {error}"))?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('harness_profiles', ?1)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [saved],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save harness profiles: {error}"))
+    }
+
+    pub fn load_preferred_profile_id(&self) -> Result<Option<String>, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='preferred_harness_profile'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("load preferred harness profile: {error}"))
+    }
+
+    pub fn save_preferred_profile_id(&self, id: Option<&str>) -> Result<(), String> {
+        match id {
+            Some(id) => self.connection.execute(
+                "INSERT INTO meta(key,value) VALUES('preferred_harness_profile',?1)
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [id],
+            ),
+            None => self
+                .connection
+                .execute("DELETE FROM meta WHERE key='preferred_harness_profile'", []),
+        }
+        .map(|_| ())
+        .map_err(|error| format!("save preferred harness profile: {error}"))
+    }
+
     pub fn load_expand_transcript_folders(&self) -> Result<bool, String> {
         self.connection
             .query_row(
@@ -497,6 +569,21 @@ impl StateStore {
     }
 }
 
+fn validate_harness_profiles(profiles: &[crate::agents::HarnessProfile]) -> Result<(), String> {
+    let mut ids = std::collections::HashSet::new();
+    let mut names = std::collections::HashSet::new();
+    for profile in profiles {
+        profile.validate()?;
+        if !ids.insert(&profile.id) {
+            return Err(format!("duplicate harness profile ID: {}", profile.id));
+        }
+        if !names.insert(profile.name.to_lowercase()) {
+            return Err(format!("duplicate harness profile name: {}", profile.name));
+        }
+    }
+    Ok(())
+}
+
 fn normalize_configuration_catalogs(
     catalogs: Vec<CachedConfigurationCatalog>,
 ) -> Vec<CachedConfigurationCatalog> {
@@ -504,7 +591,11 @@ fn normalize_configuration_catalogs(
     let mut normalized = Vec::with_capacity(catalogs.len());
     for mut catalog in catalogs {
         catalog.project = crate::sessions::normalize_session_path(&catalog.project);
-        let key = (catalog.harness, catalog.project.clone());
+        let key = (
+            catalog.harness,
+            catalog.profile_id.clone(),
+            catalog.project.clone(),
+        );
         if let Some(index) = indexes.get(&key) {
             normalized[*index] = catalog;
         } else {

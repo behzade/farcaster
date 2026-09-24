@@ -9,6 +9,7 @@ pub(super) struct PersistedState {
     pub(super) session_folders: crate::app::session_folders::SessionFolders,
     pub(super) selected_draft: String,
     pub(super) preferred_harness: Option<Backend>,
+    pub(super) preferred_profile_id: Option<String>,
     pub(super) draft_session_ids: HashMap<String, i64>,
     pub(super) composer_sessions: ComposerSessions,
     pub(super) submitted_drafts: HashMap<String, Option<PathBuf>>,
@@ -60,6 +61,14 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             None
         }
     };
+    let preferred_profile_id =
+        match crate::app::persistence::open().and_then(|store| store.load_preferred_profile_id()) {
+            Ok(id) => id,
+            Err(load_error) => {
+                error.get_or_insert(load_error);
+                None
+            }
+        };
     let mut drafts =
         match crate::app::persistence::open().and_then(|store| sessions::load_drafts(&*store)) {
             Ok(drafts) => drafts,
@@ -70,15 +79,21 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         };
     let draft_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.create_draft");
-    let initial_draft = match session::draft_store::new(project.to_path_buf(), preferred_harness) {
+    let initial_draft = match session::draft_store::new(
+        project.to_path_buf(),
+        preferred_harness,
+        preferred_profile_id.clone(),
+    ) {
         Ok(draft) => draft,
         Err(load_error) => {
             error.get_or_insert(load_error);
-            sessions::DraftSession::with_id(
+            let mut draft = sessions::DraftSession::with_id(
                 preferred_harness,
                 format!("untracked-draft-{}", std::process::id()),
                 project.to_path_buf(),
-            )
+            );
+            draft.profile_id = preferred_profile_id.clone();
+            draft
         }
     };
     drop(draft_timing);
@@ -130,6 +145,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         session_folders,
         selected_draft,
         preferred_harness,
+        preferred_profile_id,
         draft_session_ids,
         composer_sessions,
         submitted_drafts,

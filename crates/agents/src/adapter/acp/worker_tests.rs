@@ -45,6 +45,8 @@ done
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     let profile = &super::super::super::antigravity::PROFILE;
     let (mut original, _, _) = spawn_session(&command, profile, project.path(), None, None, None)?;
@@ -164,6 +166,8 @@ done
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     let factory = AcpWorkerFactory::new(command, super::super::super::antigravity::PROFILE.clone());
     let mut worker = factory.create(WorkerLaunch {
@@ -290,6 +294,8 @@ done
                 app_proxy: None,
                 session_locator_root: None,
                 prompt_boundary_url: None,
+                profiles: Default::default(),
+                profile_id: None,
             };
             let (mut session, metadata, _) =
                 spawn_session(&command, profile, project.path(), None, None, None)
@@ -392,6 +398,8 @@ done
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
 
     let (session, _, _) = spawn_session(&command, &PROFILE, project.path(), None, None, None)
@@ -1258,6 +1266,8 @@ fn live_cursor_configuration_and_listing() {
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     let profile = &super::super::super::cursor::PROFILE;
     let (mut session, metadata, _) =
@@ -1428,6 +1438,8 @@ fn live_cursor_session_round_trip() {
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     let profile = &super::super::super::cursor::PROFILE;
     let (mut session, metadata, history) = spawn_session(

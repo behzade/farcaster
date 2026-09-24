@@ -3,6 +3,34 @@ use std::path::{Path, PathBuf};
 use crate::AgentLaunchConfig;
 
 impl AgentLaunchConfig {
+    pub fn locator_root(&self) -> Option<PathBuf> {
+        let root = self.session_locator_root.as_ref()?;
+        Some(
+            self.profile_id
+                .as_ref()
+                .map_or_else(|| root.clone(), |id| root.join("profiles").join(id)),
+        )
+    }
+
+    pub fn selected_profile(&self) -> Result<Option<crate::HarnessProfile>, String> {
+        self.profile_id
+            .as_deref()
+            .map(|id| self.profiles.get(id))
+            .transpose()
+    }
+
+    pub fn validate_profile_backend(&self, backend: crate::Backend) -> Result<(), String> {
+        if let Some(profile) = self.selected_profile()?
+            && profile.backend != backend
+        {
+            return Err(format!(
+                "{} uses {}, not {}",
+                profile.name, profile.backend, backend
+            ));
+        }
+        Ok(())
+    }
+
     #[doc(hidden)]
     pub fn test_script(script: &Path, mut arguments: Vec<String>) -> Self {
         let mut prefix_args = Vec::with_capacity(arguments.len() + 1);
@@ -15,10 +43,13 @@ impl AgentLaunchConfig {
             app_proxy: None,
             session_locator_root: None,
             prompt_boundary_url: None,
+            profiles: Default::default(),
+            profile_id: None,
         }
     }
 
     pub fn command(&self, project: &Path) -> Result<std::process::Command, String> {
+        let profile = self.selected_profile()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let environment = super::shell_environment::project_shell_environment(project)?;
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -30,8 +61,11 @@ impl AgentLaunchConfig {
                 .map(|(_, value)| value.clone())
                 .or_else(|| std::env::var_os(name))
         };
+        let executable = profile.as_ref().map_or(self.program.as_path(), |profile| {
+            profile.executable.as_path()
+        });
         let program =
-            resolve_agent_program(&self.program, project, environment_value("PATH").as_deref())?;
+            resolve_agent_program(executable, project, environment_value("PATH").as_deref())?;
         let network = farcaster_access::network_configuration(
             environment.as_deref(),
             self.app_proxy.as_deref(),
@@ -50,6 +84,12 @@ impl AgentLaunchConfig {
                 .collect();
             farcaster_access::append_app_proxy_environment(&mut proxy_environment, &network);
             command.envs(proxy_environment);
+        }
+        if let Some(profile) = profile
+            && let (Some(key), Some(directory)) =
+                (profile.data_environment_key(), profile.data_directory)
+        {
+            command.env(key, directory);
         }
         command.env_remove("FARCASTER_PROMPT_BOUNDARY_URL");
         if let Some(url) = &self.prompt_boundary_url {

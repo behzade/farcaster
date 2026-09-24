@@ -105,6 +105,8 @@ pub(super) fn owner_without_process(
                 app_proxy: None,
                 session_locator_root: None,
                 prompt_boundary_url: None,
+                profiles: Default::default(),
+                profile_id: None,
             },
             process: None,
             snapshot: RuntimeSnapshot {
@@ -2096,6 +2098,8 @@ fn failed_model_reconnect_keeps_the_loaded_history() {
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     preview_history(&mut owner, session.clone(), "keep this history");
 
@@ -2234,6 +2238,8 @@ fn failed_start_returns_the_deferred_prompt_to_the_composer()
         app_proxy: None,
         session_locator_root: None,
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     owner.state = Some(SharedStateStore::open_at(&database)?);
 

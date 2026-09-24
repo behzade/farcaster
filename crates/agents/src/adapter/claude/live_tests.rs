@@ -21,6 +21,8 @@ fn setup(project: &Path, access_mode: HarnessAccessMode) -> (AgentLaunchConfig, 
             app_proxy: None,
             session_locator_root: Some(project.join("locators")),
             prompt_boundary_url: None,
+            profiles: Default::default(),
+            profile_id: None,
         },
         SessionLaunch {
             harness: super::BACKEND,

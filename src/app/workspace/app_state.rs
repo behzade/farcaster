@@ -34,6 +34,12 @@ pub(in crate::app) struct TerminalState {
 }
 
 pub(in crate::app) struct SettingsState {
+    pub(in crate::app) harness_profiles: Arc<crate::agents::HarnessProfiles>,
+    pub(in crate::app) harness_profile_name: Entity<InputState>,
+    pub(in crate::app) harness_profile_executable: Entity<InputState>,
+    pub(in crate::app) harness_profile_data_directory: Entity<InputState>,
+    pub(in crate::app) harness_profile_backend: crate::agents::Backend,
+    pub(in crate::app) harness_profile_error: Option<String>,
     pub(in crate::app) network_proxy_input: Entity<InputState>,
     pub(in crate::app) network_proxy_error: Option<String>,
     pub(in crate::app) proxy_save: Option<Task<()>>,

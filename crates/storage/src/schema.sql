@@ -10,6 +10,7 @@ CREATE TABLE sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id),
   harness TEXT NOT NULL,
+  profile_id TEXT,
   locator TEXT,
   backend_id TEXT,
   parent_backend_id TEXT,

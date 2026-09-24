@@ -20,8 +20,82 @@ use crate::{
     agents::ConfigurationCatalog,
     projects::{self, Registry},
     protocol::{Model, PromptImage, PromptMode},
-    sessions::{DraftSession, SessionSummary, UsageSummary},
+    sessions::{DraftSession, SessionImport, SessionSummary, UsageSummary},
 };
+
+#[test]
+fn same_native_session_id_in_two_profiles_keeps_two_rows() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempdir()?;
+    let mut store = StateStore::open_at(&temp.path().join("profiles.sqlite3"))?;
+    let project = temp.path().join("project");
+    fs::create_dir(&project)?;
+    let profile = "7d0916b8-6b90-4dbc-8d87-c5371169d0a2";
+    let imported = [
+        temp.path().join("locators/codex-cli/same"),
+        temp.path()
+            .join(format!("locators/profiles/{profile}/codex-cli/same")),
+    ]
+    .into_iter()
+    .map(|path| {
+        SessionSummary::import(SessionImport {
+            id: "same".into(),
+            harness: Backend::Codex,
+            path,
+            project: project.clone(),
+            title: "same".into(),
+            first_user_message: String::new(),
+            timestamp: String::new(),
+            parent_session: None,
+            modified: SystemTime::now(),
+            message_count: 0,
+            usage: UsageSummary::default(),
+            archived: false,
+            is_running: false,
+            search: String::new(),
+        })
+    })
+    .collect::<Vec<_>>();
+    store.index_sessions(&imported, false)?;
+    assert_eq!(store.cached_sessions("")?.len(), 2);
+    let mut ids = store.with_connection(|db| {
+        db.prepare("SELECT profile_id FROM sessions WHERE backend_id='same' ORDER BY profile_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, Option<String>>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    });
+    ids.sort();
+    assert_eq!(ids, vec![None, Some(profile.into())]);
+    Ok(())
+}
+
+#[test]
+fn harness_profiles_and_preference_survive_reopen() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("profiles.sqlite3");
+    let profile = crate::agents::HarnessProfile {
+        id: "7d0916b8-6b90-4dbc-8d87-c5371169d0a2".into(),
+        name: "codex2".into(),
+        backend: Backend::Codex,
+        executable: "codex2".into(),
+        data_directory: Some(temp.path().join("codex2")),
+    };
+    let store = StateStore::open_at(&database)?;
+    store.save_harness_profiles(std::slice::from_ref(&profile))?;
+    store.save_preferred_profile_id(Some(&profile.id))?;
+    assert!(
+        store
+            .save_harness_profiles(&[profile.clone(), profile.clone()])
+            .is_err()
+    );
+    drop(store);
+    let store = StateStore::open_at(&database)?;
+    assert_eq!(store.load_harness_profiles()?, vec![profile.clone()]);
+    assert_eq!(store.load_preferred_profile_id()?, Some(profile.id));
+    Ok(())
+}
 
 #[allow(clippy::too_many_arguments)]
 fn session_from_cached(
@@ -185,6 +259,7 @@ fn configuration_catalogs_survive_reopen() -> Result<(), Box<dyn std::error::Err
     let database = temp.path().join("gui.sqlite3");
     let cached = CachedConfigurationCatalog {
         harness: Backend::Codex,
+        profile_id: None,
         project: temp.path().to_path_buf(),
         catalog: ConfigurationCatalog {
             models: vec![Model {
@@ -254,11 +329,13 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
     let legacy = vec![
         CachedConfigurationCatalog {
             harness: Backend::Codex,
+            profile_id: None,
             project: alias,
             catalog: catalog("old"),
         },
         CachedConfigurationCatalog {
             harness: Backend::Codex,
+            profile_id: None,
             project: project.clone(),
             catalog: catalog("new"),
         },
@@ -275,6 +352,7 @@ fn legacy_configuration_catalog_aliases_share_one_project_key()
         StateStore::open_at(&database)?.load_configuration_catalogs()?,
         vec![CachedConfigurationCatalog {
             harness: Backend::Codex,
+            profile_id: None,
             project: project.canonicalize()?,
             catalog: catalog("new"),
         }]
@@ -288,6 +366,7 @@ fn session_control_defaults_survive_reopen() -> Result<(), Box<dyn std::error::E
     let database = temp.path().join("gui.sqlite3");
     let cached = CachedSessionControlDefaults {
         harness: Backend::Codex,
+        profile_id: None,
         model: Some(Model {
             id: "model".into(),
             name: "Model".into(),
@@ -403,7 +482,7 @@ fn check_schema_migration(version: i64) -> Result<(), Box<dyn std::error::Error>
         |row| row.get(0),
     )?;
     assert!(!has_modifier);
-    assert_eq!(database_schema_version(&database)?, 20);
+    assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     drop(store);
     StateStore::open_at(&database)?;
     Ok(())
@@ -646,6 +725,7 @@ fn registry_composer_and_outbox_survive_reopen() -> Result<(), Box<dyn std::erro
         id: "draft-one".into(),
         app_session_id: 1,
         harness: Some(Backend::Pi),
+        profile_id: None,
         project: project.clone(),
         created_ms: 7,
         submitted: true,
@@ -1194,6 +1274,7 @@ fn prompt_completion_persists_draft_session_association_atomically()
             id: "pending".into(),
             app_session_id: 1,
             harness: Some(Backend::Pi),
+            profile_id: None,
             project: project.clone(),
             created_ms: 1,
             submitted: false,
@@ -1325,6 +1406,7 @@ fn schema_v1_migrates_to_current_with_defaults_and_outbox_preserved()
             id: "legacy-draft".into(),
             app_session_id: 1,
             harness: Some(Backend::Pi),
+            profile_id: None,
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -1340,7 +1422,7 @@ fn schema_v1_migrates_to_current_with_defaults_and_outbox_preserved()
     assert!(queued[0].images.is_empty());
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 20);
+    assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     Ok(())
 }
 
@@ -1360,6 +1442,7 @@ fn schema_v2_migrates_to_current_with_defaults_and_outbox_preserved()
             id: "legacy-draft".into(),
             app_session_id: 1,
             harness: Some(Backend::Pi),
+            profile_id: None,
             project: project.canonicalize()?,
             created_ms: 7,
             submitted: false,
@@ -1378,7 +1461,7 @@ fn schema_v2_migrates_to_current_with_defaults_and_outbox_preserved()
     );
     drop(store);
 
-    assert_eq!(database_schema_version(&database)?, 20);
+    assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     Ok(())
 }
 
@@ -1418,7 +1501,7 @@ fn schema_v3_migrates_with_running_default_false_and_preserves_session_identity(
     drop(connection);
 
     let store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 20);
+    assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     let cached = store.cached_sessions("")?;
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].id, "v3-legacy");
@@ -1452,7 +1535,7 @@ fn schema_v4_migrates_with_a_writable_provisional_title_column()
     // The migration itself adds provisional_title; prove the new column is the
     // registry's title source by writing through it and reopening.
     let mut store = StateStore::open_at(&database)?;
-    assert_eq!(database_schema_version(&database)?, 20);
+    assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     assert_eq!(store.load_registry()?.drafts[0].title, None);
     let mut registry = store.load_registry()?;
     registry.drafts[0].title = Some("Migrated column".into());
@@ -1504,7 +1587,7 @@ fn schema_v5_migrates_existing_sessions_and_drafts_to_incremental_ids()
     assert!(session.app_session_id > 0);
     assert_ne!(draft.app_session_id, session.app_session_id);
     assert_eq!(session.harness, Backend::Pi);
-    assert_eq!(database_schema_version(&database)?, 20);
+    assert_eq!(database_schema_version(&database)?, crate::SCHEMA_VERSION);
     Ok(())
 }
 
@@ -1639,6 +1722,7 @@ fn submitted_draft_without_session_path_survives_reopen() -> Result<(), Box<dyn 
             id: "pending".into(),
             app_session_id: 1,
             harness: Some(Backend::Pi),
+            profile_id: None,
             project,
             created_ms: 1,
             submitted: true,

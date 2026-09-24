@@ -291,13 +291,13 @@ pub(super) fn changed_external_documents(
 fn cache_configuration_catalog(
     entries: &mut Vec<farcaster_storage::CachedConfigurationCatalog>,
     harness: Backend,
+    profile_id: Option<String>,
     project: PathBuf,
     catalog: crate::agents::ConfigurationCatalog,
 ) -> bool {
-    if let Some(entry) = entries
-        .iter_mut()
-        .find(|entry| entry.harness == harness && entry.project == project)
-    {
+    if let Some(entry) = entries.iter_mut().find(|entry| {
+        entry.harness == harness && entry.profile_id == profile_id && entry.project == project
+    }) {
         if entry.catalog == catalog {
             return false;
         }
@@ -306,6 +306,7 @@ fn cache_configuration_catalog(
     }
     entries.push(farcaster_storage::CachedConfigurationCatalog {
         harness,
+        profile_id,
         project,
         catalog,
     });
@@ -327,15 +328,25 @@ fn update_selected_configuration(
 ) -> bool {
     match command {
         RuntimeCommand::SetModel(model) | RuntimeCommand::SetModelWithAccessMode { model, .. } => {
-            configurations.set_model(snapshot.harness, model.clone())
+            configurations.set_model_for(
+                snapshot.harness,
+                snapshot.profile_id.as_deref(),
+                model.clone(),
+            )
         }
-        RuntimeCommand::SetThinking(effort) => {
-            configurations.set_effort(snapshot.harness, effort.clone())
+        RuntimeCommand::SetThinking(effort) => configurations.set_effort_for(
+            snapshot.harness,
+            snapshot.profile_id.as_deref(),
+            effort.clone(),
+        ),
+        RuntimeCommand::ResetThinking => {
+            configurations.reset_effort_for(snapshot.harness, snapshot.profile_id.as_deref())
         }
-        RuntimeCommand::ResetThinking => configurations.reset_effort(snapshot.harness),
-        RuntimeCommand::SetAccessMode(access_mode) => {
-            configurations.set_access_mode(snapshot.harness, *access_mode)
-        }
+        RuntimeCommand::SetAccessMode(access_mode) => configurations.set_access_mode_for(
+            snapshot.harness,
+            snapshot.profile_id.as_deref(),
+            *access_mode,
+        ),
         _ => false,
     }
 }
@@ -368,6 +379,7 @@ fn send_configured_command(
     command: RuntimeCommand,
     configurations: &HarnessConfigurationStore,
     access_mode: Option<HarnessAccessMode>,
+    profile_id: Option<&str>,
 ) {
     let defaults_harness = match &command {
         RuntimeCommand::NewSession { harness, .. }
@@ -376,13 +388,15 @@ fn send_configured_command(
     };
     let defaults = defaults_harness.map(|harness| {
         (
-            configurations.model(harness),
-            configurations.effort(harness),
+            configurations.model_for(harness, profile_id),
+            configurations.effort_for(harness, profile_id),
         )
     });
-    let access_mode = access_mode.or_else(|| configurations.access_mode(defaults_harness));
-    let catalog = command_target(&command)
-        .and_then(|(_, project, harness)| configurations.catalog_command(harness, &project));
+    let access_mode =
+        access_mode.or_else(|| configurations.access_mode_for(defaults_harness, profile_id));
+    let catalog = command_target(&command).and_then(|(_, project, harness)| {
+        configurations.catalog_command_for_profile(harness, profile_id, &project)
+    });
     // Fork and restart launch inside the command handler, so validate them
     // against the cached catalog before starting the child process.
     if matches!(
@@ -413,6 +427,7 @@ fn send_configured_command(
 
 type ConfigurationUpdate = (
     Backend,
+    Option<String>,
     PathBuf,
     Result<crate::agents::ConfigurationCatalog, String>,
 );
@@ -448,7 +463,7 @@ struct Supervisor {
     configuration_tx: Option<mpsc::Sender<ConfigurationUpdate>>,
     // Coalesce in-flight requests and keep successful loads for this app run.
     // A failed result removes its key so the next selection can retry.
-    configuration_requests: HashSet<(Backend, PathBuf)>,
+    configuration_requests: HashSet<(Backend, Option<String>, PathBuf)>,
     requested_access_modes: HashMap<String, (Backend, PathBuf, HarnessAccessMode)>,
     published_statuses: HashMap<String, (Option<PathBuf>, String)>,
 }
@@ -552,7 +567,12 @@ impl Supervisor {
             .and_then(|state| state.with(|store| store.load_configuration_catalogs()).ok())
             .unwrap_or_default();
         for entry in &configuration_catalogs {
-            configurations.set_catalog(entry.harness, entry.project.clone(), entry.catalog.clone());
+            configurations.set_catalog_for_profile(
+                entry.harness,
+                entry.profile_id.clone(),
+                entry.project.clone(),
+                entry.catalog.clone(),
+            );
         }
         if let Some(state) = catalog_state.as_ref()
             && let Ok(defaults) = state.with(|store| store.load_session_control_defaults())
@@ -563,7 +583,16 @@ impl Supervisor {
             let access_mode = initial_session
                 .as_ref()
                 .and_then(|session| saved_access_mode(catalog_state.as_ref(), &session.path));
-            send_configured_command(actor, initial_command, &configurations, access_mode);
+            send_configured_command(
+                actor,
+                initial_command,
+                &configurations,
+                access_mode,
+                initial_session
+                    .as_ref()
+                    .and_then(|session| agents::profile_id_from_locator(&session.path))
+                    .as_deref(),
+            );
         }
         let (configuration_tx, configuration_rx) = mpsc::channel();
         let published_statuses = HashMap::<String, (Option<PathBuf>, String)>::new();

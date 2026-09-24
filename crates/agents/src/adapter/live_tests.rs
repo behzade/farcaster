@@ -171,6 +171,8 @@ fn exercise_live_harness(harness: Backend, capabilities: &AgentCapabilities) -> 
         app_proxy: None,
         session_locator_root: Some(locator_root),
         prompt_boundary_url: None,
+        profiles: Default::default(),
+        profile_id: None,
     };
     let launch = |start, session_id| SessionLaunch {
         harness: harness.to_owned(),
@@ -1542,6 +1544,8 @@ pub mod support {
                 app_proxy: None,
                 session_locator_root: Some(locator_guard.path().into()),
                 prompt_boundary_url: None,
+                profiles: Default::default(),
+                profile_id: None,
             };
             let resolved_config = super::super::launch_configuration(&config, harness)?;
             let program_version = program_version(&resolved_config.program);

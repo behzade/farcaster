@@ -123,7 +123,7 @@ impl WorkerProfileEditor {
     pub(in crate::app) fn catalog(&self, harness: Backend, project: &Path) -> ConfigurationCatalog {
         let mut result = ConfigurationCatalog::default();
         for entry in &self.catalogs {
-            if entry.harness == harness && entry.project == project {
+            if entry.profile_id.is_none() && entry.harness == harness && entry.project == project {
                 result.models.extend(entry.catalog.models.clone());
                 result.efforts.extend(entry.catalog.efforts.clone());
                 if result.sandbox_adapter.is_none() {

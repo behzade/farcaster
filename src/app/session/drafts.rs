@@ -93,6 +93,18 @@ impl FarcasterApp {
             .or(self.snapshot.harness)
     }
 
+    pub(in crate::app) fn active_profile_id(&self) -> Option<String> {
+        if let Some(id) = self.sessions.selected_draft.as_deref()
+            && let Some(draft) = self.sessions.drafts.iter().find(|draft| draft.id == id)
+        {
+            return draft.profile_id.clone();
+        }
+        self.snapshot
+            .selected_session
+            .as_deref()
+            .and_then(crate::agents::profile_id_from_locator)
+    }
+
     pub(in crate::app) fn editable_draft_harness(&self) -> Option<Option<Backend>> {
         let id = self.sessions.selected_draft.as_deref()?;
         let target = draft_target(id);
@@ -117,15 +129,42 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.change_draft_harness_choice(harness, None, window, cx);
+    }
+
+    pub(in crate::app) fn change_draft_harness_profile(
+        &mut self,
+        harness: Backend,
+        profile_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let profile = self.settings.harness_profiles.get(&profile_id);
+        if !profile.is_ok_and(|profile| profile.backend == harness) {
+            self.sessions.error = Some("Harness profile is unavailable".into());
+            self.notify_session_rail(cx);
+            return;
+        }
+        self.change_draft_harness_choice(harness, Some(profile_id), window, cx);
+    }
+
+    fn change_draft_harness_choice(
+        &mut self,
+        harness: Backend,
+        profile_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = self.sessions.selected_draft.clone() else {
             return;
         };
         if self.editable_draft_harness().is_none() {
             return;
         }
-        if let Err(error) =
-            crate::app::persistence::open().and_then(|store| store.save_preferred_harness(harness))
-        {
+        if let Err(error) = crate::app::persistence::open().and_then(|store| {
+            store.save_preferred_harness(harness)?;
+            store.save_preferred_profile_id(profile_id.as_deref())
+        }) {
             self.sessions.error = Some(error);
             self.notify_session_rail(cx);
             cx.notify();
@@ -149,7 +188,12 @@ impl FarcasterApp {
             .find(|draft| draft.id == id)
             .expect("selected draft was materialized");
         self.sessions.preferred_harness = Some(harness);
-        if !draft.change_harness(Some(harness)) {
+        self.sessions.preferred_profile_id = profile_id.clone();
+        let changed = match profile_id {
+            Some(profile_id) => draft.change_profile(harness, profile_id),
+            None => draft.change_harness(Some(harness)),
+        };
+        if !changed {
             return;
         }
         let project = draft.project.clone();

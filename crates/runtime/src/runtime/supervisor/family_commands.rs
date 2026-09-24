@@ -284,7 +284,8 @@ impl Supervisor {
                     self.selected = self.catalog_key.clone();
                     self.generation = self.generation.saturating_add(1);
                 }
-                let leftovers = agents::delete_session_family(&targets)?;
+                let leftovers =
+                    agents::delete_session_family_with_config(&self.process_command, &targets)?;
                 let state_warning = state
                     .with(|store| sessions::delete_state(store, &paths))
                     .err();
@@ -404,7 +405,11 @@ impl Supervisor {
                     self.selected = self.catalog_key.clone();
                     self.generation = self.generation.saturating_add(1);
                 }
-                let moved = agents::move_session_family(&owned_family, target_project)?;
+                let moved = agents::move_session_family_with_config(
+                    &self.process_command,
+                    &owned_family,
+                    target_project,
+                )?;
                 let path_updates = moved
                     .paths
                     .iter()

@@ -318,8 +318,11 @@ impl RuntimeOwner {
             | RuntimeCommand::StopAndMoveSession { .. }
             | RuntimeCommand::DeleteSessionFamily { .. } => {}
             RuntimeCommand::NewSession {
-                harness, project, ..
-            } => self.stage_draft(harness, project),
+                id,
+                harness,
+                project,
+                ..
+            } => self.stage_draft(&id, harness, project),
             RuntimeCommand::ForkSession {
                 path,
                 harness,
@@ -332,8 +335,11 @@ impl RuntimeOwner {
                 self.start_fork_process(path);
             }
             RuntimeCommand::ResumeDraft {
-                harness, project, ..
-            } => self.stage_draft(harness, project),
+                id,
+                harness,
+                project,
+                ..
+            } => self.stage_draft(&id, harness, project),
             RuntimeCommand::SelectSession {
                 path,
                 harness,
@@ -410,8 +416,9 @@ impl RuntimeOwner {
             RuntimeCommand::ScheduleSessionRefresh => self.schedule_session_refresh(),
             RuntimeCommand::PreviewImport {
                 harness,
+                profile_id,
                 generation,
-            } => self.preview_import(harness, generation),
+            } => self.preview_import(harness, profile_id, generation),
             RuntimeCommand::CommitImport { sessions } => self.commit_import(sessions),
             // Configuration loading belongs to the supervisor, not a chat actor.
             RuntimeCommand::LoadConfiguration { .. }

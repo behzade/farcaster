@@ -134,6 +134,9 @@ impl RuntimeOwner {
         fork: Option<PathBuf>,
         preserve_transcript: bool,
     ) {
+        if let Some(path) = session.as_ref().or(fork.as_ref()) {
+            self.process_command.profile_id = agents::profile_id_from_locator(path);
+        }
         let preserve_transcript = preserve_transcript
             || self.deferred_prompt.is_some()
             || !self.queued_prompts.is_empty()
@@ -651,6 +654,10 @@ impl RuntimeOwner {
         snapshot.live_status = session_badge_status(&active_snapshot.conversation).into();
         snapshot.transcript_changed_from = self.transcript_changed_from.take();
         self.review_projection.apply(&mut snapshot);
+        snapshot.profile_id = snapshot.selected_session.as_deref().map_or_else(
+            || self.process_command.profile_id.clone(),
+            agents::profile_id_from_locator,
+        );
         let _ = self.event_tx.send(RuntimeEvent::Snapshot {
             generation: self.process_generation,
             snapshot: Arc::new(snapshot),

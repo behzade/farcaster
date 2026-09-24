@@ -42,7 +42,11 @@ pub(super) fn configure(
 ) -> Result<agents::WorkerExecution, String> {
     let choices = catalogs
         .iter()
-        .filter(|entry| entry.project == caller.project && backends.contains(&entry.harness))
+        .filter(|entry| {
+            entry.profile_id.is_none()
+                && entry.project == caller.project
+                && backends.contains(&entry.harness)
+        })
         .flat_map(|entry| {
             entry.catalog.models.iter().filter_map(move |model| {
                 let execution = agents::WorkerExecution {

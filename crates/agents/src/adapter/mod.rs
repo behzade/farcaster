@@ -26,9 +26,14 @@ mod queued_session;
 mod session_storage;
 mod shell_environment;
 use backend::for_backend;
+pub fn profile_data_environment_key(backend: Backend) -> Option<&'static str> {
+    for_backend(backend).profile_data_environment_key()
+}
 pub use session_storage::{
-    delete_session_family, discover_sessions_for, load_session_history, move_session_family,
-    supports_session_move, validate_session_move,
+    delete_session_family, delete_session_family_with_config, discover_sessions_for,
+    discover_sessions_for_profile, load_session_history, load_session_history_for_profile,
+    move_session_family, move_session_family_with_config, supports_session_move,
+    validate_session_move,
 };
 mod trust;
 pub use trust::{
@@ -130,6 +135,7 @@ fn launch_configuration(
     config: &crate::AgentLaunchConfig,
     harness: Backend,
 ) -> Result<crate::AgentLaunchConfig, String> {
+    config.validate_profile_backend(harness)?;
     Ok(for_backend(harness).launch_configuration(config))
 }
 
@@ -158,6 +164,7 @@ fn configuration_launch(
     config: &crate::AgentLaunchConfig,
     harness: Backend,
 ) -> Result<crate::AgentLaunchConfig, String> {
+    config.validate_profile_backend(harness)?;
     let mut command = for_backend(harness).launch_configuration(config);
     command.access_mode = configuration_access_mode(harness, config.access_mode)?;
     Ok(command)
@@ -225,6 +232,7 @@ fn spawn_native_session(
     config: &crate::AgentLaunchConfig,
     launch: crate::SessionLaunch,
 ) -> Result<Box<dyn crate::SessionTransport>, String> {
+    config.validate_profile_backend(launch.harness)?;
     let adapter = for_backend(launch.harness);
     adapter.validate_launch_locator(&launch)?;
     adapter.spawn(config, launch)
@@ -243,7 +251,10 @@ pub fn rename_session(
         id: session_id.into(),
         path: session.into(),
     })?;
-    for_backend(harness).rename_session(config, project, session, session_id, name)
+    let mut config = config.clone();
+    config.profile_id = crate::profile_id_from_locator(session);
+    config.validate_profile_backend(harness)?;
+    for_backend(harness).rename_session(&config, project, session, session_id, name)
 }
 
 pub fn external_session_identity(path: &std::path::Path) -> Option<(Backend, String)> {

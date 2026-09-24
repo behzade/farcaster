@@ -39,30 +39,62 @@ impl FarcasterApp {
         let identity = self.snapshot.session_identity();
         let current_model = identity.model;
         match scope {
-            PickerScope::Harnesses => crate::agents::backend_statuses()
-                .into_iter()
-                .map(|backend| {
-                    let detail = if !backend.available {
-                        Some(format!(
-                            "Not installed (expected: {})",
-                            backend.program.display()
-                        ))
-                    } else {
-                        (Some(backend.id) == self.active_harness()).then(|| "Current".into())
-                    };
-                    picker_row(
-                        commands,
-                        &format!("harness:{}", backend.id),
-                        PickerCommand::SetHarness(backend.id),
-                        AppIcon::for_harness(backend.id),
-                        &backend.name,
-                        detail,
-                        None,
-                        backend.id.as_str(),
-                    )
-                    .disabled(!backend.available)
-                })
-                .collect(),
+            PickerScope::Harnesses => {
+                let mut rows = crate::agents::backend_statuses()
+                    .into_iter()
+                    .map(|backend| {
+                        let detail = if !backend.available {
+                            Some(format!(
+                                "Not installed (expected: {})",
+                                backend.program.display()
+                            ))
+                        } else {
+                            (Some(backend.id) == self.active_harness()
+                                && self.active_profile_id().is_none())
+                            .then(|| "Current".into())
+                        };
+                        picker_row(
+                            commands,
+                            &format!("harness:{}", backend.id),
+                            PickerCommand::SetHarness(backend.id),
+                            AppIcon::for_harness(backend.id),
+                            &backend.name,
+                            detail,
+                            None,
+                            backend.id.as_str(),
+                        )
+                        .disabled(!backend.available)
+                    })
+                    .collect::<Vec<_>>();
+                for profile in self.settings.harness_profiles.list().unwrap_or_default() {
+                    let current = self.active_profile_id().as_deref() == Some(profile.id.as_str());
+                    let available = profile.is_selectable();
+                    rows.push(
+                        picker_row(
+                            commands,
+                            &format!("profile:{}", profile.id),
+                            PickerCommand::SetHarnessProfile(profile.backend, profile.id.clone()),
+                            AppIcon::for_harness(profile.backend),
+                            &profile.name,
+                            Some(if current {
+                                "Current".into()
+                            } else if available {
+                                format!(
+                                    "{} · {}",
+                                    crate::agents::backend_display_name(profile.backend),
+                                    profile.executable.display()
+                                )
+                            } else {
+                                format!("Not installed: {}", profile.executable.display())
+                            }),
+                            None,
+                            profile.backend.as_str(),
+                        )
+                        .disabled(!available),
+                    );
+                }
+                rows
+            }
             PickerScope::Sandbox => self
                 .snapshot
                 .available_access_modes()

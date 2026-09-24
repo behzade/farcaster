@@ -43,6 +43,7 @@ mod migrate_v17;
 mod migrate_v18;
 mod migrate_v19;
 mod migrate_v20;
+mod migrate_v21;
 #[cfg(test)]
 mod persistence_tests;
 #[path = "projects.rs"]
@@ -61,7 +62,7 @@ pub use editor_setting::EditorChoice;
 use draft_storage::{remove_draft_row, save_draft};
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 
-const SCHEMA_VERSION: i64 = 20;
+const SCHEMA_VERSION: i64 = 21;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);
 const LEGACY_PI_GPUI_IMPORT_KEY: &str = "legacy_pi_gpui_state_imported";
 const REPOSITORY_BACKENDS: [&str; 3] = ["auto", "git", "jj"];
@@ -132,6 +133,8 @@ pub enum WindowState {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CachedConfigurationCatalog {
     pub harness: Backend,
+    #[serde(default)]
+    pub profile_id: Option<String>,
     pub project: PathBuf,
     pub catalog: crate::agents::ConfigurationCatalog,
 }
@@ -139,6 +142,8 @@ pub struct CachedConfigurationCatalog {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CachedSessionControlDefaults {
     pub harness: Backend,
+    #[serde(default)]
+    pub profile_id: Option<String>,
     pub model: Option<crate::protocol::Model>,
     pub effort: Option<String>,
     pub access_mode: Option<crate::agents::HarnessAccessMode>,

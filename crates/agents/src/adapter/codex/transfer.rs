@@ -29,6 +29,30 @@ pub fn move_family(
     move_via_server(Command::new(program), family, directory)
 }
 
+pub(super) fn move_family_with_config(
+    config: &crate::AgentLaunchConfig,
+    family: &[SessionSummary],
+    destination: &Path,
+) -> Result<SessionTransfer, String> {
+    if config.profile_id.is_none() {
+        return move_family(family, destination);
+    }
+    let destination = destination
+        .canonicalize()
+        .map_err(|error| format!("Codex move destination: {error}"))?;
+    if !destination.is_dir() {
+        return Err("Codex move destination must be a directory".into());
+    }
+    let directory = destination
+        .to_str()
+        .ok_or("Codex move destination must be UTF-8")?;
+    config
+        .selected_profile()?
+        .ok_or("Codex profile is unavailable")?;
+    let command = config.command(&destination)?;
+    move_via_server(command, family, directory)
+}
+
 fn move_via_server(
     command: Command,
     family: &[SessionSummary],

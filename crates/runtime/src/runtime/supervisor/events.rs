@@ -4,14 +4,19 @@ use std::path::Path;
 
 impl Supervisor {
     pub(super) fn drain_configuration_updates(&mut self) {
-        while let Ok((harness, project, result)) = self.configuration_rx.try_recv() {
+        while let Ok((harness, profile_id, project, result)) = self.configuration_rx.try_recv() {
             match result {
                 Ok(catalog) => {
-                    self.configurations
-                        .set_catalog(harness, project.clone(), catalog.clone());
+                    self.configurations.set_catalog_for_profile(
+                        harness,
+                        profile_id.clone(),
+                        project.clone(),
+                        catalog.clone(),
+                    );
                     if cache_configuration_catalog(
                         &mut self.configuration_catalogs,
                         harness,
+                        profile_id.clone(),
                         project.clone(),
                         catalog,
                     ) && let Some(state) = self.catalog_state.as_ref()
@@ -22,22 +27,39 @@ impl Supervisor {
                     }
                 }
                 Err(error) => {
-                    self.configuration_requests
-                        .remove(&(harness, project.clone()));
+                    self.configuration_requests.remove(&(
+                        harness,
+                        profile_id.clone(),
+                        project.clone(),
+                    ));
                     zlog::warn!("Failed to refresh {harness} catalog: {error}");
-                    self.configurations
-                        .set_catalog_error(harness, project.clone(), error);
+                    self.configurations.set_catalog_error(
+                        harness,
+                        profile_id.clone(),
+                        project.clone(),
+                        error,
+                    );
                 }
             }
-            self.publish_configuration_snapshots(harness, &project);
+            self.publish_configuration_snapshots(harness, profile_id.as_deref(), &project);
         }
     }
 
-    pub(super) fn publish_configuration_snapshots(&mut self, harness: Backend, project: &Path) {
+    pub(super) fn publish_configuration_snapshots(
+        &mut self,
+        harness: Backend,
+        profile_id: Option<&str>,
+        project: &Path,
+    ) {
         for (key, snapshot) in &mut self.latest {
-            if snapshot.harness == Some(harness) && snapshot.project == project {
+            if snapshot.harness == Some(harness)
+                && snapshot.profile_id.as_deref() == profile_id
+                && snapshot.project == project
+            {
                 if let Some(actor) = self.actors.get(key)
-                    && let Some(command) = self.configurations.catalog_command(harness, project)
+                    && let Some(command) = self
+                        .configurations
+                        .catalog_command_for_profile(harness, profile_id, project)
                 {
                     actor.send(command);
                 }
@@ -137,6 +159,7 @@ impl Supervisor {
                     && cache_configuration_catalog(
                         &mut self.configuration_catalogs,
                         harness,
+                        snapshot.profile_id.clone(),
                         snapshot.project.clone(),
                         crate::agents::ConfigurationCatalog {
                             models: snapshot.models.clone(),

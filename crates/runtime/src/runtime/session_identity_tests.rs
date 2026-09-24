@@ -16,6 +16,53 @@ fn model(id: &str, reasoning: bool, efforts: Option<&[&str]>) -> Model {
 }
 
 #[test]
+fn profile_defaults_and_catalogs_do_not_cross_between_same_backend() {
+    let project = std::path::PathBuf::from("/project");
+    let mut store = HarnessConfigurationStore::default();
+    let base = model("base", false, None);
+    let alternate = model("alternate", false, None);
+    store.set_model(Backend::Codex, base.clone());
+    store.set_model_for(Backend::Codex, Some("codex2"), alternate.clone());
+    store.set_catalog(
+        Backend::Codex,
+        project.clone(),
+        crate::agents::ConfigurationCatalog {
+            models: vec![base.clone()],
+            ..Default::default()
+        },
+    );
+    store.set_catalog_for_profile(
+        Backend::Codex,
+        Some("codex2".into()),
+        project.clone(),
+        crate::agents::ConfigurationCatalog {
+            models: vec![alternate.clone()],
+            ..Default::default()
+        },
+    );
+    assert_eq!(store.model_for(Backend::Codex, None), Some(&base));
+    assert_eq!(
+        store.model_for(Backend::Codex, Some("codex2")),
+        Some(&alternate)
+    );
+    let mut snapshot = RuntimeSnapshot {
+        harness: Some(Backend::Codex),
+        profile_id: Some("codex2".into()),
+        project,
+        ..Default::default()
+    };
+    store.refresh_snapshot_catalog(&mut snapshot);
+    assert_eq!(snapshot.models, vec![alternate]);
+    let mut restored = HarnessConfigurationStore::default();
+    restored.restore(store.cached());
+    assert_eq!(restored.model_for(Backend::Codex, None), Some(&base));
+    assert_eq!(
+        restored.model_for(Backend::Codex, Some("codex2")),
+        snapshot.models.first()
+    );
+}
+
+#[test]
 fn available_thinking_levels_follow_the_selected_model() {
     let selected = model("selected", true, Some(&["low", "medium"]));
     let snapshot = RuntimeSnapshot {

@@ -38,7 +38,13 @@ impl Supervisor {
                 )
             });
             if target_command_needs_actor_message(&select, resident.map(Arc::as_ref)) {
-                send_configured_command(actor, select, &self.configurations, access_mode);
+                send_configured_command(
+                    actor,
+                    select,
+                    &self.configurations,
+                    access_mode,
+                    agents::profile_id_from_locator(&session.path).as_deref(),
+                );
             }
             self.actor_paths.insert(session.path.clone(), key.clone());
             key
@@ -124,17 +130,19 @@ impl Supervisor {
         let Some(sender) = &self.configuration_tx else {
             return;
         };
+        let process_command = self.configuration_process_command(harness, &project, target);
+        let profile_id = process_command.profile_id.clone();
         if !self
             .configuration_requests
-            .insert((harness, project.clone()))
+            .insert((harness, profile_id.clone(), project.clone()))
         {
             return;
         }
         self.configurations
-            .set_catalog_loading(harness, project.clone());
+            .set_catalog_loading(harness, profile_id.clone(), project.clone());
         let request_harness = harness;
         let request_project = project.clone();
-        let process_command = self.configuration_process_command(harness, &project, target);
+        let request_profile_id = profile_id.clone();
         let supervisor = self.supervisor_thread.clone();
         let updates = sender.clone();
         if let Err(error) = thread::Builder::new()
@@ -145,17 +153,19 @@ impl Supervisor {
                     request_harness,
                     &request_project,
                 );
-                let _ = updates.send((request_harness, request_project, result));
+                let _ =
+                    updates.send((request_harness, request_profile_id, request_project, result));
                 supervisor.unpark();
             })
         {
             let _ = sender.send((
                 harness,
+                profile_id.clone(),
                 project.clone(),
                 Err(format!("start catalog request: {error}")),
             ));
         }
-        self.publish_configuration_snapshots(harness, &project);
+        self.publish_configuration_snapshots(harness, profile_id.as_deref(), &project);
     }
 
     pub(super) fn configuration_process_command(
@@ -165,6 +175,18 @@ impl Supervisor {
         target: &str,
     ) -> AgentLaunchConfig {
         let mut command = self.process_command.clone();
+        command.profile_id = crate::sessions::draft_id(target)
+            .and_then(|id| {
+                self.catalog_state.as_ref().and_then(|state| {
+                    state
+                        .with(|store| store.draft_profile_id(id))
+                        .ok()
+                        .flatten()
+                })
+            })
+            .or_else(|| {
+                crate::sessions::session_path(target).and_then(agents::profile_id_from_locator)
+            });
         if let Some((requested_harness, requested_project, requested_mode)) =
             self.requested_access_modes.get(target)
             && *requested_harness == harness
@@ -339,6 +361,10 @@ impl Supervisor {
                     self.selected_project = project.clone();
                     self.selected_session = next_selected_session;
                     let resident_snapshot = self.latest.get(&key).cloned();
+                    let profile_id = harness.and_then(|harness| {
+                        self.configuration_process_command(harness, &project, &key)
+                            .profile_id
+                    });
                     let access_mode = match &command {
                         RuntimeCommand::ForkSession { path, .. }
                         | RuntimeCommand::SelectSession { path, .. }
@@ -363,9 +389,16 @@ impl Supervisor {
                         )
                     });
                     if target_command_needs_actor_message(&command, resident_snapshot.as_deref()) {
-                        send_configured_command(actor, command, &self.configurations, access_mode);
+                        send_configured_command(
+                            actor,
+                            command,
+                            &self.configurations,
+                            access_mode,
+                            profile_id.as_deref(),
+                        );
                     }
                     if let Some(mut snapshot) = resident_snapshot {
+                        Arc::make_mut(&mut snapshot).profile_id = profile_id;
                         self.configurations
                             .refresh_snapshot_catalog(Arc::make_mut(&mut snapshot));
                         if let Some(mode) = access_mode {

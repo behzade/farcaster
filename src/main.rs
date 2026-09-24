@@ -118,9 +118,12 @@ fn load_agent_launch_config(
     state_store: &app::persistence::StateStore,
 ) -> Result<agents::AgentLaunchConfig, String> {
     let app_proxy = crate::access::load_proxy(state_store)?;
+    let profiles = std::sync::Arc::new(agents::HarnessProfiles::default());
+    profiles.replace(state_store.load_harness_profiles()?)?;
     Ok(agents::AgentLaunchConfig {
         app_proxy,
         session_locator_root: Some(data_root.join("session-locators")),
+        profiles,
         ..agents::AgentLaunchConfig::default()
     })
 }

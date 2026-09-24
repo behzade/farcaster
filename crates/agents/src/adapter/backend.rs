@@ -21,6 +21,9 @@ pub(super) trait BackendAdapter: Sync {
     fn descriptor(&self) -> AgentBackendDescriptor;
     fn launch_configuration(&self, config: &AgentLaunchConfig) -> AgentLaunchConfig;
     fn worker_factory(&self, config: AgentLaunchConfig) -> Arc<dyn WorkerSessionFactory>;
+    fn profile_data_environment_key(&self) -> Option<&'static str> {
+        None
+    }
     fn configuration_catalog(
         &self,
         config: &AgentLaunchConfig,
@@ -130,6 +133,14 @@ pub(super) trait BackendAdapter: Sync {
                 .collect()
         })
     }
+    fn discover_sessions_for_profile(
+        &self,
+        _config: &AgentLaunchConfig,
+        root: Option<&Path>,
+        query: &str,
+    ) -> Result<Vec<SessionSummary>, String> {
+        self.discover_sessions(root, query)
+    }
     fn external_history(&self, _path: &Path, _project: &Path) -> Result<DiscoveredHistory, String> {
         Err(format!(
             "unsupported session harness: {}",
@@ -146,6 +157,14 @@ pub(super) trait BackendAdapter: Sync {
             prompt_deliveries: history.prompt_deliveries,
         })
     }
+    fn load_history_for_profile(
+        &self,
+        _config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+    ) -> Result<LoadedHistory, String> {
+        self.load_history(path, project)
+    }
     fn move_family(
         &self,
         _family: &[SessionSummary],
@@ -156,11 +175,27 @@ pub(super) trait BackendAdapter: Sync {
             self.descriptor().id
         ))
     }
+    fn move_family_with_config(
+        &self,
+        _config: &AgentLaunchConfig,
+        family: &[SessionSummary],
+        project: &Path,
+    ) -> Result<SessionTransfer, String> {
+        self.move_family(family, project)
+    }
     fn delete_session(&self, _id: &str, _path: &Path) -> Result<Option<PathBuf>, String> {
         Err(format!(
             "Session deletion is not supported for {}",
             self.descriptor().id
         ))
+    }
+    fn delete_session_with_config(
+        &self,
+        _config: &AgentLaunchConfig,
+        id: &str,
+        path: &Path,
+    ) -> Result<Option<PathBuf>, String> {
+        self.delete_session(id, path)
     }
     fn validate_locator(&self, path: &Path) -> Result<Option<String>, String> {
         let backend = self.descriptor().id;
@@ -207,8 +242,8 @@ pub(super) fn worker_transport(
     metadata: main_session::MainSessionMetadata,
     history: Option<DiscoveredHistory>,
 ) -> Result<Box<dyn SessionTransport>, String> {
-    let root = config
-        .session_locator_root
+    let locator_root = config.locator_root();
+    let root = locator_root
         .as_deref()
         .ok_or_else(|| "agent session locator root is not configured".to_owned())?;
     main_session::WorkerSessionTransport::new(

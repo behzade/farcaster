@@ -1,3 +1,4 @@
+mod harness_profiles;
 mod worker_tasks;
 use gpui::{
     AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -64,6 +65,7 @@ pub(in crate::app::views) fn render(
                         .gap(gpui::px(24.0))
                         .p(gpui::px(24.0))
                         .child(worker_tasks::render(app, entity.clone()))
+                        .child(harness_profiles::render(app, entity.clone()))
                         .child(editor_setting(
                             app.settings.editor_choice,
                             &app.workspace_project(),

@@ -144,8 +144,11 @@ impl FarcasterApp {
             );
             return;
         }
-        let draft =
-            super::super::session::draft_store::new(settings.project.clone(), settings.harness);
+        let draft = super::super::session::draft_store::new(
+            settings.project.clone(),
+            settings.harness,
+            None,
+        );
         let draft = match draft {
             Ok(draft) => draft,
             Err(error) => {

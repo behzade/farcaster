@@ -69,7 +69,7 @@ fn upgrades_v19_outbox_states_without_losing_rows() -> Result<(), Box<dyn std::e
             [],
             |row| row.get::<_, i64>(0),
         )?,
-        20
+        crate::SCHEMA_VERSION
     );
     let id = store.enqueue_prompt(
         "session:/session",

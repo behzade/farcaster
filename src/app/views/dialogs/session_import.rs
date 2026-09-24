@@ -30,7 +30,14 @@ pub(in crate::app::views) fn render(
     let dialog = app.sessions.import.as_ref().expect("visible import");
     let dismiss = entity.clone();
     let harness = dialog.harness;
-    let harness_name = agents::backend_display_name(harness);
+    let harness_name = dialog
+        .profile_id
+        .as_deref()
+        .and_then(|id| app.settings.harness_profiles.get(id).ok())
+        .map_or_else(
+            || agents::backend_display_name(harness).to_string(),
+            |profile| profile.name,
+        );
     let loading = dialog.loading;
     let error = dialog.error.clone();
     let candidates = dialog.candidates.clone();
@@ -66,7 +73,7 @@ pub(in crate::app::views) fn render(
                                 "Choose one harness, review what is on disk, then import the sessions you want. Farcaster does not watch session files.",
                             ),
                     )
-                    .child(harness_picker(entity.clone(), harness))
+                    .child(harness_picker(entity.clone(), harness, dialog.profile_id.as_deref(), app.settings.harness_profiles.list().unwrap_or_default()))
                     .when_some(error, |this, message| {
                         this.child(feedback("import-error", message, FeedbackTone::Error))
                     })
@@ -122,13 +129,15 @@ pub(in crate::app::views) fn render(
 fn harness_picker(
     entity: WeakEntity<FarcasterApp>,
     selected: Option<crate::agents::Backend>,
+    selected_profile: Option<&str>,
+    profiles: Vec<agents::HarnessProfile>,
 ) -> gpui::Div {
     div()
         .flex()
         .flex_wrap()
         .gap(THEME.space.xs)
         .children(import_harnesses().into_iter().map(|harness| {
-            let active = Some(harness) == selected;
+            let active = Some(harness) == selected && selected_profile.is_none();
             let entity = entity.clone();
             let id = format!("import-harness-{harness}");
             let label = agents::backend_display_name(harness);
@@ -144,6 +153,26 @@ fn harness_picker(
                 move |_, cx| {
                     let _ = entity.update(cx, |this, cx| {
                         this.select_session_import_harness(harness, cx);
+                    });
+                },
+            )
+        }))
+        .children(profiles.into_iter().map(|profile| {
+            let active = selected_profile == Some(profile.id.as_str());
+            let entity = entity.clone();
+            let id = format!("import-profile-{}", profile.id);
+            button(
+                id,
+                profile.name,
+                if active {
+                    ButtonTone::Accent
+                } else {
+                    ButtonTone::Neutral
+                },
+                true,
+                move |_, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        this.select_session_import_profile(profile.backend, profile.id.clone(), cx);
                     });
                 },
             )

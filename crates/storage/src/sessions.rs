@@ -110,6 +110,7 @@ impl StateStore {
         update: &crate::agents::SessionMetadata,
     ) -> Result<SessionSummary, String> {
         let path = crate::sessions::normalize_session_path(&update.path);
+        let profile_id = crate::agents::profile_id_from_locator(&path);
         let tx = self
             .connection
             .transaction()
@@ -125,6 +126,7 @@ impl StateStore {
             .prepare(
                 "SELECT id FROM sessions
                   WHERE harness=?1 AND project_id=?2
+                    AND profile_id IS ?5
                     AND (backend_id=?3 OR locator=?4)
                   ORDER BY backend_id=?3 DESC, locator=?4 DESC, id",
             )
@@ -135,7 +137,8 @@ impl StateStore {
                     update.harness.as_str(),
                     project,
                     update.id,
-                    path.to_string_lossy()
+                    path.to_string_lossy(),
+                    profile_id,
                 ],
                 |row| row.get(0),
             )
@@ -162,34 +165,35 @@ impl StateStore {
             id
         } else {
             tx.execute(
-                "INSERT INTO sessions(project_id,harness,locator,backend_id,modified_ms,created_ms)
-                 VALUES(?1,?2,?3,?4,?5,?5)",
+                "INSERT INTO sessions(project_id,harness,locator,backend_id,profile_id,modified_ms,created_ms)
+                 VALUES(?1,?2,?3,?4,?6,?5,?5)",
                 params![
                     project,
                     update.harness.as_str(),
                     path.to_string_lossy(),
                     update.id,
-                    now
+                    now,
+                    profile_id,
                 ],
             )
             .map_err(|error| error.to_string())?;
             tx.last_insert_rowid()
         };
         tx.execute(
-            "UPDATE sessions SET project_id=?2, locator=?3, backend_id=?4,
+            "UPDATE sessions SET project_id=?2, locator=?3, backend_id=?4, profile_id=?12,
                search_text=CASE WHEN ?5 IS NOT NULL AND ?5 != title
                    THEN search_text || ' ' || LOWER(?5) ELSE search_text END,
                title=COALESCE(?5,NULLIF(title,''),?6,''),
                first_user_message=CASE WHEN first_user_message='' THEN COALESCE(?6,'') ELSE first_user_message END,
                parent_backend_id=COALESCE(?7,parent_backend_id),
                parent_id=COALESCE(parent_id,(SELECT id FROM sessions
-                 WHERE harness=?8 AND project_id=?2 AND backend_id=?7 LIMIT 1)),
+                 WHERE harness=?8 AND project_id=?2 AND profile_id IS ?12 AND backend_id=?7 LIMIT 1)),
                 message_count=COALESCE(?9,message_count), modified_ms=?10,
                 access_mode=COALESCE(?11,access_mode)
               WHERE id=?1",
             params![id, project, path.to_string_lossy(), update.id, update.title,
                 update.first_user_message, update.parent_session, update.harness.as_str(),
-                update.message_count.map(|n| n as i64), now, access_mode],
+                update.message_count.map(|n| n as i64), now, access_mode, profile_id],
         ).map_err(|error| format!("update live session metadata: {error}"))?;
         tx.execute(
             "UPDATE sessions SET search_text=LOWER(title || ' ' || first_user_message)
@@ -265,6 +269,7 @@ impl StateStore {
                 "UPDATE sessions AS child SET parent_id=COALESCE(child.parent_id,
                (SELECT parent.id FROM sessions parent
                  WHERE parent.harness=child.harness AND parent.project_id=child.project_id
+                   AND parent.profile_id IS child.profile_id
                    AND (parent.backend_id=child.parent_backend_id
                         OR parent.locator=child.parent_backend_id)
                    AND parent.id != child.id LIMIT 1))
@@ -494,6 +499,7 @@ fn upsert_bound_session(
     legacy_locators: &LegacyLocatorIndex,
 ) -> Result<(), String> {
     let locator = crate::sessions::normalize_session_path(&session.path);
+    let profile_id = crate::agents::profile_id_from_locator(&locator);
     let locator_text = locator.to_string_lossy();
     let project_id = ensure_project(
         transaction,
@@ -507,13 +513,15 @@ fn upsert_bound_session(
     let existing = transaction
         .query_row(
             "SELECT id FROM sessions WHERE harness=?1 AND
+               profile_id IS ?5 AND
                (locator=?2 OR (backend_id=?3 AND project_id=?4))
              ORDER BY locator=?2 DESC LIMIT 1",
             params![
                 session.harness.as_str(),
                 locator_text.as_ref(),
                 session.id,
-                project_id
+                project_id,
+                profile_id,
             ],
             |row| row.get::<_, i64>(0),
         )
@@ -534,9 +542,11 @@ fn upsert_bound_session(
             .then_some(session.app_session_id)
             .and_then(|id| {
                 transaction
-                    .query_row("SELECT id FROM sessions WHERE id=?1", [id], |row| {
-                        row.get::<_, i64>(0)
-                    })
+                    .query_row(
+                        "SELECT id FROM sessions WHERE id=?1 AND profile_id IS ?2",
+                        params![id, profile_id],
+                        |row| row.get::<_, i64>(0),
+                    )
                     .optional()
                     .ok()
                     .flatten()
@@ -546,7 +556,7 @@ fn upsert_bound_session(
         transaction
             .execute(
                 "UPDATE sessions SET
-                   project_id=?2, harness=?3, locator=?4, backend_id=?5, title=?6,
+                   project_id=?2, harness=?3, locator=?4, backend_id=?5, profile_id=?19, title=?6,
                    first_user_message=?7, search_text=?8, timestamp=?9, modified_ms=?10,
                    archived_at=COALESCE(archived_at, ?11), message_count=?12,
                    input_tokens=?13, output_tokens=?14, cache_read_tokens=?15,
@@ -571,6 +581,7 @@ fn upsert_bound_session(
                     session.usage.cache_write,
                     session.usage.total,
                     session.usage.cost_micros,
+                    profile_id,
                 ],
             )
             .map_err(|error| format!("update session {}: {error}", session.path.display()))?;
@@ -582,8 +593,8 @@ fn upsert_bound_session(
                    project_id, harness, locator, backend_id, title, first_user_message,
                    search_text, timestamp, modified_ms, archived_at, record_coverage,
                    message_count, input_tokens, output_tokens, cache_read_tokens,
-                   cache_write_tokens, total_tokens, cost_micros, created_ms
-                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'unloaded', ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?9)",
+                   cache_write_tokens, total_tokens, cost_micros, created_ms, profile_id
+                 ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'unloaded', ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?9, ?18)",
                 params![
                     project_id,
                     session.harness.as_str(),
@@ -602,6 +613,7 @@ fn upsert_bound_session(
                     session.usage.cache_write,
                     session.usage.total,
                     session.usage.cost_micros,
+                    profile_id,
                 ],
             )
             .map_err(|error| format!("insert session {}: {error}", session.path.display()))?;

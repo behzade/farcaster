@@ -6,6 +6,7 @@ pub(super) fn bind_locator(
     draft_id: &str,
     locator: &Path,
 ) -> Result<(), String> {
+    let profile_id = crate::agents::profile_id_from_locator(locator);
     let locator = locator.to_string_lossy();
     let draft_row: Option<(i64, String)> = transaction
         .query_row(
@@ -31,8 +32,8 @@ pub(super) fn bind_locator(
     }
     transaction
         .execute(
-            "UPDATE sessions SET locator=?2 WHERE id=?1",
-            params![draft_session_id, locator.as_ref()],
+            "UPDATE sessions SET locator=?2, profile_id=?3 WHERE id=?1",
+            params![draft_session_id, locator.as_ref(), profile_id],
         )
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -175,10 +176,12 @@ pub(super) fn ensure_locator_session(
         locator_root.join(harness.as_str()).join(encoded)
     };
     let locator = crate::sessions::normalize_session_path(&locator);
+    let profile_id = crate::agents::profile_id_from_locator(&locator);
     let locator_text = locator.to_string_lossy();
     let mut statement = transaction
         .prepare(
             "SELECT id, locator FROM sessions WHERE harness=?1 AND project_id=?2
+               AND profile_id IS ?5
                AND (locator=?3 OR (?4 IS NOT NULL AND backend_id=?4))
              ORDER BY backend_id=?4 DESC, locator=?3 DESC, id",
         )
@@ -189,7 +192,8 @@ pub(super) fn ensure_locator_session(
                 harness.as_str(),
                 project_id,
                 locator_text.as_ref(),
-                native_id
+                native_id,
+                profile_id,
             ],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
         )
@@ -226,13 +230,14 @@ pub(super) fn ensure_locator_session(
     transaction
         .execute(
             "INSERT INTO sessions(
-               project_id, harness, locator, backend_id, modified_ms, created_ms
-             ) VALUES(?1, ?2, ?3, ?4, ?5, ?5)",
+               project_id, harness, locator, backend_id, profile_id, modified_ms, created_ms
+             ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             params![
                 project_id,
                 harness.as_str(),
                 locator_text.as_ref(),
                 native_id,
+                profile_id,
                 now
             ],
         )

@@ -256,6 +256,23 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
     load_history_in(&projects_root()?, path)
 }
 
+pub(super) fn load_history_with_config(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+) -> Result<DiscoveredHistory, String> {
+    load_history_in(&profile_projects_root(config)?, path)
+}
+
+fn profile_projects_root(config: &crate::AgentLaunchConfig) -> Result<PathBuf, String> {
+    match config
+        .selected_profile()?
+        .and_then(|profile| profile.data_directory)
+    {
+        Some(directory) => Ok(directory.join("projects")),
+        None => projects_root(),
+    }
+}
+
 fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String> {
     let id = external_session_locator(BACKEND, path).ok_or("invalid Claude session locator")?;
     let (parent, agent) = id
@@ -290,6 +307,14 @@ fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String
 
 pub fn discover(locator_root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {
     discover_in(&projects_root()?, locator_root, query)
+}
+
+pub(super) fn discover_with_config(
+    config: &crate::AgentLaunchConfig,
+    locator_root: &Path,
+    query: &str,
+) -> Result<Vec<DiscoveredSession>, String> {
+    discover_in(&profile_projects_root(config)?, locator_root, query)
 }
 
 fn first_prompt(rows: &[Value], sidechain: bool) -> String {

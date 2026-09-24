@@ -152,6 +152,7 @@ pub enum RuntimeCommand {
     ScheduleSessionRefresh,
     PreviewImport {
         harness: Backend,
+        profile_id: Option<String>,
         generation: u64,
     },
     CommitImport {
@@ -252,6 +253,7 @@ pub struct RuntimeSnapshot {
     pub connected: bool,
     pub status: String,
     pub harness: Option<Backend>,
+    pub profile_id: Option<String>,
     pub project: PathBuf,
     pub live_session: Option<PathBuf>,
     pub live_status: String,

@@ -11,6 +11,7 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) draft_session_ids: HashMap<String, i64>,
     pub(in crate::app) selected_draft: Option<String>,
     pub(in crate::app) preferred_harness: Option<Backend>,
+    pub(in crate::app) preferred_profile_id: Option<String>,
     pub(in crate::app) submitted_drafts: HashMap<String, Option<PathBuf>>,
     pub(in crate::app) error: Option<String>,
     pub(in crate::app) project_filter: Option<PathBuf>,

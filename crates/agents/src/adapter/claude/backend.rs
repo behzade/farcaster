@@ -14,6 +14,9 @@ impl BackendAdapter for ClaudeAdapter {
     fn descriptor(&self) -> AgentBackendDescriptor {
         super::descriptor()
     }
+    fn profile_data_environment_key(&self) -> Option<&'static str> {
+        Some("CLAUDE_CONFIG_DIR")
+    }
     fn launch_configuration(&self, config: &AgentLaunchConfig) -> AgentLaunchConfig {
         program(config, super::program())
     }
@@ -38,7 +41,9 @@ impl BackendAdapter for ClaudeAdapter {
         config: &AgentLaunchConfig,
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String> {
-        let history = launch_history(&launch, super::load_history)?;
+        let history = launch_history(&launch, |path| {
+            super::catalog::load_history_with_config(config, path)
+        })?;
         let command = self.launch_configuration(config);
         let (worker, locator, metadata) = super::spawn_main(&command, &launch)?;
         worker_transport(config, &launch, worker, locator, metadata, history)
@@ -46,7 +51,36 @@ impl BackendAdapter for ClaudeAdapter {
     fn discover(&self, root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {
         super::discover(root, query)
     }
+    fn discover_sessions_for_profile(
+        &self,
+        config: &AgentLaunchConfig,
+        root: Option<&Path>,
+        query: &str,
+    ) -> Result<Vec<farcaster_sessions::SessionSummary>, String> {
+        let root = root.ok_or("session locator root is unavailable")?;
+        super::catalog::discover_with_config(config, root, query).map(|sessions| {
+            sessions
+                .into_iter()
+                .map(super::super::session_storage::import_session)
+                .collect()
+        })
+    }
     fn external_history(&self, path: &Path, _project: &Path) -> Result<DiscoveredHistory, String> {
         super::load_history(path)
+    }
+    fn load_history_for_profile(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        _project: &Path,
+    ) -> Result<farcaster_sessions::LoadedHistory, String> {
+        let history = super::catalog::load_history_with_config(config, path)?;
+        Ok(farcaster_sessions::LoadedHistory {
+            messages: history.messages,
+            model: history.model,
+            thinking_level: history.thinking_level,
+            pending_question: None,
+            prompt_deliveries: history.prompt_deliveries,
+        })
     }
 }

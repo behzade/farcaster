@@ -746,6 +746,7 @@ fn worker_model_selection_uses_installed_harnesses_and_project_catalogs() {
     let backends = vec![Backend::Pi];
     let catalog = crate::storage::CachedConfigurationCatalog {
         harness: Backend::Pi,
+        profile_id: None,
         project: project.into(),
         catalog: crate::agents::ConfigurationCatalog {
             models: vec![crate::protocol::Model {
@@ -872,6 +873,7 @@ fn auto_parent_can_route_to_pi_when_its_sandbox_adapter_is_configured() {
     };
     let catalogs = [crate::storage::CachedConfigurationCatalog {
         harness: Backend::Pi,
+        profile_id: None,
         project: project.into(),
         catalog: crate::agents::ConfigurationCatalog {
             models: vec![crate::protocol::Model {

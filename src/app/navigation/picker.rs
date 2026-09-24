@@ -116,6 +116,7 @@ enum PickerCommand {
     OpenScope(PickerScope),
     SetSandbox(crate::runtime::HarnessAccessMode),
     SetHarness(Backend),
+    SetHarnessProfile(Backend, String),
     RetryConfiguration,
     SetRuntime {
         model: crate::protocol::Model,
@@ -499,6 +500,13 @@ impl FarcasterApp {
                 }
                 self.close_picker(window, cx);
                 self.change_draft_harness(harness, window, cx);
+            }
+            PickerCommand::SetHarnessProfile(harness, profile_id) => {
+                if self.editable_draft_harness().is_none() {
+                    return;
+                }
+                self.close_picker(window, cx);
+                self.change_draft_harness_profile(harness, profile_id, window, cx);
             }
             PickerCommand::SetSandbox(mode) => {
                 self.close_picker(window, cx);

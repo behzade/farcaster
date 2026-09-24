@@ -20,6 +20,7 @@ impl FarcasterApp {
         let _startup_timing =
             crate::app::infrastructure::performance::StartupTiming::always("app.start");
         let persisted = persisted::load(&project, agent_launch.app_proxy.clone());
+        let harness_profiles = agent_launch.profiles.clone();
 
         let runtime_timing =
             crate::app::infrastructure::performance::StartupTiming::new("app.spawn_runtime");
@@ -45,6 +46,7 @@ impl FarcasterApp {
             notice_board,
             persisted,
             runtime,
+            harness_profiles,
             window,
             cx,
         )
@@ -76,6 +78,7 @@ impl FarcasterApp {
             session_folders: Default::default(),
             selected_draft: draft_id.clone(),
             preferred_harness: Some(crate::agents::Backend::Pi),
+            preferred_profile_id: None,
             draft_session_ids: HashMap::new(),
             composer_sessions: ComposerSessions::for_test(draft_target(&draft_id)),
             submitted_drafts: HashMap::new(),
@@ -91,6 +94,7 @@ impl FarcasterApp {
             mcp_server::NoticeBoard::default(),
             persisted,
             runtime,
+            std::sync::Arc::new(crate::agents::HarnessProfiles::default()),
             window,
             cx,
         )
@@ -105,6 +109,7 @@ impl FarcasterApp {
         notice_board: mcp_server::NoticeBoard,
         persisted: persisted::PersistedState,
         runtime: RuntimeHandle,
+        harness_profiles: std::sync::Arc<crate::agents::HarnessProfiles>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -165,6 +170,7 @@ impl FarcasterApp {
                 draft_session_ids: persisted.draft_session_ids,
                 selected_draft: Some(persisted.selected_draft),
                 preferred_harness: persisted.preferred_harness,
+                preferred_profile_id: persisted.preferred_profile_id,
                 submitted_drafts: persisted.submitted_drafts,
                 error: persisted.error,
                 project_filter: None,
@@ -248,6 +254,12 @@ impl FarcasterApp {
                 code_tasks: Default::default(),
             },
             settings: workspace::SettingsState {
+                harness_profiles,
+                harness_profile_name: inputs.harness_profile_name,
+                harness_profile_executable: inputs.harness_profile_executable,
+                harness_profile_data_directory: inputs.harness_profile_data_directory,
+                harness_profile_backend: crate::agents::Backend::Claude,
+                harness_profile_error: None,
                 network_proxy_input: inputs.network_proxy,
                 network_proxy_error: None,
                 proxy_save: None,

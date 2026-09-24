@@ -34,7 +34,12 @@ impl FarcasterApp {
             .track_scroll(scroll)
             .when_some(self.editable_draft_harness(), |footer, harness| {
                 footer
-                    .child(super::start::harness_selector(harness, entity.clone()))
+                    .child(super::start::harness_selector(
+                        harness,
+                        self.active_profile_id(),
+                        self.settings.harness_profiles.list().unwrap_or_default(),
+                        entity.clone(),
+                    ))
                     .child(separator())
             })
             .child(runtime::render(self, entity));

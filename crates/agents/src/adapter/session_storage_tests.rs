@@ -80,6 +80,27 @@ fn deletion_validates_all_members_before_touching_any_file() {
 }
 
 #[test]
+fn custom_profile_actions_require_the_matching_saved_profile() {
+    let id = uuid::Uuid::new_v4();
+    let custom = summary(
+        Backend::Codex,
+        PathBuf::from(format!("/locators/profiles/{id}/codex-cli/same")),
+        "same",
+    );
+    let config = crate::AgentLaunchConfig::default();
+    assert!(
+        delete_session_family_with_config(&config, &[custom.target()])
+            .expect_err("profile is missing")
+            .contains("unknown harness profile")
+    );
+    assert!(
+        move_session_family_with_config(&config, &[custom], Path::new("/project"))
+            .expect_err("profile is missing")
+            .contains("unknown harness profile")
+    );
+}
+
+#[test]
 fn pi_identity_does_not_depend_on_its_parent_directory_name() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let directory = temp.path().join("codex-cli");

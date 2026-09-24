@@ -121,7 +121,12 @@ impl RuntimeOwner {
         self.refresh_sessions();
     }
 
-    pub(super) fn preview_import(&mut self, harness: Backend, generation: u64) {
+    pub(super) fn preview_import(
+        &mut self,
+        harness: Backend,
+        profile_id: Option<String>,
+        generation: u64,
+    ) {
         if !self.owns_session_catalog {
             let _ = self.event_tx.send(RuntimeEvent::RefreshCatalog);
             return;
@@ -145,13 +150,14 @@ impl RuntimeOwner {
         .into_iter()
         .map(|session| crate::sessions::normalize_session_path(&session.path))
         .collect::<HashSet<_>>();
-        let locator_root = self.process_command.session_locator_root.clone();
+        let mut command = self.process_command.clone();
+        command.profile_id = profile_id;
         let sender = self.event_tx.clone();
         let failed_harness = harness;
         if let Err(error) = thread::Builder::new()
             .name("farcaster-import".into())
             .spawn(move || {
-                let result = agents::discover_sessions_for(harness, locator_root.as_deref(), "")
+                let result = agents::discover_sessions_for_profile(&command, harness, "")
                     .map(|sessions| unknown_import_candidates(sessions, &known));
                 let event = match result {
                     Ok(sessions) => RuntimeEvent::ImportPreview {

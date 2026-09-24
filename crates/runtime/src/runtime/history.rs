@@ -118,6 +118,8 @@ impl RuntimeOwner {
         let failed_path = path.clone();
         let failed_project = project.clone();
         let harness = self.harness;
+        let mut config = self.process_command.clone();
+        config.profile_id = agents::profile_id_from_locator(&path);
         let host = self.host.clone();
         if let Err(error) = thread::Builder::new()
             .name("farcaster-history".into())
@@ -125,7 +127,9 @@ impl RuntimeOwner {
                 let mut operation = host.timer(RuntimeMetric::LoadHistory);
                 let result = harness
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
-                    .and_then(|harness| agents::load_session_history(harness, &path, &project));
+                    .and_then(|harness| {
+                        agents::load_session_history_for_profile(&config, harness, &path, &project)
+                    });
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
                 }
@@ -166,11 +170,26 @@ impl RuntimeOwner {
         self.pending_document_refresh = None;
     }
 
-    pub(super) fn stage_draft(&mut self, harness: Option<Backend>, project: PathBuf) {
+    pub(super) fn stage_draft(&mut self, id: &str, harness: Option<Backend>, project: PathBuf) {
+        let profile_id = match self
+            .state
+            .as_ref()
+            .map(|state| state.with(|store| store.draft_profile_id(id)))
+            .transpose()
+        {
+            Ok(profile_id) => profile_id.flatten(),
+            Err(error) => {
+                conversation_mut(&mut self.snapshot)
+                    .push_local_error("Load harness profile", error);
+                self.publish();
+                return;
+            }
+        };
         let unchanged = self.process.is_none()
             && self.parked_snapshot.is_none()
             && !self.snapshot.history_preview
             && self.harness == harness
+            && self.process_command.profile_id == profile_id
             && self.project == project;
         if unchanged {
             self.publish();
@@ -179,6 +198,7 @@ impl RuntimeOwner {
 
         self.reset_process_runtime();
         self.harness = harness;
+        self.process_command.profile_id = profile_id;
         self.project = project.clone();
         self.session_id = None;
         self.pending_prompt_target = None;
