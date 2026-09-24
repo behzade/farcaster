@@ -1670,7 +1670,8 @@ impl WorkerSession for AcpWorkerSession {
 
     fn close(&mut self) -> Result<(), String> {
         let mut errors = Vec::new();
-        if self.features.close
+        // Cursor accepts session/close but omits the capability in initialize.
+        if (self.features.close || self.profile.backend == Backend::Cursor)
             && self
                 .child
                 .try_wait()

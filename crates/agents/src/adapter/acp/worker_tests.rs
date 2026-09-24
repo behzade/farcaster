@@ -1213,6 +1213,7 @@ while IFS= read -r line; do
     *'"method":"authenticate"'*) result='{}' ;;
     *'"method":"session/new"'*) result='{"sessionId":"cached-model-session","configOptions":[{"id":"model","category":"model","currentValue":"base","options":[{"value":"base"}]}]}' ;;
     *'"method":"cursor/list_available_models"'*) result='{"models":[{"value":"base","name":"Base"}]}' ;;
+    *'"method":"session/close"'*) result='{}' ;;
     *) exit 2 ;;
   esac
   printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
@@ -2348,7 +2349,7 @@ fn acp_first_completed_tool_update_delivers_before_exact_tool_lifecycle() {
 }
 
 #[test]
-fn acp_close_waits_for_the_matching_response_before_reaping() {
+fn cursor_close_waits_for_the_matching_response_even_without_advertised_close() {
     use std::io::{BufRead as _, Write as _};
     use std::os::unix::net::UnixStream;
     use std::process::Stdio;
@@ -2356,7 +2357,8 @@ fn acp_close_waits_for_the_matching_response_before_reaping() {
     use std::time::Duration;
 
     let mut session = inert_session();
-    session.features.close = true;
+    assert_eq!(session.profile.backend, Backend::Cursor);
+    assert!(!session.features.close);
     session.child = std::process::Command::new("sh")
         .args(["-c", "read _"])
         .stdin(Stdio::piped())
