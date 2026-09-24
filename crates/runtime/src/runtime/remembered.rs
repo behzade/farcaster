@@ -70,6 +70,9 @@ impl<T: Clone> Remembered<T> {
         }
     }
 
+    /// A source that disappeared stops matching its stamp on its own, so this
+    /// is only for a caller that must drop an entry it is still holding.
+    #[cfg(test)]
     pub fn forget(&mut self, key: &Path) {
         self.entries.retain(|(remembered, _, _)| remembered != key);
     }

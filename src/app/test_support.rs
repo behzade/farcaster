@@ -11,6 +11,17 @@ pub(crate) fn with_offline_app(
     cx: &mut TestAppContext,
     test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &TestRuntime, &Path),
 ) {
+    with_prepared_offline_app(test_name, cx, |_| {}, test);
+}
+
+/// An offline app over a data directory the test fills in first, so a case can
+/// assert what the app knows before the runtime has answered at all.
+pub(crate) fn with_prepared_offline_app(
+    test_name: &str,
+    cx: &mut TestAppContext,
+    prepare: impl FnOnce(&Path),
+    test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &TestRuntime, &Path),
+) {
     let test_name = test_name
         .split_once("::")
         .map_or(test_name, |(_, test_name)| test_name);
@@ -43,6 +54,8 @@ pub(crate) fn with_offline_app(
     }
 
     let project = tempfile::tempdir().expect("offline app project");
+    let project_path = project.path().to_path_buf();
+    prepare(&project_path);
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_component::init(cx);

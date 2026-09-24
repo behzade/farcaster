@@ -11,6 +11,7 @@ pub(in crate::app) mod drafts;
 mod expiries;
 pub(in crate::app) mod import;
 pub(in crate::app) mod lifecycle;
+pub(in crate::app) mod remembered_transcript;
 pub(in crate::app) mod status;
 #[cfg(test)]
 #[path = "switch_perf_tests.rs"]
