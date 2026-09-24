@@ -990,7 +990,15 @@ pub(in crate::app) fn record_pending_prompt_result_for_submission(
     let key = match submission_id {
         Some(id) => pending
             .get(id)
-            .is_some_and(|row| row.submitted_target == target)
+            .is_some_and(|row| {
+                row.submitted_target == target
+                    // Promotion moves the pending send to its session path;
+                    // the actor's reply still names the original draft.
+                    || (target.starts_with("draft:")
+                        && session.as_deref().is_some_and(|path| {
+                            row.submitted_target == session_target(path)
+                        }))
+            })
             .then(|| id.to_owned()),
         None => {
             let mut matches = pending.iter().filter(|(_, pending)| {

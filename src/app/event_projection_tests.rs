@@ -528,6 +528,119 @@ fn prompt_result_follows_submission_through_draft_promotion() {
 }
 
 #[gpui::test]
+fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::TestAppContext) {
+    use crate::app::composer::{ComposerImage, attachments};
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::promoted_draft_completion_clears_status_and_saved_attachments"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let target = "draft:completion";
+            let submission_id = "submission-completion";
+            let path = project.join("completed-session");
+            let session_key = session_target(&path);
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.begin_draft_submission(target, "hi");
+                    app.composer.pending_submissions.insert(
+                        submission_id.into(),
+                        PendingSubmission {
+                            id: submission_id.into(),
+                            submitted_at: std::time::Instant::now(),
+                            submitted_target: target.into(),
+                            mode: crate::protocol::PromptMode::Normal,
+                            text: "hi".into(),
+                            images: vec![
+                                ComposerImage::from_prompt(crate::protocol::PromptImage::new(
+                                    "AQID".into(),
+                                    "image/png".into(),
+                                ))
+                                .expect("test attachment"),
+                            ],
+                            pastes: Vec::new(),
+                            append_on_failure: false,
+                            result: None,
+                        },
+                    );
+                    app.save_composer_attachments(target);
+                });
+            });
+            let row = SessionSummary::from_cached(
+                "completed".into(),
+                path.clone(),
+                project.into(),
+                "Kickoff".into(),
+                "hi".into(),
+                String::new(),
+                None,
+                std::time::SystemTime::now(),
+                0,
+                crate::sessions::UsageSummary::default(),
+                false,
+                true,
+                String::new(),
+            );
+            runtime.send_event(RuntimeEvent::SessionStatus {
+                target: target.into(),
+                session: Some(path.clone()),
+                status: "Working".into(),
+            });
+            runtime.send_event(RuntimeEvent::SessionUpdated(row));
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(
+                        app.composer.pending_submissions[submission_id].submitted_target,
+                        session_key
+                    );
+                    assert!(!app.sessions.submitted_drafts.contains_key("completion"));
+                    // Startup would restore the attachment while its UI receipt is unresolved.
+                    assert_eq!(
+                        attachments::restore(&app.composer.sessions).0[&session_key].len(),
+                        1
+                    );
+                });
+            });
+
+            // The actor still addresses the original draft after the rail promotes it.
+            runtime.send_event(RuntimeEvent::PromptResult {
+                submission_id: Some(submission_id.into()),
+                target: target.into(),
+                outcome: crate::agents::PromptOutcome::Accepted,
+                session: Some(path.clone()),
+            });
+            runtime.send_event(RuntimeEvent::SessionStatus {
+                target: target.into(),
+                session: Some(path.clone()),
+                status: "Done".into(),
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(
+                        app.activity
+                            .run_statuses
+                            .get(&session_key)
+                            .map(String::as_str),
+                        Some("Done")
+                    );
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(app.composer.pending_submissions.is_empty());
+                let (images, pastes) = attachments::restore(&app.composer.sessions);
+                assert!(images.is_empty() && pastes.is_empty());
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn unknown_activity_then_real_rejection_resolves_the_original_payload_once(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -877,15 +990,22 @@ fn a_submission_id_cannot_settle_a_different_chat() {
         },
     )]);
 
-    record_pending_prompt_result_for_submission(
-        &mut pending,
-        Some("id"),
-        "session:two",
-        crate::agents::PromptOutcome::Accepted,
-        None,
-    );
+    for (target, session) in [
+        ("session:two", None),
+        ("session:two", Some(PathBuf::from("one"))),
+        ("draft:two", None),
+        ("draft:two", Some(PathBuf::from("two"))),
+    ] {
+        record_pending_prompt_result_for_submission(
+            &mut pending,
+            Some("id"),
+            target,
+            crate::agents::PromptOutcome::Accepted,
+            session,
+        );
 
-    assert!(pending["id"].result.is_none());
+        assert!(pending["id"].result.is_none());
+    }
 }
 
 #[test]
