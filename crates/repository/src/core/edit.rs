@@ -55,21 +55,19 @@ impl RepositoryBackend {
         for path in selected {
             self.validate_edit_path(path)?;
         }
-        let mut paths = selected
-            .iter()
-            .filter(|path| {
-                snapshot
-                    .changes
-                    .iter()
-                    .any(|change| &change.relative_path == *path)
-            })
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        if paths.is_empty() {
-            return Err(RepositoryError::InvalidRepository(
-                "Selected files have no changes".into(),
-            ));
+        for path in selected {
+            if !snapshot.changes.iter().any(|change| {
+                &change.relative_path == path
+                    || (change.kind == ChangeKind::Renamed
+                        && change.original_relative_path.as_ref() == Some(path))
+            }) {
+                return Err(RepositoryError::InvalidRepository(format!(
+                    "Selected file has no changes: {}",
+                    path.display()
+                )));
+            }
         }
+        let mut paths = selected.clone();
         // A rename is one whole-file operation, even if Git reports its ends separately.
         loop {
             let before = paths.len();
