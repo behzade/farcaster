@@ -3,7 +3,7 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc, time::Duration};
 #[cfg(target_os = "linux")]
 use std::{fs, sync::Arc};
 
-use super::performance::StartupTiming;
+use super::{isolation, performance::StartupTiming};
 
 use crate::{
     app::FarcasterApp,
@@ -172,9 +172,12 @@ pub(crate) fn run(
                 )
             });
             drop(placement_timing);
+            let owned_window = !isolation::is_isolated();
             let window_options = WindowOptions {
                 window_bounds: Some(window_bounds),
                 display_id,
+                focus: owned_window,
+                show: owned_window,
                 titlebar: Some(TitlebarOptions {
                     title: Some("Farcaster".into()),
                     ..TitlebarOptions::default()
@@ -221,7 +224,9 @@ pub(crate) fn run(
                 quit_after_start(cx);
                 return;
             }
-            cx.activate(true);
+            if !isolation::is_isolated() {
+                cx.activate(true);
+            }
             drop(launch_timing);
         });
     match failure.borrow_mut().take() {

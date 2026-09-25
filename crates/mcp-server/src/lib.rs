@@ -39,6 +39,21 @@ use rmcp::{
 };
 
 const BIND_ADDRESS: &str = "127.0.0.1:8765";
+
+static BIND_ADDRESS_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Lets the host app point the server at a per-process port, so an isolated
+/// run does not collide with another instance on the default address.
+pub fn set_bind_address(address: &str) {
+    let _ = BIND_ADDRESS_OVERRIDE.set(address.to_owned());
+}
+
+pub(crate) fn bind_address() -> String {
+    BIND_ADDRESS_OVERRIDE
+        .get()
+        .cloned()
+        .unwrap_or_else(|| BIND_ADDRESS.to_owned())
+}
 const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
 

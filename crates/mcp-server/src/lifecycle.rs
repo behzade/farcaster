@@ -13,7 +13,7 @@ use tokio::sync::oneshot;
 
 #[cfg(test)]
 use super::notices;
-use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, server_config};
+use super::{FarcasterMcp, MCP_PATH, bind_address, server_config};
 
 static SERVER: Mutex<Option<ServerState>> = Mutex::new(None);
 
@@ -56,7 +56,7 @@ pub fn start(
     let server = ServerState::new(
         FarcasterMcp::new(store.clone(), workers, updates, notices),
         crate::builtin_mcp::enabled(),
-        BIND_ADDRESS,
+        &bind_address(),
     )?;
     let family_store = store.clone();
     crate::agents::CallerRegistry::shared().set_family_sink(Some(Arc::new(move |link| {
@@ -90,7 +90,7 @@ pub fn set_enabled(
     let server = current.as_mut().ok_or("MCP server is not initialized")?;
     let was_running = server.running.is_some();
     if enabled {
-        server.enable(BIND_ADDRESS)?;
+        server.enable(&bind_address())?;
     }
     if let Err(error) = save_setting(enabled) {
         if !was_running {
