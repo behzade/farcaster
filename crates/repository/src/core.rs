@@ -20,7 +20,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
 use port::{CommandExecutor, CommandMode, CommandOutput, RepositoryOperations};
@@ -93,6 +93,43 @@ impl RepositoryBackend {
     pub fn snapshot(&self) -> Result<WorkingCopySnapshot, RepositoryError> {
         let _operation = repository_operation()?;
         self.operations.snapshot(self)
+    }
+
+    /// Observe only when the operation lock is free and authorization still
+    /// allows execution. A busy lock or denied authorization returns `None`.
+    pub fn try_snapshot_with_totals(
+        &self,
+        allowed: impl FnOnce() -> bool,
+    ) -> Result<Option<(WorkingCopySnapshot, Option<u64>, Option<u64>)>, RepositoryError> {
+        self.try_snapshot_with_totals_using(
+            REPOSITORY_OPERATION_LOCK.get_or_init(|| Mutex::new(())),
+            allowed,
+        )
+    }
+
+    fn try_snapshot_with_totals_using(
+        &self,
+        lock: &Mutex<()>,
+        allowed: impl FnOnce() -> bool,
+    ) -> Result<Option<(WorkingCopySnapshot, Option<u64>, Option<u64>)>, RepositoryError> {
+        let _operation = match lock.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(RepositoryError::InvalidRepository(
+                    "repository operation lock is poisoned".into(),
+                ));
+            }
+        };
+        if !allowed() {
+            return Ok(None);
+        }
+        let mut snapshot = self.operations.snapshot(self)?;
+        let (additions, deletions) = self
+            .operations
+            .working_copy_totals(self, &mut snapshot)
+            .unwrap_or((None, None));
+        Ok(Some((snapshot, additions, deletions)))
     }
 
     pub fn working_copy_totals(
@@ -427,3 +464,7 @@ pub(super) fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
     }
     (Some(additions), Some(deletions))
 }
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;

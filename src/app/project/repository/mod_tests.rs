@@ -136,7 +136,7 @@ fn a_scan_with_nothing_to_show_is_never_remembered() {
     assert!(
         RepositoryObservation::from_scan(
             BackendPreference::Auto,
-            Err(RepositoryError::BackendUnavailable {
+            Err(crate::repository::RepositoryError::BackendUnavailable {
                 kind: crate::repository::RepositoryKind::Git,
                 project: PathBuf::from("/project"),
             }),
@@ -178,5 +178,185 @@ fn repository_preferences_are_project_specific() {
     assert_eq!(
         preference_for(&preferences, std::path::Path::new("/other")),
         BackendPreference::Auto
+    );
+}
+
+#[gpui::test]
+fn returning_to_a_project_restores_counts_but_requires_fresh_validation(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::returning_to_a_project_restores_counts_but_requires_fresh_validation"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let first = project.to_path_buf();
+                    let second = project.join("second");
+                    let repository = &mut app.project.repository;
+                    repository.execution_allowed = true;
+                    let mut observed = cached_observation(repository.preference);
+                    observed.snapshot.as_mut().unwrap().location.project_root = first.clone();
+                    repository.apply_observation(observed);
+                    repository.snapshot_validated = true;
+                    assert!(repository.can_sync());
+                    // Occupy the refresh gate without spawning a scan. Selection
+                    // must queue its refresh behind this outstanding request.
+                    let in_flight = repository.refresh.request().unwrap();
+
+                    app.set_repository_project_execution(second.clone(), true, cx);
+                    assert_eq!(app.project.repository.project, second);
+                    assert!(app.project.repository.snapshot.is_none());
+                    app.set_repository_project_execution(first.clone(), true, cx);
+
+                    let repository = &mut app.project.repository;
+                    assert_eq!(repository.project, first);
+                    assert_eq!(
+                        repository.snapshot.as_ref().unwrap().location.project_root,
+                        first
+                    );
+                    assert_eq!(repository.additions, Some(2));
+                    assert_eq!(repository.deletions, Some(1));
+                    assert!(repository.initialized);
+                    assert!(repository.loading);
+                    assert_eq!(repository.refresh.in_flight, Some(in_flight));
+                    assert!(repository.refresh.pending);
+                    assert!(!repository.snapshot_validated);
+                    assert!(!repository.can_sync());
+                    let completion = repository.refresh.finish(in_flight).unwrap();
+                    assert!(!completion.publish);
+                    assert!(completion.next.is_some());
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn selecting_an_untrusted_project_drops_its_cached_observation(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::selecting_an_untrusted_project_drops_its_cached_observation"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let target = project.join("untrusted");
+                    app.project
+                        .repository
+                        .observations
+                        .remember(target.clone(), cached_observation(BackendPreference::Auto));
+                    app.set_repository_project_execution(target.clone(), false, cx);
+
+                    let repository = &mut app.project.repository;
+                    assert_eq!(repository.project, target);
+                    assert!(!repository.execution_allowed);
+                    assert!(repository.backend.is_none());
+                    assert!(repository.snapshot.is_none());
+                    assert!(repository.additions.is_none());
+                    assert!(repository.deletions.is_none());
+                    assert!(!repository.initialized);
+                    assert!(!repository.loading);
+                    assert!(!repository.can_sync());
+                    assert!(repository.refresh.in_flight.is_none());
+                    assert!(
+                        repository
+                            .observations
+                            .reuse(&target, BackendPreference::Auto)
+                            .is_none()
+                    );
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn selecting_and_leaving_a_project_rejects_its_old_background_scan(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::selecting_and_leaving_a_project_rejects_its_old_background_scan"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    let target = project.join("target");
+                    let repository = &mut app.project.repository;
+                    let ticket = repository
+                        .observations
+                        .begin(target.clone(), BackendPreference::Auto)
+                        .unwrap();
+                    repository.refresh.request().unwrap();
+
+                    app.set_repository_project_execution(target.clone(), true, cx);
+                    assert!(app.project.repository.observations.busy());
+                    // Supply the newer foreground result without executing Git.
+                    let repository = &mut app.project.repository;
+                    let mut newer = cached_observation(repository.preference);
+                    newer.additions = Some(42);
+                    repository.apply_observation(newer);
+                    repository.snapshot_validated = true;
+                    app.set_repository_project_execution(project.to_path_buf(), true, cx);
+
+                    let repository = &mut app.project.repository;
+                    assert!(!repository.observations.finish(&ticket));
+                    assert!(!repository.observations.busy());
+                    let kept = repository
+                        .observations
+                        .reuse(&target, BackendPreference::Auto)
+                        .unwrap();
+                    assert_eq!(kept.additions, Some(42));
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn changing_repository_preference_away_and_back_rejects_pending_scan(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::changing_repository_preference_away_and_back_rejects_pending_scan"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    let repository = &mut app.project.repository;
+                    assert!(repository.select_preference(BackendPreference::Git));
+                    repository.execution_allowed = true;
+                    repository.apply_observation(cached_observation(BackendPreference::Git));
+                    repository.snapshot_validated = true;
+                    let ticket = repository
+                        .observations
+                        .begin(project.to_path_buf(), BackendPreference::Git)
+                        .unwrap();
+
+                    assert!(repository.select_preference(BackendPreference::Jujutsu));
+                    assert!(repository.observations.busy());
+                    assert!(repository.snapshot.is_none());
+                    assert!(!repository.can_sync());
+                    assert!(repository.select_preference(BackendPreference::Git));
+                    assert_eq!(repository.preference, ticket.preference);
+                    assert_eq!(
+                        repository.preferences.get(project),
+                        Some(&BackendPreference::Git)
+                    );
+                    assert!(!repository.observations.finish(&ticket));
+                    assert!(!repository.observations.busy());
+                    assert!(!repository.snapshot_validated);
+                });
+            });
+        },
     );
 }

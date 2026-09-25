@@ -1,5 +1,9 @@
 mod edits;
+mod observations;
+mod prefetch;
 mod watching;
+
+use observations::{ObservationCache, RepositoryObservation, observe_project};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,8 +14,8 @@ use gpui::{AppContext as _, Context, FocusHandle, Window};
 
 use super::FarcasterApp;
 use crate::repository::{
-    BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryError, RepositoryLocation,
-    RepositorySyncAction, RepositoryWatcher, WorkingCopySnapshot,
+    BackendPreference, DiffTargetKey, RepositoryBackend, RepositoryLocation, RepositorySyncAction,
+    RepositoryWatcher, WorkingCopySnapshot,
 };
 
 #[derive(Default)]
@@ -82,82 +86,6 @@ impl RefreshGate {
     }
 }
 
-/// The last working copy observed for one project.
-struct RepositoryObservation {
-    preference: BackendPreference,
-    backend: Option<RepositoryBackend>,
-    snapshot: Option<WorkingCopySnapshot>,
-    additions: Option<u64>,
-    deletions: Option<u64>,
-}
-
-impl RepositoryObservation {
-    fn reusable_for(&self, preference: BackendPreference) -> bool {
-        self.preference == preference
-    }
-
-    /// What a project should show from a scan read off screen, or nothing when
-    /// the scan found nothing to show.
-    fn from_scan(preference: BackendPreference, scanned: ScanResult) -> Option<Self> {
-        match scanned {
-            Ok(Some((backend, Ok((snapshot, additions, deletions))))) => Some(Self {
-                preference,
-                backend: Some(backend),
-                snapshot: Some(snapshot),
-                additions,
-                deletions,
-            }),
-            _ => None,
-        }
-    }
-}
-
-type ScanResult = Result<
-    Option<(
-        RepositoryBackend,
-        Result<(WorkingCopySnapshot, Option<u64>, Option<u64>), RepositoryError>,
-    )>,
-    RepositoryError,
->;
-
-/// Reads a project's working copy without publishing it anywhere.
-fn observe_project(project: &std::path::Path, preference: BackendPreference) -> ScanResult {
-    RepositoryBackend::discover(project, preference).map(|backend| {
-        backend.map(|backend| {
-            let snapshot = backend.snapshot().map(|mut snapshot| {
-                let (additions, deletions) = backend
-                    .working_copy_totals(&mut snapshot)
-                    .unwrap_or((None, None));
-                (snapshot, additions, deletions)
-            });
-            (backend, snapshot)
-        })
-    })
-}
-
-/// Remembered working copies, keyed by project, so moving between projects can
-/// show the previous result immediately instead of an empty panel waiting on a
-/// fresh scan.
-#[derive(Default)]
-struct ObservationCache {
-    projects: BTreeMap<PathBuf, RepositoryObservation>,
-}
-
-impl ObservationCache {
-    fn remember(&mut self, project: PathBuf, observation: RepositoryObservation) {
-        self.projects.insert(project, observation);
-    }
-
-    fn reuse(
-        &mut self,
-        project: &std::path::Path,
-        preference: BackendPreference,
-    ) -> Option<RepositoryObservation> {
-        let observation = self.projects.remove(project)?;
-        observation.reusable_for(preference).then_some(observation)
-    }
-}
-
 pub(in crate::app) struct RepositoryState {
     pub(in crate::app) project: PathBuf,
     pub(in crate::app) execution_allowed: bool,
@@ -166,6 +94,7 @@ pub(in crate::app) struct RepositoryState {
     pub(in crate::app) snapshot: Option<WorkingCopySnapshot>,
     pub(in crate::app) loading: bool,
     pub(in crate::app) initialized: bool,
+    snapshot_validated: bool,
     pub(in crate::app) error: Option<String>,
     pub(in crate::app) preference_error: Option<String>,
     pub(in crate::app) watcher_error: Option<String>,
@@ -185,7 +114,7 @@ pub(in crate::app) struct RepositoryState {
     watcher_generation: u64,
     observations: ObservationCache,
     warmed: BTreeSet<PathBuf>,
-    pass_started: bool,
+    pass_task: Option<gpui::Task<()>>,
     pass_cursor: usize,
 }
 
@@ -206,6 +135,7 @@ impl RepositoryState {
             snapshot: None,
             loading: false,
             initialized: false,
+            snapshot_validated: false,
             error: None,
             preference_error,
             watcher_error: None,
@@ -225,7 +155,7 @@ impl RepositoryState {
             watcher_generation: 0,
             observations: ObservationCache::default(),
             warmed: BTreeSet::new(),
-            pass_started: false,
+            pass_task: None,
             pass_cursor: 0,
         }
     }
@@ -235,6 +165,8 @@ impl RepositoryState {
             return false;
         }
         let project_changed = self.project != project;
+        self.observations.invalidate(&self.project);
+        self.observations.invalidate(&project);
         if project_changed {
             if let Some(observation) = self.observe() {
                 self.observations
@@ -246,27 +178,22 @@ impl RepositoryState {
             self.jj_init_in_flight = false;
         }
         self.execution_allowed = execution_allowed;
+        let cached = (project_changed && execution_allowed)
+            .then(|| self.observations.reuse(&self.project, self.preference))
+            .flatten();
         self.clear_observation();
-        if project_changed {
-            let project = self.project.clone();
-            if let Some(observation) = self.observations.reuse(&project, self.preference) {
-                self.apply_observation(observation);
-            }
+        if let Some(observation) = cached {
+            self.apply_observation(observation);
         }
         true
-    }
-
-    /// Keeps a project's working copy for a later switch without touching the
-    /// project currently on screen.
-    fn remember(&mut self, project: PathBuf, observation: RepositoryObservation) {
-        if self.project != project {
-            self.observations.remember(project, observation);
-        }
     }
 
     /// Move the current working copy out so it can be remembered for its own
     /// project. A project with nothing observed yet has nothing to keep.
     fn observe(&mut self) -> Option<RepositoryObservation> {
+        if !self.execution_allowed {
+            return None;
+        }
         let snapshot = self.snapshot.take()?;
         Some(RepositoryObservation {
             preference: self.preference,
@@ -316,7 +243,13 @@ impl RepositoryState {
         true
     }
 
+    pub(in crate::app) fn can_sync(&self) -> bool {
+        self.execution_allowed && self.snapshot_validated && self.sync.action.is_none()
+    }
+
     fn clear_observation(&mut self) {
+        self.observations.forget(&self.project);
+        self.snapshot_validated = false;
         self.refresh.invalidate();
         self.backend = None;
         self.snapshot = None;
@@ -483,124 +416,12 @@ impl FarcasterApp {
         .detach();
     }
 
-    /// Reads the working copies of the other known projects one at a time, so
-    /// switching to one shows its changes right away instead of an empty panel.
-    pub(in crate::app) fn warm_repository_observations(&mut self, cx: &mut Context<Self>) {
-        self.start_offscreen_observation_pass(cx);
-        let repository = &mut self.project.repository;
-        let current = repository.project.clone();
-        let mut projects = self.project.registered.clone();
-        projects.extend(
-            self.sessions
-                .visible
-                .iter()
-                .map(|session| session.project.clone()),
-        );
-        projects.sort();
-        projects.dedup();
-        projects.retain(|project| project != &current && !repository.warmed.contains(project));
-        repository.warmed.extend(projects.iter().cloned());
-        let preferences = repository.preferences.clone();
-        cx.spawn(async move |weak, cx| {
-            for project in projects {
-                let preference = preference_for(&preferences, &project);
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
-                    .await;
-                let target = project.clone();
-                let scanned = cx
-                    .background_spawn(async move { observe_project(&target, preference) })
-                    .await;
-                let _ = weak.update(cx, |this, _| {
-                    if let Some(observation) = RepositoryObservation::from_scan(preference, scanned)
-                    {
-                        this.project.repository.remember(project, observation);
-                    }
-                });
-            }
-        })
-        .detach();
-    }
-
-    fn next_offscreen_project(&mut self) -> Option<PathBuf> {
-        let mut projects = self.project.registered.clone();
-        projects.extend(
-            self.sessions
-                .visible
-                .iter()
-                .map(|session| session.project.clone()),
-        );
-        projects.sort();
-        projects.dedup();
-        let current = self.project.repository.project.clone();
-        projects.retain(|project| project != &current);
-        if projects.is_empty() {
-            return None;
-        }
-        let cursor = self.project.repository.pass_cursor % projects.len();
-        self.project.repository.pass_cursor = cursor.wrapping_add(1);
-        Some(projects[cursor].clone())
-    }
-
-    /// Reads one project per tick so the counts off screen stay current and a
-    /// switch can show them without waiting for a refresh of its own.
-    pub(in crate::app) fn start_offscreen_observation_pass(&mut self, cx: &mut Context<Self>) {
-        if self.project.repository.pass_started {
-            return;
-        }
-        self.project.repository.pass_started = true;
-        cx.spawn(async move |weak, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(5))
-                    .await;
-                if weak
-                    .update(cx, |this, cx| {
-                        if let Some(project) = this.next_offscreen_project() {
-                            this.prefetch_repository_observation(project, cx);
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    pub(in crate::app) fn prefetch_repository_observation(
-        &mut self,
-        project: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        if project == self.project.repository.project {
-            return;
-        }
-        let preference = preference_for(&self.project.repository.preferences, &project);
-        let target = project.clone();
-        cx.spawn(async move |weak, cx| {
-            let scanned = cx
-                .background_spawn(async move { observe_project(&target, preference) })
-                .await;
-            let _ = weak.update(cx, |this, _| {
-                if let Some(observation) = RepositoryObservation::from_scan(preference, scanned) {
-                    this.project.repository.remember(project, observation);
-                }
-            });
-        })
-        .detach();
-    }
-
     pub(in crate::app) fn request_repository_sync(
         &mut self,
         action: RepositorySyncAction,
         cx: &mut Context<Self>,
     ) {
-        if !self.project.repository.execution_allowed
-            || self.project.repository.sync.action.is_some()
-            || self.project.repository.edits.pending.is_some()
-        {
+        if !self.project.repository.can_sync() || self.project.repository.edits.pending.is_some() {
             return;
         }
         let (Some(backend), Some(snapshot)) = (
@@ -639,7 +460,10 @@ impl FarcasterApp {
             self.notify_run_panel(cx);
             return;
         }
-        let notify = !self.project.repository.initialized && !self.project.repository.loading;
+        let repository = &mut self.project.repository;
+        repository.observations.invalidate(&repository.project);
+        repository.warmed.insert(repository.project.clone());
+        let notify = !repository.initialized && !repository.loading;
         self.project.repository.loading = true;
         if !self.project.repository.initialized {
             self.project.repository.error = None;
@@ -669,6 +493,8 @@ impl FarcasterApp {
                     this.project.repository.initialized = true;
                     match result {
                         Ok(Some((backend, Ok((snapshot, additions, deletions))))) => {
+                            display_changed |= !this.project.repository.snapshot_validated;
+                            this.project.repository.snapshot_validated = true;
                             let observation_changed = this
                                 .project
                                 .repository

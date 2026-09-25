@@ -210,7 +210,7 @@ fn repository_actions(
 ) -> impl IntoElement {
     let project = app.project.repository.project.clone();
     let enabled = app.project.repository.execution_allowed;
-    let syncing = app.project.repository.sync.action;
+    let can_sync = app.project.repository.can_sync();
     let identity = snapshot.map(|snapshot| snapshot.identity.clone());
     let kind = snapshot.map(|snapshot| snapshot.location.kind);
     let (git, jj) = RepositoryBackend::available_backends();
@@ -248,8 +248,7 @@ fn repository_actions(
                     (_, RepositorySyncAction::PullOrFetch) => "Pull repository",
                     (_, RepositorySyncAction::Push) => "Push repository",
                 };
-                let available = enabled
-                    && syncing.is_none()
+                let available = can_sync
                     && identity
                         .as_ref()
                         .is_some_and(|identity| action.is_available_for(identity));
