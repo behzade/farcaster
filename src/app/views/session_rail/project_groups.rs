@@ -116,3 +116,7 @@ pub(super) fn project_header(
 #[cfg(test)]
 #[path = "project_groups_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "project_groups_tests.rs"]
+mod tests;
