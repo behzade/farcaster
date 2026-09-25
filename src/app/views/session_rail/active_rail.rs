@@ -8,6 +8,7 @@ use gpui::{
 use gpui_component::{
     input::Input,
     menu::{DropdownMenu as _, PopupMenuItem},
+    scroll::Scrollbar,
 };
 
 use super::{
@@ -71,6 +72,7 @@ impl FarcasterApp {
             None
         };
         let active_drop_list = session_list.clone();
+        let rail_scrollbar = session_list.clone();
         let active_rows = folder_rows(active_rows, &self.sessions.folders);
         let session_shortcuts =
             visible_session_shortcuts(active_rows.iter().filter_map(FolderRow::session));
@@ -362,17 +364,19 @@ impl FarcasterApp {
                         },
                     )
                     .when(!archived_expanded, |lists| {
-                        lists.child(active_session_drop_target(
-                            div()
-                                .id("active-session-drop-area")
-                                .flex_1()
-                                .min_h_0()
-                                .overflow_y_hidden()
-                                .child(active_list),
-                            active_drop_list,
-                            last_active_row,
-                            active_drop_entity,
-                        ))
+                        lists
+                            .child(active_session_drop_target(
+                                div()
+                                    .id("active-session-drop-area")
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_hidden()
+                                    .child(active_list),
+                                active_drop_list,
+                                last_active_row,
+                                active_drop_entity,
+                            ))
+                            .child(Scrollbar::vertical(&rail_scrollbar))
                     })
                     .when(archived_entry_count > 0, |lists| {
                         lists.child(archived_session_rail)

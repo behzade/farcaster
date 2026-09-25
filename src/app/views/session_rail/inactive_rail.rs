@@ -4,6 +4,7 @@ use gpui::{
     InteractiveElement as _, IntoElement, ListState, ParentElement as _, Styled as _, WeakEntity,
     div, list, prelude::FluentBuilder as _, px,
 };
+use gpui_component::scroll::Scrollbar;
 
 use super::{
     FarcasterApp,
@@ -95,6 +96,7 @@ impl FarcasterApp {
         let title_input = self.sessions.title_input.clone();
         let live_status = self.snapshot.live_status.clone();
         let run_statuses = self.activity.run_statuses.clone();
+        let section_scrollbar = list_state.clone();
         let rows_list = list(list_state, move |index, _, _| match rows.get(index) {
             Some(item) => {
                 let selected = selected_root.as_deref() == Some(item.session.id.as_str());
@@ -150,10 +152,12 @@ impl FarcasterApp {
             .when(expanded, |section| {
                 section.child(
                     div()
+                        .relative()
                         .flex_1()
                         .min_h_0()
                         .overflow_y_hidden()
-                        .child(rows_list),
+                        .child(rows_list)
+                        .child(Scrollbar::vertical(&section_scrollbar)),
                 )
             });
         session_section_drop_target(section, kind, drop_entity).into_any_element()
