@@ -417,6 +417,7 @@ impl FarcasterApp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn activate_terminal_editor(
         &mut self,
         project: PathBuf,

@@ -34,6 +34,7 @@ pub(crate) struct ProjectTrustView {
 }
 
 impl ProjectTrustView {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         project: PathBuf,
         agent_launch: crate::agents::AgentLaunchConfig,
