@@ -44,7 +44,6 @@ impl FarcasterApp {
                         draft::render_heading(project, entity.clone()).into_any_element()
                     }),
                     self.composer.focus.clone(),
-                    viewport_height,
                 )
                 .into_any_element()
             })

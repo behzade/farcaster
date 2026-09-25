@@ -10,10 +10,6 @@ pub(crate) enum LayoutMode {
 pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
 pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
 
-pub(crate) fn draft_top_padding(height: Pixels) -> Pixels {
-    gpui::px((f32::from(height) * 0.18).clamp(24.0, 160.0))
-}
-
 pub(crate) fn composer_bottom_clearance(height: Pixels) -> Pixels {
     gpui::px(((f32::from(height) - 400.0) * 0.06).clamp(12.0, 28.0))
 }
