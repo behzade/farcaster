@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
 pub(crate) fn data_dir() -> Result<PathBuf, String> {
+    if let Some(path) = super::isolation::data_dir() {
+        return Ok(path.to_path_buf());
+    }
     if let Some(path) = std::env::var_os("FARCASTER_DATA_DIR") {
         return absolute(PathBuf::from(path));
     }
