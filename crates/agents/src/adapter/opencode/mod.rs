@@ -30,6 +30,33 @@ pub(super) fn program() -> std::path::PathBuf {
         .unwrap_or_else(|| "opencode".into())
 }
 
+pub(super) fn model_override() -> Option<contract::OpenCodeModelSelection> {
+    let value = std::env::var("FARCASTER_OPENCODE_MODEL").ok()?;
+    let selection = parse_model_override(&value);
+    if selection.is_none() {
+        zlog::warn!("Ignoring FARCASTER_OPENCODE_MODEL={value}: expected provider/model");
+    }
+    selection
+}
+
+fn parse_model_override(value: &str) -> Option<contract::OpenCodeModelSelection> {
+    let (model, variant) = match value.split_once('#') {
+        Some((model, variant)) => (model, Some(variant)),
+        None => (value, None),
+    };
+    let (provider_id, id) = model.split_once('/')?;
+    if provider_id.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some(contract::OpenCodeModelSelection {
+        id: id.to_owned(),
+        provider_id: provider_id.to_owned(),
+        variant: variant
+            .filter(|variant| !variant.is_empty() && *variant != "default")
+            .map(str::to_owned),
+    })
+}
+
 pub fn descriptor() -> AgentBackendDescriptor {
     use crate::HarnessAccessMode::{Full, Sandboxed};
     use CapabilitySupport::Available;

@@ -779,6 +779,152 @@ fn promotion_failures_do_not_skip_later_followups_or_interrupt() {
 }
 
 #[test]
+fn model_override_only_decides_new_sessions() -> Result<(), String> {
+    use super::super::{
+        client::OpenCodeClient,
+        contract::{
+            OpenCodeHttpMethod, OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport,
+            OpenCodeModelSelection, OpenCodeSession,
+        },
+    };
+
+    struct Transport {
+        responses: VecDeque<OpenCodeHttpResponse>,
+        requests: Vec<OpenCodeHttpRequest>,
+    }
+    impl OpenCodeHttpTransport for Transport {
+        fn execute(
+            &mut self,
+            request: OpenCodeHttpRequest,
+        ) -> Result<OpenCodeHttpResponse, String> {
+            self.requests.push(request);
+            self.responses
+                .pop_front()
+                .ok_or_else(|| "missing response".into())
+        }
+    }
+    let response = |status, body: Value| OpenCodeHttpResponse {
+        status,
+        body: serde_json::to_vec(&body).expect("test response serializes"),
+    };
+    let session = |model: Value| -> OpenCodeSession {
+        serde_json::from_value(json!({
+            "id": "ses_1",
+            "location": {"directory": "/project"},
+            "model": model,
+        }))
+        .expect("session fixture")
+    };
+    let launch = |start: crate::SessionStart| crate::SessionLaunch {
+        harness: Backend::OpenCode,
+        session_id: None,
+        project: std::path::PathBuf::from("/project"),
+        start,
+        wake: None,
+        service_tier: None,
+    };
+    let override_model = OpenCodeModelSelection {
+        provider_id: "opencode".into(),
+        id: "big-pickle".into(),
+        variant: Some("high".into()),
+    };
+
+    // A new session starts on the override.
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::from([response(204, Value::Null)]),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::New),
+        &session(Value::Null),
+        Some(override_model.clone()),
+    )?;
+    assert_eq!(selected, Some(override_model.clone()));
+    let requests = client.into_transport().requests;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/api/session/ses_1/model");
+    assert_eq!(
+        serde_json::from_slice::<Value>(requests[0].body.as_deref().expect("override body"))
+            .expect("override JSON"),
+        json!({"model": {"providerID": "opencode", "id": "big-pickle", "variant": "high"}})
+    );
+
+    // Resuming keeps the model saved on the session.
+    let saved = OpenCodeModelSelection {
+        provider_id: "anthropic".into(),
+        id: "sonnet".into(),
+        variant: Some("low".into()),
+    };
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::new(),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::Resume(
+            "/project/opencode/ses_1".into(),
+        )),
+        &session(json!({"providerID": "anthropic", "id": "sonnet", "variant": "low"})),
+        Some(override_model.clone()),
+    )?;
+    assert_eq!(selected, Some(saved));
+    assert!(
+        client.into_transport().requests.is_empty(),
+        "resuming must keep the saved model"
+    );
+
+    // A fork keeps the model inherited from the session it was forked from.
+    let inherited = OpenCodeModelSelection {
+        provider_id: "google".into(),
+        id: "gemini-3-pro".into(),
+        variant: None,
+    };
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::new(),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::Fork("/project/opencode/ses_1".into())),
+        &session(json!({"providerID": "google", "id": "gemini-3-pro"})),
+        Some(override_model),
+    )?;
+    assert_eq!(selected, Some(inherited));
+    assert!(
+        client.into_transport().requests.is_empty(),
+        "forks must inherit the source session's model"
+    );
+
+    // Without a saved model a new session still falls back to the backend default.
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::from([response(
+            200,
+            json!({"data": {"providerID": "opencode", "id": "fallback"}}),
+        )]),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::New),
+        &session(Value::Null),
+        None,
+    )?;
+    assert_eq!(
+        selected,
+        Some(OpenCodeModelSelection {
+            provider_id: "opencode".into(),
+            id: "fallback".into(),
+            variant: None,
+        })
+    );
+    let requests = client.into_transport().requests;
+    assert_eq!(requests[0].method, OpenCodeHttpMethod::Get);
+    assert!(requests[0].path.starts_with("/api/model/default?"));
+    Ok(())
+}
+
+#[test]
 fn extracts_the_last_assistant_text() {
     let context = [
         json!({"type":"assistant","content":[{"type":"text","text":"old"}]}),
