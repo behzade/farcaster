@@ -185,11 +185,11 @@ impl TerminalEditor {
                 .update(cx, |terminal, _| terminal.set_visible(false));
         }
         self.active = index;
-        if self.visible {
-            if let Some(tab) = self.tabs.get(self.active) {
-                tab.terminal
-                    .update(cx, |terminal, _| terminal.set_visible(true));
-            }
+        if self.visible
+            && let Some(tab) = self.tabs.get(self.active)
+        {
+            tab.terminal
+                .update(cx, |terminal, _| terminal.set_visible(true));
         }
         cx.notify();
     }

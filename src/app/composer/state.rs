@@ -62,6 +62,7 @@ impl FarcasterApp {
         }
     }
 
+    #[cfg(test)]
     pub(in crate::app) fn select_model(&mut self, model: &Model, cx: &mut Context<Self>) {
         self.send(RuntimeCommand::SetModel(model.clone()), cx);
         cx.notify();

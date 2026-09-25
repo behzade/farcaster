@@ -7,6 +7,7 @@ mod subscriptions;
 mod tasks;
 
 impl FarcasterApp {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         project: PathBuf,
         agent_launch: crate::agents::AgentLaunchConfig,

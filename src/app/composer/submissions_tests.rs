@@ -306,8 +306,10 @@ fn a_later_failure_waits_for_the_earlier_submission_in_the_same_chat() {
 
     assert!(take_resolved_pending_submissions(&mut submissions).is_empty());
     assert_eq!(submissions.len(), 2);
-    submissions.get_mut("first").unwrap().result =
-        Some((crate::agents::PromptOutcome::RejectedBeforeAcceptance, None));
+    submissions
+        .get_mut("first")
+        .expect("first submission is pending")
+        .result = Some((crate::agents::PromptOutcome::RejectedBeforeAcceptance, None));
     let resolved = take_resolved_pending_submissions(&mut submissions);
     assert_eq!(
         resolved

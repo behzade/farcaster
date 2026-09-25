@@ -55,6 +55,7 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
 }
 
 impl FarcasterApp {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn agent_card(
         &self,
         activity: &AgentActivity,
