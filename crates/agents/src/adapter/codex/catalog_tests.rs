@@ -1,6 +1,62 @@
 use super::*;
 use crate::Backend;
 
+#[cfg(unix)]
+#[test]
+fn profile_history_and_rename_launch_in_requested_project() -> Result<(), String> {
+    use crate::adapter::backend::BackendAdapter;
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let bin = project.path().join("bin");
+    std::fs::create_dir(&bin).map_err(|error| error.to_string())?;
+    std::fs::write(project.path().join("project-marker"), "").map_err(|error| error.to_string())?;
+    let executable = bin.join("codex-fixture");
+    std::fs::write(
+        &executable,
+        r#"#!/bin/sh
+test "$1" = app-server && test "$2" = --stdio && test -f project-marker || exit 1
+IFS= read -r request || exit 1
+printf '%s\n' '{"id":1,"result":{"userAgent":"fixture","codexHome":"/nonexistent-farcaster-codex-profile-history","platformFamily":"unix","platformOs":"linux"}}'
+IFS= read -r notification || exit 1
+IFS= read -r request || exit 1
+case "$request" in
+  *'"method":"thread/read"'*) printf '%s\n' '{"id":2,"result":{"thread":{"turns":[{"items":[{"type":"agentMessage","text":"project history"}]}]}}}' ;;
+  *'"method":"thread/name/set"'*) printf '%s\n' '{"id":2,"result":{}}' ;;
+  *) exit 1 ;;
+esac
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut permissions = std::fs::metadata(&executable)
+        .map_err(|error| error.to_string())?
+        .permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).map_err(|error| error.to_string())?;
+
+    let profile = crate::HarnessProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "project Codex".into(),
+        backend: Backend::Codex,
+        executable: "bin/codex-fixture".into(),
+        data_directory: Some(project.path().join("codex-home")),
+    };
+    let profiles = std::sync::Arc::new(crate::HarnessProfiles::default());
+    profiles.replace(vec![profile.clone()])?;
+    let config = crate::AgentLaunchConfig {
+        profiles,
+        profile_id: Some(profile.id),
+        ..crate::AgentLaunchConfig::default()
+    };
+    let path = project.path().join("locators/codex-cli/thread-1");
+    let adapter = super::super::backend::CodexAdapter;
+    let history = adapter.load_history_for_profile(&config, &path, project.path())?;
+    assert_eq!(history.messages.len(), 1);
+    assert_eq!(history.messages[0]["content"][0]["text"], "project history");
+    adapter.rename_session(&config, project.path(), &path, "thread-1", "new name")?;
+    Ok(())
+}
+
 #[test]
 fn discovers_previewless_descendants_across_pages_without_duplicates() -> Result<(), String> {
     let home = tempfile::tempdir().map_err(|error| error.to_string())?;

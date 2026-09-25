@@ -39,7 +39,7 @@ pub(super) fn discover_with_config(
     locator_root: &Path,
     query: &str,
 ) -> Result<Vec<DiscoveredSession>, String> {
-    with_connection_and_home_using(Some(config), |connection, home| {
+    with_connection_and_home_using(Some(config), None, |connection, home| {
         discover_with_client(connection, home, locator_root, query)
     })
 }
@@ -164,23 +164,25 @@ fn thread_list_params(archived: bool, query: &str, source_kinds: &[&str]) -> Val
 }
 
 pub fn rename_session(session_id: &str, name: &str) -> Result<(), String> {
-    rename_session_using(None, session_id, name)
+    rename_session_using(None, None, session_id, name)
 }
 
 pub(super) fn rename_session_with_config(
     config: &crate::AgentLaunchConfig,
+    project: &Path,
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    rename_session_using(Some(config), session_id, name)
+    rename_session_using(Some(config), Some(project), session_id, name)
 }
 
 fn rename_session_using(
     config: Option<&crate::AgentLaunchConfig>,
+    project: Option<&Path>,
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    with_connection_and_home_using(config, |connection, _| {
+    with_connection_and_home_using(config, project, |connection, _| {
         let id = connection.send_request(
             "thread/name/set",
             json!({"threadId": session_id, "name": name}),
@@ -204,30 +206,32 @@ fn delete_session_using(
     config: Option<&crate::AgentLaunchConfig>,
     session_id: &str,
 ) -> Result<(), String> {
-    with_connection_and_home_using(config, |connection, _| {
+    with_connection_and_home_using(config, None, |connection, _| {
         let id = connection.send_request("thread/delete", json!({"threadId": session_id}))?;
         connection.wait_response::<Value>(&id).map(|_| ())
     })
 }
 
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
-    load_history_using(None, path)
+    load_history_using(None, path, None)
 }
 
 pub(super) fn load_history_with_config(
     config: &crate::AgentLaunchConfig,
     path: &Path,
+    project: &Path,
 ) -> Result<DiscoveredHistory, String> {
-    load_history_using(Some(config), path)
+    load_history_using(Some(config), path, Some(project))
 }
 
 fn load_history_using(
     config: Option<&crate::AgentLaunchConfig>,
     path: &Path,
+    project: Option<&Path>,
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
-    with_connection_and_home_using(config, |connection, codex_home| {
+    with_connection_and_home_using(config, project, |connection, codex_home| {
         let id = connection.send_request(
             "thread/read",
             json!({"threadId": locator, "includeTurns": true}),
@@ -293,16 +297,20 @@ fn with_connection<T>(
 fn with_connection_and_home<T>(
     operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    with_connection_and_home_using(None, operation)
+    with_connection_and_home_using(None, None, operation)
 }
 
 fn with_connection_and_home_using<T>(
     config: Option<&crate::AgentLaunchConfig>,
+    project: Option<&Path>,
     operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
     let mut command = if let Some(config) = config.filter(|config| config.profile_id.is_some()) {
-        let project =
-            std::env::current_dir().map_err(|error| format!("Codex catalog project: {error}"))?;
+        let project = match project {
+            Some(project) => project.to_path_buf(),
+            None => std::env::current_dir()
+                .map_err(|error| format!("Codex catalog project: {error}"))?,
+        };
         config.command(&project)?
     } else {
         Command::new(
