@@ -15,6 +15,7 @@ pub(super) struct PersistedState {
     pub(super) submitted_drafts: HashMap<String, Option<PathBuf>>,
     pub(super) saved_proxy: Option<String>,
     pub(super) expand_transcript_folders: bool,
+    pub(super) group_by_project: bool,
     pub(super) editor_choice: crate::storage::EditorChoice,
 }
 
@@ -130,6 +131,12 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             error.get_or_insert(load_error);
             false
         });
+    let group_by_project = crate::app::persistence::open()
+        .and_then(|store| store.load_group_sessions_by_project())
+        .unwrap_or_else(|load_error| {
+            error.get_or_insert(load_error);
+            false
+        });
     let editor_choice = crate::app::persistence::open()
         .and_then(|store| store.load_editor_choice())
         .unwrap_or_else(|load_error| {
@@ -151,6 +158,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         submitted_drafts,
         saved_proxy,
         expand_transcript_folders,
+        group_by_project,
         editor_choice,
     }
 }

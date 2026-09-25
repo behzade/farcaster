@@ -813,6 +813,33 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn toggle_group_by_project(&mut self, cx: &mut Context<Self>) {
+        let grouped = !self.sessions.group_by_project;
+        match crate::app::persistence::open()
+            .and_then(|store| store.save_group_sessions_by_project(grouped))
+        {
+            Ok(()) => {
+                self.sessions.group_by_project = grouped;
+                self.sessions.error = None;
+            }
+            Err(error) => self.sessions.error = Some(error),
+        }
+        cx.notify();
+    }
+
+    pub(in crate::app) fn toggle_project_group(
+        &mut self,
+        project: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.sessions.collapsed_projects.remove(project) {
+            self.sessions
+                .collapsed_projects
+                .insert(project.to_path_buf());
+        }
+        cx.notify();
+    }
+
     pub(in crate::app) fn select_editor(
         &mut self,
         choice: crate::storage::EditorChoice,

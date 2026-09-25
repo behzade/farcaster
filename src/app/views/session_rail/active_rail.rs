@@ -13,8 +13,9 @@ use gpui_component::{
 use super::{
     FarcasterApp, active_item_identity,
     draft_row::{DraftRow, DraftRowInput},
-    folders::{FolderRow, folder_drop_target, folder_header, folder_rows},
+    folders::{FolderRow, folder_drop_target, folder_header},
     groups::{ActiveSessionItem, session_rail_lists},
+    project_groups::project_header,
     reconcile_list_rows,
     rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
@@ -71,7 +72,7 @@ impl FarcasterApp {
             None
         };
         let active_drop_list = session_list.clone();
-        let active_rows = folder_rows(active_rows, &self.sessions.folders);
+        let active_rows = self.session_rail_rows(active_rows);
         let session_shortcuts =
             visible_session_shortcuts(active_rows.iter().filter_map(FolderRow::session));
         let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
@@ -83,6 +84,7 @@ impl FarcasterApp {
                 .map(|row| match row {
                     FolderRow::Session(item) => active_item_identity(item),
                     FolderRow::Header(id, _) => format!("folder:{id}"),
+                    FolderRow::Project(project, _) => format!("project:{}", project.display()),
                     FolderRow::New => "new-folder".to_owned(),
                 })
                 .collect(),
@@ -173,6 +175,9 @@ impl FarcasterApp {
                     active_title_input.clone(),
                     active_row_entity.clone(),
                 ),
+                Some(FolderRow::Project(project, collapsed)) => {
+                    project_header(project.clone(), *collapsed, active_row_entity.clone())
+                }
                 Some(FolderRow::New) => folder_header(
                     None,
                     "+ New folder".into(),
@@ -196,6 +201,8 @@ impl FarcasterApp {
             .cached(archived_session_rail_style);
         let projects = self.available_projects();
         let project_filter_entity = entity.clone();
+        let group_entity = entity.clone();
+        let grouped_by_project = self.sessions.group_by_project;
         let filter_label = self
             .sessions
             .project_filter
@@ -315,7 +322,29 @@ impl FarcasterApp {
                                         menu
                                     },
                                 ),
-                            ),
+                            )
+                            .child(icon_button(
+                                "group-by-project",
+                                if grouped_by_project {
+                                    AppIcon::Folder
+                                } else {
+                                    AppIcon::List
+                                },
+                                if grouped_by_project {
+                                    "Grouped by project"
+                                } else {
+                                    "Flat list"
+                                },
+                                if grouped_by_project {
+                                    ButtonTone::Neutral
+                                } else {
+                                    ButtonTone::Quiet
+                                },
+                                move |_, cx| {
+                                    let _ = group_entity
+                                        .update(cx, |this, cx| this.toggle_group_by_project(cx));
+                                },
+                            )),
                     ),
             )
             .when_some(self.sessions.error.clone(), |rail, error| {

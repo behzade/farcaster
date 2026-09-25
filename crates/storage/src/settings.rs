@@ -125,6 +125,29 @@ impl StateStore {
             .map_err(|error| format!("save transcript folder setting: {error}"))
     }
 
+    pub fn load_group_sessions_by_project(&self) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='group_sessions_by_project'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| value.as_deref() == Some("true"))
+            .map_err(|error| format!("load session rail grouping: {error}"))
+    }
+
+    pub fn save_group_sessions_by_project(&self, grouped: bool) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('group_sessions_by_project', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [if grouped { "true" } else { "false" }],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save session rail grouping: {error}"))
+    }
+
     pub fn load_preferred_harness(&self, project: &Path) -> Result<Option<Backend>, String> {
         // Before the first saved choice, infer it from this project's main sessions.
         let normalized_project = crate::sessions::normalize_session_path(project);

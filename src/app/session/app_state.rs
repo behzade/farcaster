@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::app::*;
 
 pub(in crate::app) struct SessionState {
@@ -15,6 +17,8 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) submitted_drafts: HashMap<String, Option<PathBuf>>,
     pub(in crate::app) error: Option<String>,
     pub(in crate::app) project_filter: Option<PathBuf>,
+    pub(in crate::app) group_by_project: bool,
+    pub(in crate::app) collapsed_projects: BTreeSet<PathBuf>,
     pub(in crate::app) generation: u64,
     pub(in crate::app) title_input: Entity<InputState>,
     pub(in crate::app) editing_title: Option<SessionTitleEdit>,
