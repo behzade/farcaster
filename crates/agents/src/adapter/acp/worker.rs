@@ -428,7 +428,7 @@ fn acp_mcp_servers(caller_token: Option<&str>) -> Vec<Value> {
             vec![json!({
                 "type": "http",
                 "name": "farcaster",
-                "url": farcaster_mcp::URL,
+                "url": farcaster_mcp::url(),
                 "headers": [{"name": farcaster_mcp::CALLER_HEADER, "value": token}],
             })]
         })

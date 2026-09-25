@@ -13,9 +13,37 @@ use tokio::sync::oneshot;
 
 #[cfg(test)]
 use super::notices;
-use super::{FarcasterMcp, MCP_PATH, bind_address, server_config};
+use super::{BIND_ADDRESS, FarcasterMcp, MCP_PATH, server_config};
 
 static SERVER: Mutex<Option<ServerState>> = Mutex::new(None);
+// Keep the reservation even while MCP is disabled or startup fails.
+static INSTALLED_LISTENER: Mutex<Option<TcpListener>> = Mutex::new(None);
+
+/// Install a reserved endpoint before starting the server or launching agents.
+/// The socket stays reserved for this process, including while MCP is disabled.
+pub fn install_listener(listener: TcpListener) -> Result<(), String> {
+    let current = SERVER
+        .lock()
+        .map_err(|_| "MCP server state is unavailable")?;
+    if current.is_some() {
+        return Err("MCP server is already initialized".into());
+    }
+    let mut installed = INSTALLED_LISTENER
+        .lock()
+        .map_err(|_| "MCP listener is unavailable")?;
+    if installed.is_some() {
+        return Err("MCP listener is already installed".into());
+    }
+    let address = listener
+        .local_addr()
+        .map_err(|error| format!("read MCP address: {error}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("configure MCP listener: {error}"))?;
+    crate::builtin_mcp::set_endpoint(address)?;
+    *installed = Some(listener);
+    Ok(())
+}
 
 #[cfg(any(test, feature = "test-support"))]
 static TEST_WORKER_POOL: Mutex<Option<crate::agents::WorkerPool>> = Mutex::new(None);
@@ -28,6 +56,7 @@ pub struct McpServer;
 struct ServerState {
     service: FarcasterMcp,
     running: Option<RunningServer>,
+    reserved: Option<TcpListener>,
 }
 
 struct RunningServer {
@@ -53,10 +82,18 @@ pub fn start(
                 .map_err(|error| error.to_string())
         })
     })?;
-    let server = ServerState::new(
+    let reserved = INSTALLED_LISTENER
+        .lock()
+        .map_err(|_| "MCP listener is unavailable")?
+        .as_ref()
+        .map(TcpListener::try_clone)
+        .transpose()
+        .map_err(|error| format!("clone MCP listener: {error}"))?;
+    let server = ServerState::with_listener(
         FarcasterMcp::new(store.clone(), workers, updates, notices),
         crate::builtin_mcp::enabled(),
-        &bind_address(),
+        BIND_ADDRESS,
+        reserved,
     )?;
     let family_store = store.clone();
     crate::agents::CallerRegistry::shared().set_family_sink(Some(Arc::new(move |link| {
@@ -90,7 +127,7 @@ pub fn set_enabled(
     let server = current.as_mut().ok_or("MCP server is not initialized")?;
     let was_running = server.running.is_some();
     if enabled {
-        server.enable(&bind_address())?;
+        server.enable(BIND_ADDRESS)?;
     }
     if let Err(error) = save_setting(enabled) {
         if !was_running {
@@ -209,10 +246,21 @@ impl Drop for McpServer {
 }
 
 impl ServerState {
+    #[cfg(test)]
     fn new(service: FarcasterMcp, enabled: bool, address: &str) -> Result<Self, String> {
+        Self::with_listener(service, enabled, address, None)
+    }
+
+    fn with_listener(
+        service: FarcasterMcp,
+        enabled: bool,
+        address: &str,
+        reserved: Option<TcpListener>,
+    ) -> Result<Self, String> {
         let mut server = Self {
             service,
             running: None,
+            reserved,
         };
         if enabled {
             server.enable(address)?;
@@ -224,8 +272,13 @@ impl ServerState {
         if self.running.is_some() {
             return Ok(());
         }
-        let listener = TcpListener::bind(address)
-            .map_err(|error| format!("bind http://{address}{MCP_PATH}: {error}"))?;
+        let listener = match &self.reserved {
+            Some(listener) => listener
+                .try_clone()
+                .map_err(|error| format!("clone MCP listener: {error}"))?,
+            None => TcpListener::bind(address)
+                .map_err(|error| format!("bind http://{address}{MCP_PATH}: {error}"))?,
+        };
         listener
             .set_nonblocking(true)
             .map_err(|error| format!("configure MCP listener: {error}"))?;

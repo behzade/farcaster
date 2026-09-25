@@ -14,8 +14,8 @@ mod reviews;
 #[cfg(any(test, feature = "test-support"))]
 pub use lifecycle::with_test_worker_pool;
 pub use lifecycle::{
-    McpServer, finish_session_family_worker_stop, set_enabled, set_worker_app_proxy, start,
-    stop_session_family_workers, worker_snapshots,
+    McpServer, finish_session_family_worker_stop, install_listener, set_enabled,
+    set_worker_app_proxy, start, stop_session_family_workers, worker_snapshots,
 };
 pub use notice_board::{NoticeBoard, NoticeView};
 pub use workers::{SendParams, send};
@@ -40,20 +40,6 @@ use rmcp::{
 
 const BIND_ADDRESS: &str = "127.0.0.1:8765";
 
-static BIND_ADDRESS_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
-/// Lets the host app point the server at a per-process port, so an isolated
-/// run does not collide with another instance on the default address.
-pub fn set_bind_address(address: &str) {
-    let _ = BIND_ADDRESS_OVERRIDE.set(address.to_owned());
-}
-
-pub(crate) fn bind_address() -> String {
-    BIND_ADDRESS_OVERRIDE
-        .get()
-        .cloned()
-        .unwrap_or_else(|| BIND_ADDRESS.to_owned())
-}
 const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
 

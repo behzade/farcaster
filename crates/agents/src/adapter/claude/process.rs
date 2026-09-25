@@ -112,7 +112,7 @@ fn configure_with_boundary(
     if let Some(token) = caller.filter(|_| farcaster_mcp::enabled()) {
         command.arg("--mcp-config").arg(
             json!({"mcpServers": {"farcaster": {
-                "type": "http", "url": farcaster_mcp::URL,
+                "type": "http", "url": farcaster_mcp::url(),
                 "headers": {farcaster_mcp::CALLER_HEADER: token}
             }}})
             .to_string(),

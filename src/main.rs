@@ -34,13 +34,13 @@ fn main() -> std::process::ExitCode {
 
     let (requested_project, isolated) =
         app::infrastructure::isolation::split(std::env::args_os().skip(1));
-    let isolation_summary = if isolated {
+    let isolation = if isolated {
         let source = match app::paths::data_dir() {
             Ok(path) => path,
             Err(error) => return fail(error),
         };
         match app::infrastructure::isolation::install(&source) {
-            Ok(summary) => Some(summary),
+            Ok(isolation) => Some(isolation),
             Err(error) => return fail(error),
         }
     } else {
@@ -52,17 +52,13 @@ fn main() -> std::process::ExitCode {
     if let Err(error) = init_log_file() {
         zlog::error!("Failed to initialize application log file: {error}");
     }
-    if let Some(summary) = isolation_summary {
-        zlog::info!("{summary}");
+    if let Some(isolation) = &isolation {
+        zlog::info!("{}", isolation.summary());
     }
     if let Some(elapsed_ms) = shell_import_ms {
         zlog::info!("STARTUP operation=main.import_shell_environment elapsed_ms={elapsed_ms}");
     }
     let prepare_timing = StartupTiming::always("main.prepare");
-    let project = match app::launch::resolve_project(requested_project) {
-        Ok(project) => project,
-        Err(error) => return fail(error),
-    };
     let data_root = match app::paths::data_dir() {
         Ok(path) => path,
         Err(error) => return fail(error),
@@ -70,6 +66,10 @@ fn main() -> std::process::ExitCode {
     let state_store = match app::persistence::initialize() {
         Ok(store) => store,
         Err(error) => return fail(format!("initialize state database: {error}")),
+    };
+    let project = match app::launch::resolve_project(requested_project) {
+        Ok(project) => project,
+        Err(error) => return fail(error),
     };
     let (builtin_mcp_enabled, agent_launch, saved_worker_routes) = {
         let store = match state_store.lock() {

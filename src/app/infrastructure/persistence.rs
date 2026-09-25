@@ -72,7 +72,8 @@ fn open_fresh() -> Result<StateStore, String> {
     );
     let path = state_path()?;
     let mut store = StateStore::open_at(&path)?;
-    if let Some(legacy) = legacy_pi_gpui_state_path()
+    if !super::isolation::is_isolated()
+        && let Some(legacy) = legacy_pi_gpui_state_path()
         && legacy != path
         && legacy.is_file()
     {

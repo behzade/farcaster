@@ -126,7 +126,7 @@ fn apply_farcaster_tools(command: &mut std::process::Command, caller_token: Opti
     match caller_token {
         Some(token) => {
             command
-                .env("FARCASTER_MCP_URL", crate::adapter::farcaster_mcp::URL)
+                .env("FARCASTER_MCP_URL", crate::adapter::farcaster_mcp::url())
                 .env(
                     "FARCASTER_MCP_HEADER",
                     crate::adapter::farcaster_mcp::CALLER_HEADER,

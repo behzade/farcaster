@@ -1,7 +1,47 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::{net::SocketAddr, sync::OnceLock};
 
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{Mutex, MutexGuard};
+
+const DEFAULT_URL: &str = "http://127.0.0.1:8765/mcp";
+static ENDPOINT: OnceLock<String> = OnceLock::new();
+
+/// Configure the host endpoint once, before any agents launch.
+pub fn set_endpoint(address: SocketAddr) -> Result<(), String> {
+    ENDPOINT
+        .set(format!("http://{address}/mcp"))
+        .map_err(|_| "MCP endpoint is already configured".to_owned())
+}
+
+pub fn url() -> String {
+    #[cfg(test)]
+    if let Some(url) = TEST_URL.with(|url| url.borrow().clone()) {
+        return url;
+    }
+    ENDPOINT
+        .get()
+        .map(String::as_str)
+        .unwrap_or(DEFAULT_URL)
+        .to_owned()
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_URL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_url_for_test<T>(url: &str, test: impl FnOnce() -> T) -> T {
+    struct Restore(Option<String>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_URL.with(|url| *url.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(TEST_URL.with(|value| value.replace(Some(url.to_owned()))));
+    test()
+}
 
 static ENABLED: AtomicBool = AtomicBool::new(true);
 

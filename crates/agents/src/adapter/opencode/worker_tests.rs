@@ -695,33 +695,35 @@ fn sandboxed_permission_requests_keep_native_choices() {
 
 #[test]
 fn native_startup_merges_direct_farcaster_mcp() {
-    let mut command = std::process::Command::new("opencode");
-    command.env(
+    crate::builtin_mcp::with_url_for_test("http://127.0.0.1:32123/mcp", || {
+        let mut command = std::process::Command::new("opencode");
+        command.env(
             "OPENCODE_CONFIG_CONTENT",
             r#"{"model":"provider/model","mcp":{"servers":{"other":{"type":"remote","url":"https://example.test/mcp"}}}}"#,
         );
-    configure_farcaster_mcp(&mut command, "caller-1").expect("MCP config");
-    let value = command
-        .get_envs()
-        .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
-        .and_then(|(_, value)| value)
-        .and_then(|value| serde_json::from_str::<Value>(&value.to_string_lossy()).ok())
-        .expect("inline config");
-    assert_eq!(value["model"], "provider/model");
-    assert_eq!(
-        value["mcp"]["servers"]["other"]["url"],
-        "https://example.test/mcp"
-    );
-    assert_eq!(
-        value["mcp"]["servers"]["farcaster"]["url"],
-        farcaster_mcp::URL
-    );
-    assert_eq!(
-        value["mcp"]["servers"]["farcaster"]["headers"][farcaster_mcp::CALLER_HEADER],
-        "caller-1"
-    );
-    assert_eq!(value["mcp"]["servers"]["farcaster"]["codemode"], true);
-    assert_eq!(value["mcp"]["servers"]["farcaster"]["oauth"], false);
+        configure_farcaster_mcp(&mut command, "caller-1").expect("MCP config");
+        let value = command
+            .get_envs()
+            .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
+            .and_then(|(_, value)| value)
+            .and_then(|value| serde_json::from_str::<Value>(&value.to_string_lossy()).ok())
+            .expect("inline config");
+        assert_eq!(value["model"], "provider/model");
+        assert_eq!(
+            value["mcp"]["servers"]["other"]["url"],
+            "https://example.test/mcp"
+        );
+        assert_eq!(
+            value["mcp"]["servers"]["farcaster"]["url"],
+            "http://127.0.0.1:32123/mcp"
+        );
+        assert_eq!(
+            value["mcp"]["servers"]["farcaster"]["headers"][farcaster_mcp::CALLER_HEADER],
+            "caller-1"
+        );
+        assert_eq!(value["mcp"]["servers"]["farcaster"]["codemode"], true);
+        assert_eq!(value["mcp"]["servers"]["farcaster"]["oauth"], false);
+    });
 }
 
 #[test]

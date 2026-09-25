@@ -2606,3 +2606,19 @@ fn natural_completion_batches_all_pending_inputs_with_original_receipts() {
     assert!(session.poll_prompt_ack().is_none());
     assert!(session.events.is_empty());
 }
+
+#[test]
+fn session_mcp_servers_use_the_host_endpoint() {
+    let _mcp = crate::builtin_mcp::exclusive_for_test();
+    crate::builtin_mcp::with_url_for_test("http://127.0.0.1:32123/mcp", || {
+        let servers = acp_mcp_servers(Some("caller-endpoint"));
+        assert_eq!(
+            servers,
+            vec![json!({
+                "type": "http", "name": "farcaster",
+                "url": "http://127.0.0.1:32123/mcp",
+                "headers": [{"name": "farcaster-caller", "value": "caller-endpoint"}]
+            })]
+        );
+    });
+}

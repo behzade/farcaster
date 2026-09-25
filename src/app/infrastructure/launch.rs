@@ -76,7 +76,9 @@ pub(crate) fn run(
 ) -> Result<(), LaunchError> {
     let launch_timing = StartupTiming::always("launch.until_window_open");
     #[cfg(target_os = "linux")]
-    install_linux_desktop_identity();
+    if !isolation::is_isolated() {
+        install_linux_desktop_identity();
+    }
 
     let trust_timing = StartupTiming::new("launch.project_trust");
     let startup_trust =
@@ -92,7 +94,15 @@ pub(crate) fn run(
         .with_assets(AppAssets)
         .run(move |cx: &mut App| {
             drop(event_loop_timing);
-            cx.set_app_identity("io.github.behzade.farcaster", "Farcaster");
+            let (app_id, app_name) = if isolation::is_isolated() {
+                (
+                    "io.github.behzade.farcaster.isolated",
+                    "Farcaster — Isolated app state",
+                )
+            } else {
+                ("io.github.behzade.farcaster", "Farcaster")
+            };
+            cx.set_app_identity(app_id, app_name);
             let components_timing = StartupTiming::always("launch.init_components");
             gpui_component::init(cx);
             drop(components_timing);
@@ -172,17 +182,17 @@ pub(crate) fn run(
                 )
             });
             drop(placement_timing);
-            let owned_window = !isolation::is_isolated();
+            let owned_window = !isolation::is_isolated() || cfg!(target_os = "linux");
             let window_options = WindowOptions {
                 window_bounds: Some(window_bounds),
                 display_id,
                 focus: owned_window,
                 show: owned_window,
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Farcaster".into()),
+                    title: Some(isolation::window_title("Farcaster").into()),
                     ..TitlebarOptions::default()
                 }),
-                app_id: Some("io.github.behzade.farcaster".into()),
+                app_id: Some(app_id.into()),
                 ..WindowOptions::default()
             };
             #[cfg(target_os = "linux")]
@@ -224,7 +234,7 @@ pub(crate) fn run(
                 quit_after_start(cx);
                 return;
             }
-            if !isolation::is_isolated() {
+            if owned_window {
                 cx.activate(true);
             }
             drop(launch_timing);

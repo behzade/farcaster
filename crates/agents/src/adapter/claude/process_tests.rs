@@ -203,3 +203,34 @@ fn close_reaps_a_cli_that_writes_valid_frames_continuously() {
         "close must reap the child"
     );
 }
+
+#[test]
+fn process_mcp_config_uses_the_host_endpoint() {
+    let _mcp = crate::builtin_mcp::exclusive_for_test();
+    crate::builtin_mcp::with_url_for_test("http://127.0.0.1:32123/mcp", || {
+        let mut command = std::process::Command::new("claude");
+        configure(
+            &mut command,
+            HarnessAccessMode::Sandboxed,
+            "session",
+            false,
+            Some("caller-endpoint"),
+            true,
+        );
+        let args = command.get_args().collect::<Vec<_>>();
+        let config = args
+            .windows(2)
+            .find(|args| args[0] == "--mcp-config")
+            .expect("MCP config");
+        let config: Value =
+            serde_json::from_str(config[1].to_str().expect("UTF-8 config")).expect("JSON config");
+        assert_eq!(
+            config["mcpServers"]["farcaster"]["url"],
+            "http://127.0.0.1:32123/mcp"
+        );
+        assert_eq!(
+            config["mcpServers"]["farcaster"]["headers"]["farcaster-caller"],
+            "caller-endpoint"
+        );
+    });
+}

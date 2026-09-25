@@ -2562,7 +2562,7 @@ fn configure_codex_app_server(command: &mut std::process::Command, mode: crate::
 }
 
 fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &str) {
-    let url = serde_json::to_string(farcaster_mcp::URL).expect("static MCP URL encodes");
+    let url = serde_json::to_string(&farcaster_mcp::url()).expect("MCP URL encodes");
     let header =
         serde_json::to_string(farcaster_mcp::CALLER_HEADER).expect("static MCP header encodes");
     let token = serde_json::to_string(caller_token).expect("caller token encodes");

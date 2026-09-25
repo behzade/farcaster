@@ -2208,7 +2208,7 @@ fn configure_farcaster_mcp(
                 "servers": {
                     "farcaster": {
                         "type": "remote",
-                        "url": farcaster_mcp::URL,
+                        "url": farcaster_mcp::url(),
                         "headers": {(farcaster_mcp::CALLER_HEADER): caller_token},
                         "oauth": false,
                         "codemode": true

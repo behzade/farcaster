@@ -44,9 +44,21 @@ fn check_claude_tool_listing(sdk: Option<&std::path::Path>) {
     );
     let probe = TcpListener::bind("127.0.0.1:0").expect("test operation should succeed");
     let address = probe.local_addr().expect("test operation should succeed");
-    drop(probe);
-    let mut server = ServerState::new(service, true, &address.to_string())
-        .expect("test operation should succeed");
+    let mut server = ServerState::with_listener(service, false, BIND_ADDRESS, Some(probe))
+        .expect("disabled reserved server");
+    assert!(
+        TcpListener::bind(address).is_err(),
+        "disabled startup keeps reservation"
+    );
+    for _ in 0..2 {
+        server.enable(BIND_ADDRESS).expect("enable reserved socket");
+        server.disable();
+        assert!(
+            TcpListener::bind(address).is_err(),
+            "disable keeps reservation"
+        );
+    }
+    server.enable(BIND_ADDRESS).expect("enable reserved socket");
     let request = |body: serde_json::Value| {
         let body = body.to_string();
         let mut stream = TcpStream::connect(address).expect("test operation should succeed");
@@ -179,5 +191,92 @@ fn disabled_server_leaves_the_port_free_and_can_be_reenabled() {
         server.disable();
         let probe = TcpListener::bind(&address).expect("disabled server releases port");
         drop(probe);
+    }
+}
+
+#[test]
+fn installed_endpoint_stays_reserved_before_start_and_after_failed_reinstall() {
+    const CHILD: &str = "FARCASTER_TEST_INSTALLED_MCP_ENDPOINT";
+    if std::env::var_os(CHILD).is_none() {
+        let executable = std::env::current_exe().expect("test executable");
+        #[cfg(target_os = "macos")]
+        let mut command = {
+            let mut command = std::process::Command::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../scripts/run-macos.sh"
+            ));
+            command.arg(&executable);
+            command
+        };
+        #[cfg(not(target_os = "macos"))]
+        let mut command = std::process::Command::new(executable);
+        let status = command
+            .args(["--exact", "lifecycle::tests::installed_endpoint_stays_reserved_before_start_and_after_failed_reinstall"])
+            .env(CHILD, "1")
+            .status().expect("isolated endpoint test");
+        assert!(status.success());
+        return;
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve endpoint");
+    let address = listener.local_addr().expect("address");
+    crate::builtin_mcp::set_enabled(false);
+    install_listener(listener).expect("install endpoint");
+    assert_eq!(crate::builtin_mcp::url(), format!("http://{address}/mcp"));
+    assert!(TcpListener::bind(address).is_err());
+    let other = TcpListener::bind("127.0.0.1:0").expect("other endpoint");
+    assert!(install_listener(other).is_err());
+    assert_eq!(crate::builtin_mcp::url(), format!("http://{address}/mcp"));
+    assert!(TcpListener::bind(address).is_err());
+
+    let project = tempfile::tempdir().expect("project");
+    let store = Arc::new(Mutex::new(
+        crate::storage::StateStore::open_at(&project.path().join("state.db")).expect("state"),
+    ));
+    let (factories, backend) =
+        crate::agents::worker_factories(crate::agents::AgentLaunchConfig::default());
+    let workers = crate::agents::WorkerPool::new(factories, backend, project.path().to_owned(), 1)
+        .expect("workers");
+    let (updates, _) = async_channel::bounded(1);
+    for _ in 0..2 {
+        let server = start(
+            store.clone(),
+            workers.clone(),
+            updates.clone(),
+            notices::NoticeBoard::default(),
+        )
+        .expect("start with disabled reserved endpoint");
+        assert!(TcpListener::bind(address).is_err());
+        assert!(set_enabled(true, |_| Err("save failed".into())).is_err());
+        assert!(!crate::builtin_mcp::enabled());
+        assert!(
+            SERVER
+                .lock()
+                .expect("server")
+                .as_ref()
+                .expect("initialized")
+                .running
+                .is_none()
+        );
+        assert!(
+            TcpListener::bind(address).is_err(),
+            "failed enable keeps reservation"
+        );
+        set_enabled(true, |_| Ok(())).expect("enable reserved endpoint");
+        assert!(
+            SERVER
+                .lock()
+                .expect("server")
+                .as_ref()
+                .expect("initialized")
+                .running
+                .is_some()
+        );
+        set_enabled(false, |_| Ok(())).expect("disable reserved endpoint");
+        drop(server);
+        assert_eq!(crate::builtin_mcp::url(), format!("http://{address}/mcp"));
+        assert!(
+            TcpListener::bind(address).is_err(),
+            "server drop keeps reservation"
+        );
     }
 }
