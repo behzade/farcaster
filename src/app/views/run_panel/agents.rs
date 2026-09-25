@@ -4,15 +4,13 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use super::super::super::{FarcasterApp, RunPanelView};
+use super::super::super::FarcasterApp;
 use super::super::session_rail::{session_hover_details, session_tooltip_content, status_visual};
 use super::WorkerProfileNames;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
-    app::ui::primitives::{
-        AppIconSize, AppTooltip as _, activates_button, app_icon, disclosure_button,
-    },
+    app::ui::primitives::{AppIconSize, AppTooltip as _, activates_button, app_icon},
     app::ui::theme::theme,
 };
 

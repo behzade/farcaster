@@ -361,7 +361,7 @@ impl FarcasterApp {
             return;
         }
         let session = self.sessions.drafts[index].session_path.clone();
-        self.save_project_registry();
+        self.save_session_draft(&id);
         if let Some(path) = session {
             self.set_session_archived(path, archived, cx);
         }

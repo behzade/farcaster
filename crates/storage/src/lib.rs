@@ -131,7 +131,7 @@ pub enum WindowState {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
-pub(crate) struct PanelLayout {
+pub struct PanelLayout {
     pub session_rail_hidden: bool,
     pub run_panel_hidden: bool,
     pub notifications_collapsed: bool,

@@ -1,6 +1,6 @@
 use super::*;
 use crate::agents::Backend;
-use crate::{app::session_folders::SessionFolder, projects::DraftSession};
+use crate::{app::session_folders::SessionFolder, sessions::DraftSession};
 use gpui::AppContext as _;
 
 fn draft(id: i64) -> ActiveSessionItem {

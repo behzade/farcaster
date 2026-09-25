@@ -153,7 +153,7 @@ impl FarcasterApp {
             archived_expanded: self.sessions.archived_expanded,
             archived_height: self.views.archived_panel.stored_height(),
         };
-        if let Err(error) = crate::app::infrastructure::persistence::StateStore::open()
+        if let Err(error) = crate::app::infrastructure::persistence::open()
             .and_then(|store| store.save_panel_layout(&layout))
         {
             zlog::warn!("Save panel layout: {error}");

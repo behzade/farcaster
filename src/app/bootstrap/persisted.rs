@@ -153,7 +153,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             None
         });
 
-    let panel_layout = crate::app::infrastructure::persistence::StateStore::open()
+    let panel_layout = crate::app::infrastructure::persistence::open()
         .and_then(|store| store.load_panel_layout())
         .unwrap_or_else(|load_error| {
             error.get_or_insert(load_error);

@@ -212,6 +212,11 @@ impl NvimEditor {
         self.terminal.update(cx, |terminal, _| terminal.snapshot())
     }
 
+    pub(super) fn frame_count(&mut self, cx: &mut Context<Self>) -> u64 {
+        self.terminal
+            .update(cx, |terminal, _| terminal.frame_count())
+    }
+
     pub(super) fn activate_tab(
         &mut self,
         tab: u64,

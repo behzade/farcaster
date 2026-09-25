@@ -1,4 +1,5 @@
 use super::*;
+use farcaster_sessions::archived_root_family_for_path;
 use std::path::Path;
 
 impl Supervisor {

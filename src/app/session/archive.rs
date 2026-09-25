@@ -5,9 +5,8 @@ use gpui::{Context, FocusHandle, Window};
 use super::FarcasterApp;
 use crate::{
     app::composer::sessions::session_target,
-    projects::DraftSession,
     runtime::RuntimeCommand,
-    sessions::{SessionSummary, root_session_for_path},
+    sessions::{DraftSession, SessionSummary, root_session_for_path},
 };
 
 /// Where a chat's archived state lives. A chat that has never been written to

@@ -15,7 +15,10 @@ use crate::{
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
-        primitives::{AppIconSize, AppTooltip as _, SearchField, activates_button, app_icon},
+        primitives::{
+            AppIconSize, AppTooltip as _, ButtonTone, SearchField, activates_button, app_icon,
+            button,
+        },
     },
     repository::{RepositoryEdit, RepositoryKind, WorkingCopyChange, WorkingCopySnapshot},
 };

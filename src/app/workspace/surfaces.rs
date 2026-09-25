@@ -988,63 +988,6 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn save_settings_text_editor(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let value = self
-            .settings
-            .text_editor_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_owned();
-        let command = (!value.is_empty()).then_some(value);
-        self.set_settings_text_editor(command, window, cx);
-    }
-
-    pub(in crate::app) fn set_settings_text_editor(
-        &mut self,
-        command: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let command = match command {
-            Some(command) => match crate::editors::EditorCommand::parse(&command) {
-                Ok(command) => Some(command.command_line()),
-                Err(error) => {
-                    self.settings.text_editor_error = Some(error);
-                    cx.notify();
-                    return;
-                }
-            },
-            None => None,
-        };
-        let result =
-            crate::app::infrastructure::persistence::StateStore::open().and_then(|store| {
-                if store.load_text_editor()? == command {
-                    return Ok(false);
-                }
-                store.save_text_editor(command.as_deref())?;
-                Ok(true)
-            });
-        match result {
-            Ok(changed) => {
-                self.settings.text_editor_error = None;
-                self.settings.text_editor = command.clone();
-                self.settings.text_editor_input.update(cx, |input, cx| {
-                    input.set_value(command.clone().unwrap_or_default(), window, cx);
-                });
-                if changed {
-                    self.reset_editor_sessions(cx);
-                }
-            }
-            Err(error) => self.settings.text_editor_error = Some(error),
-        }
-        cx.notify();
-    }
-
     pub(in crate::app) fn schedule_settings_proxy_save(&mut self, cx: &mut Context<Self>) {
         self.settings.proxy_save = Some(cx.spawn(async move |weak, cx| {
             cx.background_executor()

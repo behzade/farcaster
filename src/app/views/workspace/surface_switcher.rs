@@ -2,8 +2,7 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::layout::{TRAFFIC_LIGHT_INSET, shows_left_inline},
     app::ui::primitives::{
-        AppIconSize, AppTooltip as _, ButtonTone, IndicatorEdge, app_icon, icon_button,
-        icon_control, line_indicator,
+        AppIconSize, AppTooltip as _, ButtonTone, app_icon, icon_button, icon_control,
     },
     app::ui::theme::theme,
     app::workspace::editor::effective_editor_choice,
@@ -14,7 +13,6 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _,
 };
-
 
 impl FarcasterApp {
     pub(in crate::app::views) fn render_workspace_bar(
@@ -56,6 +54,7 @@ impl FarcasterApp {
         let bar_entity = entity.clone();
         let rail_toggle = entity.clone();
         div()
+            .id("workspace-bar")
             .h(theme().size(38.0))
             .flex_none()
             .flex()
