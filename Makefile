@@ -1,65 +1,72 @@
 PROJECT ?= $(CURDIR)
-CARGO_TARGET_DIR ?= $(CURDIR)/target
-GPUI_GHOSTTY_DIR ?= $(abspath ../gpui-ghostty)
-LOG_LINES ?= 50
-DEFAULT_FARCASTER_DATA_DIR := $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/farcaster
-LOG_FILE ?= $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(DEFAULT_FARCASTER_DATA_DIR))/logs/farcaster.log
-TAIL_ARGS ?= -n $(LOG_LINES)
+export CARGO_TARGET_DIR ?= $(CURDIR)/target
+DATA_DIR := $(if $(FARCASTER_DATA_DIR),$(FARCASTER_DATA_DIR),$(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/farcaster)
+LOG_FILE ?= $(DATA_DIR)/logs/farcaster.log
+TAIL_ARGS ?= -n 50
 BUMP ?= patch
+ISOLATED ?=
+DEP_GRAPH := Cargo.toml Cargo.lock
+INCREMENTAL_BUDGET ?= 3072
+INCREMENTAL_STAMP := $(CARGO_TARGET_DIR)/.incremental-stamp
+INCREMENTAL_DIR := $(CARGO_TARGET_DIR)/debug/incremental
+SCRATCH := $(CARGO_TARGET_DIR)/scratch
+SANDBOX = rm -rf "$(SCRATCH)"; FARCASTER_DATA_DIR="$(SCRATCH)"
+MODEL ?= opencode/big-pickle
+FREE_MODEL = FARCASTER_OPENCODE_MODEL="$(MODEL)"
+# Detailed timings alone stay silent for phases under the slow-operation floor.
+PERF_TRACE ?= 1
+TRACE_ENV = DEBUG=true FARCASTER_PERF_TRACE="$(PERF_TRACE)"
+PRUNE = status=$$?; size=$$(du -sm "$(INCREMENTAL_DIR)" 2>/dev/null | cut -f1); if [ "$${size:-0}" -gt "$(INCREMENTAL_BUDGET)" ]; then echo "pruning the local incremental cache: $${size}MB of $(INCREMENTAL_BUDGET)MB"; cargo clean -p farcaster; fi; exit $$status
+CARGO_TARGETS := build run test e2e measure debug isolated release release-debug release-preview release-publish bundle bundle-relaunch package clippy check
 
-.PHONY: run test e2e debug release release-local release-debug release-preview release-publish bundle bundle-relaunch package logs check check-flake build-nix
+.SILENT:
+.PHONY: $(CARGO_TARGETS) logs fmt check-flake clean prune-incremental libcxx build-nix
 
-run:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
+$(CARGO_TARGETS): | $(INCREMENTAL_STAMP) libcxx
+libcxx:
+	printf 'int main(){}\n' | cc -x c++ - -o /dev/null -lc++ 2>/dev/null || (echo "libc++ is missing" >&2; exit 1)
 
+$(INCREMENTAL_STAMP): $(DEP_GRAPH)
+	mkdir -p "$(dir $@)"
+	if [ -f "$@" ]; then echo "dependency graph changed: pruning the local incremental cache"; cargo clean -p farcaster; fi
+	touch "$@"
+
+build:
+	cargo build; $(PRUNE)
+run debug:
+	$(if $(ISOLATED),$(FREE_MODEL) )DEBUG=$(if $(or $(filter debug,$@),$(ISOLATED)),true,) cargo run -- $(if $(ISOLATED),--isolated) "$(PROJECT)"; $(PRUNE)
+isolated: ISOLATED := 1
+isolated: run
 test:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test
-
+	$(SANDBOX) cargo test; $(PRUNE)
+measure:
+	$(SANDBOX) $(TRACE_ENV) cargo test --bin farcaster switch_perf_tests -- --nocapture; $(PRUNE)
 e2e:
-	HARNESS="$(HARNESS)" CASE="$(CASE)" CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" \
-		sh scripts/e2e.sh
-
-debug:
-	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run -- "$(PROJECT)"
-
-release:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
-
+	$(SANDBOX) $(FREE_MODEL) $(TRACE_ENV) HARNESS="$(HARNESS)" CASE="$(CASE)" sh scripts/e2e.sh; $(PRUNE)
+release release-debug:
+	DEBUG=$(if $(filter release-debug,$@),true) cargo run --release -- "$(PROJECT)"
 release-local:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo \
-		--config 'paths = ["$(GPUI_GHOSTTY_DIR)/crates/gpui-ghostty"]' \
-		run --release -- "$(PROJECT)"
-
-release-debug:
-	DEBUG=true CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo run --release -- "$(PROJECT)"
-
-release-preview:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo release "$(BUMP)" --package farcaster
-
-release-publish:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo release "$(BUMP)" --package farcaster --execute
-
-bundle:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(BUNDLE_FORMATS)" PROJECT="$(PROJECT)" ./scripts/bundle.sh
-
-bundle-relaunch:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(BUNDLE_FORMATS)" PROJECT="$(PROJECT)" ./scripts/bundle.sh --relaunch
-
+	cargo --config 'paths = ["$(GPUI_GHOSTTY_DIR)/crates/gpui-ghostty"]' run --release -- "$(PROJECT)"
+release-preview release-publish:
+	cargo release "$(BUMP)" --package farcaster $(if $(filter release-publish,$@),--execute)
+bundle bundle-relaunch:
+	BUNDLE_FORMATS="$(BUNDLE_FORMATS)" PROJECT="$(PROJECT)" ./scripts/bundle.sh $(if $(filter bundle-relaunch,$@),--relaunch)
 package:
-	@test -n "$(FORMAT)" || (echo "usage: make package FORMAT=app|dmg|appimage|deb|pacman" >&2; exit 1)
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" BUNDLE_FORMATS="$(FORMAT)" ./scripts/bundle.sh
-
+	test -n "$(FORMAT)" || (echo "usage: make package FORMAT=app|dmg|appimage|deb|pacman" >&2; exit 1)
+	BUNDLE_FORMATS="$(FORMAT)" ./scripts/bundle.sh
 logs:
-	@tail $(TAIL_ARGS) "$(LOG_FILE)"
-
+	tail $(TAIL_ARGS) "$(LOG_FILE)"
+fmt:
+	cargo fmt
+clippy:
+	cargo clippy --all-targets -- -D warnings; $(PRUNE)
 check:
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo fmt --check
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo test
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo check
-	CARGO_TARGET_DIR="$(CARGO_TARGET_DIR)" cargo clippy --all-targets -- -D warnings
-
+	cargo fmt --check && cargo test && cargo check && cargo clippy --all-targets -- -D warnings; $(PRUNE)
 check-flake:
 	nix flake check
-
 build-nix:
 	nix build --print-build-logs .#default
+clean:
+	cargo clean
+prune-incremental:
+	cargo clean -p farcaster
