@@ -18,3 +18,17 @@ fn file_totals_handle_nested_deleted_renamed_and_quoted_paths() {
         assert_eq!(counts.get(Path::new(path)), Some(&Some(expected)), "{path}");
     }
 }
+
+#[test]
+fn untracked_files_count_their_lines_and_leave_binaries_unknown() {
+    assert_eq!(untracked(b""), Some((0, 0)));
+    assert_eq!(untracked(b"one\ntwo\n"), Some((2, 0)));
+    assert_eq!(untracked(b"one\ntwo"), Some((2, 0)));
+    assert_eq!(untracked(b"one\n\n"), Some((2, 0)));
+    assert_eq!(untracked(b"one\n\x00\n"), None);
+
+    let mut late_nul = vec![b'a'; BINARY_SNIFF_BYTES + 2];
+    late_nul[BINARY_SNIFF_BYTES + 1] = b'\n';
+    late_nul[BINARY_SNIFF_BYTES] = 0;
+    assert_eq!(untracked(&late_nul), Some((1, 0)));
+}

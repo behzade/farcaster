@@ -27,12 +27,19 @@ use port::{CommandExecutor, CommandMode, CommandOutput, RepositoryOperations};
 
 static REPOSITORY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-pub(crate) use file_counts::parse as parse_file_counts;
+pub(crate) use file_counts::{parse as parse_file_counts, untracked as untracked_file_counts};
+
+#[derive(Default)]
+pub(crate) struct UntrackedTotals {
+    pub additions: u64,
+    pub binary: bool,
+}
 
 pub(crate) fn finish_working_copy_totals(
     snapshot: &mut WorkingCopySnapshot,
     file_counts: &BTreeMap<(ChangeLayer, PathBuf), Option<(usize, usize)>>,
     patch: &[u8],
+    untracked: UntrackedTotals,
 ) -> (Option<u64>, Option<u64>) {
     for change in &mut snapshot.changes {
         change.counts = file_counts
@@ -40,7 +47,14 @@ pub(crate) fn finish_working_copy_totals(
             .copied()
             .flatten();
     }
-    patch_counts(&String::from_utf8_lossy(patch))
+    if untracked.binary {
+        return (None, None);
+    }
+    let (additions, deletions) = patch_counts(&String::from_utf8_lossy(patch));
+    (
+        additions.map(|additions| additions.saturating_add(untracked.additions)),
+        deletions,
+    )
 }
 
 #[derive(Clone)]

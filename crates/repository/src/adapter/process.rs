@@ -160,21 +160,32 @@ impl CommandRunner {
         let process_group = child.id();
         let stdout_rx = drain_bounded(stdout, self.output_limit);
         let stderr_rx = drain_bounded(stderr, self.output_limit.min(STDERR_OUTPUT_LIMIT));
-        let started = Instant::now();
-        let status = loop {
-            match child.try_wait().map_err(|source| RepositoryError::Io {
-                context: format!("wait for {}", program.to_string_lossy()),
-                source,
-            })? {
-                Some(status) => break status,
-                None if started.elapsed() >= self.timeout => {
-                    terminate_child(&mut child, process_group);
-                    return Err(RepositoryError::CommandTimedOut {
-                        program: program.to_string_lossy().into_owned(),
-                        timeout: self.timeout,
-                    });
-                }
-                None => thread::sleep(POLL_INTERVAL),
+        let (status_sender, status_receiver) = mpsc::sync_channel(1);
+        let waiter = thread::spawn(move || {
+            let _ = status_sender.send(child.wait());
+        });
+        let status = match status_receiver.recv_timeout(self.timeout) {
+            Ok(Ok(status)) => status,
+            Ok(Err(source)) => {
+                let _ = waiter.join();
+                return Err(RepositoryError::Io {
+                    context: format!("wait for {}", program.to_string_lossy()),
+                    source,
+                });
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                terminate_process_group(process_group);
+                let _ = waiter.join();
+                return Err(RepositoryError::CommandTimedOut {
+                    program: program.to_string_lossy().into_owned(),
+                    timeout: self.timeout,
+                });
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(RepositoryError::InvalidRepository(format!(
+                    "{} status was never reported",
+                    program.to_string_lossy()
+                )));
             }
         };
         let stdout = receive_drain(program, stdout_rx, process_group)?;
@@ -253,21 +264,10 @@ fn receive_drain(
     })
 }
 
-fn terminate_child(child: &mut std::process::Child, process_group: u32) {
+fn terminate_process_group(process_group: u32) {
     kill_process_group(process_group, false);
-    let deadline = Instant::now() + TERMINATE_GRACE;
-    let mut reaped = false;
-    while Instant::now() < deadline {
-        if !reaped {
-            reaped = child.try_wait().ok().flatten().is_some();
-        }
-        thread::sleep(POLL_INTERVAL);
-    }
+    thread::sleep(TERMINATE_GRACE);
     kill_process_group(process_group, true);
-    if !reaped {
-        let _kill_result = child.kill();
-        let _wait_result = child.wait();
-    }
 }
 
 #[cfg(unix)]
