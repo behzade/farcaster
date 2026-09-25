@@ -128,7 +128,7 @@ impl RuntimeOwner {
                 let result = harness
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
                     .and_then(|harness| {
-                        agents::load_session_history_for_profile(&config, harness, &path, &project)
+                        history_cache::load_cached_history(harness, &path, &project)
                     });
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
