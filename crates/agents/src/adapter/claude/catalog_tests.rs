@@ -116,4 +116,27 @@ fn discovery_includes_native_children_and_reads_sidechain_history() {
     assert_eq!(history.messages.len(), 2);
     assert_eq!(history.messages[1]["content"][0]["text"], "Found it");
     assert!(child_id(parent, "../../outside").is_none());
+
+    // A warm child transcript still tracks changes to the child file, not just
+    // the parent transcript or the synthetic locator.
+    let child_path = children.join("agent-a123.jsonl");
+    let next = json!({"type":"assistant","uuid":"next","parentUuid":"a","isSidechain":true,
+        "message":{"role":"assistant","model":"updated-model","content":"More findings"}});
+    use std::io::Write as _;
+    writeln!(
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&child_path)
+            .unwrap(),
+        "{next}"
+    )
+    .unwrap();
+    let updated = load_history_in(directory.path(), &sessions[0].path).unwrap();
+    assert_eq!(updated.messages.len(), 3);
+    assert_eq!(
+        updated.model,
+        Some((BACKEND.into(), "updated-model".into()))
+    );
+    fs::remove_file(&child_path).unwrap();
+    assert!(load_history_in(directory.path(), &sessions[0].path).is_err());
 }

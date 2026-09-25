@@ -1,3 +1,6 @@
+#[path = "history_cache.rs"]
+mod history_cache;
+
 use crate::Backend;
 use std::{
     path::{Path, PathBuf},
@@ -40,11 +43,15 @@ pub fn delete_session(session_id: &str) -> Result<(), String> {
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::OpenCode, path)
         .ok_or_else(|| format!("invalid OpenCode session locator: {}", path.display()))?;
+    history_cache::load(&locator, || load_history_uncached(&locator))
+}
+
+fn load_history_uncached(locator: &str) -> Result<DiscoveredHistory, String> {
     with_server(|server| {
         // Read pending inputs first. If one moves into history between the two
         // reads it may appear in both sets, which safely resolves as delivered.
         // The opposite order could briefly omit it from both sets.
-        let inbox = match server.client().session_inbox(&locator) {
+        let inbox = match server.client().session_inbox(locator) {
             Ok(inbox) => Some(inbox),
             Err(error) => {
                 // History remains useful without an authoritative pending-input
@@ -53,7 +60,7 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
                 None
             }
         };
-        let response = server.client().session_messages(&locator)?;
+        let response = server.client().session_messages(locator)?;
         let rows = response
             .as_array()
             .or_else(|| response.get("data").and_then(Value::as_array))
@@ -62,7 +69,7 @@ pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
         let prompt_deliveries = inbox
             .as_deref()
             .map(|inbox| prompt_delivery_reconciliation(rows, inbox));
-        let session = server.client().get_session(&locator)?;
+        let session = server.client().get_session(locator)?;
         let identity = latest_identity(rows, session.model.as_ref());
         let messages = rows.iter().flat_map(history_messages).collect();
         let (model, thinking_level) = identity.map_or((None, None), |identity| {

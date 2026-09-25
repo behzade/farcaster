@@ -10,6 +10,7 @@ mod codex;
 mod cursor;
 mod farcaster_mcp;
 mod handler;
+mod history_cache;
 #[cfg(test)]
 mod live_basic_tests;
 #[cfg(test)]

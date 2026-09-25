@@ -18,6 +18,9 @@ use super::super::{
     main_session::{external_session_locator, external_session_path},
 };
 
+#[path = "history_cache.rs"]
+mod history_cache;
+
 const INTERACTIVE_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer", "unknown"];
 const AGENT_SOURCE_KINDS: &[&str] = &[
     "subAgent",
@@ -231,47 +234,99 @@ fn load_history_using(
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
-    with_connection_and_home_using(config, project, |connection, codex_home| {
-        let id = connection.send_request(
-            "thread/read",
-            json!({"threadId": locator, "includeTurns": true}),
-        )?;
-        let response: Value = connection.wait_response(&id)?;
-        let thread = response.get("thread").unwrap_or(&response);
-        let mut messages = Vec::new();
-        let mut delivered = Vec::new();
-        for turn in thread
-            .get("turns")
+    with_connection_and_home_and_scope_using(config, project, |connection, codex_home, scope| {
+        if scope.has_sqlite_home_override()
+            || !history_cache::has_revision(codex_home, &locator)
+            || !can_cache_persisted_history(connection, codex_home)
+        {
+            return read_history(connection, codex_home, &locator);
+        }
+        history_cache::load(codex_home, &locator, scope, || {
+            read_history(connection, codex_home, &locator)
+        })
+    })
+}
+
+fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    home: &Path,
+) -> bool {
+    let check = || -> Result<bool, String> {
+        // A reused/daemon-backed server can return unflushed live turns. Cache
+        // only when the server confirms it has no loaded threads.
+        let id = connection.send_request("thread/loaded/list", json!({}))?;
+        let loaded: Value = connection.wait_response(&id)?;
+        if !loaded
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            return Ok(false);
+        }
+        // CODEX_HOME and SQLite's configured home can differ. The cache follows
+        // the existing identity reader, so bypass it for a relocated state DB.
+        let id = connection.send_request("config/read", json!({"includeLayers": false}))?;
+        let config: Value = connection.wait_response(&id)?;
+        let Some(config) = config.get("config").and_then(Value::as_object) else {
+            return Ok(false);
+        };
+        Ok(match config.get("sqlite_home") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(path)) => std::fs::canonicalize(path)
+                .ok()
+                .zip(std::fs::canonicalize(home).ok())
+                .is_some_and(|(left, right)| left == right),
+            _ => false,
+        })
+    };
+    let mut check = check;
+    check().unwrap_or(false)
+}
+
+fn read_history<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    codex_home: &Path,
+    locator: &str,
+) -> Result<DiscoveredHistory, String> {
+    let id = connection.send_request(
+        "thread/read",
+        json!({"threadId": locator, "includeTurns": true}),
+    )?;
+    let response: Value = connection.wait_response(&id)?;
+    let thread = response.get("thread").unwrap_or(&response);
+    let mut messages = Vec::new();
+    let mut delivered = Vec::new();
+    for turn in thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for item in turn
+            .get("items")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
         {
-            for item in turn
-                .get("items")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(id) = delivered_submission_id(item) {
-                    delivered.push(id.to_owned());
-                }
-                messages.extend(history_messages(item));
+            if let Some(id) = delivered_submission_id(item) {
+                delivered.push(id.to_owned());
             }
+            messages.extend(history_messages(item));
         }
-        let identity = stored_identities(codex_home, &[&locator])?.remove(&locator);
-        let (model, thinking_level) = identity.map_or((None, None), |identity| {
-            (Some((identity.provider, identity.model)), identity.effort)
-        });
-        Ok(DiscoveredHistory {
-            messages,
-            model,
-            thinking_level,
-            prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
-                delivered,
-                pending: Vec::new(),
-                absence_is_not_delivered: false,
-            }),
-        })
+    }
+    let identity = stored_identities(codex_home, &[locator])?.remove(locator);
+    let (model, thinking_level) = identity.map_or((None, None), |identity| {
+        (Some((identity.provider, identity.model)), identity.effort)
+    });
+    Ok(DiscoveredHistory {
+        messages,
+        model,
+        thinking_level,
+        prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
+            delivered,
+            pending: Vec::new(),
+            absence_is_not_delivered: false,
+        }),
     })
 }
 
@@ -305,6 +360,16 @@ fn with_connection_and_home_using<T>(
     project: Option<&Path>,
     operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
+    with_connection_and_home_and_scope_using(config, project, |connection, home, _| {
+        operation(connection, home)
+    })
+}
+
+fn with_connection_and_home_and_scope_using<T>(
+    config: Option<&crate::AgentLaunchConfig>,
+    project: Option<&Path>,
+    operation: impl FnOnce(&mut CatalogConnection, &Path, history_cache::Scope) -> Result<T, String>,
+) -> Result<T, String> {
     let mut command = if let Some(config) = config.filter(|config| config.profile_id.is_some()) {
         let project = match project {
             Some(project) => project.to_path_buf(),
@@ -320,6 +385,7 @@ fn with_connection_and_home_using<T>(
         )
     };
     command.args(["app-server", "--stdio"]);
+    let scope = history_cache::Scope::new(&command, config, project);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -328,7 +394,7 @@ fn with_connection_and_home_using<T>(
         .map_err(|error| format!("start Codex catalog app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-catalog")?;
     let result = connect(&mut child)
-        .and_then(|(mut connection, codex_home)| operation(&mut connection, &codex_home));
+        .and_then(|(mut connection, codex_home)| operation(&mut connection, &codex_home, scope));
     let _ = child.kill();
     let _ = child.wait();
     result

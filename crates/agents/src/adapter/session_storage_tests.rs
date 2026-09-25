@@ -141,3 +141,117 @@ fn external_identity_must_match_both_harness_and_id() {
     );
     assert!(validate_session_target(&summary(Backend::Cursor, path, "thread").target()).is_err());
 }
+
+#[test]
+fn warmed_pi_history_still_requires_matching_backend() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let path = temp.path().join("session.jsonl");
+    std::fs::write(&path, PI_HEADER).expect("Pi history");
+    let config = crate::AgentLaunchConfig::default();
+    for _ in 0..2 {
+        load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
+            .expect("warm Pi history");
+    }
+    for backend in [
+        Backend::Codex,
+        Backend::Claude,
+        Backend::Cursor,
+        Backend::OpenCode,
+    ] {
+        assert!(
+            load_session_history_for_profile(&config, backend, &path, temp.path()).is_err(),
+            "cached Pi history must not satisfy {backend}"
+        );
+    }
+}
+
+#[test]
+fn warmed_pi_history_still_validates_changed_or_deleted_profile() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let profile = crate::HarnessProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "History fixture".into(),
+        backend: Backend::Pi,
+        executable: PathBuf::from("pi"),
+        data_directory: None,
+    };
+    let config = crate::AgentLaunchConfig {
+        profile_id: Some(profile.id.clone()),
+        ..Default::default()
+    };
+    config
+        .profiles
+        .replace(vec![profile.clone()])
+        .expect("profile");
+    let directory = temp.path().join("profiles").join(&profile.id).join("pi");
+    std::fs::create_dir_all(&directory).expect("profile directory");
+    let path = directory.join("session.jsonl");
+    std::fs::write(&path, PI_HEADER).expect("Pi history");
+    for _ in 0..2 {
+        load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
+            .expect("warm profile history");
+    }
+    config
+        .profiles
+        .replace(vec![crate::HarnessProfile {
+            backend: Backend::Claude,
+            ..profile
+        }])
+        .expect("changed profile");
+    let error = load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
+        .expect_err("changed backend must fail despite cached history");
+    assert!(error.contains("uses"), "{error}");
+    config.profiles.replace(vec![]).expect("delete profile");
+    let error = load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
+        .expect_err("deleted profile must fail despite cached history");
+    assert!(error.contains("unknown harness profile"), "{error}");
+}
+
+#[test]
+fn profile_history_uses_current_claude_data_directory() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let mut profile = crate::HarnessProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "Custom Claude".into(),
+        backend: Backend::Claude,
+        executable: PathBuf::from("claude"),
+        data_directory: None,
+    };
+    let config = crate::AgentLaunchConfig {
+        profile_id: Some(profile.id.clone()),
+        ..Default::default()
+    };
+    let locator = temp
+        .path()
+        .join("profiles")
+        .join(&profile.id)
+        .join("claude")
+        .join(&session_id);
+    for text in ["first profile directory", "changed profile directory"] {
+        let root = temp.path().join(text);
+        let project = root.join("projects/fixture");
+        std::fs::create_dir_all(&project).expect("Claude project directory");
+        let row = serde_json::json!({
+            "type": "user", "uuid": "u", "parentUuid": null,
+            "message": {"role": "user", "content": text}
+        });
+        std::fs::write(
+            project.join(format!("{session_id}.jsonl")),
+            format!("{row}\n"),
+        )
+        .expect("Claude history");
+        profile.data_directory = Some(root);
+        config
+            .profiles
+            .replace(vec![profile.clone()])
+            .expect("profile");
+        for _ in 0..2 {
+            let history =
+                load_session_history_for_profile(&config, Backend::Claude, &locator, temp.path())
+                    .expect("custom profile history");
+            assert_eq!(history.messages.len(), 1);
+            assert_eq!(history.messages[0]["content"][0]["text"], text);
+        }
+    }
+}
