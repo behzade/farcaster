@@ -96,7 +96,6 @@ impl FarcasterApp {
             terminal
         };
 
-        self.retain_workspace_draft(cx);
         self.hide_terminal(cx);
         self.workspace.terminal.view = Some(terminal);
         self.workspace.terminal.project = Some(project);

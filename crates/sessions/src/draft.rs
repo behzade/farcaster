@@ -109,22 +109,14 @@ pub fn sync_materialized_draft(
     app_session_id: i64,
     project: &Path,
     harness: Option<Backend>,
-    retain: bool,
 ) -> bool {
-    let existing = drafts.iter().position(|draft| draft.id == id);
-    match (existing, retain) {
-        (None, true) => {
-            let mut draft = DraftSession::with_id(harness, id.to_owned(), project.to_path_buf());
-            draft.app_session_id = app_session_id;
-            drafts.insert(0, draft);
-            true
-        }
-        (Some(index), false) => {
-            drafts.remove(index);
-            true
-        }
-        _ => false,
+    if drafts.iter().any(|draft| draft.id == id) {
+        return false;
     }
+    let mut draft = DraftSession::with_id(harness, id.to_owned(), project.to_path_buf());
+    draft.app_session_id = app_session_id;
+    drafts.insert(0, draft);
+    true
 }
 
 pub fn update_persisted_submission(
