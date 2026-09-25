@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::{
     FarcasterApp,
     drag::DraggedSession,
@@ -27,6 +29,7 @@ use gpui_component::{
 pub(super) enum FolderRow {
     Session(Box<ActiveSessionItem>),
     Header(u64, String),
+    Project(PathBuf, bool),
     New,
 }
 

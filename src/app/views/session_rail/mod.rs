@@ -6,6 +6,7 @@ mod groups;
 mod hover;
 mod inactive_rail;
 mod navigation;
+mod project_groups;
 mod rendering;
 mod rows;
 #[cfg(test)]
@@ -64,7 +65,9 @@ impl VisibleSessionTarget {
                 ActiveSessionItem::Draft(draft) => Some(Self::Draft(draft)),
                 ActiveSessionItem::Session(item) => Some(Self::Persisted(item.session)),
             },
-            folders::FolderRow::Header(..) | folders::FolderRow::New => None,
+            folders::FolderRow::Header(..)
+            | folders::FolderRow::Project(..)
+            | folders::FolderRow::New => None,
         }
     }
 
@@ -276,7 +279,7 @@ impl FarcasterApp {
     }
 
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
-        folders::folder_rows(
+        self.session_rail_rows(
             session_rail_lists(
                 &self.sessions.visible,
                 &self.sessions.drafts,
@@ -284,11 +287,18 @@ impl FarcasterApp {
                 &self.sessions.order,
             )
             .active,
-            &self.sessions.folders,
         )
         .into_iter()
         .filter_map(VisibleSessionTarget::from_row)
         .collect()
+    }
+
+    fn session_rail_rows(&self, active: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
+        if self.sessions.group_by_project {
+            project_groups::project_rows(active, &self.sessions.collapsed_projects)
+        } else {
+            folders::folder_rows(active, &self.sessions.folders)
+        }
     }
 
     pub(super) fn begin_session_rail_resize(
