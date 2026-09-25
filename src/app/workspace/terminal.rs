@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use gpui::{Context, Window};
 
-use super::{AppSurface, FarcasterApp, spawn_workspace_terminal};
+use super::{AppSurface, FarcasterApp, LoginBanner, spawn_workspace_terminal};
 
 gpui_libghostty::bind_gpui!(gpui);
 
@@ -48,6 +48,7 @@ impl FarcasterApp {
             let terminal = match spawn_workspace_terminal(
                 crate::app::infrastructure::shell_environment::terminal_login_shell_command(),
                 project.clone(),
+                LoginBanner::Visible,
                 window,
                 cx,
             ) {

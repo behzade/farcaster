@@ -12,7 +12,7 @@ use std::{
 use gpui::{App, Context, Entity, IntoElement, Render, RenderImage, Task, Window};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
-use super::{Terminal, spawn_workspace_terminal};
+use super::{LoginBanner, Terminal, spawn_workspace_terminal};
 use crate::app::infrastructure::editor_launch;
 use crate::editors::EditorCommand;
 
@@ -217,7 +217,13 @@ impl EditorSession {
             editor_launch::ARGUMENT,
             shell_quote(&launch_file),
         );
-        let terminal = spawn_workspace_terminal(command_line, project.clone(), window, cx)?;
+        let terminal = spawn_workspace_terminal(
+            command_line,
+            project.clone(),
+            LoginBanner::Quiet,
+            window,
+            cx,
+        )?;
         terminal.update(cx, |terminal, _| terminal.set_visible(false));
         Ok(Self {
             project,

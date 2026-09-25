@@ -27,14 +27,22 @@ pub(in crate::app) mod worker_tasks;
 
 pub(crate) use surfaces::{CycleWorkspaceBackward, CycleWorkspaceForward};
 
+#[derive(Clone, Copy)]
+pub(in crate::app) enum LoginBanner {
+    Quiet,
+    Visible,
+}
+
 pub(in crate::app) fn spawn_workspace_terminal<T: 'static>(
     command: String,
     project: PathBuf,
+    banner: LoginBanner,
     window: &mut Window,
     cx: &mut Context<T>,
 ) -> Result<Entity<Terminal>, String> {
     let mut options = TerminalOptions::new(command, project);
     options.configuration = TerminalConfiguration::Custom(crate::app::ui::theme::terminal_theme());
+    options.quiet_login = matches!(banner, LoginBanner::Quiet);
     Terminal::spawn(options, window, cx)
 }
 

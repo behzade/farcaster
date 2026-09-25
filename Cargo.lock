@@ -2006,6 +2006,9 @@ dependencies = [
 [[package]]
 name = "farcaster-editors"
 version = "0.1.0"
+dependencies = [
+ "farcaster-agents",
+]
 
 [[package]]
 name = "farcaster-mcp-server"
@@ -2774,7 +2777,7 @@ dependencies = [
 [[package]]
 name = "gpui-libghostty"
 version = "0.3.0"
-source = "git+https://github.com/yumedots/gpui-libghostty?rev=8afd36eff68995b44cf089677b5dba3eb00fbfc8#8afd36eff68995b44cf089677b5dba3eb00fbfc8"
+source = "git+https://github.com/yumedots/gpui-libghostty?rev=02b359186f1ac4a0f9ef666b9e83074de5273933#02b359186f1ac4a0f9ef666b9e83074de5273933"
 dependencies = [
  "async-channel",
  "image",
