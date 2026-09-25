@@ -74,7 +74,7 @@ impl StateStore {
                         s.total_tokens, s.cost_micros, s.search_text,
                         s.archived_at IS NOT NULL, s.harness,
                         m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
-                        parent.harness, s.parent_id
+                        parent.harness, s.parent_id, s.created_ms
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
@@ -742,6 +742,9 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
         row.get(15)?,
     )
     .with_app_session_id(id);
+    session.created_at = session
+        .created_at
+        .or(UNIX_EPOCH.checked_add(Duration::from_millis(row.get::<_, u64>(24)?)));
     session.parent_session = row.get(6)?;
     session.parent_app_session_id = row.get(23)?;
     session.parent_harness = match row.get::<_, Option<String>>(22)? {

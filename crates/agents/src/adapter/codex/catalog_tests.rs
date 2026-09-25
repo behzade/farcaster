@@ -166,6 +166,7 @@ fn translates_thread_metadata() -> Result<(), String> {
         "cwd": project,
         "name": "Fix tests",
         "preview": "Please fix tests",
+        "createdAt": 1_790_337_600,
         "updatedAt": SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -181,6 +182,10 @@ fn translates_thread_metadata() -> Result<(), String> {
     assert_eq!(session.usage.output, 20);
     assert_eq!(session.usage.cache_read, 80);
     assert_eq!(session.usage.total, 120);
+    assert_eq!(
+        crate::adapter::session_storage::import_session(session).created_at,
+        Some(UNIX_EPOCH + Duration::from_secs(1_790_337_600))
+    );
     Ok(())
 }
 

@@ -1,6 +1,8 @@
 pub(in crate::app) mod agents;
 mod background_jobs;
 pub(crate) use crate::app::ui::change_tree;
+#[cfg(test)]
+mod order_tests;
 mod performance;
 mod repository;
 mod repository_controls;
@@ -79,12 +81,8 @@ fn ordered_worker_rows<'a>(
     AgentSection,
 )> {
     let mut workers = run_panel_agent_rows(sessions, activities, selected);
-    workers.sort_by(|left, right| {
-        right
-            .2
-            .timestamp
-            .cmp(&left.2.timestamp)
-            .then_with(|| left.2.id.cmp(&right.2.id))
+    workers.sort_by(|(_, _, left, _), (_, _, right, _)| {
+        (right.created_at, &right.id).cmp(&(left.created_at, &left.id))
     });
     workers
 }

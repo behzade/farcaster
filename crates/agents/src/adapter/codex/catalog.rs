@@ -439,9 +439,19 @@ fn summary(
         thread,
         &["updatedAt", "updated_at", "createdAt", "created_at"],
     );
-    let timestamp = string(thread, &["createdAt", "created_at"])
-        .unwrap_or_default()
-        .to_owned();
+    let timestamp = ["createdAt", "created_at"]
+        .into_iter()
+        .find_map(|key| {
+            let value = thread.get(key)?;
+            if let Some(value) = value.as_str() {
+                return Some(value.to_owned());
+            }
+            time::OffsetDateTime::from_unix_timestamp(value.as_i64()?)
+                .ok()?
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_default();
     let parent_session = string(thread, &["parentThreadId", "parent_thread_id"])
         .map(str::to_owned)
         .or_else(|| crate::core::CallerRegistry::shared().session_parent(Backend::Codex, id));
