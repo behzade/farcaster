@@ -305,11 +305,16 @@ fn hovering_a_chat_loads_the_history_a_click_would_wait_for(cx: &mut gpui::TestA
             let script = project.join("fake-pi.sh");
             fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
                 .expect("write fake pi");
-            RuntimeHandle::spawn_with(
+            RuntimeHandle::spawn(
                 project.to_path_buf(),
-                "prefetch-perf-draft".into(),
+                crate::sessions::DraftSession::with_id(
+                    Some(Backend::Pi),
+                    "prefetch-perf-draft".into(),
+                    project.to_path_buf(),
+                ),
                 None,
                 AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
+                crate::app::runtime_host::host(),
             )
         },
         |cx, app, project| {

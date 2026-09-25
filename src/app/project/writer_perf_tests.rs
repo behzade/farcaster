@@ -55,14 +55,13 @@ fn folder_and_registry_writes_leave_the_click_path(cx: &mut gpui::TestAppContext
                     cx.update(|_, cx| {
                         app.update(cx, |app, _| {
                             app.project.registered.push(path.clone());
-                            let registry = projects::Registry {
+                            let registry = projects::ProjectList {
                                 projects: app.project.registered.clone(),
                                 excluded_projects: app.project.excluded.clone(),
-                                drafts: app.sessions.drafts.clone(),
                             };
                             let folders = app.sessions.folders.clone();
                             project_registry::save(&registry).expect("save registry");
-                            StateStore::open()
+                            crate::app::persistence::open()
                                 .and_then(|store| store.save_session_folders(&folders))
                                 .expect("save session folders");
                         });
