@@ -450,7 +450,7 @@ fn linked_git_worktree_is_an_independent_working_copy() {
 
 #[test]
 fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
-    if Command::new("jj").arg("--version").output().is_err() {
+    if !jj_installed() {
         return;
     }
     let temp = TestDirectory::new("jj-command");
@@ -494,7 +494,7 @@ fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
 fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
     use std::time::{Duration, Instant};
 
-    if Command::new("jj").arg("--version").output().is_err() {
+    if !jj_installed() {
         return;
     }
     let temp = TestDirectory::new("jj-watch-commits");
@@ -675,6 +675,14 @@ fn git_binary_untracked_files_leave_totals_unknown() {
         (None, None)
     );
     assert_eq!(snapshot.changes[0].counts, None);
+}
+
+fn jj_installed() -> bool {
+    if Command::new("jj").arg("--version").output().is_err() {
+        eprintln!("jj not installed, skipping");
+        return false;
+    }
+    true
 }
 
 fn run_git(repository: &Path, home: &Path, config: &Path, arguments: &[&str]) {
