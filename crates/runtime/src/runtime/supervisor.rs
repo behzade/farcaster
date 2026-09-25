@@ -601,7 +601,7 @@ impl Supervisor {
         {
             for prompt in prompts {
                 let key = prompt.session.as_ref().map_or_else(
-                    || initial_key.clone(),
+                    || prompt.target.clone(),
                     |session| {
                         actor_paths
                             .entry(session.clone())
