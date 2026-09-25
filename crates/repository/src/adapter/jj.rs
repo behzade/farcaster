@@ -43,6 +43,7 @@ impl RepositoryOperations for JujutsuOperations {
             snapshot,
             &file_counts,
             &output.stdout,
+            crate::core::UntrackedTotals::default(),
         ))
     }
 

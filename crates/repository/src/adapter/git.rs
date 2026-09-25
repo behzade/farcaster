@@ -59,24 +59,45 @@ impl RepositoryOperations for GitOperations {
             );
             patch.extend(output.stdout);
         }
+        let mut untracked = crate::core::UntrackedTotals::default();
         for change in snapshot
             .changes
             .iter()
             .filter(|change| change.layer == ChangeLayer::GitUntracked)
         {
-            let diff = self.load_diff(backend, change.target.clone())?;
-            file_counts.insert(
-                (change.layer, change.relative_path.clone()),
-                diff.additions
-                    .zip(diff.deletions)
-                    .map(|(a, d)| (a as usize, d as usize)),
-            );
-            patch.extend(diff.patch.into_bytes());
+            let counts = match std::fs::read(change.target.absolute_path()) {
+                Ok(contents) => {
+                    let counts = crate::core::untracked_file_counts(&contents);
+                    match counts {
+                        Some((additions, _)) => {
+                            untracked.additions =
+                                untracked.additions.saturating_add(additions as u64);
+                        }
+                        None => untracked.binary = true,
+                    }
+                    counts
+                }
+                Err(_) => {
+                    let diff = self.load_diff(backend, change.target.clone())?;
+                    match diff.additions.zip(diff.deletions) {
+                        Some((additions, deletions)) => {
+                            untracked.additions = untracked.additions.saturating_add(additions);
+                            Some((additions as usize, deletions as usize))
+                        }
+                        None => {
+                            untracked.binary = true;
+                            None
+                        }
+                    }
+                }
+            };
+            file_counts.insert((change.layer, change.relative_path.clone()), counts);
         }
         Ok(crate::core::finish_working_copy_totals(
             snapshot,
             &file_counts,
             &patch,
+            untracked,
         ))
     }
 
