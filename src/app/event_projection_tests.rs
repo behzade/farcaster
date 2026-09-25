@@ -857,9 +857,17 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
                 window.draw(cx).clear(cx);
             });
             assert!(
-                cx.debug_bounds(card_selector).is_none(),
-                "activity invalidation must remove a completed child from the collapsed section"
+                cx.debug_bounds(card_selector).is_some(),
+                "a completed child remains visible among recent workers"
             );
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).activity.agents[&activity_key].lifecycle,
+                    crate::agent_activity::AgentLifecycle::Completed(
+                        crate::agent_activity::AgentOutcome::Complete
+                    )
+                );
+            });
             let inferred_incomplete =
                 AgentActivity::from_native_child("child".into(), child_path, "worker", false, None);
             runtime.send_event(RuntimeEvent::AgentActivityUpdated(inferred_incomplete));
