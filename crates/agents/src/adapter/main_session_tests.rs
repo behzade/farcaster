@@ -12,6 +12,40 @@ use crate::extensions::SessionState;
 
 struct IdleWorker;
 
+struct ModelSelectionWorker {
+    reject: bool,
+}
+
+impl WorkerSession for ModelSelectionWorker {
+    fn send(&mut self, _: String, _: WorkerSendMode) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn respond(&mut self, _: WorkerInputResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<WorkerEvent> {
+        None
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn select_model(&mut self, _: &str, _: &str) -> Result<(), String> {
+        if self.reject {
+            Err("model unavailable".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Default)]
 struct ControlledPromptState {
     requests: Vec<(
@@ -1103,6 +1137,71 @@ fn neutral_metadata_events_refresh_session_state_and_modes() {
     });
     assert!(transport.state().service_tier.is_none());
     assert!(transport.state().service_tiers.is_empty());
+}
+
+#[test]
+fn model_selection_reconciles_known_tiers_before_the_following_state_reply() {
+    for (tiers, reject, expected_tier) in [
+        (vec!["standard"], false, None),
+        (vec!["standard", "fast"], false, Some("fast")),
+        (Vec::new(), false, Some("fast")),
+        (vec!["standard"], true, Some("fast")),
+    ] {
+        let expected_options = if tiers.is_empty() || reject {
+            vec!["standard", "fast", "priority"]
+        } else {
+            tiers.clone()
+        };
+        let mut transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "session".into(),
+            Box::new(ModelSelectionWorker { reject }),
+            MainSessionMetadata {
+                service_tier: Some("fast".into()),
+                service_tiers: vec!["standard".into(), "fast".into(), "priority".into()],
+                models: vec![json!({
+                    "id":"next", "name":"Next", "provider":"openai",
+                    "serviceTiers":tiers
+                })],
+                ..Default::default()
+            },
+            None,
+        )
+        .expect("transport");
+
+        let selected = transport.send(SessionCommand::SelectModel {
+            provider: "openai".into(),
+            model_id: "next".into(),
+        });
+        if reject {
+            assert!(selected.is_err());
+            assert_eq!(transport.state().service_tier.as_deref(), expected_tier);
+            assert_eq!(transport.state().service_tiers, expected_options);
+            continue;
+        }
+        let selected = selected.expect("select model");
+        assert!(
+            matches!(transport.poll(), Some(SessionEvent::Response(response))
+            if response.id.as_deref() == Some(selected.as_str())
+                && matches!(response.result, Ok(Payload::SelectModel(_))))
+        );
+
+        let loaded = transport
+            .send(SessionCommand::LoadState)
+            .expect("load state");
+        let Some(SessionEvent::Response(response)) = transport.poll() else {
+            panic!("state response")
+        };
+        assert_eq!(response.id.as_deref(), Some(loaded.as_str()));
+        let state = state_of(response.result.expect("state result"));
+        assert_eq!(
+            state.model.as_ref().map(|model| model.id.as_str()),
+            Some("next")
+        );
+        assert_eq!(state.service_tier.as_deref(), expected_tier);
+        assert_eq!(state.service_tiers, expected_options);
+    }
 }
 
 #[test]

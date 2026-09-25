@@ -43,6 +43,25 @@ impl PendingSessionControls {
         self.tier_error = None;
     }
 
+    fn retain_supported_service_tier(&mut self, supports: impl Fn(&str) -> bool) {
+        if self
+            .service_tier
+            .as_deref()
+            .is_some_and(|tier| !supports(tier))
+        {
+            self.clear_service_tier();
+        }
+        if self
+            .sent_tier
+            .as_deref()
+            .is_some_and(|tier| !supports(tier))
+        {
+            self.sent_tier = None;
+            self.tier_requests.clear();
+            self.tier_error = None;
+        }
+    }
+
     pub(super) fn launched_service_tier(&mut self, tier: &str) {
         if self.service_tier.as_deref() == Some(tier) {
             self.clear_service_tier();
@@ -283,6 +302,7 @@ impl RuntimeOwner {
                     self.snapshot.session_identity().effort,
                 );
                 self.remember_requested_model(&model, replacement_effort.as_deref());
+                self.reconcile_service_tier();
                 self.pending_session_controls.set(SessionControl::Model(
                     model.provider.clone(),
                     model.id.clone(),
@@ -326,24 +346,16 @@ impl RuntimeOwner {
             self.snapshot.session_identity().effort,
         );
         let control = SessionControl::Model(model.provider.clone(), model.id.clone());
+        self.remember_requested_model(&model, replacement_effort.as_deref());
+        self.reconcile_service_tier();
         if !self.snapshot.history_preview
             && self.process.is_none()
             && self.snapshot.selected_session.is_none()
         {
-            if self
-                .snapshot
-                .prefill_service_tier
-                .as_ref()
-                .is_some_and(|tier| !model.service_tiers.contains(tier))
-            {
-                self.snapshot.prefill_service_tier = None;
-                self.snapshot.pending_initial_service_tier = false;
-                self.pending_session_controls.clear_service_tier();
-            } else if let Some(tier) = self.snapshot.prefill_service_tier.clone() {
+            if let Some(tier) = self.snapshot.prefill_service_tier.clone() {
                 self.pending_session_controls
                     .set(SessionControl::ServiceTier(tier));
             }
-            self.remember_requested_model(&model, replacement_effort.as_deref());
             self.pending_session_controls.set(control);
             if let Some(effort) = replacement_effort {
                 self.pending_session_controls
@@ -352,11 +364,42 @@ impl RuntimeOwner {
             self.publish();
             return;
         }
-        self.remember_requested_model(&model, replacement_effort.as_deref());
         self.send_session_control(control);
         if let Some(effort) = replacement_effort {
             self.send_session_control(SessionControl::Thinking(Some(effort)));
         }
+    }
+
+    fn reconcile_service_tier(&mut self) {
+        let tiers = self.snapshot.available_service_tiers().to_vec();
+        let supports = |tier: &str| tiers.iter().any(|supported| supported == tier);
+        let clear_snapshot_tier = |snapshot: &mut RuntimeSnapshot| {
+            if snapshot
+                .prefill_service_tier
+                .as_deref()
+                .is_some_and(|tier| !supports(tier))
+            {
+                snapshot.prefill_service_tier = None;
+                snapshot.pending_initial_service_tier = false;
+            }
+            if let Some(session) = snapshot.session.as_mut()
+                && session
+                    .service_tier
+                    .as_deref()
+                    .is_some_and(|tier| !supports(tier))
+            {
+                session.service_tier = None;
+            }
+        };
+        clear_snapshot_tier(&mut self.snapshot);
+        if self.snapshot.history_preview
+            && self.active_session.as_ref() == self.snapshot.selected_session.as_ref()
+            && let Some(loading) = self.parked_snapshot.as_mut()
+        {
+            clear_snapshot_tier(loading);
+        }
+        self.pending_session_controls
+            .retain_supported_service_tier(supports);
     }
 
     fn remember_requested_model(&mut self, model: &Model, effort: Option<&str>) {
