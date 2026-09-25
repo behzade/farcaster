@@ -59,7 +59,7 @@ pub(super) fn activation_row(
         .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
         .tab_index(0)
         .cursor_pointer()
-        .hover(|row| row.bg(theme().colors.hover))
+        .hover(|row| row.bg(theme().colors.highlight))
         .focus_visible(|row| {
             row.border(theme().border)
                 .border_color(theme().colors.indicator)

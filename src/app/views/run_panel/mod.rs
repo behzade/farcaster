@@ -12,7 +12,7 @@ mod tests;
 
 use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, ScrollAnchor, ScrollHandle,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 pub(super) use resize::clamped_run_panel_width;

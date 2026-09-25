@@ -107,7 +107,11 @@ impl FarcasterApp {
                     } else {
                         "Could not read this repository. Check the project folder and refresh."
                     };
-                    section.child(repository_error_notice(message, error, theme().colors.error))
+                    section.child(repository_error_notice(
+                        message,
+                        error,
+                        theme().colors.error,
+                    ))
                 },
             )
             .when_some(snapshot, |section, snapshot| {
@@ -321,9 +325,9 @@ impl FarcasterApp {
                 .flex()
                 .items_center()
                 .gap(theme().space.xs)
-                .hover(|row| row.bg(theme().colors.hover))
-                .when(selected, |row| row.bg(theme().colors.selection))
-                .focus(|row| row.bg(theme().colors.selection))
+                .hover(|row| row.bg(theme().colors.highlight))
+                .when(selected, |row| row.bg(theme().colors.highlight))
+                .focus(|row| row.bg(theme().colors.highlight))
                 .cursor_pointer()
                 .on_click(move |event, window, cx| {
                     let _ = click_entity.update(cx, |this, cx| {

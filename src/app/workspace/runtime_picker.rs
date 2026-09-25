@@ -43,7 +43,13 @@ fn model_result_button(
     button(id, "", ButtonTone::Quiet, true, on_press)
         .accessibility_label(label.clone())
         .tooltip(label.clone())
-        .child(div().w_full().min_w(theme().size(0.0)).truncate().child(label))
+        .child(
+            div()
+                .w_full()
+                .min_w(theme().size(0.0))
+                .truncate()
+                .child(label),
+        )
         .w_full()
         .min_w(theme().size(0.0))
         .overflow_hidden()

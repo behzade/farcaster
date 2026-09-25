@@ -134,7 +134,7 @@ pub(super) fn folder_header(
         });
         return section
             .child(
-                row.hover(|row| row.bg(theme().colors.hover))
+                row.hover(|row| row.bg(theme().colors.highlight))
                     .child(new_folder_button(move |window, cx| {
                         let _ = edit_entity
                             .update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
@@ -248,7 +248,7 @@ pub(super) fn folder_drop_target(
         })
         .drag_over::<DraggedSession>(|style, _, _, _| {
             style
-                .bg(theme().colors.hover)
+                .bg(theme().colors.highlight)
                 .border_color(theme().colors.indicator)
         })
         .on_drop(move |drag: &DraggedSession, window, cx| {

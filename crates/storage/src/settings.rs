@@ -627,19 +627,19 @@ fn validate_repository_backend_preferences(
 }
 
 impl StateStore {
-    pub(crate) fn load_theme_css(&self) -> Result<Option<String>, String> {
+    pub fn load_theme_css(&self) -> Result<Option<String>, String> {
         self.load_meta_value("theme_css", "themes")
     }
 
-    pub(crate) fn save_theme_css(&self, css: &str) -> Result<(), String> {
+    pub fn save_theme_css(&self, css: &str) -> Result<(), String> {
         self.save_meta_value("theme_css", css, "themes")
     }
 
-    pub(crate) fn load_active_theme(&self) -> Result<Option<String>, String> {
+    pub fn load_active_theme(&self) -> Result<Option<String>, String> {
         self.load_meta_value("theme_selected", "active theme")
     }
 
-    pub(crate) fn save_active_theme(&self, name: &str) -> Result<(), String> {
+    pub fn save_active_theme(&self, name: &str) -> Result<(), String> {
         self.save_meta_value("theme_selected", name, "active theme")
     }
 

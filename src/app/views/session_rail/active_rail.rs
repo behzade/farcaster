@@ -267,7 +267,7 @@ impl FarcasterApp {
                             .pl(theme().size(10.0))
                             .rounded(theme().size(5.0))
                             .border(theme().border)
-                            .border_color(theme().colors.hover)
+                            .border_color(theme().colors.highlight)
                             .bg(theme().colors.surface)
                             .text_color(theme().colors.muted)
                             .on_click(move |_, window, cx| search_focus.focus(window, cx))

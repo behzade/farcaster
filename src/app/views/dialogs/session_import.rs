@@ -281,13 +281,13 @@ fn candidate_row(
         .items_center()
         .gap(theme().space.sm)
         .bg(if checked {
-            theme().colors.session_selection
+            theme().colors.highlight
         } else {
             theme().colors.panel
         })
         .hover(move |row| {
             row.bg(if checked {
-                theme().colors.session_selection
+                theme().colors.highlight
             } else {
                 theme().colors.surface
             })

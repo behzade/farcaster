@@ -145,7 +145,7 @@ pub(in crate::app::views) fn render(
                                 .rounded(theme().radius)
                                 .text_size(theme().type_scale.caption)
                                 .when(selected_path == Some(&location.path), |row| {
-                                    row.bg(theme().colors.selection)
+                                    row.bg(theme().colors.highlight)
                                 })
                                 .child(file_icon(path))
                                 .child(
@@ -199,7 +199,7 @@ pub(in crate::app::views) fn render(
                                 .p(theme().space.xs)
                                 .rounded(theme().radius)
                                 .when(inspecting == Some(index), |row| {
-                                    row.bg(theme().colors.selection)
+                                    row.bg(theme().colors.highlight)
                                 })
                                 .child(div().text_color(theme().colors.muted).child(
                                     if selected == Some(index) {
@@ -249,9 +249,9 @@ fn location_button(
         .tab_index(0)
         .when(available, |row| {
             row.cursor_pointer()
-                .hover(|row| row.bg(theme().colors.hover))
+                .hover(|row| row.bg(theme().colors.highlight))
         })
-        .focus_visible(|row| row.bg(theme().colors.selection))
+        .focus_visible(|row| row.bg(theme().colors.highlight))
         .on_mouse_down(gpui::MouseButton::Left, preserve_pointer_focus)
         .on_click(move |_, window, cx| {
             if available {

@@ -113,13 +113,13 @@ impl RenderOnce for DraftRow {
                         .rounded(theme().size(2.0))
                         .group(action_group.clone())
                         .bg(if selected {
-                            theme().colors.session_selection
+                            theme().colors.highlight
                         } else {
                             theme().colors.panel
                         })
                         .hover(move |row| {
                             row.bg(if selected {
-                                theme().colors.session_selection
+                                theme().colors.highlight
                             } else {
                                 theme().colors.surface
                             })
@@ -152,7 +152,7 @@ impl RenderOnce for DraftRow {
                         .reorder_target::<DraggedSession>(
                             drop_position,
                             theme().colors.indicator,
-                            theme().colors.hover,
+                            theme().colors.highlight,
                             move |position, _, cx| {
                                 let _ = drag_move_entity.update(cx, |this, cx| {
                                     this.update_session_drop_target(
@@ -246,7 +246,7 @@ impl RenderOnce for DraftRow {
                                     .opacity(0.0)
                                     .group_hover(action_group, |button| button.opacity(1.0))
                                     .focus(|button| button.opacity(1.0))
-                                    .hover(|button| button.bg(theme().colors.hover))
+                                    .hover(|button| button.bg(theme().colors.highlight))
                                     .child(app_icon(AppIcon::Trash, AppIconSize::Control))
                                     .on_click(move |_, window, cx| {
                                         cx.stop_propagation();

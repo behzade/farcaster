@@ -115,11 +115,11 @@ impl WorkGraphBoardView {
                                     .border_color(theme().colors.border)
                                     .py(theme().space.sm)
                                     .bg(if is_selected {
-                                        theme().colors.selection
+                                        theme().colors.highlight
                                     } else {
                                         theme().colors.panel
                                     })
-                                    .hover(|style| style.bg(theme().colors.hover))
+                                    .hover(|style| style.bg(theme().colors.highlight))
                                     .on_click(move |_, _, cx| {
                                         entity.update(cx, |this, cx| {
                                             this.catalog.task = Some(task);

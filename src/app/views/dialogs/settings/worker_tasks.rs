@@ -689,15 +689,22 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
                 })));
         }
     };
-    form.child(div().flex().justify_end().gap(theme().space.sm).child(button(
-        "finish-worker-edit",
-        "Done",
-        ButtonTone::Neutral,
-        true,
-        move |window, cx| {
-            let _ = entity.update(cx, |this, cx| this.finish_worker_profile_edit(window, cx));
-        },
-    )))
+    form.child(
+        div()
+            .flex()
+            .justify_end()
+            .gap(theme().space.sm)
+            .child(button(
+                "finish-worker-edit",
+                "Done",
+                ButtonTone::Neutral,
+                true,
+                move |window, cx| {
+                    let _ =
+                        entity.update(cx, |this, cx| this.finish_worker_profile_edit(window, cx));
+                },
+            )),
+    )
     .into_any_element()
 }
 

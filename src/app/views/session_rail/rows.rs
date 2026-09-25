@@ -161,13 +161,13 @@ impl RenderOnce for SessionRow {
             .rounded(theme().size(2.0))
             .group(action_group)
             .bg(if selected {
-                theme().colors.session_selection
+                theme().colors.highlight
             } else {
                 theme().colors.panel
             })
             .hover(move |row| {
                 row.bg(if selected {
-                    theme().colors.session_selection
+                    theme().colors.highlight
                 } else {
                     theme().colors.surface
                 })
@@ -198,7 +198,7 @@ impl RenderOnce for SessionRow {
                 .reorder_target::<DraggedSession>(
                     drop_position,
                     theme().colors.indicator,
-                    theme().colors.hover,
+                    theme().colors.highlight,
                     move |position, _, cx| {
                         let _ = drag_move_entity.update(cx, |this, cx| {
                             this.update_session_drop_target(target_app_session_id, position, cx);
@@ -433,7 +433,7 @@ fn session_archive_action(
         } else {
             theme().colors.muted
         })
-        .hover(|button| button.bg(theme().colors.hover))
+        .hover(|button| button.bg(theme().colors.highlight))
         .tooltip(move |window, cx| Tooltip::new(format!("{label} session")).build(window, cx))
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
@@ -477,7 +477,7 @@ fn session_delete_action(
                 .border_color(theme().colors.indicator)
         })
         .text_color(theme().colors.danger)
-        .hover(|button| button.bg(theme().colors.hover))
+        .hover(|button| button.bg(theme().colors.highlight))
         .tooltip(move |window, cx| Tooltip::new("Delete session permanently").build(window, cx))
         .child(app_icon(AppIcon::Trash, AppIconSize::Control))
         .on_click(move |_, window, cx| {

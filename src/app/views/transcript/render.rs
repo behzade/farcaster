@@ -296,7 +296,7 @@ pub(crate) fn render(
                                 &row_selection_groups,
                                 index,
                             )),
-                            |row| row.bg(theme().colors.selection),
+                            |row| row.bg(theme().colors.highlight),
                         )
                         .child(div().w_full().child(render_row(
                             font_scale,

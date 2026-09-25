@@ -126,11 +126,11 @@ fn dialog_choice(
             theme().colors.border
         })
         .bg(if primary {
-            theme().colors.selection
+            theme().colors.highlight
         } else {
             theme().colors.surface
         })
-        .hover(|choice| choice.bg(theme().colors.hover))
+        .hover(|choice| choice.bg(theme().colors.highlight))
         .focus(|choice| choice.border_color(theme().colors.indicator))
         .cursor(CursorStyle::PointingHand)
         .on_click(move |_, window, cx| on_press(window, cx))

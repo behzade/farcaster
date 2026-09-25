@@ -62,10 +62,7 @@ pub(in crate::app::views) fn render(
         },
         |surface| {
             let mut choices = div().flex().flex_col().gap(theme().space.xs);
-            for (index, option) in projects::options(project)
-                .into_iter()
-                .enumerate()
-            {
+            for (index, option) in projects::options(project).into_iter().enumerate() {
                 let choice = option.choice;
                 let select = entity.clone();
                 choices = choices.child(
@@ -122,12 +119,28 @@ pub(in crate::app::views) fn render(
                     })
                     .child(choices)
                     .when_some(editable_backend, |content, backend| {
-                        let label = format!("{} project trust…", crate::agents::backend_display_name(backend));
+                        let label = format!(
+                            "{} project trust…",
+                            crate::agents::backend_display_name(backend)
+                        );
                         let project = project.to_path_buf();
                         let entity = entity.clone();
-                        content.child(button("backend-project-trust", label, ButtonTone::Quiet, true, move |window, cx| {
-                            let _ = entity.update(cx, |this, cx| this.open_backend_project_trust(backend, project.clone(), window, cx));
-                        }))
+                        content.child(button(
+                            "backend-project-trust",
+                            label,
+                            ButtonTone::Quiet,
+                            true,
+                            move |window, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.open_backend_project_trust(
+                                        backend,
+                                        project.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            },
+                        ))
                     })
                     .child(
                         div()

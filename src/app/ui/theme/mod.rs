@@ -713,13 +713,6 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.selection = colors.highlight.into();
     component.tokens = ThemeTokens::from(component.colors);
     install_scrollbar_theme(theme, cx);
-    gpui_component::tooltip::set_metrics(gpui_component::tooltip::TooltipMetrics {
-        padding_x: theme.space.md,
-        padding_y: theme.space.sm,
-        gap: theme.space.sm,
-        font_size: theme.type_scale.caption,
-        max_width: theme.size(360.0),
-    });
 }
 
 fn install_scrollbar_theme(theme: Theme, cx: &mut App) {

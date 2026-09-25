@@ -382,7 +382,7 @@ impl FarcasterApp {
         }
         let css = self.settings.themes.library.to_css();
         let selected = self.settings.themes.library.selected_name().to_owned();
-        let store = crate::app::infrastructure::persistence::StateStore::open()?;
+        let store = crate::app::infrastructure::persistence::open()?;
         store.save_theme_css(&css)?;
         store.save_active_theme(&selected)
     }

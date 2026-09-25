@@ -147,11 +147,11 @@ fn render_plan_row(
             theme().colors.panel
         })
         .bg(if is_selected {
-            theme().colors.selection
+            theme().colors.highlight
         } else {
             theme().colors.panel
         })
-        .hover(|style| style.bg(theme().colors.hover))
+        .hover(|style| style.bg(theme().colors.highlight))
         .px(theme().space.sm)
         .py(theme().space.sm)
         .flex()

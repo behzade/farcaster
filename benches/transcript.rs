@@ -229,6 +229,8 @@ mod primitives {
     pub(crate) use crate::bench_content::*;
     pub(crate) use crate::bench_context_menu::*;
     pub(crate) use crate::bench_disclosure::*;
+    pub(crate) use crate::bench_highlight as highlight;
+    pub(crate) use crate::bench_highlight::*;
     pub(crate) use crate::bench_icon::*;
 }
 #[path = "../src/app/ui/primitives/button.rs"]
@@ -239,6 +241,8 @@ mod bench_content;
 mod bench_context_menu;
 #[path = "../src/app/ui/primitives/disclosure.rs"]
 mod bench_disclosure;
+#[path = "../src/app/ui/primitives/highlight.rs"]
+mod bench_highlight;
 #[path = "../src/app/ui/primitives/icon.rs"]
 mod bench_icon;
 use primitives::{AppIconSize, activates_button, app_icon, icon_control, preserve_pointer_focus};
@@ -261,7 +265,7 @@ pub(crate) mod prompt_fragments;
 mod protocol {
     pub(crate) use farcaster_agent_protocol::extensions::*;
 }
-#[path = "../src/app/ui/theme.rs"]
+#[path = "../src/app/ui/theme/mod.rs"]
 mod theme;
 
 use app::views::transcript::{

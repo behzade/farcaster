@@ -39,7 +39,7 @@ fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> im
                         div()
                             .px(theme().space.xs)
                             .rounded(theme().radius)
-                            .bg(theme().colors.session_selection)
+                            .bg(theme().colors.highlight)
                             .text_color(theme().colors.accent)
                             .child("Current"),
                     )

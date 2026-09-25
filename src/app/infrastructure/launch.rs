@@ -8,7 +8,7 @@ use super::performance::StartupTiming;
 use crate::{
     app::FarcasterApp,
     app::infrastructure::persistence::{WindowPlacement, WindowState},
-    app::ui::theme::{theme, install_component_theme},
+    app::ui::theme::{install_component_theme, theme},
     app::ui::{
         assets::AppAssets,
         keybindings,

@@ -28,13 +28,13 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
         .py(theme().size(4.0))
         .rounded(theme().radius)
         .bg(if selected {
-            theme().colors.session_selection
+            theme().colors.highlight
         } else {
             theme().colors.inspector
         })
         .hover(move |row| {
             row.bg(if selected {
-                theme().colors.session_selection
+                theme().colors.highlight
             } else {
                 theme().colors.surface
             })
@@ -50,7 +50,10 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
                     .bg(theme().colors.accent),
             )
         })
-        .focus(|row| row.border(theme().border).border_color(theme().colors.accent))
+        .focus(|row| {
+            row.border(theme().border)
+                .border_color(theme().colors.accent)
+        })
         .cursor_pointer()
 }
 

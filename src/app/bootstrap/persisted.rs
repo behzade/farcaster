@@ -139,13 +139,13 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             Default::default()
         });
 
-    let theme_css = crate::app::infrastructure::persistence::StateStore::open()
+    let theme_css = crate::app::infrastructure::persistence::open()
         .and_then(|store| store.load_theme_css())
         .unwrap_or_else(|load_error| {
             error.get_or_insert(load_error);
             None
         });
-    let active_theme = crate::app::infrastructure::persistence::StateStore::open()
+    let active_theme = crate::app::infrastructure::persistence::open()
         .and_then(|store| store.load_active_theme())
         .unwrap_or_else(|load_error| {
             error.get_or_insert(load_error);

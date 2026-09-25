@@ -200,7 +200,7 @@ pub(super) fn render_message(
         .when(user, |row| {
             row.mt(theme().space.sm)
                 .py(theme().space.md)
-                .bg(theme().colors.selection)
+                .bg(theme().colors.highlight)
         })
         .when(follows_tool, |row| {
             row.mt(theme().space.md).pt(theme().space.sm)
@@ -248,7 +248,7 @@ pub(super) fn render_message_chunk(
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
         .px(theme().size(18.0))
-        .when(user, |row| row.bg(theme().colors.selection))
+        .when(user, |row| row.bg(theme().colors.highlight))
         .when(first, |row| row.pt(theme().space.sm))
         .when(first && user, |row| {
             row.mt(theme().space.sm).pt(theme().space.md)

@@ -60,7 +60,7 @@ impl RenderOnce for FileMentionMenu {
                     .font_family(MONO_FONT_FAMILY)
                     .text_size(theme().type_scale.caption)
                     .when(index == self.selected, selected_row)
-                    .hover(|row| row.bg(theme().colors.hover))
+                    .hover(|row| row.bg(theme().colors.highlight))
                     .focus(|row| {
                         row.border(theme().border)
                             .border_color(theme().colors.indicator)
@@ -122,7 +122,7 @@ impl RenderOnce for CommandMenu {
                     .py(theme().space.xs)
                     .rounded(theme().radius)
                     .when(index == self.selected, selected_row)
-                    .hover(|row| row.bg(theme().colors.hover))
+                    .hover(|row| row.bg(theme().colors.highlight))
                     .focus(|row| {
                         row.border(theme().border)
                             .border_color(theme().colors.indicator)
@@ -173,7 +173,7 @@ fn suggestion_menu(id: &'static str, label: &'static str) -> gpui::Stateful<gpui
 }
 
 fn selected_row(row: gpui::Stateful<gpui::Div>) -> gpui::Stateful<gpui::Div> {
-    row.bg(theme().colors.hover)
+    row.bg(theme().colors.highlight)
         .text_color(theme().colors.indicator)
 }
 

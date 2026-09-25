@@ -363,11 +363,11 @@ impl WorkGraphBoardView {
             .border_b(theme().border)
             .border_color(theme().colors.border)
             .bg(if self.catalog.selected == Some(number) {
-                theme().colors.selection
+                theme().colors.highlight
             } else {
                 theme().colors.panel
             })
-            .hover(|style| style.bg(theme().colors.hover))
+            .hover(|style| style.bg(theme().colors.highlight))
             .px(theme().space.sm)
             .py(theme().space.sm)
             .flex()
