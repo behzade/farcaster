@@ -1,6 +1,9 @@
 use std::{
     cell::RefCell,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -14,6 +17,7 @@ const HIGH_LATENCY_REPORT_COOLDOWN: Duration = Duration::from_secs(15);
 
 static MONITORING: AtomicBool = AtomicBool::new(false);
 static DETAILED: AtomicBool = AtomicBool::new(false);
+static TRACE_ALL: OnceLock<bool> = OnceLock::new();
 static SNAPSHOTS_PUBLISHED: AtomicU64 = AtomicU64::new(0);
 static STREAM_EVENTS_OBSERVED: AtomicU64 = AtomicU64::new(0);
 static STREAM_EVENTS_COALESCED: AtomicU64 = AtomicU64::new(0);
@@ -325,7 +329,7 @@ impl Timing {
     pub(crate) fn new(name: &'static str) -> Self {
         Self {
             name,
-            started_at: DETAILED.load(Ordering::Relaxed).then(Instant::now),
+            started_at: timing_enabled().then(Instant::now),
         }
     }
 
@@ -340,7 +344,7 @@ impl Drop for Timing {
             return;
         };
         let elapsed = started_at.elapsed();
-        if should_log_duration(elapsed) {
+        if should_log_operation(elapsed) {
             zlog::info!(
                 "PERF operation={} elapsed_ms={:.2}",
                 self.name,
@@ -574,6 +578,40 @@ fn collect_summary(
 
 fn should_log_duration(duration: Duration) -> bool {
     duration >= SLOW_OPERATION
+}
+
+fn tracing_every_operation() -> bool {
+    *TRACE_ALL.get_or_init(|| {
+        let enabled = trace_from_env(std::env::var("FARCASTER_PERF_TRACE").ok().as_deref());
+        if enabled {
+            install_trace_logging();
+        }
+        enabled
+    })
+}
+
+/// `main` installs the logger for the app binary. A test binary never runs it,
+/// so a traced phase would record and then discard its line.
+fn install_trace_logging() {
+    if zlog::try_init(None).is_ok() {
+        zlog::init_output_stderr();
+    }
+}
+
+fn trace_from_env(value: Option<&str>) -> bool {
+    matches!(value, Some("1" | "true" | "yes"))
+}
+
+fn timing_enabled() -> bool {
+    DETAILED.load(Ordering::Relaxed) || tracing_every_operation()
+}
+
+fn should_log_operation(duration: Duration) -> bool {
+    should_log_operation_with(duration, tracing_every_operation())
+}
+
+fn should_log_operation_with(duration: Duration, trace_all: bool) -> bool {
+    trace_all || should_log_duration(duration)
 }
 
 fn is_high_latency(summary: &PerformanceSummary) -> bool {
