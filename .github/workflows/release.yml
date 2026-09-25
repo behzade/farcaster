@@ -1,7 +1,6 @@
 name: Release
 
 on:
-  pull_request:
   push:
     tags:
       - "v*"
@@ -19,93 +18,8 @@ env:
 
 jobs:
   linux:
-    name: Linux x86_64
-    runs-on: ubuntu-22.04
-    timeout-minutes: 90
-    env:
-      BUILD_LABEL: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Test Debian packaging logic
-        run: python3 scripts/package-deb_tests.py
-
-      - name: Install Linux build dependencies
-        run: |
-          # Zig 0.16's C++ headers require libc++ 21 or newer.
-          curl --fail --silent --show-error --location https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /usr/share/keyrings/apt.llvm.org.asc >/dev/null
-          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main' \
-            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            clang cmake desktop-file-utils dpkg-dev libc++-21-dev libc++abi-21-dev \
-            libasound2-dev libegl1-mesa-dev \
-            libfontconfig1-dev libfreetype6-dev libfuse2 libvulkan-dev \
-            libwayland-dev libx11-dev libxcb1-dev libxkbcommon-dev \
-            libxkbcommon-x11-dev libxml2-dev patchelf pkg-config
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.95.0
-
-      - name: Verify tag matches Cargo version
-        if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        run: |
-          package_version=$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
-          test "$GITHUB_REF_NAME" = "v$package_version" || {
-            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $package_version" >&2
-            exit 1
-          }
-
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.8 --locked
-
-      - name: Build AppImage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: make bundle BUNDLE_FORMATS=appimage
-
-      - name: Stage release asset
-        shell: bash
-        run: |
-          file target/release/farcaster | grep -q 'ELF 64-bit.*x86-64'
-          mkdir -p dist
-          appimage=$(find target/release -maxdepth 1 -type f -iname '*farcaster*.AppImage' -print -quit)
-          test -n "$appimage"
-          cp "$appimage" "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
-          chmod 755 "dist/Farcaster-${BUILD_LABEL}-linux-x86_64.AppImage"
-
-      - name: Package Debian binary and Arch source
-        run: |
-          bash scripts/package-deb.sh dist
-          bash scripts/package-arch-source.sh dist
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-linux-x86_64
-          path: dist/*
-          if-no-files-found: error
-
-  linux-startup:
-    name: AppImage release gate
-    needs: linux
-    uses: ./.github/workflows/appimage-startup.yml
-    with:
-      artifact: release-linux-x86_64
-
-  native-packages:
-    name: Native package release gates
-    needs: linux
-    uses: ./.github/workflows/native-packages.yml
-    with:
-      artifact: release-linux-x86_64
+    name: Linux packages
+    uses: ./.github/workflows/linux-packages.yml
 
   macos:
     name: macOS arm64
@@ -155,7 +69,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, linux-startup, native-packages, macos]
+    needs: [linux, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
