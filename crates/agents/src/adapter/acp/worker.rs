@@ -525,17 +525,14 @@ struct AcpWorkerSession {
 impl AcpWorkerSession {
     fn with_identity(mut self, identity: crate::core::CallerIdentity) -> Self {
         self.caller_identity = Some(identity);
-        self.sync_caller_selection(None);
+        self.sync_caller_selection();
         self
     }
 
-    fn sync_caller_selection(&self, effort: Option<&str>) {
+    fn sync_caller_selection(&self) {
         if let Some(identity) = &self.caller_identity {
             if let Some(model) = self.config_ids.selected_model.as_deref() {
                 identity.select_model(self.profile.backend.as_str(), model);
-            }
-            if let Some(effort) = effort {
-                identity.set_effort(Some(effort));
             }
         }
     }
@@ -632,7 +629,10 @@ impl AcpWorkerSession {
         let selected_effort = current_value(ids.effort.as_deref());
         let selected_mode = current_value(ids.mode.as_deref());
         self.config_ids = ids;
-        self.sync_caller_selection(selected_effort.as_deref());
+        self.sync_caller_selection();
+        if let Some(identity) = &self.caller_identity {
+            identity.set_effort(selected_effort.as_deref());
+        }
         self.events
             .push_back(WorkerEvent::Activity(WorkerActivity::ServiceTierChanged {
                 selected: metadata.service_tier,
@@ -1466,7 +1466,7 @@ impl WorkerSession for AcpWorkerSession {
                 json!({"sessionId":self.session_id,"modelId":model}),
             )?;
             self.config_ids.selected_model = Some(model.into());
-            self.sync_caller_selection(None);
+            self.sync_caller_selection();
             return Ok(());
         };
         let selection = self.config_ids.selections.get(model).cloned();
@@ -1485,7 +1485,7 @@ impl WorkerSession for AcpWorkerSession {
             self.select_service_tier(&tier)?;
         }
         self.config_ids.selected_model = Some(model.into());
-        self.sync_caller_selection(None);
+        self.sync_caller_selection();
         Ok(())
     }
 

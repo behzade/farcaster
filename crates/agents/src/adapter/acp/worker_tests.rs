@@ -901,7 +901,7 @@ fn acp_caller_tracks_selected_model_on_attach_and_configuration_change() {
             backend: crate::Backend::Cursor,
             provider: None,
             model: None,
-            effort: None,
+            effort: Some("high".into()),
         },
         None,
     );
@@ -914,6 +914,14 @@ fn acp_caller_tracks_selected_model_on_attach_and_configuration_change() {
     let caller = registry.resolve(&token).expect("caller");
     assert_eq!(caller.provider.as_deref(), Some("cursor-cli"));
     assert_eq!(caller.model.as_deref(), Some("first"));
+    assert_eq!(caller.effort.as_deref(), Some("high"));
+
+    session.config_ids.selected_model = Some("model-only".into());
+    session.sync_caller_selection();
+    assert_eq!(
+        registry.resolve(&token).expect("caller").effort.as_deref(),
+        Some("high")
+    );
 
     session.refresh_configuration(&json!({"configOptions":[
         {"id":"model","category":"model","currentValue":"second","options":[
@@ -923,6 +931,7 @@ fn acp_caller_tracks_selected_model_on_attach_and_configuration_change() {
     let caller = registry.resolve(&token).expect("caller");
     assert_eq!(caller.provider.as_deref(), Some("cursor-cli"));
     assert_eq!(caller.model.as_deref(), Some("second"));
+    assert_eq!(caller.effort, None);
 }
 
 #[cfg(unix)]
