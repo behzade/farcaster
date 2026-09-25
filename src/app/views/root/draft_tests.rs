@@ -21,7 +21,6 @@ impl Render for DraftView {
                 div().h(px(100.0)).child(Textarea::new(&self.composer)),
                 None,
                 focus,
-                px(600.0),
             ))
     }
 }
