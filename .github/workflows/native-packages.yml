@@ -38,8 +38,12 @@ jobs:
       - name: Install only desktop and diagnostic tools
         run: |
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            weston wayland-utils libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers \
+            weston libegl-mesa0 libgl1-mesa-dri mesa-vulkan-drivers \
             fonts-dejavu-core dbus binutils file xvfb desktop-file-utils
+          # Ubuntu 22.04 supplies weston-info with Weston instead.
+          if [ "${{ matrix.image }}" != ubuntu:22.04 ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends wayland-utils
+          fi
           desktop-file-validate /usr/share/applications/io.github.behzade.farcaster.desktop
           useradd --create-home tester
           install -d -o tester -g tester /tmp/probe-logs

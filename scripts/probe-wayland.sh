@@ -37,6 +37,11 @@ start_probe_wayland() {
         sleep 0.1
     done
     test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
-    timeout 10s wayland-info > "$logs/wayland-info.txt" 2>&1
+    # Ubuntu 22.04 has weston-info but no wayland-utils package.
+    local info_command=wayland-info
+    if ! command -v "$info_command" >/dev/null; then
+        info_command=weston-info
+    fi
+    timeout 10s "$info_command" > "$logs/wayland-info.txt" 2>&1
     grep -q wl_seat "$logs/wayland-info.txt"
 }

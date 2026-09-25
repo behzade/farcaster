@@ -58,7 +58,7 @@ let
   ];
 in
 assert lib.assertMsg (
-  ghostty.version == "0.3.0"
+  ghostty.version == "0.3.1"
 ) "Refresh packaging/ghostty-zig-deps.json when upgrading gpui-libghostty";
 rustPlatform.buildRustPackage {
   pname = "farcaster";
