@@ -242,9 +242,20 @@ pub fn spawn_main(
     if let Err(error) = complete_model_catalog(command, &launch.project, &mut metadata) {
         zlog::warn!("OpenCode started without a refreshed model catalog: {error}");
     }
-    let selection = match session.model {
-        Some(selection) => Some(selection),
-        None => client.default_model(&launch.project.to_string_lossy())?,
+    let selection = match super::model_override() {
+        Some(override_model) => {
+            client.select_model(
+                &session_id,
+                &override_model.provider_id,
+                &override_model.id,
+                override_model.variant.as_deref(),
+            )?;
+            Some(override_model)
+        }
+        None => match session.model {
+            Some(selection) => Some(selection),
+            None => client.default_model(&launch.project.to_string_lossy())?,
+        },
     };
     let context_window = selection
         .as_ref()
