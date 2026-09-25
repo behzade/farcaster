@@ -677,6 +677,77 @@ fn git_binary_untracked_files_leave_totals_unknown() {
     assert_eq!(snapshot.changes[0].counts, None);
 }
 
+#[cfg(unix)]
+#[test]
+fn git_untracked_symlink_counts_the_link_not_its_destination() {
+    assert_untracked_symlink_totals(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn git_untracked_symlink_to_fifo_uses_the_command_timeout() {
+    assert_untracked_symlink_totals(true);
+}
+
+#[cfg(unix)]
+fn assert_untracked_symlink_totals(fifo: bool) {
+    let temp = TestDirectory::new("git-untracked-symlink");
+    let repository = temp.path().join("repo");
+    let home = temp.path().join("home");
+    let config = temp.path().join("config");
+    for directory in [&repository, &home, &config] {
+        fs::create_dir_all(directory).expect("create test directory");
+    }
+    run_git(&repository, &home, &config, &["init"]);
+    let destination = temp.path().join("destination");
+    if fifo {
+        assert!(
+            Command::new("mkfifo")
+                .arg(&destination)
+                .status()
+                .expect("create FIFO")
+                .success()
+        );
+    } else {
+        fs::write(&destination, "one\ntwo\nthree\n").expect("write symlink destination");
+    }
+    std::os::unix::fs::symlink(&destination, repository.join("link"))
+        .expect("create untracked symlink");
+    let backend = RepositoryBackend::discover_with_options(
+        &repository,
+        BackendPreference::Git,
+        RepositoryOptions {
+            environment: isolated_environment(&home, &config),
+            timeout: std::time::Duration::from_secs(1),
+            ..RepositoryOptions::default()
+        },
+    )
+    .expect("discover Git")
+    .expect("Git repository");
+    let mut snapshot = backend.snapshot().expect("capture Git snapshot");
+    assert_eq!(snapshot.changes.len(), 1);
+    if fifo {
+        // Git itself opens this destination, but unlike an in-process read its
+        // execution is bounded by the repository command timeout.
+        assert!(matches!(
+            backend.working_copy_totals(&mut snapshot),
+            Err(RepositoryError::CommandTimedOut { .. })
+        ));
+        return;
+    }
+    let diff = backend
+        .load_diff(snapshot.changes[0].target.clone())
+        .expect("Git diffs the symlink");
+    assert_eq!((diff.additions, diff.deletions), (Some(1), Some(0)));
+    assert_eq!(
+        backend
+            .working_copy_totals(&mut snapshot)
+            .expect("count link"),
+        (diff.additions, diff.deletions)
+    );
+    assert_eq!(snapshot.changes[0].counts, Some((1, 0)));
+}
+
 fn jj_installed() -> bool {
     if Command::new("jj").arg("--version").output().is_err() {
         eprintln!("jj not installed, skipping");

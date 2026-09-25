@@ -65,8 +65,15 @@ impl RepositoryOperations for GitOperations {
             .iter()
             .filter(|change| change.layer == ChangeLayer::GitUntracked)
         {
-            let counts = match std::fs::read(change.target.absolute_path()) {
-                Ok(contents) => {
+            // Git diffs a symlink's target path, not the destination's contents.
+            // Reading a link can also block forever when it points to a FIFO.
+            let path = change.target.absolute_path();
+            let contents = std::fs::symlink_metadata(&path)
+                .ok()
+                .filter(|metadata| metadata.is_file())
+                .and_then(|_| std::fs::read(&path).ok());
+            let counts = match contents {
+                Some(contents) => {
                     let counts = crate::core::untracked_file_counts(&contents);
                     match counts {
                         Some((additions, _)) => {
@@ -77,7 +84,7 @@ impl RepositoryOperations for GitOperations {
                     }
                     counts
                 }
-                Err(_) => {
+                None => {
                     let diff = self.load_diff(backend, change.target.clone())?;
                     match diff.additions.zip(diff.deletions) {
                         Some((additions, deletions)) => {
