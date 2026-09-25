@@ -108,10 +108,14 @@ impl WorkerProfileEditor {
             .map_err(|_| "Choose a provider and model to save this route.".to_owned())?;
         let mut saved = self.saved.clone();
         if let Some(profile) = saved.get_mut(target.profile) {
-            *profile
-                .models
-                .get_mut(target.model)
-                .ok_or("Model no longer exists")? = route.clone();
+            if profile.models.is_empty() && target.model == 0 {
+                profile.models.push(route.clone());
+            } else {
+                *profile
+                    .models
+                    .get_mut(target.model)
+                    .ok_or("Model no longer exists")? = route.clone();
+            }
         } else if target.profile == saved.len() {
             saved.push(draft.clone());
         } else {
