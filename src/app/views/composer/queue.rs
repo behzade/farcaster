@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::app::{
