@@ -9,14 +9,47 @@ use gpui::{
 };
 
 use super::{
-    FarcasterApp, folders::FolderRow, groups::ActiveSessionItem, rendering::session_section_header,
+    FarcasterApp,
+    folders::{FolderRow, folder_rows},
+    groups::ActiveSessionItem,
+    rendering::session_section_header,
     rows::project_label,
 };
+use crate::app::session_folders::SessionFolders;
 use crate::app::ui::{
     assets::AppIcon,
     primitives::{AppIconSize, app_icon},
     theme::THEME,
 };
+
+pub(super) fn grouped_rows(
+    items: Vec<ActiveSessionItem>,
+    folders: &SessionFolders,
+    collapsed: &BTreeSet<PathBuf>,
+) -> Vec<FolderRow> {
+    let mut drafts = Vec::new();
+    let mut filed = Vec::new();
+    let mut unfiled = Vec::new();
+    for item in items {
+        if matches!(item, ActiveSessionItem::Draft(_)) {
+            drafts.push(item);
+        } else if folders.folder_for(item.app_session_id()).is_some() {
+            filed.push(item);
+        } else {
+            unfiled.push(item);
+        }
+    }
+    let mut rows = drafts
+        .into_iter()
+        .map(|item| FolderRow::Session(Box::new(item)))
+        .collect::<Vec<_>>();
+    let mut sections = folder_rows(filed, folders);
+    sections.pop();
+    rows.extend(sections);
+    rows.extend(project_rows(unfiled, collapsed));
+    rows.push(FolderRow::New);
+    rows
+}
 
 pub(super) fn project_rows(
     items: Vec<ActiveSessionItem>,
@@ -112,10 +145,6 @@ pub(super) fn project_header(
         ))
         .into_any_element()
 }
-
-#[cfg(test)]
-#[path = "project_groups_tests.rs"]
-mod tests;
 
 #[cfg(test)]
 #[path = "project_groups_tests.rs"]
