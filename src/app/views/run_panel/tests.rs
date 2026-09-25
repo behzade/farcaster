@@ -7,7 +7,7 @@ use super::{
 use crate::agents::Backend;
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 use std::{
     path::{Path, PathBuf},
@@ -16,9 +16,9 @@ use std::{
 
 #[test]
 fn run_panel_resize_stays_within_design_bounds() {
-    assert_eq!(clamped_run_panel_width(100.0), THEME.layout.run_panel_min);
-    assert_eq!(clamped_run_panel_width(332.0), gpui::px(332.0));
-    assert_eq!(clamped_run_panel_width(500.0), THEME.layout.run_panel_max);
+    assert_eq!(clamped_run_panel_width(100.0), theme().layout.run_panel_min);
+    assert_eq!(clamped_run_panel_width(332.0), theme().size(332.0));
+    assert_eq!(clamped_run_panel_width(500.0), theme().layout.run_panel_max);
 }
 
 #[test]

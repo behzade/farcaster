@@ -2,6 +2,8 @@ use std::ops::Range;
 
 use gpui::{Pixels, px};
 
+use crate::app::ui::theme::theme;
+
 #[derive(Clone, Copy)]
 struct RowHeight {
     value: Pixels,
@@ -11,7 +13,7 @@ struct RowHeight {
 impl RowHeight {
     fn estimated(value: Pixels) -> Self {
         Self {
-            value: value.max(px(1.0)),
+            value: value.max(theme().size(1.0)),
             measured: false,
         }
     }
@@ -76,7 +78,7 @@ impl HeightIndex {
     }
 
     pub(super) fn set_height(&mut self, row: usize, height: Pixels) {
-        let height = height.max(px(1.0));
+        let height = height.max(theme().size(1.0));
         let previous = self.rows[row].value;
         self.rows[row] = RowHeight {
             value: height,

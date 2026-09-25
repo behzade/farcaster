@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, CursorStyle, Entity, FontWeight, InteractiveElement as _,
     IntoElement, MouseButton, ParentElement as _, Pixels, RenderOnce, Rgba, Role,
     StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
@@ -27,7 +27,7 @@ use crate::{
     app::ui::primitives::{
         AppIconSize, ContextMenuTrigger, ReorderPosition, ReorderTargetExt as _, app_icon,
     },
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     app::{FarcasterApp, PickerScope, ProjectPickerIntent},
 };
 
@@ -52,7 +52,7 @@ impl SessionRowInput {
             draggable: true,
             title_editor: None,
             subagents: 0,
-            row_height: THEME.layout.session_row_height,
+            row_height: theme().layout.session_row_height,
         }
     }
 }
@@ -156,20 +156,20 @@ impl RenderOnce for SessionRow {
             .relative()
             .flex()
             .items_stretch()
-            .px(THEME.space.sm)
-            .py(THEME.space.xs)
-            .rounded(px(2.0))
+            .px(theme().space.sm)
+            .py(theme().space.xs)
+            .rounded(theme().size(2.0))
             .group(action_group)
             .bg(if selected {
-                THEME.colors.session_selection
+                theme().colors.highlight
             } else {
-                THEME.colors.panel
+                theme().colors.panel
             })
             .hover(move |row| {
                 row.bg(if selected {
-                    THEME.colors.session_selection
+                    theme().colors.highlight
                 } else {
-                    THEME.colors.surface
+                    theme().colors.surface
                 })
             })
             .when(selected, |row| {
@@ -177,13 +177,13 @@ impl RenderOnce for SessionRow {
                     div()
                         .absolute()
                         .left_0()
-                        .top(THEME.space.xs)
-                        .bottom(THEME.space.xs)
-                        .w(px(2.0))
-                        .bg(THEME.colors.accent),
+                        .top(theme().space.xs)
+                        .bottom(theme().space.xs)
+                        .w(theme().size(2.0))
+                        .bg(theme().colors.indicator),
                 )
             })
-            .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+            .focus(|row| row.border(theme().border).border_color(theme().colors.indicator))
             .cursor(CursorStyle::PointingHand)
             .when(draggable, move |row| {
                 row.on_drag(drag, move |drag, _, _, cx| {
@@ -197,8 +197,8 @@ impl RenderOnce for SessionRow {
                 })
                 .reorder_target::<DraggedSession>(
                     drop_position,
-                    THEME.colors.accent,
-                    THEME.colors.hover,
+                    theme().colors.indicator,
+                    theme().colors.highlight,
                     move |position, _, cx| {
                         let _ = drag_move_entity.update(cx, |this, cx| {
                             this.update_session_drop_target(target_app_session_id, position, cx);
@@ -241,14 +241,14 @@ impl RenderOnce for SessionRow {
                     .min_w_0()
                     .flex()
                     .items_stretch()
-                    .gap(THEME.space.sm)
+                    .gap(theme().space.sm)
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .gap(px(2.0))
+                            .gap(theme().size(2.0))
                             .overflow_hidden()
                             .child(session_row_title(
                                 session.title.clone(),
@@ -262,16 +262,16 @@ impl RenderOnce for SessionRow {
                                     .min_w_0()
                                     .flex()
                                     .items_center()
-                                    .gap(THEME.space.xs)
+                                    .gap(theme().space.xs)
                                     .child(
                                         div()
                                             .min_w_0()
                                             .flex_1()
                                             .flex()
                                             .items_center()
-                                            .gap(px(3.0))
-                                            .text_size(THEME.type_scale.caption)
-                                            .text_color(THEME.colors.subtle)
+                                            .gap(theme().size(3.0))
+                                            .text_size(theme().type_scale.caption)
+                                            .text_color(theme().colors.subtle)
                                             .child(
                                                 div()
                                                     .id(format!("move-project-{}", session.id))
@@ -282,12 +282,12 @@ impl RenderOnce for SessionRow {
                                                             .aria_label("Move session to another project")
                                                             .tab_index(0)
                                                             .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
-                                                            .rounded(THEME.radius)
+                                                            .rounded(theme().radius)
                                                             .cursor(CursorStyle::PointingHand)
-                                                            .hover(|icon| icon.text_color(THEME.colors.accent))
+                                                            .hover(|icon| icon.text_color(theme().colors.indicator))
                                                             .focus(|icon| {
-                                                                icon.border(THEME.border)
-                                                                    .border_color(THEME.colors.accent)
+                                                                icon.border(theme().border)
+                                                                    .border_color(theme().colors.indicator)
                                                             })
                                                             .tooltip(move |window, cx| {
                                                                 Tooltip::new("Move to project…").build(window, cx)
@@ -337,7 +337,7 @@ impl RenderOnce for SessionRow {
             div()
                 .h(row_height)
                 .w_full()
-                .px(px(2.0))
+                .px(theme().size(2.0))
                 .child(context_menu)
                 .into_any_element(),
         )
@@ -363,19 +363,23 @@ fn session_row_title(
             .into_any_element()
     } else {
         div()
-            .pr(if is_archived { px(50.0) } else { px(24.0) })
+            .pr(if is_archived {
+                theme().size(50.0)
+            } else {
+                theme().size(24.0)
+            })
             .whitespace_nowrap()
             .text_ellipsis()
-            .text_size(THEME.type_scale.body_small)
+            .text_size(theme().type_scale.body_small)
             .font_weight(if selected {
                 FontWeight::SEMIBOLD
             } else {
                 FontWeight::NORMAL
             })
             .text_color(if is_archived && !selected {
-                THEME.colors.muted
+                theme().colors.muted
             } else {
-                THEME.colors.text
+                theme().colors.text
             })
             .child(title)
             .into_any_element()
@@ -405,27 +409,31 @@ fn session_archive_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .absolute()
-        .top(px(4.0))
-        .right(if is_archived { px(28.0) } else { px(5.0) })
-        .size(px(21.0))
+        .top(theme().size(4.0))
+        .right(if is_archived {
+            theme().size(28.0)
+        } else {
+            theme().size(5.0)
+        })
+        .size(theme().size(21.0))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(THEME.radius)
+        .rounded(theme().radius)
         .opacity(0.0)
         .group_hover(action_group, |button| button.opacity(1.0))
         .focus(|button| {
             button
                 .opacity(1.0)
-                .border(THEME.border)
-                .border_color(THEME.colors.accent)
+                .border(theme().border)
+                .border_color(theme().colors.indicator)
         })
         .text_color(if is_archived {
-            THEME.colors.success
+            theme().colors.success
         } else {
-            THEME.colors.muted
+            theme().colors.muted
         })
-        .hover(|button| button.bg(THEME.colors.hover))
+        .hover(|button| button.bg(theme().colors.highlight))
         .tooltip(move |window, cx| Tooltip::new(format!("{label} session")).build(window, cx))
         .child(app_icon(icon, AppIconSize::Control))
         .on_click(move |_, window, cx| {
@@ -453,23 +461,23 @@ fn session_delete_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .absolute()
-        .top(px(4.0))
-        .right(px(5.0))
-        .size(px(21.0))
+        .top(theme().size(4.0))
+        .right(theme().size(5.0))
+        .size(theme().size(21.0))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(THEME.radius)
+        .rounded(theme().radius)
         .opacity(0.0)
         .group_hover(action_group, |button| button.opacity(1.0))
         .focus(|button| {
             button
                 .opacity(1.0)
-                .border(THEME.border)
-                .border_color(THEME.colors.accent)
+                .border(theme().border)
+                .border_color(theme().colors.indicator)
         })
-        .text_color(THEME.colors.danger)
-        .hover(|button| button.bg(THEME.colors.hover))
+        .text_color(theme().colors.danger)
+        .hover(|button| button.bg(theme().colors.highlight))
         .tooltip(move |window, cx| Tooltip::new("Delete session permanently").build(window, cx))
         .child(app_icon(AppIcon::Trash, AppIconSize::Control))
         .on_click(move |_, window, cx| {
@@ -500,7 +508,7 @@ fn session_context_menu(
             let rename_title = title.clone();
             let rename_entity = entity.clone();
             let mut menu = menu
-                .min_w(px(190.0))
+                .min_w(theme().size(190.0))
                 .item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
                     let _ = rename_entity.update(cx, |this, cx| {
                         this.begin_session_title_edit(
@@ -610,11 +618,11 @@ pub(super) fn session_row_metadata(
         .flex_none()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline))
         .child(
             div()
-                .size(THEME.icons.inline)
+                .size(theme().icons.inline)
                 .flex_none()
                 .when_some(status_icon(app_session_id, status), |slot, icon| {
                     slot.child(icon)
@@ -622,12 +630,12 @@ pub(super) fn session_row_metadata(
         )
         .child(
             div()
-                .w(px(30.0))
+                .w(theme().size(30.0))
                 .flex_none()
                 .whitespace_nowrap()
                 .text_align(gpui::TextAlign::Right)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.subtle)
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.subtle)
                 .child(age),
         )
         .when_some(shortcut, |metadata, number| {
@@ -657,13 +665,15 @@ fn status_icon(app_session_id: i64, status: &str) -> Option<AnyElement> {
 pub(in crate::app) fn status_visual(status: &str) -> Option<(AppIcon, Rgba)> {
     match status {
         "" => None,
-        "Done" | "Complete" => Some((AppIcon::CheckCircle, THEME.colors.success)),
-        "Needs input" | "Incomplete" => Some((AppIcon::WarningCircle, THEME.colors.warning)),
-        "Waiting" => Some((AppIcon::Hourglass, THEME.colors.accent)),
-        "Failed" => Some((AppIcon::XCircle, THEME.colors.error)),
-        "Working" => Some((AppIcon::SpinnerGap, THEME.colors.accent)),
-        "Compacting" => Some((AppIcon::ArrowsClockwise, THEME.colors.accent)),
-        _ => Some((AppIcon::Question, THEME.colors.subtle)),
+        "Done" | "Complete" => Some((AppIcon::CheckCircle, theme().colors.success)),
+        "Needs input" | "Delivery unknown" | "Incomplete" => {
+            Some((AppIcon::WarningCircle, theme().colors.warning))
+        }
+        "Waiting" => Some((AppIcon::Hourglass, theme().colors.indicator)),
+        "Failed" => Some((AppIcon::XCircle, theme().colors.error)),
+        "Working" => Some((AppIcon::SpinnerGap, theme().colors.indicator)),
+        "Compacting" => Some((AppIcon::ArrowsClockwise, theme().colors.indicator)),
+        _ => Some((AppIcon::Question, theme().colors.subtle)),
     }
 }
 
@@ -674,9 +684,9 @@ pub(super) fn project_badge(project: &Path) -> AnyElement {
         .max_w_full()
         .flex()
         .items_center()
-        .gap(px(3.0))
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.subtle)
+        .gap(theme().size(3.0))
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.subtle)
         .tooltip(move |window, cx| Tooltip::new(path.clone()).build(window, cx))
         .child(
             div()

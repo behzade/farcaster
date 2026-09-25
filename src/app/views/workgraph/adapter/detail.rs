@@ -6,7 +6,7 @@ use gpui::{
 use super::WorkGraphBoardView;
 use crate::{
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     app::views::workgraph::{
         components::{
             detail_action, detail_copy, detail_empty, detail_rule, detail_section, evidence_label,
@@ -21,14 +21,14 @@ fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> im
     div()
         .flex()
         .flex_col()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(THEME.space.sm)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.muted)
+                .gap(theme().space.sm)
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.muted)
                 .child(
                     div()
                         .font_family(MONO_FONT_FAMILY)
@@ -37,10 +37,10 @@ fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> im
                 .when(current, |meta| {
                     meta.child(
                         div()
-                            .px(THEME.space.xs)
-                            .rounded(THEME.radius)
-                            .bg(THEME.colors.session_selection)
-                            .text_color(THEME.colors.accent)
+                            .px(theme().space.xs)
+                            .rounded(theme().radius)
+                            .bg(theme().colors.highlight)
+                            .text_color(theme().colors.accent)
                             .child("Current"),
                     )
                 })
@@ -48,9 +48,9 @@ fn render_node_identity(node: &workgraph::Node, current: bool, leaf: bool) -> im
         )
         .child(
             div()
-                .text_size(THEME.type_scale.display)
+                .text_size(theme().type_scale.display)
                 .font_weight(FontWeight::SEMIBOLD)
-                .line_height(THEME.type_scale.line_composer)
+                .line_height(theme().type_scale.line_composer)
                 .child(node.title.clone()),
         )
 }
@@ -59,9 +59,9 @@ fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
     detail_section("Acceptance").child(
         detail_copy()
             .text_color(if node.acceptance.is_empty() {
-                THEME.colors.subtle
+                theme().colors.subtle
             } else {
-                THEME.colors.text
+                theme().colors.text
             })
             .child(if node.acceptance.is_empty() {
                 "No acceptance condition recorded.".to_owned()
@@ -74,9 +74,9 @@ fn render_acceptance(node: &workgraph::Node) -> impl IntoElement {
 fn render_scoped_paths(node: &workgraph::Node) -> impl IntoElement {
     detail_section("Files").children(node.files.iter().map(|path| {
         div()
-            .text_size(THEME.type_scale.body_small)
+            .text_size(theme().type_scale.body_small)
             .font_family(MONO_FONT_FAMILY)
-            .text_color(THEME.colors.code)
+            .text_color(theme().colors.code)
             .child(path.clone())
     }))
 }
@@ -87,19 +87,19 @@ fn render_outcome(
     current: bool,
 ) -> impl IntoElement {
     detail_section("Outcome")
-        .p(THEME.space.sm)
-        .border_l(px(2.0))
+        .p(theme().space.sm)
+        .border_l(theme().size(2.0))
         .border_color(if current {
-            THEME.colors.accent
+            theme().colors.accent
         } else {
-            THEME.colors.border
+            theme().colors.border
         })
-        .bg(THEME.colors.surface)
+        .bg(theme().colors.surface)
         .when_some(outcome, |section, step| {
             section.child(detail_copy().child(step.note.clone())).child(
                 div()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.subtle)
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.subtle)
                     .child(format!(
                         "{} · {}",
                         evidence_label(step.evidence.kind),
@@ -116,8 +116,8 @@ fn render_outcome(
                 }))
                 .child(
                     div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.muted)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.muted)
                         .child(format!("Evidence: {}", requirement_label(completion))),
                 )
         })
@@ -180,13 +180,13 @@ impl WorkGraphBoardView {
             .flex_none()
             .h_full()
             .overflow_y_scroll()
-            .px(THEME.space.md)
-            .py(THEME.space.md)
-            .bg(THEME.colors.panel)
+            .px(theme().space.md)
+            .py(theme().space.md)
+            .bg(theme().colors.panel)
             .when(!external && !narrow, |detail| {
                 detail
-                    .border_l(THEME.border)
-                    .border_color(THEME.colors.surface)
+                    .border_l(theme().border)
+                    .border_color(theme().colors.surface)
             })
             .child(match (snapshot, node) {
                 (Some(snapshot), Some(node)) => {
@@ -244,9 +244,9 @@ impl WorkGraphBoardView {
                     div()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.md)
+                        .gap(theme().space.md)
                         .w_full()
-                        .max_w(px(620.0))
+                        .max_w(theme().size(620.0))
                         .mx_auto()
                         .child(render_node_identity(node, current, leaf))
                         .child(render_acceptance(node))
@@ -268,17 +268,17 @@ impl WorkGraphBoardView {
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body)
+                            .text_size(theme().type_scale.body)
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("No node selected"),
                     )
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child("Choose a node to inspect its scope and outcome."),
                     )
                     .into_any_element(),

@@ -8,7 +8,7 @@ use crate::app::{
     AppSurface,
     ui::{
         layout::{LayoutMode, composer_bottom_clearance, shows_left_inline, shows_right_inline},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -51,10 +51,10 @@ impl FarcasterApp {
                 main.child(
                     div()
                         .w_full()
-                        .max_w(THEME.layout.conversation_width)
+                        .max_w(theme().layout.conversation_width)
                         .mx_auto()
-                        .px(THEME.space.md)
-                        .pt(THEME.space.sm)
+                        .px(theme().space.md)
+                        .pt(theme().space.sm)
                         .pb(composer_bottom_clearance(viewport_height))
                         .flex_none()
                         .child(self.views.composer.clone()),
@@ -143,11 +143,11 @@ impl FarcasterApp {
                     div()
                         .relative()
                         .w(session_rail_width)
-                        .min_w(THEME.layout.session_rail_min)
-                        .max_w(THEME.layout.session_rail_max)
+                        .min_w(theme().layout.session_rail_min)
+                        .max_w(theme().layout.session_rail_max)
                         .flex_none()
-                        .border_r(THEME.border)
-                        .border_color(THEME.colors.border)
+                        .border_r(theme().border)
+                        .border_color(theme().colors.border)
                         .child(
                             self.views
                                 .session_rail
@@ -168,11 +168,11 @@ impl FarcasterApp {
                     div()
                         .relative()
                         .w(run_panel_width)
-                        .min_w(THEME.layout.run_panel_min)
-                        .max_w(THEME.layout.run_panel_max)
+                        .min_w(theme().layout.run_panel_min)
+                        .max_w(theme().layout.run_panel_max)
                         .flex_none()
-                        .border_l(THEME.border)
-                        .border_color(THEME.colors.border)
+                        .border_l(theme().border)
+                        .border_color(theme().colors.border)
                         .child(
                             if self.views.workgraph_inspector_issue.is_some()
                                 && self.visible_review().is_none()
@@ -209,7 +209,7 @@ fn resize_handle(
         .bottom_0()
         .when(right, |handle| handle.right(gpui::px(-4.0)))
         .when(!right, |handle| handle.left(gpui::px(-4.0)))
-        .w(gpui::px(7.0))
+        .w(theme().size(7.0))
         .cursor_col_resize()
         .group(id)
         .on_mouse_down(gpui::MouseButton::Left, move |event, _, cx| {
@@ -218,11 +218,11 @@ fn resize_handle(
         })
         .child(
             div()
-                .ml(gpui::px(3.0))
-                .w(THEME.border)
+                .ml(theme().size(3.0))
+                .w(theme().border)
                 .h_full()
                 .opacity(0.0)
-                .bg(THEME.colors.muted)
+                .bg(theme().colors.muted)
                 .group_hover(id, |line| line.opacity(1.0)),
         )
 }

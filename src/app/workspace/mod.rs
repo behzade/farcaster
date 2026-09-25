@@ -20,6 +20,7 @@ pub(in crate::app) mod send_to_chat;
 mod surfaces;
 mod terminal;
 pub(in crate::app) mod terminal_editor;
+pub(in crate::app) mod theme_settings;
 mod vscode;
 mod zed;
 pub(in crate::app) use terminal::Terminal;

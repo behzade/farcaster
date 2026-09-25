@@ -1,12 +1,12 @@
 use gpui::{Pixels, px};
 
 use super::super::FarcasterApp;
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 
 pub(in crate::app::views) fn clamped_run_panel_width(width: f32) -> Pixels {
     px(width.clamp(
-        f32::from(THEME.layout.run_panel_min),
-        f32::from(THEME.layout.run_panel_max),
+        f32::from(theme().layout.run_panel_min),
+        f32::from(theme().layout.run_panel_max),
     ))
 }
 

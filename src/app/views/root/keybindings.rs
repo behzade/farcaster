@@ -1,7 +1,7 @@
 use gpui::{IntoElement, ParentElement as _, Styled as _, div};
 use gpui_component::kbd::Kbd;
 
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 
 pub(super) fn render_help() -> impl IntoElement {
     let app_context = gpui::KeyBindingContextPredicate::parse(crate::app::APP_SHORTCUT_CONTEXT)
@@ -50,32 +50,32 @@ pub(super) fn render_help() -> impl IntoElement {
     let content = div()
         .flex()
         .flex_col()
-        .gap(THEME.space.md)
-        .p(THEME.space.md)
+        .gap(theme().space.md)
+        .p(theme().space.md)
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(THEME.space.xs)
-                .pb(THEME.space.sm)
-                .border_b(THEME.border)
-                .border_color(THEME.colors.border)
+                .gap(theme().space.xs)
+                .pb(theme().space.sm)
+                .border_b(theme().border)
+                .border_color(theme().colors.border)
                 .child(
                     div()
-                        .text_size(THEME.type_scale.display)
-                        .text_color(THEME.colors.text)
+                        .text_size(theme().type_scale.display)
+                        .text_color(theme().colors.text)
                         .child("Keyboard shortcuts"),
                 )
                 .child(
                     div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.muted)
+                        .text_size(theme().type_scale.body_small)
+                        .text_color(theme().colors.muted)
                         .child("Ctrl+G activates app keys for 2 seconds; double Ctrl+G returns to the chat composer. After Ctrl+G, Ctrl+F/B scroll a page and Ctrl+U/D scroll half a page."),
                 )
                 .child(
                     div()
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.muted)
+                        .text_size(theme().type_scale.body_small)
+                        .text_color(theme().colors.muted)
                         .child("Cmd+0–9 on macOS and Super+0–9 on Linux switch sessions from any view, including Neovim and the terminal. Ctrl+0–9 also works in app views on both platforms. Other app-view shortcuts work outside Neovim and the terminal. Composer keys require composer focus; completion keys require visible suggestions. Tab and Shift+Tab move focus elsewhere or select picker items. Esc dismisses dialogs. Project work navigation keys require focus outside search; Esc also works in search. Use the action picker to find app commands."),
                 ),
         );
@@ -87,11 +87,11 @@ pub(super) fn render_help() -> impl IntoElement {
             .unwrap_or_else(|| {
                 sections.push((
                     section_name.clone(),
-                    div().flex().flex_col().gap(THEME.space.xs).child(
+                    div().flex().flex_col().gap(theme().space.xs).child(
                         div()
-                            .mb(THEME.space.xs)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.accent)
+                            .mb(theme().space.xs)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.accent)
                             .child(section_name),
                     ),
                 ));
@@ -113,7 +113,7 @@ fn shortcut_row(keystroke: &str, label: &str) -> impl IntoElement {
         .flex_none()
         .max_w_full()
         .items_center()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .children(keystroke.split_whitespace().map(|key| {
             Kbd::new(gpui::Keystroke::parse(key).expect("registered shortcut must parse"))
         }));
@@ -125,12 +125,12 @@ fn shortcut_row(keystroke: &str, label: &str) -> impl IntoElement {
         .items_center()
         .justify_between()
         .flex_wrap()
-        .gap(THEME.space.md)
-        .min_h(THEME.controls.utility_row)
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
-        .rounded(THEME.radius)
-        .bg(THEME.colors.surface)
+        .gap(theme().space.md)
+        .min_h(theme().controls.utility_row)
+        .px(theme().space.sm)
+        .py(theme().space.xs)
+        .rounded(theme().radius)
+        .bg(theme().colors.surface)
         .child(
             div()
                 .debug_selector(|| "shortcut-label".into())

@@ -2,7 +2,7 @@ use crate::app::{
     FarcasterApp, OVERLAY_KEY_CONTEXT,
     ui::{
         primitives::{ButtonTone, button, modal, submit_textarea},
-        theme::THEME,
+        theme::theme,
     },
 };
 use gpui::{
@@ -51,7 +51,7 @@ pub(in crate::app::views) fn render(
                     div()
                         .flex()
                         .flex_col()
-                        .child(div().p(THEME.space.sm).child(button(
+                        .child(div().p(theme().space.sm).child(button(
                             "code-destination-back",
                             "Back",
                             ButtonTone::Quiet,
@@ -65,16 +65,16 @@ pub(in crate::app::views) fn render(
                         .child(
                             List::new(&picker.list)
                                 .search_placeholder("Search chats in this project…")
-                                .max_h(gpui::px(360.0)),
+                                .max_h(theme().size(360.0)),
                         ),
                 );
             }
             surface.child(
                 div()
-                    .p(THEME.space.md)
+                    .p(theme().space.md)
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.sm)
+                    .gap(theme().space.sm)
                     .child(button(
                         "code-destination",
                         format!(
@@ -92,8 +92,8 @@ pub(in crate::app::views) fn render(
                     .children(destination.is_none().then(|| {
                         let settings = &dialog.settings;
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child(format!(
                                 "{} · {}",
                                 crate::agents::backend_display_name(settings.harness),
@@ -108,15 +108,15 @@ pub(in crate::app::views) fn render(
                     ))
                     .children(dialog.error.as_ref().map(|error| {
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.danger)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.danger)
                             .child(error.clone())
                     }))
                     .child(
                         div()
                             .flex()
                             .justify_end()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "cancel-send-to-chat",
                                 "Cancel",

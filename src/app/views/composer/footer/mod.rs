@@ -14,7 +14,7 @@ use crate::{
     app::FarcasterApp,
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, prominent_icon_button},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     runtime::RuntimeCommand,
 };
 
@@ -57,21 +57,21 @@ impl FarcasterApp {
             .id("composer-status")
             .w_full()
             .min_w_0()
-            .h(px(28.0))
+            .h(theme().size(28.0))
             .flex_none()
             .flex()
             .items_center()
-            .px(px(12.0))
+            .px(theme().size(12.0))
             .overflow_x_scroll()
             .track_scroll(scroll)
             .when_some(mode, |row, mode| {
                 row.child(
                     div()
                         .flex_none()
-                        .pr(THEME.space.sm)
+                        .pr(theme().space.sm)
                         .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.accent)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.indicator)
                         .whitespace_nowrap()
                         .child(mode.to_owned()),
                 )
@@ -92,8 +92,8 @@ impl FarcasterApp {
         let abort_entity = entity;
         div()
             .absolute()
-            .right(px(12.0))
-            .bottom(px(10.0))
+            .right(theme().size(12.0))
+            .bottom(theme().size(10.0))
             .occlude()
             .flex()
             .items_center()
@@ -102,7 +102,7 @@ impl FarcasterApp {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .when(self.snapshot.conversation.running, |actions| {
                         actions.child(
                             prominent_icon_button(
@@ -116,7 +116,7 @@ impl FarcasterApp {
                                     });
                                 },
                             )
-                            .text_color(THEME.colors.error),
+                            .text_color(theme().colors.error),
                         )
                     })
                     .when_some(primary_action, |actions, label| {
@@ -147,14 +147,14 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
         .flex()
         .items_center()
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.caption)
+        .text_size(theme().type_scale.caption)
         .child(context_metric(usage));
     if let Some(rate) = usage.cache_hit_rate {
         row = row.child(separator()).child(labeled_metric(
             "CH",
             "Cache hit rate",
             format!("{rate:.0}%"),
-            THEME.colors.success,
+            theme().colors.success,
             None,
         ));
     }
@@ -163,7 +163,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             Some(AppIcon::ArrowDown),
             "Input tokens",
             format_tokens(usage.aggregate.input),
-            THEME.colors.muted,
+            theme().colors.muted,
         ));
     }
     if usage.aggregate.output > 0 {
@@ -171,7 +171,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             Some(AppIcon::ArrowUp),
             "Output tokens",
             format_tokens(usage.aggregate.output),
-            THEME.colors.text,
+            theme().colors.text,
         ));
     }
     if usage.aggregate.cost_micros > 0 {
@@ -179,7 +179,7 @@ fn render_usage(usage: &ComposerUsage) -> AnyElement {
             None,
             "Cost",
             format_cost(usage.aggregate.cost_micros),
-            THEME.colors.text,
+            theme().colors.text,
         ));
     }
     if let Some(weekly) = usage.weekly {
@@ -211,11 +211,11 @@ fn format_reset_time(timestamp: i64) -> Option<String> {
 
 fn weekly_color(remaining: f64) -> gpui::Rgba {
     if remaining <= 10.0 {
-        THEME.colors.error
+        theme().colors.error
     } else if remaining <= 25.0 {
-        THEME.colors.warning
+        theme().colors.warning
     } else {
-        THEME.colors.text
+        theme().colors.text
     }
 }
 
@@ -232,13 +232,13 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
         .flex_none()
         .flex()
         .items_center()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(context_meter(percent, color))
         .child(
             div()
                 .flex_none()
                 .whitespace_nowrap()
-                .text_color(THEME.colors.text)
+                .text_color(theme().colors.text)
                 .child(value),
         )
         .into_any_element()
@@ -246,13 +246,13 @@ fn context_metric(usage: &ComposerUsage) -> AnyElement {
 
 fn context_meter(percent: f64, color: gpui::Rgba) -> AnyElement {
     div()
-        .size(px(14.0))
+        .size(theme().size(14.0))
         .flex_none()
         .rounded_full()
         .overflow_hidden()
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.border)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .bg(theme().colors.border)
         .child(
             canvas(
                 |bounds, _, _| bounds,
@@ -301,12 +301,12 @@ fn labeled_metric(
         .flex_none()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .whitespace_nowrap()
         .child(
             div()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(THEME.colors.subtle)
+                .text_color(theme().colors.subtle)
                 .child(label),
         )
         .child(div().text_color(value_color).child(value))
@@ -329,11 +329,11 @@ fn simple_metric(
         .flex_none()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .whitespace_nowrap()
         .children(icon.map(|icon| {
             app_icon(icon, AppIconSize::Inline)
-                .text_color(THEME.colors.subtle)
+                .text_color(theme().colors.subtle)
                 .into_any_element()
         }))
         .child(div().text_color(value_color).child(value))
@@ -343,19 +343,19 @@ fn simple_metric(
 pub(in crate::app::views) fn separator() -> AnyElement {
     div()
         .flex_none()
-        .px(px(6.0))
+        .px(theme().size(6.0))
         .text_align(gpui::TextAlign::Center)
         .font_family(MONO_FONT_FAMILY)
-        .text_color(THEME.colors.subtle)
+        .text_color(theme().colors.subtle)
         .child("/")
         .into_any_element()
 }
 
 fn context_color(percent: Option<f64>) -> gpui::Rgba {
     match percent {
-        Some(percent) if percent > 90.0 => THEME.colors.error,
-        Some(percent) if percent > 70.0 => THEME.colors.warning,
-        Some(_) => THEME.colors.success,
-        None => THEME.colors.border,
+        Some(percent) if percent > 90.0 => theme().colors.error,
+        Some(percent) if percent > 70.0 => theme().colors.warning,
+        Some(_) => theme().colors.success,
+        None => theme().colors.border,
     }
 }

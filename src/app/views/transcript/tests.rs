@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::{
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     conversation::{self, TranscriptItem, TranscriptKind},
     utility::persistent_vec::PersistentVec,
 };
@@ -71,9 +71,9 @@ fn transcript_copy_keeps_image_attachment_markers() {
 
 #[test]
 fn tail_reserve_is_responsive_but_bounded() {
-    assert_eq!(tail_reserve(px(100.0)), px(72.0));
-    assert_eq!(tail_reserve(px(500.0)), px(160.0));
-    assert_eq!(tail_reserve(px(2_000.0)), px(280.0));
+    assert_eq!(tail_reserve(theme().size(100.0)), theme().size(72.0));
+    assert_eq!(tail_reserve(theme().size(500.0)), theme().size(160.0));
+    assert_eq!(tail_reserve(px(2_000.0)), theme().size(280.0));
 }
 
 #[test]
@@ -203,17 +203,17 @@ fn mixed_user_messages_highlight_only_recognized_invocation_tokens() {
 
 #[test]
 fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
-    assert_ne!(THEME.colors.skill, THEME.colors.accent);
-    assert_ne!(THEME.colors.skill, THEME.colors.success);
+    assert_ne!(theme().colors.skill, theme().colors.accent);
+    assert_ne!(theme().colors.skill, theme().colors.success);
     let skill = invocation_transcript_markdown_style("<skill name=\"review\">body</skill>");
-    assert_eq!(skill.inline_code.color, Some(THEME.colors.skill.into()));
+    assert_eq!(skill.inline_code.color, Some(theme().colors.skill.into()));
     assert_eq!(skill.inline_code.background_color, None);
 
     let prompt = invocation_transcript_markdown_style("expanded prompt");
-    assert_eq!(prompt.inline_code.color, Some(THEME.colors.accent.into()));
+    assert_eq!(prompt.inline_code.color, Some(theme().colors.accent.into()));
     assert_eq!(
         prompt.inline_code.background_color,
-        Some(THEME.colors.panel.into())
+        Some(theme().colors.panel.into())
     );
 }
 
@@ -221,10 +221,10 @@ fn invocation_treatment_uses_distinct_skill_and_prompt_palettes() {
 fn markdown_inline_code_uses_the_reading_palette() {
     let style = transcript_markdown_style();
 
-    assert_eq!(style.inline_code.color, Some(THEME.colors.code.into()));
+    assert_eq!(style.inline_code.color, Some(theme().colors.code.into()));
     assert_eq!(
         style.inline_code.background_color,
-        Some(THEME.colors.panel.into())
+        Some(theme().colors.panel.into())
     );
 }
 
@@ -645,7 +645,7 @@ fn markdown_row_height_estimates_reflect_wrapping_and_physical_lines() {
     assert!(rows.len() > 10);
     assert!(
         rows.iter()
-            .all(|row| estimated_row_height(*row, &items) > TRANSCRIPT_ROW_HEIGHT_HINT)
+            .all(|row| estimated_row_height(*row, &items) > theme().size(24.0))
     );
 }
 
@@ -690,10 +690,7 @@ fn long_worker_messages_remain_one_compact_row() {
     assert_eq!(rows.len(), 1);
     assert!(matches!(rows[0], TranscriptRow::Item { index: 0, .. }));
     assert!(!expanded_by_default(rows[0], &items));
-    assert_eq!(
-        estimated_row_height(rows[0], &items),
-        TRANSCRIPT_ROW_HEIGHT_HINT
-    );
+    assert_eq!(estimated_row_height(rows[0], &items), theme().size(24.0));
 }
 
 #[test]

@@ -1,13 +1,13 @@
 use gpui::{
     AnyElement, IntoElement as _, ParentElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _, px,
+    prelude::FluentBuilder as _,
 };
 
 use crate::app::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::primitives::{ButtonTone, button, modal},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     projects,
 };
 
@@ -61,11 +61,8 @@ pub(in crate::app::views) fn render(
             let _ = close.update(cx, |this, cx| this.dismiss_project_trust(window, cx));
         },
         |surface| {
-            let mut choices = div().flex().flex_col().gap(THEME.space.xs);
-            for (index, option) in projects::options(project)
-                .into_iter()
-                .enumerate()
-            {
+            let mut choices = div().flex().flex_col().gap(theme().space.xs);
+            for (index, option) in projects::options(project).into_iter().enumerate() {
                 let choice = option.choice;
                 let select = entity.clone();
                 choices = choices.child(
@@ -88,51 +85,67 @@ pub(in crate::app::views) fn render(
                 );
             }
 
-            surface.w(px(640.0)).max_w_full().child(
+            surface.w(theme().size(640.0)).max_w_full().child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.md)
-                    .p(THEME.space.md)
+                    .gap(theme().space.md)
+                    .p(theme().space.md)
                     .child(
                         div()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small)
-                            .text_color(THEME.colors.accent)
+                            .text_size(theme().type_scale.body_small)
+                            .text_color(theme().colors.accent)
                             .child(project.display().to_string()),
                     )
                     .child(
                         div()
-                            .text_color(THEME.colors.muted)
-                            .line_height(THEME.type_scale.line_body)
+                            .text_color(theme().colors.muted)
+                            .line_height(theme().type_scale.line_body)
                             .child(description),
                     )
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child(saved),
                     )
                     .when_some(app.project.trust_error.clone(), |content, error| {
                         content.child(
                             div()
-                                .text_color(THEME.colors.error)
+                                .text_color(theme().colors.error)
                                 .child(format!("Trust decision was not saved: {error}")),
                         )
                     })
                     .child(choices)
                     .when_some(editable_backend, |content, backend| {
-                        let label = format!("{} project trust…", crate::agents::backend_display_name(backend));
+                        let label = format!(
+                            "{} project trust…",
+                            crate::agents::backend_display_name(backend)
+                        );
                         let project = project.to_path_buf();
                         let entity = entity.clone();
-                        content.child(button("backend-project-trust", label, ButtonTone::Quiet, true, move |window, cx| {
-                            let _ = entity.update(cx, |this, cx| this.open_backend_project_trust(backend, project.clone(), window, cx));
-                        }))
+                        content.child(button(
+                            "backend-project-trust",
+                            label,
+                            ButtonTone::Quiet,
+                            true,
+                            move |window, cx| {
+                                let _ = entity.update(cx, |this, cx| {
+                                    this.open_backend_project_trust(
+                                        backend,
+                                        project.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            },
+                        ))
                     })
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child(
                                 if app.project.pending_trust_command.is_some()
                                     || app.project.pending_trust_action.is_some()

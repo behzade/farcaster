@@ -11,29 +11,29 @@ use super::{
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, ButtonTone, app_icon, button},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 
 pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bool) -> Div {
     let status = goal.status.replace('_', " ");
     let usage = goal_usage_label(goal);
     div()
-        .mx(if compact { px(0.0) } else { THEME.space.md })
-        .mt(if compact { px(0.0) } else { THEME.space.sm })
-        .px(THEME.space.sm)
-        .py(THEME.space.sm)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.surface)
+        .mx(if compact { px(0.0) } else { theme().space.md })
+        .mt(if compact { px(0.0) } else { theme().space.sm })
+        .px(theme().space.sm)
+        .py(theme().space.sm)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .bg(theme().colors.surface)
         .flex()
         .items_start()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(
             div()
-                .h(px(20.0))
+                .h(theme().size(20.0))
                 .flex()
                 .items_center()
-                .text_color(THEME.colors.accent)
+                .text_color(theme().colors.accent)
                 .child(app_icon(AppIcon::Eye, AppIconSize::Inline)),
         )
         .child(
@@ -42,14 +42,14 @@ pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bo
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
+                .gap(theme().size(3.0))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(THEME.space.xs)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .gap(theme().space.xs)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child("Native goal")
                         .child("·")
                         .child(status),
@@ -57,16 +57,16 @@ pub(super) fn render_session_goal(goal: &crate::agents::SessionGoal, compact: bo
                 .child(
                     div()
                         .line_clamp(if compact { 3 } else { 2 })
-                        .text_size(THEME.type_scale.body_small)
+                        .text_size(theme().type_scale.body_small)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(THEME.colors.text)
+                        .text_color(theme().colors.text)
                         .child(goal.objective.clone()),
                 )
                 .when_some(usage, |content, usage| {
                     content.child(
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child(usage),
                     )
                 }),
@@ -106,7 +106,7 @@ pub(super) fn render_plan_list(
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .p(THEME.space.md)
+        .p(theme().space.md)
         .when(rows.is_empty(), |list| {
             list.child(detail_empty("No nodes match your search."))
         })
@@ -124,9 +124,9 @@ fn render_plan_row(
     let number = row.node.number;
     let is_selected = selected == Some(number);
     let title_color = if row.detached || row.reached {
-        THEME.colors.subtle
+        theme().colors.subtle
     } else {
-        THEME.colors.text
+        theme().colors.text
     };
     div()
         .id(format!("workgraph-node-{number}"))
@@ -140,37 +140,37 @@ fn render_plan_row(
         .cursor_pointer()
         .flex_none()
         .on_click(move |_, _, cx| entity.update(cx, |this, cx| this.select_node(number, cx)))
-        .border_l(px(2.0))
+        .border_l(theme().size(2.0))
         .border_color(if is_selected {
-            THEME.colors.accent
+            theme().colors.accent
         } else {
-            THEME.colors.panel
+            theme().colors.panel
         })
         .bg(if is_selected {
-            THEME.colors.selection
+            theme().colors.highlight
         } else {
-            THEME.colors.panel
+            theme().colors.panel
         })
-        .hover(|style| style.bg(THEME.colors.hover))
-        .px(THEME.space.sm)
-        .py(THEME.space.sm)
+        .hover(|style| style.bg(theme().colors.highlight))
+        .px(theme().space.sm)
+        .py(theme().space.sm)
         .flex()
         .items_start()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(
             div()
-                .w(px(22.0))
-                .h(px(22.0))
+                .w(theme().size(22.0))
+                .h(theme().size(22.0))
                 .flex_none()
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_color(if row.reached {
-                    THEME.colors.success
+                    theme().colors.success
                 } else if row.current {
-                    THEME.colors.accent
+                    theme().colors.accent
                 } else {
-                    THEME.colors.subtle
+                    theme().colors.subtle
                 })
                 .when(row.reached, |marker| {
                     marker.child(app_icon(AppIcon::CheckCircle, AppIconSize::Inline))
@@ -178,7 +178,7 @@ fn render_plan_row(
                 .when(!row.reached, |marker| {
                     marker.child(
                         div()
-                            .text_size(THEME.type_scale.caption)
+                            .text_size(theme().type_scale.caption)
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("{number}")),
                     )
@@ -190,10 +190,10 @@ fn render_plan_row(
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(3.0))
+                .gap(theme().size(3.0))
                 .child(
                     div()
-                        .text_size(THEME.type_scale.body)
+                        .text_size(theme().type_scale.body)
                         .font_weight(if row.current {
                             FontWeight::SEMIBOLD
                         } else {
@@ -207,9 +207,9 @@ fn render_plan_row(
                     div()
                         .flex()
                         .items_center()
-                        .gap(THEME.space.xs)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .gap(theme().space.xs)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .when(row.current, |meta| meta.child("Current"))
                         .when(row.detached, |meta| meta.child("Detached"))
                         .when(!row.node.files.is_empty(), |meta| {
@@ -237,18 +237,18 @@ pub(super) fn render_create_form(
         .flex_col()
         .child(
             div()
-                .h(px(56.0))
+                .h(theme().size(56.0))
                 .flex_none()
-                .pl(px(24.0))
-                .pr(px(56.0))
+                .pl(theme().size(24.0))
+                .pr(theme().size(56.0))
                 .flex()
                 .items_center()
                 .justify_between()
-                .border_b(THEME.border)
-                .border_color(THEME.colors.surface)
+                .border_b(theme().border)
+                .border_color(theme().colors.surface)
                 .child(
                     div()
-                        .text_size(THEME.type_scale.display)
+                        .text_size(theme().type_scale.display)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(if add_node { "Add node" } else { "New plan" }),
                 ),
@@ -259,16 +259,16 @@ pub(super) fn render_create_form(
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .p(px(24.0))
+                .p(theme().size(24.0))
                 .flex()
                 .justify_center()
                 .child(
                     div()
                         .w_full()
-                        .max_w(px(520.0))
+                        .max_w(theme().size(520.0))
                         .when(add_node, |form| {
                             form.child(compact_field("Node title", Input::new(title).w_full()))
-                                .child(div().mt(THEME.space.md).child(compact_field(
+                                .child(div().mt(theme().space.md).child(compact_field(
                                     "Paths (optional, one per line)",
                                     Textarea::new(detail).w_full().appearance(true),
                                 )))
@@ -276,16 +276,16 @@ pub(super) fn render_create_form(
                         .when(!add_node, |form| {
                             form.child(
                                 div()
-                                    .mb(THEME.space.md)
-                                    .text_size(THEME.type_scale.body_small)
-                                    .text_color(THEME.colors.muted)
+                                    .mb(theme().space.md)
+                                    .text_size(theme().type_scale.body_small)
+                                    .text_color(theme().colors.muted)
                                     .child("Describe where the project is now and what should be true when this plan is complete."),
                             )
                             .child(compact_field(
                                 "Current state",
                                 Textarea::new(detail).w_full().appearance(true),
                             ))
-                            .child(div().mt(THEME.space.md).child(compact_field(
+                            .child(div().mt(theme().space.md).child(compact_field(
                                 "Desired outcome",
                                 Input::new(title).w_full(),
                             )))
@@ -294,15 +294,15 @@ pub(super) fn render_create_form(
         )
         .child(
             div()
-                .h(px(56.0))
+                .h(theme().size(56.0))
                 .flex_none()
-                .px(px(24.0))
+                .px(theme().size(24.0))
                 .flex()
                 .items_center()
                 .justify_end()
-                .gap(THEME.space.sm)
-                .border_t(THEME.border)
-                .border_color(THEME.colors.surface)
+                .gap(theme().space.sm)
+                .border_t(theme().border)
+                .border_color(theme().colors.surface)
                 .child(button(
                         "workgraph-create-cancel",
                         "Cancel",
@@ -332,10 +332,10 @@ fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoEle
     div()
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(
             div()
-                .text_size(THEME.type_scale.body_small)
+                .text_size(theme().type_scale.body_small)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(label),
         )
@@ -343,23 +343,23 @@ fn compact_field(label: &'static str, control: impl IntoElement) -> impl IntoEle
 }
 
 pub(super) fn detail_section(label: &'static str) -> Div {
-    div().flex().flex_col().gap(THEME.space.xs).child(
+    div().flex().flex_col().gap(theme().space.xs).child(
         div()
-            .text_size(THEME.type_scale.caption)
+            .text_size(theme().type_scale.caption)
             .font_weight(FontWeight::SEMIBOLD)
-            .text_color(THEME.colors.muted)
+            .text_color(theme().colors.muted)
             .child(label),
     )
 }
 
 pub(super) fn detail_rule() -> Div {
-    div().h(THEME.border).w_full().bg(THEME.colors.surface)
+    div().h(theme().border).w_full().bg(theme().colors.surface)
 }
 
 pub(super) fn detail_empty(text: &'static str) -> Div {
     div()
-        .text_size(THEME.type_scale.body_small)
-        .text_color(THEME.colors.subtle)
+        .text_size(theme().type_scale.body_small)
+        .text_color(theme().colors.subtle)
         .child(text)
 }
 
@@ -369,8 +369,8 @@ pub(super) fn detail_action(control: impl IntoElement) -> Div {
 
 pub(super) fn detail_copy() -> Div {
     div()
-        .text_size(THEME.type_scale.body_small)
-        .line_height(THEME.type_scale.line_body)
+        .text_size(theme().type_scale.body_small)
+        .line_height(theme().type_scale.line_body)
 }
 
 pub(super) const fn requirement_label(

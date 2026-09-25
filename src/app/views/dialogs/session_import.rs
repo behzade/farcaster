@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement as _,
     MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::tooltip::Tooltip;
 
@@ -18,7 +18,7 @@ use crate::{
             AppIconSize, ButtonTone, FeedbackTone, activates_button, app_icon, button, feedback,
             icon_control, modal,
         },
-        theme::THEME,
+        theme::theme,
     },
     sessions::SessionSummary,
 };
@@ -54,21 +54,21 @@ pub(in crate::app::views) fn render(
         |surface| {
             let cancel = entity.clone();
             let confirm = entity.clone();
-            surface.w(px(640.0)).max_w_full().child(
+            surface.w(theme().size(640.0)).max_w_full().child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.md)
-                    .p(THEME.space.md)
+                    .gap(theme().space.md)
+                    .p(theme().space.md)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.display)
+                            .text_size(theme().type_scale.display)
                             .child("Import sessions"),
                     )
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body)
-                            .text_color(THEME.colors.muted)
+                            .text_size(theme().type_scale.body)
+                            .text_color(theme().colors.muted)
                             .child(
                                 "Choose one harness, review what is on disk, then import the sessions you want. Farcaster does not watch session files.",
                             ),
@@ -79,10 +79,10 @@ pub(in crate::app::views) fn render(
                     })
                     .child(if loading {
                         div()
-                            .text_color(THEME.colors.muted)
+                            .text_color(theme().colors.muted)
                             .child(format!("Looking for {harness_name} sessions…"))
                     } else if candidates.is_empty() {
-                        div().text_color(THEME.colors.muted).child(format!(
+                        div().text_color(theme().colors.muted).child(format!(
                             "No new {harness_name} sessions on disk."
                         ))
                     } else {
@@ -92,7 +92,7 @@ pub(in crate::app::views) fn render(
                         div()
                             .flex()
                             .justify_end()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "cancel-session-import",
                                 "Cancel",
@@ -135,7 +135,7 @@ fn harness_picker(
     div()
         .flex()
         .flex_wrap()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .children(import_harnesses().into_iter().map(|harness| {
             let active = Some(harness) == selected && selected_profile.is_none();
             let entity = entity.clone();
@@ -190,12 +190,12 @@ fn candidate_list(
     div()
         .flex()
         .flex_col()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(
             div()
                 .flex()
                 .items_center()
-                .gap(THEME.space.sm)
+                .gap(theme().space.sm)
                 .child(button(
                     "import-select-all",
                     "Select all",
@@ -220,8 +220,8 @@ fn candidate_list(
                 ))
                 .child(
                     div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child(format!(
                             "{selected_count} selected · {} on disk",
                             candidates.len()
@@ -231,7 +231,7 @@ fn candidate_list(
         .child(
             div()
                 .id("import-session-list")
-                .max_h(THEME.layout.session_row_height * 7)
+                .max_h(theme().layout.session_row_height * 7)
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
@@ -272,24 +272,24 @@ fn candidate_row(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .w_full()
-        .h(THEME.layout.session_row_height)
+        .h(theme().layout.session_row_height)
         .relative()
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
-        .rounded(px(2.0))
+        .px(theme().space.sm)
+        .py(theme().space.xs)
+        .rounded(theme().size(2.0))
         .flex()
         .items_center()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .bg(if checked {
-            THEME.colors.session_selection
+            theme().colors.highlight
         } else {
-            THEME.colors.panel
+            theme().colors.panel
         })
         .hover(move |row| {
             row.bg(if checked {
-                THEME.colors.session_selection
+                theme().colors.highlight
             } else {
-                THEME.colors.surface
+                theme().colors.surface
             })
         })
         .when(checked, |row| {
@@ -297,13 +297,16 @@ fn candidate_row(
                 div()
                     .absolute()
                     .left_0()
-                    .top(THEME.space.xs)
-                    .bottom(THEME.space.xs)
-                    .w(px(2.0))
-                    .bg(THEME.colors.accent),
+                    .top(theme().space.xs)
+                    .bottom(theme().space.xs)
+                    .w(theme().size(2.0))
+                    .bg(theme().colors.accent),
             )
         })
-        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .focus(|row| {
+            row.border(theme().border)
+                .border_color(theme().colors.accent)
+        })
         .cursor(CursorStyle::PointingHand)
         .on_click(move |_, _, cx| {
             let path = toggle.clone();
@@ -328,7 +331,7 @@ fn candidate_row(
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
+                .gap(theme().size(2.0))
                 .overflow_hidden()
                 .child(
                     div()
@@ -336,13 +339,13 @@ fn candidate_row(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_size(THEME.type_scale.body_small)
+                        .text_size(theme().type_scale.body_small)
                         .font_weight(if checked {
                             FontWeight::SEMIBOLD
                         } else {
                             FontWeight::NORMAL
                         })
-                        .text_color(THEME.colors.text)
+                        .text_color(theme().colors.text)
                         .child(title.clone()),
                 )
                 .child(
@@ -351,8 +354,8 @@ fn candidate_row(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child(project),
                 ),
         )
@@ -361,19 +364,19 @@ fn candidate_row(
                 .flex_none()
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
+                .gap(theme().space.xs)
                 .child(app_icon(
                     AppIcon::for_harness(session.harness),
                     AppIconSize::Inline,
                 ))
                 .child(
                     div()
-                        .w(px(30.0))
+                        .w(theme().size(30.0))
                         .flex_none()
                         .whitespace_nowrap()
                         .text_align(gpui::TextAlign::Right)
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child(age),
                 ),
         )
@@ -388,7 +391,7 @@ fn selection_checkbox(
     let press = Rc::new(on_press);
     let click = Rc::clone(&press);
     icon_control(id, label)
-        .size(px(20.0))
+        .size(theme().size(20.0))
         .role(Role::CheckBox)
         .aria_toggled(if selected {
             gpui::Toggled::True
@@ -407,17 +410,17 @@ fn selection_checkbox(
         })
         .child(
             div()
-                .size(px(14.0))
-                .border(THEME.border)
-                .border_color(THEME.colors.muted)
-                .rounded(px(2.0))
+                .size(theme().size(14.0))
+                .border(theme().border)
+                .border_color(theme().colors.muted)
+                .rounded(theme().size(2.0))
                 .flex()
                 .items_center()
                 .justify_center()
                 .when(selected, |checkbox| {
-                    checkbox.bg(THEME.colors.accent).child(
+                    checkbox.bg(theme().colors.accent).child(
                         app_icon(AppIcon::Check, AppIconSize::Inline)
-                            .text_color(THEME.colors.surface),
+                            .text_color(theme().colors.surface),
                     )
                 }),
         )

@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     text::{TextViewState, TextViewStyle},
@@ -9,16 +9,13 @@ use gpui_component::{
 
 use crate::{
     app::{
-        FarcasterApp, composer::prompt_fragments::invocation_token, ui::theme::THEME,
+        FarcasterApp, composer::prompt_fragments::invocation_token, ui::theme::theme,
         views::transcript::attachments::render_attachments,
     },
     conversation::{TranscriptItem, TranscriptKind},
 };
 
-use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, item_color, selectable_text, selectable_text_state,
-    technical_text, with_file_links,
-};
+use super::{item_color, selectable_text, selectable_text_state, technical_text, with_file_links};
 
 pub(super) fn render_invocation(
     font_scale: f32,
@@ -31,8 +28,8 @@ pub(super) fn render_invocation(
     div()
         .id(("invocation-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(THEME.space.sm)
+        .px(theme().size(18.0))
+        .py(theme().space.sm)
         .flex()
         .flex_col()
         .when(item.has_attachments(), |row| {
@@ -46,9 +43,9 @@ pub(super) fn render_invocation(
             .min_w_0()
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(if skill {
-                THEME.colors.skill
+                theme().colors.skill
             } else {
-                THEME.colors.accent
+                theme().colors.accent
             }),
         )
         .when_some(tooltip, |row, tooltip| {
@@ -198,15 +195,15 @@ pub(super) fn render_message(
     div()
         .id(("transcript-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(THEME.space.sm)
+        .px(theme().size(18.0))
+        .py(theme().space.sm)
         .when(user, |row| {
-            row.mt(THEME.space.sm)
-                .py(THEME.space.md)
-                .bg(THEME.colors.selection)
+            row.mt(theme().space.sm)
+                .py(theme().space.md)
+                .bg(theme().colors.highlight)
         })
         .when(follows_tool, |row| {
-            row.mt(THEME.space.md).pt(THEME.space.sm)
+            row.mt(theme().space.md).pt(theme().space.sm)
         })
         .when_some(tooltip, |row, tooltip| {
             row.tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
@@ -250,17 +247,17 @@ pub(super) fn render_message_chunk(
     div()
         .id(format!("transcript-row-{key}-{block}"))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .when(user, |row| row.bg(THEME.colors.selection))
-        .when(first, |row| row.pt(THEME.space.sm))
+        .px(theme().size(18.0))
+        .when(user, |row| row.bg(theme().colors.highlight))
+        .when(first, |row| row.pt(theme().space.sm))
         .when(first && user, |row| {
-            row.mt(THEME.space.sm).pt(THEME.space.md)
+            row.mt(theme().space.sm).pt(theme().space.md)
         })
         .when(first && follows_tool, |row| {
-            row.mt(THEME.space.md).pt(THEME.space.sm)
+            row.mt(theme().space.md).pt(theme().space.sm)
         })
-        .when(!first, |row| row.pt(THEME.space.xs))
-        .when(last, |row| row.pb(THEME.space.md))
+        .when(!first, |row| row.pt(theme().space.xs))
+        .when(last, |row| row.pb(theme().space.md))
         .when(
             first && (item.kind == TranscriptKind::PeerMessage || (user && !item.label.is_empty())),
             |row| row.child(peer_label(font_scale, &item.label)),
@@ -278,9 +275,9 @@ pub(super) fn render_message_chunk(
 
 fn peer_label(font_scale: f32, label: &str) -> impl gpui::IntoElement {
     div()
-        .mb(px(7.0))
-        .text_size(THEME.type_scale.caption * font_scale)
+        .mb(theme().size(7.0))
+        .text_size(theme().type_scale.caption * font_scale)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(THEME.colors.muted)
+        .text_color(theme().colors.muted)
         .child(label.to_owned())
 }

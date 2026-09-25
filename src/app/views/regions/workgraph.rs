@@ -5,7 +5,7 @@ use gpui::{
 use super::super::{FarcasterApp, workgraph::WorkGraphBoardView};
 use crate::app::ui::{
     primitives::{ButtonTone, button},
-    theme::THEME,
+    theme::theme,
 };
 
 pub(crate) struct WorkGraphDetailView {
@@ -39,10 +39,10 @@ impl Render for WorkGraphDetailView {
             .child(
                 div()
                     .flex_none()
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
-                    .border_b(THEME.border)
-                    .border_color(THEME.colors.border)
+                    .px(theme().space.sm)
+                    .py(theme().space.xs)
+                    .border_b(theme().border)
+                    .border_color(theme().colors.border)
                     .child(button(
                         "close-workgraph-inspector",
                         "Back to session details",

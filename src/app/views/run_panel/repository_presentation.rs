@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     repository::{
         ChangeKind, ChangeLayer, DiffTargetKey, GitIdentity, SnapshotIdentity, WorkingCopyChange,
     },
@@ -154,10 +154,12 @@ pub(super) fn change_status_label(change: &WorkingCopyChange) -> &str {
 
 pub(super) fn change_color(kind: &ChangeKind) -> gpui::Rgba {
     match kind {
-        ChangeKind::Added | ChangeKind::Untracked => THEME.colors.success,
-        ChangeKind::Deleted | ChangeKind::Conflict => THEME.colors.error,
-        ChangeKind::Renamed | ChangeKind::Copied | ChangeKind::TypeChanged => THEME.colors.warning,
-        ChangeKind::Modified | ChangeKind::Unknown(_) => THEME.colors.accent,
+        ChangeKind::Added | ChangeKind::Untracked => theme().colors.success,
+        ChangeKind::Deleted | ChangeKind::Conflict => theme().colors.error,
+        ChangeKind::Renamed | ChangeKind::Copied | ChangeKind::TypeChanged => {
+            theme().colors.warning
+        }
+        ChangeKind::Modified | ChangeKind::Unknown(_) => theme().colors.accent,
     }
 }
 

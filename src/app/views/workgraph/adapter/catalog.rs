@@ -2,7 +2,7 @@ mod detail;
 
 use gpui::{
     Context, Div, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, div, prelude::FluentBuilder as _,
 };
 use workgraph::{PlanOverview, WorkStatus};
 
@@ -10,7 +10,7 @@ use super::{WorkGraphBoardView, render_board_header};
 use crate::app::{
     ui::{
         primitives::{ButtonTone, button},
-        theme::THEME,
+        theme::theme,
     },
     views::workgraph::{contract::PlanData, layout::BoardLayoutMode},
 };
@@ -32,12 +32,12 @@ impl CatalogState {
 
 fn status_label(status: WorkStatus) -> Div {
     div()
-        .text_size(THEME.type_scale.caption)
+        .text_size(theme().type_scale.caption)
         .text_color(match status {
-            WorkStatus::Done => THEME.colors.success,
-            WorkStatus::Active => THEME.colors.accent,
-            WorkStatus::Blocked => THEME.colors.warning,
-            WorkStatus::Ready => THEME.colors.muted,
+            WorkStatus::Done => theme().colors.success,
+            WorkStatus::Active => theme().colors.accent,
+            WorkStatus::Blocked => theme().colors.warning,
+            WorkStatus::Ready => theme().colors.muted,
         })
         .child(if status == WorkStatus::Done {
             "✓ Done"
@@ -48,8 +48,8 @@ fn status_label(status: WorkStatus) -> Div {
 
 fn caption(text: impl Into<gpui::SharedString>) -> Div {
     div()
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.subtle)
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.subtle)
         .child(text.into())
 }
 
@@ -155,12 +155,12 @@ impl WorkGraphBoardView {
         );
         let toolbar = div()
             .flex_none()
-            .px(THEME.space.md)
-            .py(THEME.space.sm)
+            .px(theme().space.md)
+            .py(theme().space.sm)
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .children(
                 [
                     (None, "All"),
@@ -221,15 +221,15 @@ impl WorkGraphBoardView {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .px(THEME.space.md)
+            .px(theme().space.md)
             .child(
                 div()
                     .flex()
                     .flex_none()
-                    .gap(THEME.space.sm)
-                    .py(THEME.space.xs)
+                    .gap(theme().space.sm)
+                    .py(theme().space.xs)
                     .child(caption("Plan / dependencies").flex_1())
-                    .child(caption("Status / progress").w(px(120.0))),
+                    .child(caption("Status / progress").w(theme().size(120.0))),
             )
             .when(rows.is_empty(), |list| {
                 list.child(
@@ -238,7 +238,7 @@ impl WorkGraphBoardView {
                     } else {
                         "No plans match this filter and search."
                     })
-                    .py(THEME.space.md),
+                    .py(theme().space.md),
                 )
             })
             .when(
@@ -286,8 +286,8 @@ impl WorkGraphBoardView {
             .child(toolbar)
             .child(
                 div()
-                    .px(THEME.space.md)
-                    .pb(THEME.space.sm)
+                    .px(theme().space.md)
+                    .pb(theme().space.sm)
                     .child(caption(format!("{project} · {} plans", rows.len()))),
             )
             .child(
@@ -360,29 +360,29 @@ impl WorkGraphBoardView {
                     cx.notify();
                 })
             })
-            .border_b(THEME.border)
-            .border_color(THEME.colors.border)
+            .border_b(theme().border)
+            .border_color(theme().colors.border)
             .bg(if self.catalog.selected == Some(number) {
-                THEME.colors.selection
+                theme().colors.highlight
             } else {
-                THEME.colors.panel
+                theme().colors.panel
             })
-            .hover(|style| style.bg(THEME.colors.hover))
-            .px(THEME.space.sm)
-            .py(THEME.space.sm)
+            .hover(|style| style.bg(theme().colors.highlight))
+            .px(theme().space.sm)
+            .py(theme().space.sm)
             .flex()
             .items_start()
-            .gap(THEME.space.sm)
+            .gap(theme().space.sm)
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(theme().size(3.0))
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body_small)
+                            .text_size(theme().type_scale.body_small)
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(plan.title.clone()),
                     )
@@ -395,11 +395,11 @@ impl WorkGraphBoardView {
             )
             .child(
                 div()
-                    .w(px(120.0))
+                    .w(theme().size(120.0))
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(px(3.0))
+                    .gap(theme().size(3.0))
                     .child(status_label(row.status))
                     .child(caption(format!("{} / {} done", row.done, row.total))),
             )

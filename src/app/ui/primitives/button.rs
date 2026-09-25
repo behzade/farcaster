@@ -12,7 +12,7 @@ use gpui_component::{
 
 use crate::{
     app::ui::primitives::{AppIconSize, app_icon, icon_control},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 
 type ButtonPress = dyn Fn(&mut Window, &mut App);
@@ -126,22 +126,22 @@ pub(crate) fn activates_button(event: &KeyDownEvent) -> bool {
 fn tone_icon_control(control: Stateful<Div>, tone: ButtonTone) -> Stateful<Div> {
     match tone {
         ButtonTone::Accent => control
-            .bg(THEME.colors.accent)
-            .text_color(THEME.colors.canvas)
-            .hover(|control| control.bg(THEME.colors.accent_hover))
-            .active(|control| control.bg(THEME.colors.accent_active)),
+            .bg(theme().colors.accent)
+            .text_color(theme().colors.canvas)
+            .hover(|control| control.bg(theme().colors.accent_hover))
+            .active(|control| control.bg(theme().colors.accent_active)),
         ButtonTone::Neutral => control
-            .bg(THEME.colors.surface)
-            .text_color(THEME.colors.text)
-            .hover(|control| control.bg(THEME.colors.hover))
-            .active(|control| control.bg(THEME.colors.hover)),
+            .bg(theme().colors.surface)
+            .text_color(theme().colors.text)
+            .hover(|control| control.bg(theme().colors.highlight))
+            .active(|control| control.bg(theme().colors.highlight)),
         ButtonTone::Quiet => control
-            .text_color(THEME.colors.muted)
-            .hover(|control| control.bg(THEME.colors.hover))
-            .active(|control| control.bg(THEME.colors.hover)),
+            .text_color(theme().colors.muted)
+            .hover(|control| control.bg(theme().colors.highlight))
+            .active(|control| control.bg(theme().colors.highlight)),
         ButtonTone::Danger => control
-            .bg(THEME.colors.error)
-            .text_color(THEME.colors.canvas),
+            .bg(theme().colors.error)
+            .text_color(theme().colors.canvas),
     }
 }
 

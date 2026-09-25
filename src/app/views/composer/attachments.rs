@@ -11,7 +11,7 @@ use super::super::{
     FarcasterApp,
     attachments::{format_bytes, image_card, open_card},
 };
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 
 pub(in crate::app::views) fn render(
     app: &FarcasterApp,
@@ -25,11 +25,11 @@ pub(in crate::app::views) fn render(
     Some(
         div()
             .id("composer-attachments")
-            .px(THEME.space.sm)
-            .pb(THEME.space.xs)
+            .px(theme().space.sm)
+            .pb(theme().space.xs)
             .flex()
             .flex_wrap()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .children(images.iter().enumerate().map(|(index, image)| {
                 let remove = entity.clone();
                 image_card(

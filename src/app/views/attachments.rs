@@ -2,58 +2,58 @@ use std::sync::Arc;
 
 use crate::app::{
     FarcasterApp,
-    ui::theme::{THEME, UI_FONT_FAMILY},
+    ui::theme::{UI_FONT_FAMILY, theme},
 };
 use gpui::{
     AnyElement, Div, Image, IntoElement as _, ObjectFit, ParentElement as _, Styled as _,
-    StyledImage as _, WeakEntity, div, img, px,
+    StyledImage as _, WeakEntity, div, img,
 };
 
 fn card() -> Div {
     div()
-        .h(px(48.0))
+        .h(theme().size(48.0))
         .flex_none()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
-        .px(THEME.space.sm)
-        .rounded(THEME.radius)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.surface)
+        .gap(theme().space.xs)
+        .px(theme().space.sm)
+        .rounded(theme().radius)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .bg(theme().colors.surface)
         .font_family(UI_FONT_FAMILY)
-        .text_size(THEME.type_scale.caption)
-        .text_color(THEME.colors.text)
+        .text_size(theme().type_scale.caption)
+        .text_color(theme().colors.text)
 }
 
 fn content(name: String, detail: String, image: Option<Arc<Image>>) -> AnyElement {
     let preview = match image {
         Some(image) => img(image)
-            .size(px(32.0))
-            .rounded(px(3.0))
+            .size(theme().size(32.0))
+            .rounded(theme().size(3.0))
             .object_fit(ObjectFit::Cover)
             .into_any_element(),
         None => div()
-            .size(px(32.0))
+            .size(theme().size(32.0))
             .flex()
             .items_center()
             .justify_center()
-            .text_color(THEME.colors.muted)
+            .text_color(theme().colors.muted)
             .child("TXT")
             .into_any_element(),
     };
     div()
         .flex()
         .items_center()
-        .gap(THEME.space.sm)
+        .gap(theme().space.sm)
         .child(preview)
         .child(
             div()
                 .flex()
                 .flex_col()
-                .max_w(px(220.0))
+                .max_w(theme().size(220.0))
                 .child(div().truncate().child(name))
-                .child(div().text_color(THEME.colors.muted).child(detail)),
+                .child(div().text_color(theme().colors.muted).child(detail)),
         )
         .into_any_element()
 }
@@ -80,16 +80,16 @@ pub(super) fn open_card(
     let click = open.clone();
     card()
         .id(id)
-        .hover(|card| card.border_color(THEME.colors.accent))
+        .hover(|card| card.border_color(theme().colors.accent))
         .child(
             div()
                 .id("open-attachment")
                 .h_full()
                 .flex()
                 .items_center()
-                .rounded(THEME.radius)
-                .border(THEME.border)
-                .border_color(THEME.colors.surface)
+                .rounded(theme().radius)
+                .border(theme().border)
+                .border_color(theme().colors.surface)
                 .cursor_pointer()
                 .tab_index(0)
                 .on_mouse_down(
@@ -98,7 +98,7 @@ pub(super) fn open_card(
                 )
                 .role(gpui::Role::Button)
                 .aria_label(format!("Open {name}"))
-                .focus_visible(|control| control.border_color(THEME.colors.accent))
+                .focus_visible(|control| control.border_color(theme().colors.accent))
                 .child(content(name, detail, image))
                 .on_click(move |_, window, cx| click(window, cx))
                 .on_key_down(move |event, window, cx| {

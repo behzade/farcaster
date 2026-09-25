@@ -8,7 +8,7 @@ use super::performance::StartupTiming;
 use crate::{
     app::FarcasterApp,
     app::infrastructure::persistence::{WindowPlacement, WindowState},
-    app::ui::theme::{THEME, install_component_theme},
+    app::ui::theme::{install_component_theme, theme},
     app::ui::{
         assets::AppAssets,
         keybindings,
@@ -165,7 +165,7 @@ pub(crate) fn run(
                 (
                     WindowBounds::Windowed(Bounds::centered(
                         None,
-                        size(THEME.layout.window_width, THEME.layout.window_height),
+                        size(theme().layout.window_width, theme().layout.window_height),
                         cx,
                     )),
                     None,

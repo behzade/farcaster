@@ -627,6 +627,42 @@ fn validate_repository_backend_preferences(
 }
 
 impl StateStore {
+    pub fn load_theme_css(&self) -> Result<Option<String>, String> {
+        self.load_meta_value("theme_css", "themes")
+    }
+
+    pub fn save_theme_css(&self, css: &str) -> Result<(), String> {
+        self.save_meta_value("theme_css", css, "themes")
+    }
+
+    pub fn load_active_theme(&self) -> Result<Option<String>, String> {
+        self.load_meta_value("theme_selected", "active theme")
+    }
+
+    pub fn save_active_theme(&self, name: &str) -> Result<(), String> {
+        self.save_meta_value("theme_selected", name, "active theme")
+    }
+
+    fn load_meta_value(&self, key: &str, subject: &str) -> Result<Option<String>, String> {
+        self.connection
+            .query_row("SELECT value FROM meta WHERE key=?1", [key], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(|error| format!("load {subject}: {error}"))
+    }
+
+    fn save_meta_value(&self, key: &str, value: &str, subject: &str) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save {subject}: {error}"))
+    }
+
     pub fn load_session_folders(&self) -> Result<crate::sessions::SessionFolders, String> {
         let json: Option<String> = self
             .connection

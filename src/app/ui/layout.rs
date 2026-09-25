@@ -1,5 +1,7 @@
 use gpui::Pixels;
 
+use crate::app::ui::theme::theme;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LayoutMode {
     Wide,
@@ -7,18 +9,27 @@ pub(crate) enum LayoutMode {
     Narrow,
 }
 
-pub(crate) const WIDE_MIN_WIDTH: f32 = 1_180.0;
-pub(crate) const COMPACT_MIN_WIDTH: f32 = 960.0;
+pub(crate) fn wide_min_width() -> f32 {
+    f32::from(theme().layout.wide_min_width)
+}
+
+pub(crate) fn compact_min_width() -> f32 {
+    f32::from(theme().layout.compact_min_width)
+}
 
 pub(crate) fn composer_bottom_clearance(height: Pixels) -> Pixels {
-    gpui::px(((f32::from(height) - 400.0) * 0.06).clamp(12.0, 28.0))
+    let ratio = 0.06;
+    gpui::px(
+        ((f32::from(height) - f32::from(theme().size(400.0))) * ratio)
+            .clamp(f32::from(theme().size(12.0)), f32::from(theme().size(28.0))),
+    )
 }
 
 pub(crate) fn layout_mode(width: Pixels) -> LayoutMode {
     let width = f32::from(width);
-    if width >= WIDE_MIN_WIDTH {
+    if width >= wide_min_width() {
         LayoutMode::Wide
-    } else if width >= COMPACT_MIN_WIDTH {
+    } else if width >= compact_min_width() {
         LayoutMode::Compact
     } else {
         LayoutMode::Narrow

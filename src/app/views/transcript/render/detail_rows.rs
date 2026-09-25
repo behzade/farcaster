@@ -1,17 +1,17 @@
 use gpui::{
     AnyElement, Entity, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::text::TextViewState;
 
 use crate::{
-    app::{FarcasterApp, ui::theme::THEME},
+    app::{FarcasterApp, ui::theme::theme},
     conversation::{TranscriptItem, TranscriptKind},
 };
 
 use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
-    selectable_text_state, technical_text, transcript_title_row, with_file_links,
+    disclosure_detail, fenced_text, selectable_text, selectable_text_state, technical_text,
+    transcript_title_row, with_file_links,
 };
 
 pub(super) fn render_agent_message(
@@ -38,8 +38,8 @@ pub(super) fn render_agent_message(
     div()
         .id(("agent-result-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(
@@ -53,8 +53,8 @@ pub(super) fn render_agent_message(
             )
             .child(
                 div()
-                    .text_size(THEME.type_scale.body_small * font_scale)
-                    .text_color(THEME.colors.muted)
+                    .text_size(theme().type_scale.body_small * font_scale)
+                    .text_color(theme().colors.muted)
                     .child(item.label.clone()),
             )
             .child(
@@ -62,8 +62,8 @@ pub(super) fn render_agent_message(
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(THEME.type_scale.body_small * font_scale)
-                    .text_color(THEME.colors.text)
+                    .text_size(theme().type_scale.body_small * font_scale)
+                    .text_color(theme().colors.text)
                     .child(summary),
             ),
         )
@@ -71,15 +71,15 @@ pub(super) fn render_agent_message(
             row.child(
                 disclosure_detail()
                     .id(("agent-result-detail-scroll", key))
-                    .max_h(THEME.layout.tool_max_height)
+                    .max_h(theme().layout.tool_max_height)
                     .overflow_y_scroll()
-                    .border_l(THEME.border)
-                    .border_color(THEME.colors.accent)
-                    .pl(THEME.space.sm)
-                    .py(THEME.space.xs)
+                    .border_l(theme().border)
+                    .border_color(theme().colors.indicator)
+                    .pl(theme().space.sm)
+                    .py(theme().space.xs)
                     .child(
                         with_file_links(selectable_text_state(font_scale, &state), entity)
-                            .text_color(THEME.colors.muted),
+                            .text_color(theme().colors.muted),
                     ),
             )
         })
@@ -97,8 +97,8 @@ pub(super) fn render_error(
     div()
         .id(("error-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(THEME.space.sm)
+        .px(theme().size(18.0))
+        .py(theme().space.sm)
         .flex()
         .flex_col()
         .child(
@@ -116,12 +116,12 @@ pub(super) fn render_error(
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.caption * font_scale)
+                            .text_size(theme().type_scale.caption * font_scale)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(THEME.colors.error)
+                            .text_color(theme().colors.error)
                             .child(item.label.clone()),
                     )
                     .child(
@@ -129,7 +129,7 @@ pub(super) fn render_error(
                             selectable_text(font_scale, ("error-text", key), &item.text),
                             entity,
                         )
-                        .text_color(THEME.colors.error),
+                        .text_color(theme().colors.error),
                     ),
             ),
         )
@@ -141,7 +141,7 @@ pub(super) fn render_error(
                         ("error-details", key),
                         fenced_text(&item.tool_output),
                     )
-                    .text_color(THEME.colors.muted),
+                    .text_color(theme().colors.muted),
                 ),
             )
         })
@@ -200,8 +200,8 @@ pub(super) fn render_thinking(
     div()
         .id(("thinking-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(
@@ -218,8 +218,8 @@ pub(super) fn render_thinking(
                     .flex_1()
                     .min_w_0()
                     .italic()
-                    .text_size(THEME.type_scale.body_small * font_scale)
-                    .text_color(THEME.colors.subtle)
+                    .text_size(theme().type_scale.body_small * font_scale)
+                    .text_color(theme().colors.subtle)
                     .when(emphasized, |preview| {
                         preview.font_weight(FontWeight::SEMIBOLD)
                     })
@@ -238,7 +238,7 @@ pub(super) fn render_thinking(
                         entity,
                     )
                     .italic()
-                    .text_color(THEME.colors.subtle),
+                    .text_color(theme().colors.subtle),
                 ),
             )
         })

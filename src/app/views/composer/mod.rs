@@ -17,7 +17,7 @@ use gpui::{
 use super::super::FarcasterApp;
 use crate::{
     app::composer::{file_mentions, slash_commands, user_invocations},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 
 #[cfg(test)]
@@ -114,14 +114,14 @@ impl FarcasterApp {
         let composer = div()
             .relative()
             .w_full()
-            .min_h(THEME.layout.composer_min)
+            .min_h(theme().layout.composer_min)
             .flex_none()
             .flex()
             .flex_col()
-            .rounded(THEME.radius)
-            .border(THEME.border)
+            .rounded(theme().radius)
+            .border(theme().border)
             .border_color(composer_border_color(focused))
-            .bg(THEME.colors.composer)
+            .bg(theme().colors.composer)
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 if !window.default_prevented() {
                     composer_focus.focus(window, cx);
@@ -134,7 +134,7 @@ impl FarcasterApp {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .p(THEME.space.sm)
+                    .p(theme().space.sm)
                     .when_some(widgets_above, |composer, widgets| composer.child(widgets))
                     .when_some(
                         queue::render(
@@ -177,15 +177,15 @@ impl FarcasterApp {
             )
             .child(
                 div()
-                    .h(gpui::px(36.0))
+                    .h(theme().size(36.0))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .px(gpui::px(12.0))
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.surface)
-                    .bg(THEME.colors.panel)
-                    .rounded_b(THEME.radius)
+                    .px(theme().size(12.0))
+                    .border_t(theme().border)
+                    .border_color(theme().colors.surface)
+                    .bg(theme().colors.panel)
+                    .rounded_b(theme().radius)
                     .child(self.render_composer_controls(entity.clone(), footer_scroll)),
             );
 
@@ -241,8 +241,8 @@ pub(super) fn composer_primary_action(
 
 fn composer_border_color(focused: bool) -> gpui::Rgba {
     if focused {
-        THEME.colors.focus_border
+        theme().colors.focus_border
     } else {
-        THEME.colors.border
+        theme().colors.border
     }
 }

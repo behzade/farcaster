@@ -9,7 +9,7 @@ use crate::{
         FarcasterApp,
         ui::{
             primitives::{ButtonTone, button},
-            theme::{MONO_FONT_FAMILY, THEME},
+            theme::{MONO_FONT_FAMILY, theme},
         },
     },
     conversation,
@@ -57,27 +57,27 @@ impl RenderOnce for ConfirmRequestView {
         div()
             .flex()
             .flex_col()
-            .gap(THEME.space.md)
+            .gap(theme().space.md)
             .when(!reason.is_empty(), |body| {
                 body.child(
                     selectable_dialog_text("dialog-confirm-message", reason)
-                        .text_size(THEME.type_scale.body)
-                        .text_color(THEME.colors.muted),
+                        .text_size(theme().type_scale.body)
+                        .text_color(theme().colors.muted),
                 )
             })
             .when_some(command, |body, command| {
                 body.child(
                     selectable_dialog_text("dialog-confirm-command", command)
                         .font_family(MONO_FONT_FAMILY)
-                        .text_size(THEME.type_scale.body_small)
-                        .text_color(THEME.colors.text),
+                        .text_size(theme().type_scale.body_small)
+                        .text_color(theme().colors.text),
                 )
             })
             .child(
                 div()
                     .flex()
                     .justify_end()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .child(button(
                         "confirm-no",
                         "[n] No",

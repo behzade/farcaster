@@ -1,4 +1,4 @@
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 use gpui::{
     App, Div, FocusHandle, InteractiveElement as _, ParentElement as _, Role, SharedString,
     Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
@@ -71,8 +71,8 @@ fn dialog_backdrop(
         .flex()
         .items_center()
         .justify_center()
-        .p(THEME.space.md)
-        .bg(THEME.colors.backdrop)
+        .p(theme().space.md)
+        .bg(theme().colors.backdrop)
         .occlude()
         .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
         .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
@@ -94,14 +94,14 @@ fn dialog_surface(id: impl Into<gpui::ElementId>, label: impl Into<SharedString>
         .role(Role::Dialog)
         .aria_label(label)
         .tab_group()
-        .w(THEME.layout.dialog_width)
+        .w(theme().layout.dialog_width)
         .max_w_full()
-        .max_h(THEME.layout.dialog_max_height)
+        .max_h(theme().layout.dialog_max_height)
         .overflow_y_scroll()
-        .rounded(THEME.radius)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.panel)
+        .rounded(theme().radius)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .bg(theme().colors.panel)
         .on_click(|_, _, cx| cx.stop_propagation())
 }
 

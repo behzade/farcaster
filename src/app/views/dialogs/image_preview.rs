@@ -1,13 +1,13 @@
 use gpui::{
     AnyElement, IntoElement as _, ObjectFit, ParentElement as _, Styled as _, StyledImage as _,
-    WeakEntity, div, img, px, relative,
+    WeakEntity, div, img, relative,
 };
 
 use crate::app::FarcasterApp;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{ButtonTone, icon_button, modal},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 
 pub(in crate::app::views) fn render(
@@ -28,7 +28,7 @@ pub(in crate::app::views) fn render(
             |surface| {
                 let close = entity.clone();
                 surface
-                    .w(px(960.0))
+                    .w(theme().size(960.0))
                     .max_w_full()
                     .h(relative(0.86))
                     .max_h(relative(0.92))
@@ -37,14 +37,14 @@ pub(in crate::app::views) fn render(
                     .flex_col()
                     .child(
                         div()
-                            .h(px(48.0))
+                            .h(theme().size(48.0))
                             .flex_none()
-                            .px(THEME.space.md)
+                            .px(theme().space.md)
                             .flex()
                             .items_center()
                             .justify_between()
-                            .border_b(THEME.border)
-                            .border_color(THEME.colors.border)
+                            .border_b(theme().border)
+                            .border_color(theme().colors.border)
                             .child(format!(
                                 "Attachment {} of {}",
                                 preview.index + 1,
@@ -66,8 +66,8 @@ pub(in crate::app::views) fn render(
                         div()
                             .flex_1()
                             .min_h_0()
-                            .p(THEME.space.md)
-                            .bg(THEME.colors.canvas)
+                            .p(theme().space.md)
+                            .bg(theme().colors.canvas)
                             .child(
                                 img(preview.image)
                                     .size_full()

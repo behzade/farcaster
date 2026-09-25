@@ -1,12 +1,12 @@
 use gpui::{
     App, CursorStyle, ElementId, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
-    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 
 use super::selectable_dialog_text;
 use crate::{
-    app::{FarcasterApp, ui::theme::THEME},
+    app::{FarcasterApp, ui::theme::theme},
     protocol::ExtensionUiRequest,
 };
 
@@ -68,27 +68,27 @@ impl RenderOnce for SelectRequestView {
         div()
             .flex()
             .flex_col()
-            .gap(THEME.space.md)
+            .gap(theme().space.md)
             .when_some(self.prompt, |body, prompt| {
                 body.child(
                     selectable_dialog_text("dialog-select-prompt", prompt)
-                        .text_size(THEME.type_scale.body)
-                        .text_color(THEME.colors.muted)
-                        .line_height(THEME.type_scale.line_composer),
+                        .text_size(theme().type_scale.body)
+                        .text_color(theme().colors.muted)
+                        .line_height(theme().type_scale.line_composer),
                 )
             })
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .children(choices),
             )
             .when(has_number_shortcuts, |body| {
                 body.child(
                     div()
-                        .text_size(THEME.type_scale.caption)
-                        .text_color(THEME.colors.subtle)
+                        .text_size(theme().type_scale.caption)
+                        .text_color(theme().colors.subtle)
                         .child("Press a number key to choose."),
                 )
             })
@@ -112,26 +112,26 @@ fn dialog_choice(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .w_full()
-        .min_h(px(48.0))
+        .min_h(theme().size(48.0))
         .flex()
         .items_center()
-        .gap(THEME.space.sm)
-        .px(THEME.space.sm)
-        .py(THEME.space.xs)
-        .rounded(THEME.radius)
-        .border(THEME.border)
+        .gap(theme().space.sm)
+        .px(theme().space.sm)
+        .py(theme().space.xs)
+        .rounded(theme().radius)
+        .border(theme().border)
         .border_color(if primary {
-            THEME.colors.accent
+            theme().colors.indicator
         } else {
-            THEME.colors.border
+            theme().colors.border
         })
         .bg(if primary {
-            THEME.colors.selection
+            theme().colors.highlight
         } else {
-            THEME.colors.surface
+            theme().colors.surface
         })
-        .hover(|choice| choice.bg(THEME.colors.hover))
-        .focus(|choice| choice.border_color(THEME.colors.accent))
+        .hover(|choice| choice.bg(theme().colors.highlight))
+        .focus(|choice| choice.border_color(theme().colors.indicator))
         .cursor(CursorStyle::PointingHand)
         .on_click(move |_, window, cx| on_press(window, cx))
         .child(
@@ -140,7 +140,7 @@ fn dialog_choice(
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap(THEME.space.xs)
+                .gap(theme().space.xs)
                 .child(
                     div()
                         .font_weight(if primary {
@@ -148,14 +148,14 @@ fn dialog_choice(
                         } else {
                             FontWeight::MEDIUM
                         })
-                        .text_color(THEME.colors.text)
+                        .text_color(theme().colors.text)
                         .child(title),
                 )
                 .when_some(detail, |copy, detail| {
                     copy.child(
                         div()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child(detail),
                     )
                 }),

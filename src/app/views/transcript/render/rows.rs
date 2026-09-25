@@ -4,7 +4,11 @@ use super::*;
 mod review_layout;
 
 pub(crate) fn tail_reserve(viewport_height: Pixels) -> Pixels {
-    px((f32::from(viewport_height) * 0.32).clamp(72.0, 280.0))
+    let ratio = 0.32;
+    px((f32::from(viewport_height) * ratio).clamp(
+        f32::from(theme().size(72.0)),
+        f32::from(theme().size(280.0)),
+    ))
 }
 
 pub(crate) fn estimated_row_height(
@@ -35,7 +39,7 @@ pub(crate) fn estimated_row_height(
         | TranscriptRow::Review { .. } => None,
     };
     let Some(text) = text else {
-        return TRANSCRIPT_ROW_HEIGHT_HINT;
+        return theme().size(24.0);
     };
 
     let visual_lines = text
@@ -43,11 +47,12 @@ pub(crate) fn estimated_row_height(
         .map(|line| line.chars().count().max(1).div_ceil(88))
         .sum::<usize>()
         .max(1);
-    px((visual_lines.min(320) as f32).mul_add(20.0, 36.0))
+    px((visual_lines.min(320) as f32)
+        .mul_add(f32::from(theme().size(20.0)), f32::from(theme().size(36.0))))
         + if !item(row.item_start()).has_attachments() {
             px(0.0)
         } else {
-            ATTACHMENT_ROW_HEIGHT
+            theme().size(60.0)
         }
 }
 

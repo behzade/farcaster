@@ -5,7 +5,7 @@ use gpui::{
 use gpui_component::input::{MoveDown, MoveUp, Paste, Textarea, TextareaState};
 
 use super::super::FarcasterApp;
-use crate::app::ui::theme::{THEME, UI_FONT_FAMILY};
+use crate::app::ui::theme::{UI_FONT_FAMILY, theme};
 use crate::app::{
     COMPOSER_KEY_CONTEXT, ComposerCompletionNext, ComposerCompletionPrevious, ComposerHistoryNext,
     ComposerHistoryPrevious,
@@ -74,13 +74,13 @@ impl RenderOnce for ComposerInput {
             .flex()
             .flex_col()
             .flex_1()
-            .min_h(px(48.0))
+            .min_h(theme().size(48.0))
             .font_family(UI_FONT_FAMILY)
-            .text_size(THEME.type_scale.reading)
-            .line_height(THEME.type_scale.line_composer)
-            .pl(THEME.space.sm)
-            .pr(px(48.0))
-            .py(THEME.space.sm)
+            .text_size(theme().type_scale.reading)
+            .line_height(theme().type_scale.line_composer)
+            .pl(theme().space.sm)
+            .pr(theme().size(48.0))
+            .py(theme().space.sm)
             .capture_action(move |_: &Paste, _, cx| {
                 if paste_entity
                     .update(cx, |this, cx| {

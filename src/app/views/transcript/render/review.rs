@@ -1,5 +1,5 @@
 use crate::{
-    app::{FarcasterApp, ui::theme::THEME, views::transcript::tool_changes},
+    app::{FarcasterApp, ui::theme::theme, views::transcript::tool_changes},
     reviews::Review,
 };
 use gpui::{
@@ -29,13 +29,13 @@ pub(super) fn render(
     let open_entity = entity.clone();
     div()
         .w_full()
-        .px(super::TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(THEME.space.xs)
+        .px(super::theme().size(18.0))
+        .py(theme().space.xs)
         .font_family(UI_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small * font_scale)
+        .text_size(theme().type_scale.body_small * font_scale)
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(review_header(
             key,
             review.title.clone(),
@@ -51,17 +51,17 @@ pub(super) fn render(
         .when(working, |row| {
             row.child(
                 div()
-                    .text_color(THEME.colors.muted)
+                    .text_color(theme().colors.muted)
                     .child("Agent still working"),
             )
         })
         .when(expanded, |row| {
             row.child(
                 div()
-                    .pl(THEME.space.sm)
+                    .pl(theme().space.sm)
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .children(review.items.iter().enumerate().map(|(index, location)| {
                         let line = location
                             .start_line
@@ -92,28 +92,28 @@ pub(super) fn render(
                         )
                         .flex_col()
                         .items_start()
-                        .py(THEME.space.xs)
+                        .py(theme().space.xs)
                         .child(
                             div()
                                 .flex()
                                 .items_center()
-                                .gap(THEME.space.xs)
+                                .gap(theme().space.xs)
                                 .child(file_icon(std::path::Path::new(&location.path)))
                                 .child(
                                     div()
                                         .font_family(MONO_FONT_FAMILY)
-                                        .text_color(THEME.colors.text)
+                                        .text_color(theme().colors.text)
                                         .child(path),
                                 ),
                         )
                         .child(
                             div()
-                                .pl(THEME.icons.inline + THEME.space.xs)
-                                .text_color(THEME.colors.muted)
+                                .pl(theme().icons.inline + theme().space.xs)
+                                .text_color(theme().colors.muted)
                                 .child(location.note.clone()),
                         )
                     }))
-                    .child(div().text_color(THEME.colors.muted).child(
+                    .child(div().text_color(theme().colors.muted).child(
                         "Suggested locations, not a verified changeset. Line ranges may be stale.",
                     )),
             )
@@ -148,19 +148,19 @@ fn review_header(
     )
     .aria_expanded(expanded)
     .debug_selector(move || format!("review-header-{key}"))
-    .gap(THEME.space.sm)
+    .gap(theme().space.sm)
     .child(
         div()
             .min_w_0()
             .overflow_hidden()
             .text_ellipsis()
-            .text_color(THEME.colors.code)
+            .text_color(theme().colors.code)
             .child(title),
     )
     .child(
         div()
             .flex_none()
-            .text_color(THEME.colors.muted)
+            .text_color(theme().colors.muted)
             .child(format!(
                 "{count} {}",
                 if count == 1 { "location" } else { "locations" }

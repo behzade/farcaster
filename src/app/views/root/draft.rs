@@ -9,7 +9,7 @@ use crate::app::{
     FarcasterApp, PickerScope, ProjectPickerIntent,
     ui::{
         primitives::{ButtonTone, button},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -40,7 +40,7 @@ pub(super) fn render_body(
                 .w_full()
                 .min_h(gpui::relative(1.0))
                 .flex_none()
-                .py(THEME.space.md)
+                .py(theme().space.md)
                 .flex()
                 .flex_col()
                 .justify_center()
@@ -48,12 +48,12 @@ pub(super) fn render_body(
                 .child(
                     div()
                         .w_full()
-                        .max_w(THEME.layout.conversation_width)
-                        .px(THEME.space.md)
+                        .max_w(theme().layout.conversation_width)
+                        .px(theme().space.md)
                         .flex_none()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.md)
+                        .gap(theme().space.md)
                         .when_some(heading, |body, heading| body.child(heading))
                         .child(composer),
                 ),
@@ -84,8 +84,8 @@ pub(super) fn render_heading(
         .tooltip(project.display().to_string())
         .max_w_full()
         .px_0()
-        .text_size(THEME.type_scale.display)
+        .text_size(theme().type_scale.display)
         .font_weight(FontWeight::MEDIUM)
-        .text_color(THEME.colors.accent),
+        .text_color(theme().colors.accent),
     )
 }

@@ -34,6 +34,7 @@ pub(in crate::app) struct TerminalState {
 }
 
 pub(in crate::app) struct SettingsState {
+    pub(in crate::app) themes: workspace::theme_settings::ThemeSettings,
     pub(in crate::app) harness_profiles: Arc<crate::agents::HarnessProfiles>,
     pub(in crate::app) harness_profile_name: Entity<InputState>,
     pub(in crate::app) harness_profile_executable: Entity<InputState>,

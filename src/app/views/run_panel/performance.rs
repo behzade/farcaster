@@ -1,18 +1,18 @@
 use gpui::{FontWeight, IntoElement, ParentElement as _, Styled as _, div};
 
-use crate::app::ui::{primitives::section_heading, theme::THEME};
+use crate::app::ui::{primitives::section_heading, theme::theme};
 
 pub(super) fn render_performance(
     summary: &crate::app::infrastructure::performance::PerformanceSummary,
 ) -> impl IntoElement {
     div()
-        .p(THEME.space.sm)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.canvas)
+        .p(theme().space.sm)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .bg(theme().colors.canvas)
         .flex()
         .flex_col()
-        .gap(THEME.space.xs)
+        .gap(theme().space.xs)
         .child(section_heading(format!(
             "GPUI profiler · {:.2} s sample",
             summary.sample_interval.as_secs_f64()
@@ -138,19 +138,19 @@ fn operation_metric_row(
 
 fn metric_row(label: &'static str, value: String) -> impl IntoElement {
     div()
-        .min_h(THEME.layout.status_row_height)
+        .min_h(theme().layout.status_row_height)
         .flex()
         .items_center()
         .justify_between()
-        .gap(THEME.space.sm)
-        .text_size(THEME.type_scale.caption)
-        .child(div().text_color(THEME.colors.subtle).child(label))
+        .gap(theme().space.sm)
+        .text_size(theme().type_scale.caption)
+        .child(div().text_color(theme().colors.subtle).child(label))
         .child(
             div()
                 .min_w_0()
                 .text_align(gpui::TextAlign::Right)
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(THEME.colors.muted)
+                .text_color(theme().colors.muted)
                 .child(value),
         )
 }

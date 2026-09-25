@@ -9,7 +9,7 @@ use crate::app::{
         assets::AppIcon,
         layout::{LayoutMode, shows_run_sheet_button, shows_session_sheet_button},
         primitives::{AppIconSize, ButtonTone, app_icon, icon_button, icon_control},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -26,7 +26,7 @@ impl FarcasterApp {
             .flex_none()
             .flex()
             .items_center()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .when(shows_session_sheet_button(mode), |controls| {
                 controls.child(icon_button(
                     "open-sessions",
@@ -75,18 +75,18 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
             control.child(
                 div()
                     .absolute()
-                    .top(gpui::px(1.0))
-                    .right(gpui::px(1.0))
-                    .min_w(gpui::px(13.0))
-                    .h(gpui::px(13.0))
-                    .px(gpui::px(3.0))
-                    .rounded(gpui::px(7.0))
+                    .top(theme().size(1.0))
+                    .right(theme().size(1.0))
+                    .min_w(theme().size(13.0))
+                    .h(theme().size(13.0))
+                    .px(theme().size(3.0))
+                    .rounded(theme().radius)
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(THEME.colors.accent)
-                    .text_color(THEME.colors.canvas)
-                    .text_size(gpui::px(9.0))
+                    .bg(theme().colors.indicator)
+                    .text_color(theme().colors.canvas)
+                    .text_size(theme().size(9.0))
                     .child(if count > 99 {
                         "99+".to_owned()
                     } else {

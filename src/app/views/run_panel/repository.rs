@@ -17,7 +17,7 @@ use super::{
 #[cfg(test)]
 use crate::repository::BackendPreference;
 use crate::{
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     app::ui::{
         assets::AppIcon,
         file_icons::file_icon,
@@ -56,7 +56,7 @@ impl FarcasterApp {
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(THEME.space.xs)
+            .gap(theme().space.xs)
             .child(header)
             .when(
                 self.project.repository.loading && !self.project.repository.initialized,
@@ -65,8 +65,8 @@ impl FarcasterApp {
                         div()
                             .id("repository-loading")
                             .role(Role::Status)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.accent)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.accent)
                             .child("Reading working copy…"),
                     )
                 },
@@ -76,7 +76,7 @@ impl FarcasterApp {
                 |section, error| {
                     section.child(repository_notice(
                         &format!("Backend choice was not saved: {}", bounded_message(error)),
-                        THEME.colors.warning,
+                        theme().colors.warning,
                     ))
                 },
             )
@@ -86,7 +86,7 @@ impl FarcasterApp {
                     section.child(repository_error_notice(
                         "Auto-refresh unavailable. Use Refresh to try again.",
                         error,
-                        THEME.colors.warning,
+                        theme().colors.warning,
                     ))
                 },
             )
@@ -95,7 +95,7 @@ impl FarcasterApp {
                 |section, error| {
                     section.child(repository_notice(
                         &format!("Repository sync failed: {}", bounded_message(error)),
-                        THEME.colors.error,
+                        theme().colors.error,
                     ))
                 },
             )
@@ -107,7 +107,11 @@ impl FarcasterApp {
                     } else {
                         "Could not read this repository. Check the project folder and refresh."
                     };
-                    section.child(repository_error_notice(message, error, THEME.colors.error))
+                    section.child(repository_error_notice(
+                        message,
+                        error,
+                        theme().colors.error,
+                    ))
                 },
             )
             .when_some(snapshot, |section, snapshot| {
@@ -132,8 +136,8 @@ impl FarcasterApp {
                         div()
                             .id("repository-disabled")
                             .role(Role::Status)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.warning)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.warning)
                             .child("Repository integration is disabled for this untrusted project"),
                     )
                     .child(button(
@@ -158,8 +162,8 @@ impl FarcasterApp {
                         div()
                             .id("repository-not-found")
                             .role(Role::Status)
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.subtle)
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.subtle)
                             .child("No repository found for this project"),
                     )
                 },
@@ -255,7 +259,7 @@ impl FarcasterApp {
                             RepositoryKind::Jujutsu => "Current change is empty",
                         }
                     },
-                    THEME.colors.subtle,
+                    theme().colors.subtle,
                 ))
             })
             .into_any_element()
@@ -300,141 +304,140 @@ impl FarcasterApp {
         let state = change_kind_label(&change.kind);
         let accessible_path = accessible_change_path(change);
         let accessible = format!("Edit {layer} {state} file {accessible_path} in Neovim");
-        let target = div()
-            .id(("repository-change", row_id))
-            .group(action_group.clone())
-            .track_focus(&focus)
-            .role(Role::Button)
-            .aria_label(accessible)
-            .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
-            .tab_index(0)
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                crate::app::ui::primitives::preserve_pointer_focus,
-            )
-            .min_w_0()
-            .w_full()
-            .h(px(24.0))
-            .px(THEME.space.xs)
-            .rounded(THEME.radius)
-            .flex()
-            .items_center()
-            .gap(THEME.space.xs)
-            .hover(|row| row.bg(THEME.colors.hover))
-            .when(selected, |row| row.bg(THEME.colors.selection))
-            .focus(|row| row.bg(THEME.colors.selection))
-            .cursor_pointer()
-            .on_click(move |event, window, cx| {
-                let _ = click_entity.update(cx, |this, cx| {
-                    this.open_file_editor_with_diff(
-                        click_path.clone(),
-                        None,
-                        event.modifiers().alt,
-                        window,
-                        cx,
-                    );
-                });
-            })
-            .on_key_down(move |event, window, cx| {
-                if activates_button(event) {
-                    cx.stop_propagation();
-                    let _ = key_entity.update(cx, |this, cx| {
-                        this.open_file_editor(key_path.clone(), window, cx);
-                    });
-                }
-            })
-            .child(
-                file_action(
-                    ("select-repository-file", row_id),
-                    format!(
-                        "{} {} for commit",
-                        if selected { "Deselect" } else { "Select" },
-                        change.relative_path.display()
-                    ),
-                    move |_, cx| {
-                        if editable {
-                            let _ = select_entity.update(cx, |this, cx| {
-                                this.toggle_repository_file(select_path.clone(), cx)
-                            });
-                        }
-                    },
+        let target =
+            div()
+                .id(("repository-change", row_id))
+                .group(action_group.clone())
+                .track_focus(&focus)
+                .role(Role::Button)
+                .aria_label(accessible)
+                .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+                .tab_index(0)
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    crate::app::ui::primitives::preserve_pointer_focus,
                 )
-                .role(Role::CheckBox)
-                .aria_toggled(if selected {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
+                .min_w_0()
+                .w_full()
+                .h(theme().size(24.0))
+                .px(theme().space.xs)
+                .rounded(theme().radius)
+                .flex()
+                .items_center()
+                .gap(theme().space.xs)
+                .hover(|row| row.bg(theme().colors.highlight))
+                .when(selected, |row| row.bg(theme().colors.highlight))
+                .focus(|row| row.bg(theme().colors.highlight))
+                .cursor_pointer()
+                .on_click(move |event, window, cx| {
+                    let _ = click_entity.update(cx, |this, cx| {
+                        this.open_file_editor_with_diff(
+                            click_path.clone(),
+                            None,
+                            event.modifiers().alt,
+                            window,
+                            cx,
+                        );
+                    });
                 })
-                .when(!selecting, |control| {
-                    control
-                        .opacity(0.0)
-                        .group_hover(action_group.clone(), |control| control.opacity(1.0))
-                        .focus_visible(|control| control.opacity(1.0))
+                .on_key_down(move |event, window, cx| {
+                    if activates_button(event) {
+                        cx.stop_propagation();
+                        let _ = key_entity.update(cx, |this, cx| {
+                            this.open_file_editor(key_path.clone(), window, cx);
+                        });
+                    }
                 })
                 .child(
-                    div()
-                        .size(px(14.0))
-                        .border(THEME.border)
-                        .border_color(THEME.colors.muted)
-                        .when(!editable, |checkbox| checkbox.opacity(0.4))
-                        .rounded(px(2.0))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .when(selected, |checkbox| {
-                            checkbox.bg(THEME.colors.accent).child(
-                                app_icon(AppIcon::Check, AppIconSize::Inline)
-                                    .text_color(THEME.colors.surface),
-                            )
-                        }),
-                ),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .gap(THEME.space.xs)
-                    .child(file_icon(&change.relative_path))
+                    file_action(
+                        ("select-repository-file", row_id),
+                        format!(
+                            "{} {} for commit",
+                            if selected { "Deselect" } else { "Select" },
+                            change.relative_path.display()
+                        ),
+                        move |_, cx| {
+                            if editable {
+                                let _ = select_entity.update(cx, |this, cx| {
+                                    this.toggle_repository_file(select_path.clone(), cx)
+                                });
+                            }
+                        },
+                    )
+                    .role(Role::CheckBox)
+                    .aria_toggled(if selected {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .when(!selecting, |control| {
+                        control
+                            .opacity(0.0)
+                            .group_hover(action_group.clone(), |control| control.opacity(1.0))
+                            .focus_visible(|control| control.opacity(1.0))
+                    })
                     .child(
                         div()
-                            .min_w_0()
-                            .flex_1()
-                            .text_size(THEME.type_scale.caption)
-                            .text_color(THEME.colors.text)
-                            .text_ellipsis()
-                            .child(filename),
-                    )
-                    .when(
-                        change.layer == crate::repository::ChangeLayer::GitIndex,
-                        |label| {
-                            label.child(
-                                div()
-                                    .text_size(THEME.type_scale.caption)
-                                    .text_color(THEME.colors.subtle)
-                                    .child("Staged"),
-                            )
-                        },
+                            .size(theme().size(14.0))
+                            .border(theme().border)
+                            .border_color(theme().colors.muted)
+                            .when(!editable, |checkbox| checkbox.opacity(0.4))
+                            .rounded(theme().size(2.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .when(selected, |checkbox| {
+                                checkbox.bg(theme().colors.accent).child(
+                                    app_icon(AppIcon::Check, AppIconSize::Inline)
+                                        .text_color(theme().colors.surface),
+                                )
+                            }),
                     ),
-            )
-            .child(
-                div()
-                    .w(px(14.0))
-                    .flex_none()
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(if change.kind == crate::repository::ChangeKind::Modified {
-                        THEME.colors.subtle
-                    } else {
-                        change_color(&change.kind)
-                    })
-                    .child(status),
-            )
-            .child(
-                div()
-                    .w(px(20.0))
-                    .flex_none()
-                    .when(!selecting && editable, |slot| {
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap(theme().space.xs)
+                        .child(file_icon(&change.relative_path))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .text_size(theme().type_scale.caption)
+                                .text_color(theme().colors.text)
+                                .text_ellipsis()
+                                .child(filename),
+                        )
+                        .when(
+                            change.layer == crate::repository::ChangeLayer::GitIndex,
+                            |label| {
+                                label.child(
+                                    div()
+                                        .text_size(theme().type_scale.caption)
+                                        .text_color(theme().colors.subtle)
+                                        .child("Staged"),
+                                )
+                            },
+                        ),
+                )
+                .child(
+                    div()
+                        .w(theme().size(14.0))
+                        .flex_none()
+                        .text_size(theme().type_scale.caption)
+                        .text_color(if change.kind == crate::repository::ChangeKind::Modified {
+                            theme().colors.subtle
+                        } else {
+                            change_color(&change.kind)
+                        })
+                        .child(status),
+                )
+                .child(div().w(theme().size(20.0)).flex_none().when(
+                    !selecting && editable,
+                    |slot| {
                         slot.child(
                             file_action(
                                 ("discard-repository-file", row_id),
@@ -466,8 +469,8 @@ impl FarcasterApp {
                                 AppIconSize::Inline,
                             )),
                         )
-                    }),
-            );
+                    },
+                ));
         Some(target.into_any_element())
     }
 }
@@ -484,7 +487,7 @@ fn repository_notice(message: &str, color: gpui::Rgba) -> gpui::Stateful<gpui::D
     div()
         .id(message.to_owned())
         .role(Role::Status)
-        .text_size(THEME.type_scale.caption)
+        .text_size(theme().type_scale.caption)
         .text_color(color)
         .child(message.to_owned())
 }

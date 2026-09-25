@@ -11,7 +11,7 @@ use crate::{
         ui::{
             assets::AppIcon,
             primitives::{AppIconSize, app_icon},
-            theme::{MONO_FONT_FAMILY, THEME, UI_FONT_FAMILY},
+            theme::{MONO_FONT_FAMILY, UI_FONT_FAMILY, theme},
         },
         views::transcript::tool_changes,
     },
@@ -19,10 +19,7 @@ use crate::{
     utility::persistent_vec::PersistentVec,
 };
 
-use super::{
-    TRANSCRIPT_HORIZONTAL_PADDING, disclosure_detail, fenced_text, selectable_text,
-    toggle_transcript_item,
-};
+use super::{disclosure_detail, fenced_text, selectable_text, toggle_transcript_item};
 
 #[path = "tool_rows/changed_files.rs"]
 mod changed_files;
@@ -54,8 +51,8 @@ pub(super) fn render_activity_group(
     div()
         .id(("activity-group", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(
@@ -66,9 +63,9 @@ pub(super) fn render_activity_group(
             )
             .aria_expanded(expanded)
             .font_family(UI_FONT_FAMILY)
-            .text_size(THEME.type_scale.body_small * font_scale)
-            .line_height(THEME.type_scale.line_body * font_scale)
-            .text_color(THEME.colors.muted)
+            .text_size(theme().type_scale.body_small * font_scale)
+            .line_height(theme().type_scale.line_body * font_scale)
+            .text_color(theme().colors.muted)
             .child(div().min_w_0().flex_1().truncate().child(summary)),
         )
         .when(expanded, |group| {
@@ -76,7 +73,7 @@ pub(super) fn render_activity_group(
                 disclosure_detail()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.xs)
+                    .gap(theme().space.xs)
                     .children(group_items().enumerate().map(|(offset, item)| {
                         let index = start + offset;
                         let child_expanded =
@@ -136,8 +133,8 @@ pub(super) fn render_tool(
     div()
         .id(("tool-row", key))
         .w_full()
-        .px(TRANSCRIPT_HORIZONTAL_PADDING)
-        .py(px(2.0))
+        .px(theme().size(18.0))
+        .py(theme().size(2.0))
         .flex()
         .flex_col()
         .child(
@@ -169,7 +166,7 @@ pub(super) fn render_tool(
                             .flex_1()
                             .min_w_0()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small * font_scale)
+                            .text_size(theme().type_scale.body_small * font_scale)
                             .child(label),
                     )
                 }
@@ -180,8 +177,8 @@ pub(super) fn render_tool(
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(THEME.type_scale.body_small * font_scale)
-                        .text_color(THEME.colors.muted)
+                        .text_size(theme().type_scale.body_small * font_scale)
+                        .text_color(theme().colors.muted)
                         .child(summary),
                 )
             }),
@@ -190,7 +187,7 @@ pub(super) fn render_tool(
             tool.child(
                 disclosure_detail()
                     .id(("tool-detail-scroll", key))
-                    .max_h(THEME.layout.tool_max_height)
+                    .max_h(theme().layout.tool_max_height)
                     .overflow_y_scroll()
                     .children(file_links(
                         font_scale,
@@ -344,8 +341,8 @@ fn file_links(
                     });
                 },
             )
-            .text_size(THEME.type_scale.body_small * font_scale)
-            .text_color(THEME.colors.accent)
+            .text_size(theme().type_scale.body_small * font_scale)
+            .text_color(theme().colors.accent)
             .child(label)
             .into_any_element()
         })
@@ -373,9 +370,9 @@ impl ToolStatus {
     }
     fn color(self) -> gpui::Rgba {
         match self {
-            Self::Reviewing | Self::Rejected => THEME.colors.warning,
-            Self::Failed => THEME.colors.error,
-            Self::Running | Self::Succeeded => THEME.colors.muted,
+            Self::Reviewing | Self::Rejected => theme().colors.warning,
+            Self::Failed => theme().colors.error,
+            Self::Running | Self::Succeeded => theme().colors.muted,
         }
     }
     fn icon(self) -> AppIcon {
@@ -462,8 +459,8 @@ fn file_targets(item: &TranscriptItem) -> impl Iterator<Item = &str> {
 
 fn status_slot(status: Option<ToolStatus>) -> AnyElement {
     div()
-        .w(THEME.icons.control)
-        .h(THEME.icons.control)
+        .w(theme().icons.control)
+        .h(theme().icons.control)
         .flex_none()
         .flex()
         .items_center()
@@ -482,11 +479,11 @@ fn expanded_tool_body(
 ) -> AnyElement {
     selectable_text(font_scale, id, fenced_text(&tool_body_text(item)))
         .font_family(MONO_FONT_FAMILY)
-        .text_size(THEME.type_scale.body_small * font_scale)
+        .text_size(theme().type_scale.body_small * font_scale)
         .text_color(if item.is_error {
-            THEME.colors.error
+            theme().colors.error
         } else {
-            THEME.colors.muted
+            theme().colors.muted
         })
         .into_any_element()
 }

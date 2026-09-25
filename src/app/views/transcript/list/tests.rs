@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::ui::theme::theme;
 use gpui::{
     AppContext as _, Context, ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext,
     VisualTestContext, div, size,
@@ -28,7 +29,7 @@ impl Render for FixedHeightView {
 
 fn state_with_rows(count: usize) -> TranscriptListState {
     let state = TranscriptListState::new();
-    state.splice_with_size_hints(0..0, std::iter::repeat_n(px(24.0), count));
+    state.splice_with_size_hints(0..0, std::iter::repeat_n(theme().size(24.0), count));
     state
 }
 
@@ -41,7 +42,7 @@ fn draw_transcript(
     let rendered = Rc::new(RefCell::new(Vec::new()));
     cx.draw(
         point(px(0.0), px(0.0)),
-        size(px(100.0), viewport_height),
+        size(theme().size(100.0), viewport_height),
         |_, cx| {
             cx.new(|_| FixedHeightView {
                 state: state.clone(),
@@ -56,7 +57,7 @@ fn draw_transcript(
 
 fn wheel(cx: &mut VisualTestContext, delta: Pixels) {
     cx.simulate_event(ScrollWheelEvent {
-        position: point(px(1.0), px(1.0)),
+        position: point(theme().size(1.0), theme().size(1.0)),
         delta: ScrollDelta::Pixels(point(px(0.0), delta)),
         ..Default::default()
     });
@@ -65,22 +66,22 @@ fn wheel(cx: &mut VisualTestContext, delta: Pixels) {
 #[test]
 fn height_hints_locate_rows_across_append() {
     let state = TranscriptListState::new();
-    state.splice_with_size_hints(0..0, [px(10.0), px(20.0)]);
-    state.splice_with_size_hints(2..2, [px(30.0), px(40.0)]);
+    state.splice_with_size_hints(0..0, [theme().size(10.0), theme().size(20.0)]);
+    state.splice_with_size_hints(2..2, [theme().size(30.0), theme().size(40.0)]);
 
     let heights = &state.0.borrow().heights;
-    assert_eq!(heights.row_at(px(15.0)), 1);
-    assert_eq!(heights.row_at(px(65.0)), 3);
-    assert_eq!(heights.total(), px(100.0));
+    assert_eq!(heights.row_at(theme().size(15.0)), 1);
+    assert_eq!(heights.row_at(theme().size(65.0)), 3);
+    assert_eq!(heights.total(), theme().size(100.0));
 }
 
 #[test]
 fn jump_to_end_supersedes_queued_wheel_input() {
     let state = state_with_rows(100);
-    state.0.borrow_mut().viewport_height = px(100.0);
+    state.0.borrow_mut().viewport_height = theme().size(100.0);
     state.scroll_to_end();
 
-    assert!(state.queue_scroll(px(12.0)).is_some());
+    assert!(state.queue_scroll(theme().size(12.0)).is_some());
     state.scroll_to_end();
 
     let inner = state.0.borrow();
@@ -97,18 +98,18 @@ fn wheel_events_coalesce_until_the_next_layout(cx: &mut TestAppContext) {
         item_ix: 10,
         offset_in_item: px(0.0),
     });
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
 
-    wheel(cx, px(12.0));
-    wheel(cx, px(8.0));
-    assert_eq!(state.0.borrow().pending_scroll, px(20.0));
+    wheel(cx, theme().size(12.0));
+    wheel(cx, theme().size(8.0));
+    assert_eq!(state.0.borrow().pending_scroll, theme().size(20.0));
     assert_eq!(state.logical_scroll_top().item_ix, 10);
     assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 1);
 
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     let offset = state.logical_scroll_top();
     assert_eq!(offset.item_ix, 9);
-    assert_eq!(offset.offset_in_item, px(4.0));
+    assert_eq!(offset.offset_in_item, theme().size(4.0));
     assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
 }
 
@@ -271,15 +272,15 @@ fn cross_element_selection_marks_the_inclusive_logical_range() {
 #[test]
 fn reordered_rows_clear_affected_selection_but_appends_preserve_it() {
     let state = TranscriptListState::new();
-    state.splice_with_size_hints(0..0, [px(20.0); 4]);
+    state.splice_with_size_hints(0..0, [theme().size(20.0); 4]);
     {
         let mut inner = state.0.borrow_mut();
         inner.selection_anchor = Some(1);
         inner.selection_cursor = Some(2);
     }
-    state.splice_with_size_hints(4..4, [px(20.0)]);
+    state.splice_with_size_hints(4..4, [theme().size(20.0)]);
     assert!(state.selection_contains(1));
-    state.splice_with_size_hints(1..4, [px(20.0); 3]);
+    state.splice_with_size_hints(1..4, [theme().size(20.0); 3]);
     assert!(state.0.borrow().selection_range().is_none());
 }
 
@@ -287,22 +288,22 @@ fn reordered_rows_clear_affected_selection_but_appends_preserve_it() {
 fn selection_edge_scroll_repeats_until_stopped() {
     let state = state_with_rows(100);
     let mut inner = state.0.borrow_mut();
-    inner.viewport_height = px(100.0);
-    inner.scroll_y = px(240.0);
+    inner.viewport_height = theme().size(100.0);
+    inner.scroll_y = theme().size(240.0);
 
     let first = inner
-        .set_selection_scroll(Some(px(12.0)))
+        .set_selection_scroll(Some(theme().size(12.0)))
         .expect("first edge drag schedules a frame");
     assert!(inner.should_notify(first));
     assert!(inner.begin_frame(size(px(100.), px(100.))).1);
-    assert_eq!(inner.scroll_y, px(252.0));
+    assert_eq!(inner.scroll_y, theme().size(252.0));
 
     let second = inner
         .continue_selection_scroll()
         .expect("active edge drag schedules another frame");
     assert!(inner.should_notify(second));
     assert!(inner.begin_frame(size(px(100.), px(100.))).1);
-    assert_eq!(inner.scroll_y, px(264.0));
+    assert_eq!(inner.scroll_y, theme().size(264.0));
 
     inner.set_selection_scroll(None);
     assert!(inner.continue_selection_scroll().is_none());
@@ -312,11 +313,11 @@ fn selection_edge_scroll_repeats_until_stopped() {
 fn selection_edge_scroll_stops_at_the_document_boundary() {
     let state = state_with_rows(10);
     let mut inner = state.0.borrow_mut();
-    inner.viewport_height = px(100.0);
+    inner.viewport_height = theme().size(100.0);
     inner.scroll_y = inner.maximum_scroll();
 
     let final_frame = inner
-        .set_selection_scroll(Some(px(12.0)))
+        .set_selection_scroll(Some(theme().size(12.0)))
         .expect("the final downward frame resumes tail following");
     assert!(inner.should_notify(final_frame));
     inner.begin_frame(size(px(100.), px(100.)));
@@ -329,9 +330,9 @@ fn selection_edge_scroll_stops_at_the_document_boundary() {
 fn measurement_shrink_fills_the_viewport_in_one_layout(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = TranscriptListState::new();
-    state.splice_with_size_hints(0..0, std::iter::repeat_n(px(100.0), 100));
+    state.splice_with_size_hints(0..0, std::iter::repeat_n(theme().size(100.0), 100));
 
-    let rendered = draw_transcript(cx, &state, px(10.0), px(100.0));
+    let rendered = draw_transcript(cx, &state, theme().size(10.0), theme().size(100.0));
 
     assert!(rendered.into_iter().max().unwrap_or_default() >= 9);
 }
@@ -341,13 +342,13 @@ fn measured_overdraw_is_cached_until_invalidated(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = state_with_rows(100);
 
-    let cold_rows = draw_transcript(cx, &state, px(24.0), px(100.0));
-    let cached_rows = draw_transcript(cx, &state, px(24.0), px(100.0));
+    let cold_rows = draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
+    let cached_rows = draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     assert!(cached_rows.len() < cold_rows.len());
     assert!(!cached_rows.contains(&8));
 
     state.remeasure_items(8..9);
-    let invalidated_rows = draw_transcript(cx, &state, px(24.0), px(100.0));
+    let invalidated_rows = draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     assert!(invalidated_rows.contains(&8));
 }
 
@@ -360,8 +361,8 @@ fn growing_viewport_clamps_before_selecting_rows(cx: &mut TestAppContext) {
         offset_in_item: px(0.0),
     });
 
-    draw_transcript(cx, &state, px(24.0), px(100.0));
-    let rendered = draw_transcript(cx, &state, px(24.0), px(1_000.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
+    let rendered = draw_transcript(cx, &state, theme().size(24.0), px(1_000.0));
 
     let top = state.logical_scroll_top().item_ix;
     let first_rendered = rendered
@@ -377,14 +378,14 @@ fn remeasurement_clamps_an_anchor_to_the_new_row_height(cx: &mut TestAppContext)
     let state = TranscriptListState::new();
     state.splice_with_size_hints(
         0..0,
-        std::iter::once(px(1_000.0)).chain(std::iter::repeat_n(px(20.0), 99)),
+        std::iter::once(px(1_000.0)).chain(std::iter::repeat_n(theme().size(20.0), 99)),
     );
     state.scroll_to(ListOffset {
         item_ix: 0,
-        offset_in_item: px(500.0),
+        offset_in_item: theme().size(500.0),
     });
 
-    draw_transcript(cx, &state, px(20.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(20.0), theme().size(100.0));
 
     let offset = state.logical_scroll_top();
     assert_eq!(offset.item_ix, 1);
@@ -396,12 +397,12 @@ fn downward_scroll_at_the_end_resumes_tail_following(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = state_with_rows(100);
     state.scroll_to_end();
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     state.pause_following_tail();
 
     wheel(cx, px(-10.0));
     assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 1);
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
 
     assert!(state.is_following_tail());
 }
@@ -411,23 +412,23 @@ fn keyboard_scroll_batches_repeats_and_preserves_tail_behavior(cx: &mut TestAppC
     let cx = cx.add_empty_window();
     let state = state_with_rows(100);
     state.scroll_to_end();
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     let view = cx.update(|_, cx| cx.new(|_| ()));
     let end = state.0.borrow().scroll_y;
-    assert_eq!(state.viewport_height(), px(100.0));
+    assert_eq!(state.viewport_height(), theme().size(100.0));
 
     cx.update(|window, _| {
         state.scroll_by(px(-24.0), window, view.entity_id());
         state.scroll_by(px(-24.0), window, view.entity_id());
     });
     assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 1);
-    draw_transcript(cx, &state, px(24.0), px(100.0));
-    assert_eq!(state.0.borrow().scroll_y, end - px(48.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
+    assert_eq!(state.0.borrow().scroll_y, end - theme().size(48.0));
     assert!(!state.is_following_tail());
 
     cx.update(|window, _| state.scroll_by(state.viewport_height(), window, view.entity_id()));
     cx.update(|window, cx| window.simulate_next_frame(cx));
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     assert_eq!(state.0.borrow().scroll_y, end);
     assert!(state.is_following_tail());
 }
@@ -436,13 +437,13 @@ fn keyboard_scroll_batches_repeats_and_preserves_tail_behavior(cx: &mut TestAppC
 fn tail_resume_uses_final_measured_heights(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
     let state = TranscriptListState::new();
-    state.splice_with_size_hints(0..0, std::iter::repeat_n(px(20.0), 10));
+    state.splice_with_size_hints(0..0, std::iter::repeat_n(theme().size(20.0), 10));
     state.scroll_to_end();
-    draw_transcript(cx, &state, px(20.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(20.0), theme().size(100.0));
     state.pause_following_tail();
 
     assert!(state.queue_scroll(px(-10.0)).is_some());
-    draw_transcript(cx, &state, px(100.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(100.0), theme().size(100.0));
 
     assert!(!state.is_following_tail());
     let inner = state.0.borrow();
@@ -452,16 +453,19 @@ fn tail_resume_uses_final_measured_heights(cx: &mut TestAppContext) {
 #[test]
 fn splice_preserves_anchor_after_rows_before_it_change() {
     let state = TranscriptListState::new();
-    state.splice_with_size_hints(0..0, [px(20.0), px(20.0), px(20.0)]);
+    state.splice_with_size_hints(
+        0..0,
+        [theme().size(20.0), theme().size(20.0), theme().size(20.0)],
+    );
     state.scroll_to(ListOffset {
         item_ix: 2,
-        offset_in_item: px(5.0),
+        offset_in_item: theme().size(5.0),
     });
-    state.splice_with_size_hints(0..1, [px(10.0), px(10.0)]);
+    state.splice_with_size_hints(0..1, [theme().size(10.0), theme().size(10.0)]);
 
     let offset = state.logical_scroll_top();
     assert_eq!(offset.item_ix, 3);
-    assert_eq!(offset.offset_in_item, px(5.0));
+    assert_eq!(offset.offset_in_item, theme().size(5.0));
 }
 
 #[gpui::test]
@@ -469,16 +473,16 @@ fn boundary_jumps_discard_queued_scroll_and_control_tail_following(cx: &mut Test
     let cx = cx.add_empty_window();
     let state = state_with_rows(100);
     state.scroll_to_end();
-    draw_transcript(cx, &state, px(24.0), px(100.0));
-    assert!(state.queue_scroll(px(24.0)).is_some());
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
+    assert!(state.queue_scroll(theme().size(24.0)).is_some());
     state.scroll_to_start();
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     assert_eq!(state.logical_scroll_top().item_ix, 0);
     assert_eq!(state.logical_scroll_top().offset_in_item, px(0.0));
     assert!(!state.is_following_tail());
     assert!(state.queue_scroll(px(-24.0)).is_some());
     state.scroll_to_end();
-    draw_transcript(cx, &state, px(24.0), px(100.0));
+    draw_transcript(cx, &state, theme().size(24.0), theme().size(100.0));
     assert!(state.is_following_tail());
     assert_eq!(state.0.borrow().scroll_y, state.0.borrow().maximum_scroll());
 

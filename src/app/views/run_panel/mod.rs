@@ -14,7 +14,7 @@ mod tests;
 
 use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, ScrollAnchor, ScrollHandle,
-    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 pub(super) use resize::clamped_run_panel_width;
@@ -28,7 +28,7 @@ use super::super::{FarcasterApp, RunPanelView};
 use crate::{
     agent_activity::AgentActivity,
     app::ui::primitives::{ButtonTone, activates_button, button, panel, section_heading},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     sessions::{descendant_sessions_for_root, root_session_for_path},
 };
 
@@ -139,7 +139,7 @@ impl FarcasterApp {
             .size_full()
             .rounded_none()
             .border_0()
-            .bg(THEME.colors.inspector)
+            .bg(theme().colors.inspector)
             .child(
                 div()
                     .size_full()
@@ -149,13 +149,13 @@ impl FarcasterApp {
                     .child(
                         div()
                             .flex_none()
-                            .px(px(15.0))
-                            .py(THEME.space.sm)
-                            .border_b(THEME.border)
-                            .border_color(THEME.colors.border)
+                            .px(theme().size(15.0))
+                            .py(theme().space.sm)
+                            .border_b(theme().border)
+                            .border_color(theme().colors.border)
                             .flex()
                             .items_center()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button(
                                 "close-older-workers",
                                 "Back",
@@ -177,8 +177,8 @@ impl FarcasterApp {
                             .min_h_0()
                             .overflow_y_scroll()
                             .track_scroll(scroll)
-                            .px(px(15.0))
-                            .py(THEME.space.sm)
+                            .px(theme().size(15.0))
+                            .py(theme().space.sm)
                             .children(workers.iter().skip(RECENT_WORKERS).filter_map(
                                 |(activity, depth, session, _)| {
                                     self.agent_card(
@@ -304,12 +304,12 @@ impl FarcasterApp {
             .id("run-panel-activity")
             .flex_none()
             .min_h_0()
-            .max_h(px(320.0))
+            .max_h(theme().size(320.0))
             .overflow_y_scroll()
             .track_scroll(scroll)
             .flex()
             .flex_col()
-            .gap(THEME.space.sm)
+            .gap(theme().space.sm)
             .child(conversation)
             .child(self.views.workgraph_sidebar.clone())
             .when_some(
@@ -334,11 +334,11 @@ impl FarcasterApp {
             .min_h_0()
             .flex()
             .flex_col()
-            .pt(px(17.0))
-            .pr(px(15.0))
-            .pb(px(14.0))
-            .pl(px(18.0))
-            .gap(THEME.space.md)
+            .pt(theme().size(17.0))
+            .pr(theme().size(15.0))
+            .pb(theme().size(14.0))
+            .pl(theme().size(18.0))
+            .gap(theme().space.md)
             .child(activity)
             .when(self.project.repository.backend.is_some(), |run| {
                 run.child(self.render_repository(entity.clone(), run_panel.clone(), browser))
@@ -347,11 +347,11 @@ impl FarcasterApp {
             .size_full()
             .rounded_none()
             .border_0()
-            .bg(THEME.colors.inspector)
+            .bg(theme().colors.inspector)
             .child(body)
     }
 }
 
 fn inspector_section() -> gpui::Div {
-    div().flex().flex_col().gap(px(7.0))
+    div().flex().flex_col().gap(theme().size(7.0))
 }

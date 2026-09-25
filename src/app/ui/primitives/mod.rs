@@ -6,6 +6,7 @@ mod disclosure;
 mod feedback;
 #[cfg(test)]
 mod focus_tests;
+pub(crate) mod highlight;
 mod icon;
 mod picker;
 mod reorder;
@@ -22,6 +23,7 @@ pub(crate) use disclosure::{
     disclosure_button, disclosure_detail, disclosure_title_row, tree_folder_row,
 };
 pub(crate) use feedback::{FeedbackTone, feedback};
+pub(crate) use highlight::SyntaxKey;
 pub(crate) use icon::{AppIconSize, app_icon, icon_control};
 pub(crate) use picker::{PickerDelegate, PickerRow};
 pub(crate) use reorder::{ReorderPosition, ReorderTargetExt};

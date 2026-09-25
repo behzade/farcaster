@@ -10,7 +10,7 @@ use super::{
 use crate::app::ui::{
     assets::AppIcon,
     primitives::{ButtonTone, FeedbackTone, feedback, icon_button, modal},
-    theme::THEME,
+    theme::theme,
 };
 
 impl FarcasterApp {
@@ -84,15 +84,15 @@ impl FarcasterApp {
                             .relative()
                             .w(gpui::px(crate::app::views::workgraph::BOARD_WIDTH))
                             .max_w_full()
-                            .h(gpui::px(620.0))
+                            .h(theme().size(620.0))
                             .max_h(gpui::relative(1.0))
                             .overflow_hidden()
                             .child(self.views.workgraph.clone())
                             .child(
                                 div()
                                     .absolute()
-                                    .top(gpui::px(12.0))
-                                    .right(THEME.space.md)
+                                    .top(theme().size(12.0))
+                                    .right(theme().space.md)
                                     .child(icon_button(
                                         "close-project-work",
                                         AppIcon::X,
@@ -126,7 +126,7 @@ impl FarcasterApp {
                     },
                     |surface| {
                         surface
-                            .w(gpui::px(520.0))
+                            .w(theme().size(520.0))
                             .max_w_full()
                             .child(keybindings::render_help())
                     },
@@ -173,13 +173,13 @@ impl FarcasterApp {
                 root.child(
                     div()
                         .absolute()
-                        .top(THEME.space.md)
-                        .right(THEME.space.md)
-                        .w(THEME.layout.run_panel)
+                        .top(theme().space.md)
+                        .right(theme().space.md)
+                        .w(theme().layout.run_panel)
                         .max_w_full()
                         .flex()
                         .flex_col()
-                        .gap(THEME.space.xs)
+                        .gap(theme().space.xs)
                         .children(task_notice)
                         .children(self.extensions.active.notifications.iter().enumerate().map(
                             |(index, notice)| {

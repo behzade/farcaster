@@ -10,6 +10,7 @@ use gpui::{
 #[path = "list/height_index.rs"]
 mod height_index;
 use self::height_index::HeightIndex;
+use crate::app::ui::theme::theme;
 
 type RenderRow = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type ScrollHandler = dyn FnMut(bool, &mut Window, &mut App) + 'static;
@@ -103,7 +104,7 @@ impl StateInner {
     }
 
     fn resume_tail_at_end(&mut self) {
-        if !self.following_tail && self.scroll_y >= self.maximum_scroll() - px(1.0) {
+        if !self.following_tail && self.scroll_y >= self.maximum_scroll() - theme().size(1.0) {
             self.following_tail = true;
             self.scroll_y = self.maximum_scroll();
         }
@@ -120,7 +121,7 @@ impl StateInner {
             .min(maximum);
         let resumes_tail = !self.following_tail
             && self.pending_scroll < px(0.0)
-            && self.scroll_y >= maximum - px(1.0);
+            && self.scroll_y >= maximum - theme().size(1.0);
         if projected == self.scroll_y && !resumes_tail {
             self.pending_scroll = px(0.0);
             return None;
@@ -419,7 +420,7 @@ impl Element for TranscriptList {
         };
 
         let available = gpui::size(bounds.size.width.into(), AvailableSpace::MinContent);
-        let overdraw = crate::app::ui::theme::THEME.layout.transcript_overdraw;
+        let overdraw = crate::app::ui::theme::theme().layout.transcript_overdraw;
         let mut frame_rows = BTreeMap::new();
 
         let (scroll_y, following_tail, visible_range) = loop {
@@ -443,7 +444,7 @@ impl Element for TranscriptList {
                         let height = element
                             .layout_as_root(available, window, cx)
                             .height
-                            .max(px(1.0));
+                            .max(theme().size(1.0));
                         FrameRow {
                             index,
                             element,
@@ -513,7 +514,11 @@ impl Element for TranscriptList {
                 return;
             }
             crate::app::infrastructure::performance::record_scroll_event(event.touch_phase);
-            state.scroll_by(-event.delta.pixel_delta(px(20.0)).y, window, current_view);
+            state.scroll_by(
+                -event.delta.pixel_delta(theme().size(20.0)).y,
+                window,
+                current_view,
+            );
         });
 
         let selection_state = self.state.clone();

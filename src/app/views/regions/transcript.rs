@@ -25,7 +25,7 @@ impl TranscriptView {
     ) -> Self {
         Self {
             app,
-            font_size: crate::app::ui::theme::THEME.type_scale.reading,
+            font_size: crate::app::ui::theme::theme().type_scale.reading,
             markdown_cache: transcript::markdown::TranscriptMarkdownCache::default(),
             list,
             rows: Arc::new(PersistentVec::default()),
@@ -79,7 +79,7 @@ impl Render for TranscriptView {
         transcript::render(
             &self.list,
             transcript::TranscriptViewport {
-                font_scale: self.font_size / crate::app::ui::theme::THEME.type_scale.reading,
+                font_scale: self.font_size / crate::app::ui::theme::theme().type_scale.reading,
                 following: self.following,
                 unseen: self.unseen,
                 tail_reserve: transcript::tail_reserve(viewport.height),

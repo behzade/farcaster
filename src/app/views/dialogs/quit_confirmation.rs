@@ -4,7 +4,7 @@ use crate::app::{
     FarcasterApp, OVERLAY_KEY_CONTEXT,
     ui::{
         primitives::{ButtonTone, button, confirmation_modal},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -31,19 +31,19 @@ pub(in crate::app::views) fn render(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.md)
-                    .p(THEME.space.md)
+                    .gap(theme().space.md)
+                    .p(theme().space.md)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.body)
-                            .text_color(THEME.colors.text)
+                            .text_size(theme().type_scale.body)
+                            .text_color(theme().colors.text)
                             .child("Agents, subagents, or tool runs are still active. Exiting may interrupt this work."),
                     )
                     .child(
                         div()
                             .flex()
                             .justify_end()
-                            .gap(THEME.space.sm)
+                            .gap(theme().space.sm)
                             .child(button("cancel-application-quit", "Cancel", ButtonTone::Neutral, true, on_cancel))
                             .child(button("confirm-application-quit", "Exit", ButtonTone::Danger, true, on_confirm)),
                     ),

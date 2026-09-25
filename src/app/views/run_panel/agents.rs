@@ -11,7 +11,7 @@ use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, AgentOutcome},
     app::ui::assets::AppIcon,
     app::ui::primitives::{AppIconSize, activates_button, app_icon},
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
 };
 
 pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui::Stateful<Div> {
@@ -24,19 +24,19 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
         .flex()
         .items_center()
         .min_w_0()
-        .px(THEME.space.sm)
-        .py(px(4.0))
-        .rounded(THEME.radius)
+        .px(theme().space.sm)
+        .py(theme().size(4.0))
+        .rounded(theme().radius)
         .bg(if selected {
-            THEME.colors.session_selection
+            theme().colors.highlight
         } else {
-            THEME.colors.inspector
+            theme().colors.inspector
         })
         .hover(move |row| {
             row.bg(if selected {
-                THEME.colors.session_selection
+                theme().colors.highlight
             } else {
-                THEME.colors.surface
+                theme().colors.surface
             })
         })
         .when(selected, |row| {
@@ -44,13 +44,16 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
                 div()
                     .absolute()
                     .left_0()
-                    .top(THEME.space.xs)
-                    .bottom(THEME.space.xs)
-                    .w(px(2.0))
-                    .bg(THEME.colors.accent),
+                    .top(theme().space.xs)
+                    .bottom(theme().space.xs)
+                    .w(theme().size(2.0))
+                    .bg(theme().colors.accent),
             )
         })
-        .focus(|row| row.border(THEME.border).border_color(THEME.colors.accent))
+        .focus(|row| {
+            row.border(theme().border)
+                .border_color(theme().colors.accent)
+        })
         .cursor_pointer()
 }
 
@@ -167,9 +170,9 @@ impl FarcasterApp {
                     .overflow_hidden()
                     .flex()
                     .items_center()
-                    .gap(THEME.space.xs)
-                    .text_size(THEME.type_scale.caption)
-                    .text_color(THEME.colors.muted)
+                    .gap(theme().space.xs)
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.muted)
                     .when_some(status_visual(state), |row, (icon, color)| {
                         row.child(
                             div()
@@ -189,15 +192,15 @@ impl FarcasterApp {
                             .flex_1()
                             .flex()
                             .items_center()
-                            .gap(THEME.space.xs)
+                            .gap(theme().space.xs)
                             .child(
                                 div()
                                     .flex_none()
-                                    .max_w(px(90.0))
+                                    .max_w(theme().size(90.0))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .text_color(THEME.colors.text)
+                                    .text_color(theme().colors.text)
                                     .child(identity),
                             )
                             .child(

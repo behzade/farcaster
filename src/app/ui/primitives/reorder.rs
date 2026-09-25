@@ -1,7 +1,9 @@
 use gpui::{
     App, Bounds, Div, DragMoveEvent, InteractiveElement as _, Pixels, Point, Rgba, Stateful,
-    Styled as _, Window, prelude::FluentBuilder as _, px,
+    Styled as _, Window, prelude::FluentBuilder as _,
 };
+
+use crate::app::ui::theme::theme;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ReorderPosition {
@@ -60,10 +62,10 @@ where
     T: 'static,
 {
     row.when(position == Some(ReorderPosition::Before), |row| {
-        row.border_t(px(2.0)).border_color(indicator)
+        row.border_t(theme().size(2.0)).border_color(indicator)
     })
     .when(position == Some(ReorderPosition::After), |row| {
-        row.border_b(px(2.0)).border_color(indicator)
+        row.border_b(theme().size(2.0)).border_color(indicator)
     })
     .on_drag_move(move |event: &DragMoveEvent<T>, window, cx| {
         if let Some(position) = reorder_position(&event.bounds, &event.event.position) {

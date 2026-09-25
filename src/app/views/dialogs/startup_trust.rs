@@ -3,13 +3,13 @@ use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use gpui::{
     AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement as _,
     KeyDownEvent, ParentElement as _, Render, Role, StatefulInteractiveElement as _, Styled as _,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    WeakEntity, Window, div, prelude::FluentBuilder as _,
 };
 
 use crate::{
     app::FarcasterApp,
     app::ui::primitives::{ButtonTone, button},
-    app::ui::theme::{MONO_FONT_FAMILY, THEME},
+    app::ui::theme::{MONO_FONT_FAMILY, theme},
     projects::{self, StartupTrust, TrustChoice},
 };
 
@@ -119,7 +119,7 @@ impl Render for ProjectTrustView {
 
         let entity = cx.entity().downgrade();
         let project = self.project.display().to_string();
-        let mut options = div().flex().flex_col().gap(THEME.space.xs);
+        let mut options = div().flex().flex_col().gap(theme().space.xs);
         for (index, option) in projects::options(&self.project).into_iter().enumerate() {
             let choice = option.choice;
             let select = entity.clone();
@@ -149,8 +149,8 @@ impl Render for ProjectTrustView {
             .flex()
             .items_center()
             .justify_center()
-            .bg(THEME.colors.canvas)
-            .p(THEME.space.md)
+            .bg(theme().colors.canvas)
+            .p(theme().space.md)
             .child(
                 div()
                     .id("startup-project-trust")
@@ -181,38 +181,38 @@ impl Render for ProjectTrustView {
                         }
                     }))
                     .w_full()
-                    .max_w(px(640.0))
+                    .max_w(theme().size(640.0))
                     .flex()
                     .flex_col()
-                    .gap(THEME.space.md)
-                    .rounded(THEME.radius)
-                    .border(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .bg(THEME.colors.panel)
-                    .p(THEME.space.md)
+                    .gap(theme().space.md)
+                    .rounded(theme().radius)
+                    .border(theme().border)
+                    .border_color(theme().colors.border)
+                    .bg(theme().colors.panel)
+                    .p(theme().space.md)
                     .child(
                         div()
-                            .text_size(THEME.type_scale.display)
-                            .text_color(THEME.colors.text)
+                            .text_size(theme().type_scale.display)
+                            .text_color(theme().colors.text)
                             .child("Trust project folder?"),
                     )
                     .child(
                         div()
                             .font_family(MONO_FONT_FAMILY)
-                            .text_size(THEME.type_scale.body_small)
-                            .text_color(THEME.colors.accent)
+                            .text_size(theme().type_scale.body_small)
+                            .text_color(theme().colors.accent)
                             .child(project),
                     )
                     .child(
                         div()
-                            .line_height(THEME.type_scale.line_body)
-                            .text_color(THEME.colors.muted)
+                            .line_height(theme().type_scale.line_body)
+                            .text_color(theme().colors.muted)
                             .child(projects::TRUST_DESCRIPTION),
                     )
                     .when_some(self.error.clone(), |panel, error| {
                         panel.child(
                             div()
-                                .text_color(THEME.colors.error)
+                                .text_color(theme().colors.error)
                                 .child(format!("Trust decision was not saved: {error}")),
                         )
                     })

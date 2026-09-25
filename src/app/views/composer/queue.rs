@@ -10,7 +10,7 @@ use crate::app::{
 };
 use crate::{
     agents::PeerMessage,
-    app::ui::theme::THEME,
+    app::ui::theme::theme,
     conversation::{PendingReceipt, QueueState},
     protocol::PromptMode,
 };
@@ -35,9 +35,9 @@ pub(super) enum QueuedMessageKind {
 impl QueuedMessageKind {
     fn border_color(self) -> gpui::Rgba {
         match self {
-            Self::Peer => THEME.colors.border,
-            Self::Steer => THEME.colors.accent.opacity(0.45),
-            Self::FollowUp => THEME.colors.subtle.opacity(0.45),
+            Self::Peer => theme().colors.border,
+            Self::Steer => theme().colors.accent.opacity(0.45),
+            Self::FollowUp => theme().colors.subtle.opacity(0.45),
         }
     }
 }
@@ -110,9 +110,9 @@ pub(super) fn saved_prompt_body(id: i64, text: &str) -> gpui::Stateful<gpui::Div
         .id(format!("saved-prompt-body-{id}"))
         .w_full()
         .min_w_0()
-        .max_h(THEME.layout.tool_max_height)
+        .max_h(theme().layout.tool_max_height)
         .overflow_scroll()
-        .text_color(THEME.colors.text)
+        .text_color(theme().colors.text)
         .child(text.to_owned())
 }
 
@@ -128,21 +128,21 @@ fn queued_message_group(
     div()
         .when(separated, |group| {
             group
-                .border_t(THEME.border)
-                .border_color(THEME.colors.border)
+                .border_t(theme().border)
+                .border_color(theme().colors.border)
         })
         .children(messages.iter().map(|message| {
             div()
                 .flex()
                 .items_center()
-                .gap(THEME.space.xs)
-                .border_t(THEME.border)
+                .gap(theme().space.xs)
+                .border_t(theme().border)
                 .border_color(kind.border_color())
                 .border_l(px(2.0))
-                .px(THEME.space.sm)
-                .py(THEME.space.xs)
-                .text_size(THEME.type_scale.body)
-                .text_color(THEME.colors.text)
+                .px(theme().space.sm)
+                .py(theme().space.xs)
+                .text_size(theme().type_scale.body)
+                .text_color(theme().colors.text)
                 .child(
                     div()
                         .flex_1()
@@ -214,12 +214,12 @@ pub(super) fn render(
     }
     Some(
         div()
-            .mb(THEME.space.sm)
-            .border(THEME.border)
-            .border_color(THEME.colors.border)
-            .rounded(THEME.radius)
+            .mb(theme().space.sm)
+            .border(theme().border)
+            .border_color(theme().colors.border)
+            .rounded(theme().radius)
             .overflow_hidden()
-            .bg(THEME.colors.surface)
+            .bg(theme().colors.surface)
             .when(!individual && !groups.is_empty(), |queue| {
                 let entity = entity.clone();
                 queue.child(div().flex().justify_end().child(button(
@@ -240,12 +240,12 @@ pub(super) fn render(
                 let remove_target = saved.target.clone();
                 let id = saved.id;
                 div()
-                    .border_t(THEME.border)
-                    .border_color(THEME.colors.border)
-                    .px(THEME.space.sm)
-                    .py(THEME.space.xs)
+                    .border_t(theme().border)
+                    .border_color(theme().colors.border)
+                    .px(theme().space.sm)
+                    .py(theme().space.xs)
                     .child(
-                        div().text_color(THEME.colors.subtle).child(
+                        div().text_color(theme().colors.subtle).child(
                             "Delivery unconfirmed. Sending again may duplicate this message.",
                         ),
                     )
@@ -256,7 +256,7 @@ pub(super) fn render(
                     .child(
                         div()
                             .flex()
-                            .gap(THEME.space.xs)
+                            .gap(theme().space.xs)
                             .child(button(
                                 format!("send-saved-{}", saved.id),
                                 "Send again",

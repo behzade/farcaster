@@ -50,6 +50,19 @@ impl FarcasterApp {
         Self::notify_region(&self.views.run_panel, cx);
     }
 
+    pub(in crate::app) fn notify_appearance(&self, cx: &mut Context<Self>) {
+        self.notify_session_rail(cx);
+        self.notify_composer(cx);
+        self.notify_run_panel(cx);
+        Self::notify_region(&self.views.workgraph, cx);
+        Self::notify_region(&self.views.workgraph_detail, cx);
+        Self::notify_region(&self.views.workgraph_sidebar, cx);
+        self.views.transcript.update(cx, |transcript, cx| {
+            transcript.list.remeasure_items(0..transcript.rows.len());
+            cx.notify();
+        });
+    }
+
     pub(in crate::app) fn send(&mut self, command: RuntimeCommand, cx: &mut Context<Self>) {
         if let Err(error) = self.runtime.send(command) {
             let snapshot = Arc::make_mut(&mut self.snapshot);

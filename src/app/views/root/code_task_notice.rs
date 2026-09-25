@@ -7,7 +7,7 @@ use crate::app::{
     FarcasterApp,
     ui::{
         primitives::{ButtonTone, button},
-        theme::THEME,
+        theme::theme,
     },
 };
 
@@ -25,16 +25,16 @@ impl FarcasterApp {
                         .set_live(gpui::accesskit::Live::Polite);
                     builder.parent_node().set_value(message);
                 })
-                .rounded(THEME.radius)
-                .bg(THEME.colors.panel)
-                .border(THEME.border)
-                .border_color(THEME.colors.accent)
-                .p(THEME.space.sm)
+                .rounded(theme().radius)
+                .bg(theme().colors.panel)
+                .border(theme().border)
+                .border_color(theme().colors.accent)
+                .p(theme().space.sm)
                 .flex()
                 .items_center()
-                .gap(THEME.space.sm)
-                .text_size(THEME.type_scale.caption)
-                .text_color(THEME.colors.text)
+                .gap(theme().space.sm)
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.text)
                 .child(message)
                 .child(button(
                     "open-code-task",

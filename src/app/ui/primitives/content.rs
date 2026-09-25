@@ -1,4 +1,4 @@
-use crate::app::ui::theme::THEME;
+use crate::app::ui::theme::theme;
 use gpui::{
     Div, FontWeight, InteractiveElement as _, ParentElement as _, Role, SharedString,
     StatefulInteractiveElement as _, Styled as _, div,
@@ -8,10 +8,10 @@ pub(crate) fn panel() -> Div {
     div()
         .flex()
         .flex_col()
-        .rounded(THEME.radius)
-        .border(THEME.border)
-        .border_color(THEME.colors.border)
-        .bg(THEME.colors.panel)
+        .rounded(theme().radius)
+        .border(theme().border)
+        .border_color(theme().colors.border)
+        .bg(theme().colors.panel)
 }
 
 pub(crate) fn folder_change_summary(count: usize, counts: Option<(usize, usize)>) -> Div {
@@ -20,18 +20,18 @@ pub(crate) fn folder_change_summary(count: usize, counts: Option<(usize, usize)>
         .whitespace_nowrap()
         .flex()
         .items_center()
-        .gap(THEME.space.xs)
-        .child(div().text_color(THEME.colors.muted).child(format!(
+        .gap(theme().space.xs)
+        .child(div().text_color(theme().colors.muted).child(format!(
             "{count} {}",
             if count == 1 { "file" } else { "files" }
         )))
         .child(
             div()
-                .text_color(THEME.colors.success)
+                .text_color(theme().colors.success)
                 .child(counts.map_or_else(|| "+—".to_owned(), |(added, _)| format!("+{added}"))),
         )
         .child(
-            div().text_color(THEME.colors.error).child(
+            div().text_color(theme().colors.error).child(
                 counts.map_or_else(|| "−—".to_owned(), |(_, removed)| format!("−{removed}")),
             ),
         )
@@ -44,8 +44,8 @@ pub(crate) fn section_heading(title: impl Into<SharedString>) -> impl gpui::Into
         .role(Role::Heading)
         .aria_label(title.clone())
         .aria_level(2)
-        .text_size(THEME.type_scale.body)
+        .text_size(theme().type_scale.body)
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(THEME.colors.muted)
+        .text_color(theme().colors.muted)
         .child(title)
 }
