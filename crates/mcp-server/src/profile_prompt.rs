@@ -136,9 +136,14 @@ fn configure_model(
         })
         .collect::<Vec<_>>();
     let (execution, save_choice) = if choices.is_empty() {
-        let harnesses = backends.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let access = super::workers::delegated_access_mode(caller.backend, caller.access_mode);
+        let available = fallback_harnesses(&caller.project, access, backends, catalogs);
+        let harnesses = available
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
         if harnesses.is_empty() {
-            return Err("no worker harness is installed".into());
+            return Err("no worker harness is available for this parent's access mode".into());
         }
         let selected = choose(
             caller,
@@ -148,6 +153,9 @@ fn configure_model(
         let harness = selected
             .parse::<agents::Backend>()
             .map_err(|_| "worker harness choice is invalid")?;
+        if !available.contains(&harness) {
+            return Err("worker harness choice is unavailable".into());
+        }
         let provider = choose(caller, "Provider ID".into(), Vec::new())?
             .trim()
             .to_owned();
@@ -274,6 +282,34 @@ fn configure_model(
         })?;
     }
     Ok(execution)
+}
+
+fn fallback_harnesses(
+    project: &std::path::Path,
+    access: agents::HarnessAccessMode,
+    backends: &[agents::Backend],
+    catalogs: &[storage::CachedConfigurationCatalog],
+) -> Vec<agents::Backend> {
+    backends
+        .iter()
+        .copied()
+        .filter(|&harness| {
+            // A catalog with no eligible choices cannot accept an arbitrary ID.
+            if catalogs.iter().any(|entry| {
+                entry.profile_id.is_none() && entry.project == project && entry.harness == harness
+            }) {
+                return false;
+            }
+            let probe = agents::WorkerExecution {
+                harness,
+                provider: "profile-setup".into(),
+                model: "profile-setup".into(),
+                effort: None,
+                service_tier: None,
+            };
+            super::workers::child_access_mode(&probe, project, access, backends, catalogs).is_some()
+        })
+        .collect()
 }
 
 #[cfg(test)]

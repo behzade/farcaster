@@ -18,6 +18,41 @@ fn concurrent_sends_share_one_profile_choice_and_its_result() {
     check_burst("cancelled", Err("worker creation cancelled".into()));
 }
 
+#[test]
+fn fallback_offers_only_harnesses_that_can_run_at_the_parent_access_mode() {
+    let backends = [agents::Backend::Pi, agents::Backend::Codex];
+    let project = std::path::Path::new("/profile-prompt-test");
+    let access = super::super::workers::delegated_access_mode(
+        agents::Backend::Pi,
+        agents::HarnessAccessMode::Sandboxed,
+    );
+    assert_eq!(access, agents::HarnessAccessMode::Auto);
+    assert_eq!(
+        fallback_harnesses(project, access, &backends, &[]),
+        vec![agents::Backend::Codex]
+    );
+    assert!(fallback_harnesses(project, access, &[agents::Backend::Pi], &[]).is_empty());
+    assert_eq!(
+        fallback_harnesses(project, agents::HarnessAccessMode::Full, &backends, &[]),
+        backends.to_vec()
+    );
+    let empty_catalog = storage::CachedConfigurationCatalog {
+        harness: agents::Backend::Codex,
+        profile_id: None,
+        project: project.into(),
+        catalog: agents::ConfigurationCatalog::default(),
+    };
+    assert_eq!(
+        fallback_harnesses(
+            project,
+            agents::HarnessAccessMode::Full,
+            &backends,
+            &[empty_catalog]
+        ),
+        vec![agents::Backend::Pi]
+    );
+}
+
 fn check_burst(parent: &str, expected: Selection) {
     let key = (parent.to_owned(), "light".to_owned());
     let (release_tx, release_rx) = mpsc::channel();
