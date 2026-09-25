@@ -31,8 +31,7 @@ fn the_rail_paints_stored_chats_before_the_runtime_answers(cx: &mut gpui::TestAp
         |project| {
             let session = remembered_session(project, "remembered", "Remembered chat");
             std::fs::write(&session.path, "{}").expect("write session file");
-            let mut store =
-                crate::app::infrastructure::persistence::StateStore::open().expect("open state");
+            let mut store = crate::app::persistence::open().expect("open state");
             store
                 .replace_sessions(&[session])
                 .expect("index the stored session");
@@ -72,8 +71,7 @@ fn a_launch_warms_the_history_of_the_chat_most_likely_to_open_next(cx: &mut gpui
             )
             .expect("write session file");
             let session = remembered_session(project, "recent", "Recent chat");
-            let mut store =
-                crate::app::infrastructure::persistence::StateStore::open().expect("open state");
+            let mut store = crate::app::persistence::open().expect("open state");
             store
                 .replace_sessions(&[session])
                 .expect("index the stored session");

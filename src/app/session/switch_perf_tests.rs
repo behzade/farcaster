@@ -202,11 +202,16 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
             let script = project.join("fake-pi.sh");
             fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh"))
                 .expect("write fake pi");
-            RuntimeHandle::spawn_with(
+            RuntimeHandle::spawn(
                 project.to_path_buf(),
-                "switch-perf-draft".into(),
+                crate::sessions::DraftSession::with_id(
+                    Some(Backend::Pi),
+                    "switch-perf-draft".into(),
+                    project.to_path_buf(),
+                ),
                 None,
                 AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
+                crate::app::runtime_host::host(),
             )
         },
         |cx, app, project| {
