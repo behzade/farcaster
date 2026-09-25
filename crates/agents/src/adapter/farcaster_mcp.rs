@@ -4,8 +4,3 @@ pub const CALLER_HEADER: &str = "farcaster-caller";
 pub(super) fn enabled() -> bool {
     crate::builtin_mcp::enabled()
 }
-
-#[cfg(any(test, feature = "test-support"))]
-pub(super) fn set_enabled(enabled: bool) {
-    crate::builtin_mcp::set_enabled(enabled);
-}

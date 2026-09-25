@@ -28,7 +28,7 @@ use crate::{
 
 use super::super::contract::{AgentBackendDescriptor, AgentCapabilities, CapabilitySupport};
 use super::{
-    delete_external_session, farcaster_mcp, known_backend_descriptors, load_external_history,
+    delete_external_session, known_backend_descriptors, load_external_history,
     main_session::external_session_locator, spawn_session,
 };
 
@@ -44,18 +44,15 @@ pub const LIVE_HARNESSES: [&str; 6] = [
 ];
 pub const TEST_IMAGE: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4EKBBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULACvxoEydbL2eAAAAAElFTkSuQmCC";
 
-pub struct McpGuard;
+pub struct McpGuard {
+    _guard: crate::builtin_mcp::McpDisabledForTest,
+}
 
 impl McpGuard {
     pub fn disabled() -> Self {
-        farcaster_mcp::set_enabled(false);
-        Self
-    }
-}
-
-impl Drop for McpGuard {
-    fn drop(&mut self) {
-        farcaster_mcp::set_enabled(true);
+        Self {
+            _guard: crate::builtin_mcp::McpDisabledForTest::new(),
+        }
     }
 }
 

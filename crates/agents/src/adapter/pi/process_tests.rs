@@ -6,18 +6,15 @@ use tempfile::tempdir;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-struct DisabledMcp;
+struct DisabledMcp {
+    _guard: crate::builtin_mcp::McpDisabledForTest,
+}
 
 impl DisabledMcp {
     fn new() -> Self {
-        crate::adapter::farcaster_mcp::set_enabled(false);
-        Self
-    }
-}
-
-impl Drop for DisabledMcp {
-    fn drop(&mut self) {
-        crate::adapter::farcaster_mcp::set_enabled(true);
+        Self {
+            _guard: crate::builtin_mcp::McpDisabledForTest::new(),
+        }
     }
 }
 
