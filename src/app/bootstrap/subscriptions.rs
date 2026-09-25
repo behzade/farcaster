@@ -16,11 +16,8 @@ pub(super) fn create(
     cx.on_app_quit(|this, cx| {
         this.capture_composer_session(cx);
         let target = this.composer.sessions.current_target().to_owned();
-        let composer = this.composer.sessions.current();
-        // Apply session-switch cleanup only after quit is confirmed.
-        if this.sync_current_draft(&composer, &target) {
-            this.composer.sessions.remove(&target);
-        }
+        // Materialize the open draft only after quit is confirmed.
+        this.sync_current_draft(&target, cx);
         async {}
     })
     .detach();

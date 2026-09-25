@@ -111,7 +111,7 @@ impl FarcasterApp {
                 if let Some(path) = inactive_session {
                     self.set_session_active(path, cx);
                 }
-                self.begin_draft_submission(&target, &value);
+                self.begin_draft_submission(&target, &value, cx);
                 self.notify_session_rail(cx);
                 self.composer.sessions.record_submission(&target, &value);
                 let pending_images = self.composer.images.remove(&target).unwrap_or_default();

@@ -543,8 +543,8 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
             let path = project.join("completed-session");
             let session_key = session_target(&path);
             cx.update(|_, cx| {
-                app.update(cx, |app, _| {
-                    app.begin_draft_submission(target, "hi");
+                app.update(cx, |app, cx| {
+                    app.begin_draft_submission(target, "hi", cx);
                     app.composer.pending_submissions.insert(
                         submission_id.into(),
                         PendingSubmission {

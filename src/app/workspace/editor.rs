@@ -272,7 +272,6 @@ impl FarcasterApp {
         else {
             return;
         };
-        self.retain_workspace_draft(cx);
         // Reusing the native terminal must not unmap/remap it: both file jumps
         // and repeated Open editor commands come through this path.
         let switching_editor = self.workspace.editor.view.as_ref() != Some(&editor);
@@ -467,7 +466,6 @@ impl FarcasterApp {
                 false
             });
         }
-        self.retain_workspace_draft(cx);
         let switching = self.workspace.editor.terminal_editor_view.as_ref() != Some(&editor);
         if switching {
             self.hide_editor(cx);

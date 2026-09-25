@@ -73,14 +73,7 @@ fn empty_startup_draft_stays_deleted_after_late_composer_save()
     let draft = DraftSession::with_id(Some(Backend::Pi), "startup".into(), project.clone());
     let id = store.allocate_app_session_id(&draft)?;
     let mut drafts = store.load_drafts()?;
-    assert!(sync_materialized_draft(
-        &mut drafts,
-        "startup",
-        id,
-        &project,
-        Some(Backend::Pi),
-        false,
-    ));
+    sync_materialized_draft(&mut drafts, "startup", id, &project, Some(Backend::Pi));
     store.remove_draft("startup")?;
     // A queued composer write must not recreate the draft after quit removes it.
     store.save_composer_session(&ComposerRecord {
@@ -124,57 +117,37 @@ fn project_choices_include_registered_and_current_worktrees() {
 }
 
 #[test]
-fn drafts_materialize_only_when_leaving_a_composer_with_content() {
+fn drafts_materialize_once_and_survive_leaving_them() {
     let project = PathBuf::from("/project");
     let mut drafts = Vec::new();
 
-    assert!(!draft_has_content(
-        &crate::app::composer::sessions::ComposerSnapshot::default()
-    ));
-    assert!(!draft_has_content(
-        &crate::app::composer::sessions::ComposerSnapshot::new("   ".into(), 3, 3..3)
-    ));
-    assert!(draft_has_content(
-        &crate::app::composer::sessions::ComposerSnapshot::new("work".into(), 4, 4..4)
-    ));
-    assert!(!sync_materialized_draft(
-        &mut drafts,
-        "ephemeral",
-        42,
-        &project,
-        Some(Backend::Codex),
-        false,
-    ));
-    assert!(drafts.is_empty());
     assert!(sync_materialized_draft(
         &mut drafts,
-        "ephemeral",
+        "first",
         42,
         &project,
         Some(Backend::Codex),
-        true,
     ));
     assert_eq!(drafts.len(), 1);
-    assert_eq!(drafts[0].id, "ephemeral");
+    assert_eq!(drafts[0].id, "first");
     assert_eq!(drafts[0].app_session_id, 42);
     assert_eq!(drafts[0].harness, Some(Backend::Codex));
     assert!(!sync_materialized_draft(
         &mut drafts,
-        "ephemeral",
+        "first",
         42,
         &project,
         Some(Backend::Codex),
-        true,
     ));
     assert!(sync_materialized_draft(
         &mut drafts,
-        "ephemeral",
-        42,
+        "second",
+        43,
         &project,
         Some(Backend::Codex),
-        false,
     ));
-    assert!(drafts.is_empty());
+    assert_eq!(drafts.len(), 2);
+    assert!(drafts.iter().any(|draft| draft.id == "first"));
 }
 
 #[test]
@@ -199,6 +172,7 @@ fn submitted_pathless_drafts_keep_their_pending_identity() {
         app_session_id: 1,
         harness: Some(Backend::Pi),
         profile_id: None,
+        archived: false,
         project: PathBuf::from("/project"),
         created_ms: 1,
         submitted: true,
@@ -298,6 +272,7 @@ fn accepted_draft_with_exact_path_reconciles_after_store_reopen()
         app_session_id: 1,
         harness: Some(Backend::Pi),
         profile_id: None,
+        archived: false,
         project: project.clone(),
         created_ms: 1,
         submitted: false,
@@ -360,6 +335,7 @@ fn accepted_draft_without_a_path_is_never_durable() {
         app_session_id: 1,
         harness: Some(Backend::Pi),
         profile_id: None,
+        archived: false,
         project: PathBuf::from("/project"),
         created_ms: 1,
         submitted: false,
@@ -449,7 +425,6 @@ fn materialized_codex_draft_can_enqueue_without_a_duplicate_client_key()
         id,
         temp.path(),
         Some(Backend::Codex),
-        true,
     );
     store.save_registry(&projects::Registry {
         projects: vec![temp.path().to_owned()],

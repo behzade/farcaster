@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::persistence::StateStore;
+use crate::sessions::DraftStore as _;
 
 impl FarcasterApp {
     pub(in crate::app) fn choose_project_folder(
@@ -67,7 +69,7 @@ impl FarcasterApp {
         };
         let restored = projects::restore(&mut self.project.excluded, &project);
         if projects::add_unique(&mut self.project.registered, project.clone()) || restored {
-            self.save_project_registry();
+            self.save_session_state(cx);
         }
         self.sync_project_folders(cx);
         self.ensure_open_project_folder(&project, cx);
@@ -90,7 +92,7 @@ impl FarcasterApp {
         ) {
             return;
         }
-        self.save_project_registry();
+        self.save_session_state(cx);
         let scope = self
             .navigation
             .picker
@@ -114,7 +116,7 @@ impl FarcasterApp {
             &self.project.excluded,
             project,
         ) {
-            self.save_project_registry();
+            self.save_session_state(cx);
         }
     }
 
@@ -155,12 +157,41 @@ impl FarcasterApp {
         .detach();
     }
 
-    pub(in crate::app) fn save_project_registry(&mut self) {
-        if let Err(error) = project_registry::save(&projects::ProjectList {
+    pub(in crate::app) fn save_session_state(&mut self, cx: &mut Context<Self>) {
+        if self.sessions.save_in_flight {
+            self.sessions.save_pending = true;
+            return;
+        }
+        self.sessions.save_in_flight = true;
+        let registry = projects::ProjectList {
             projects: self.project.registered.clone(),
             excluded_projects: self.project.excluded.clone(),
-        }) {
-            self.sessions.error = Some(error);
-        }
+        };
+        let drafts = self.sessions.drafts.clone();
+        let folders = self.sessions.folders.clone();
+        let task = cx.background_spawn(async move {
+            project_registry::save(&registry)?;
+            crate::app::infrastructure::persistence::open().and_then(|mut store| {
+                for draft in &drafts {
+                    store.save_draft(draft)?;
+                }
+                store.save_session_folders(&folders)
+            })
+        });
+        cx.spawn(async move |weak, cx| {
+            let result = task.await;
+            let _ = weak.update(cx, |this, cx| {
+                this.sessions.save_in_flight = false;
+                if let Err(error) = result {
+                    this.sessions.error = Some(error);
+                }
+                if std::mem::take(&mut this.sessions.save_pending) {
+                    this.save_session_state(cx);
+                } else {
+                    this.notify_session_rail(cx);
+                }
+            });
+        })
+        .detach();
     }
 }

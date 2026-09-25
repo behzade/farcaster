@@ -26,6 +26,8 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) import: Option<session::import::SessionImportDialog>,
     pub(in crate::app) import_generation: u64,
     pub(in crate::app) archived_expanded: bool,
+    pub(in crate::app) save_in_flight: bool,
+    pub(in crate::app) save_pending: bool,
     pub(in crate::app) _title_subscription: Subscription,
 }
 

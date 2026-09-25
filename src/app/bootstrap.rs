@@ -190,6 +190,8 @@ impl FarcasterApp {
                 import: None,
                 import_generation: 0,
                 archived_expanded: persisted.panel_layout.archived_expanded,
+                save_in_flight: false,
+                save_pending: false,
                 _title_subscription: subscriptions.session_title,
             },
             activity: session::ActivityState {
