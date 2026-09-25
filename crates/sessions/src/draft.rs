@@ -74,7 +74,7 @@ impl DraftSession {
     }
 
     pub fn change_harness(&mut self, harness: Option<Backend>) -> bool {
-        if !self.can_change_project() || self.harness == harness {
+        if !self.can_change_project() || (self.harness == harness && self.profile_id.is_none()) {
             return false;
         }
         self.harness = harness;
