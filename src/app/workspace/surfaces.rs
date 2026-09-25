@@ -755,6 +755,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_theme_editor(window, cx);
         if self.settings.proxy_save.is_some() {
             self.save_settings_proxy(cx);
         }

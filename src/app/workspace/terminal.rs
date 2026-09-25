@@ -103,6 +103,26 @@ impl FarcasterApp {
         self.reveal_native_center_surface(AppSurface::Terminal, window, cx);
     }
 
+    pub(in crate::app) fn refresh_terminal_themes(&mut self, cx: &mut Context<Self>) {
+        let theme = crate::app::ui::theme::terminal_theme();
+        let mut failures = Vec::new();
+        for (project, terminal) in &self.workspace.terminal.project_terminals {
+            if !terminal.read(cx).is_alive() {
+                continue;
+            }
+            if let Err(error) = terminal.update(cx, |terminal, cx| {
+                terminal.update_theme(theme.clone())?;
+                cx.notify();
+                Ok::<_, String>(())
+            }) {
+                failures.push(format!("{}: {error}", project.display()));
+            }
+        }
+        if !failures.is_empty() {
+            self.notify_workspace_error("Terminal theme", failures.join("\n"), cx);
+        }
+    }
+
     fn clear_terminal_process(&mut self) {
         if let Some(project) = self.workspace.terminal.project.take() {
             self.workspace.terminal.project_terminals.remove(&project);

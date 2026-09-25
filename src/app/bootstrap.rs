@@ -88,6 +88,7 @@ impl FarcasterApp {
             editor_choice: Default::default(),
             theme_css: None,
             active_theme: None,
+            theme_error: None,
         };
         Self::from_bootstrap_state(
             project,
@@ -263,10 +264,14 @@ impl FarcasterApp {
                 harness_profile_data_directory: inputs.harness_profile_data_directory,
                 harness_profile_backend: crate::agents::Backend::Claude,
                 harness_profile_error: None,
-                themes: workspace::theme_settings::ThemeSettings::load(
-                    persisted.theme_css.as_deref(),
-                    persisted.active_theme.as_deref(),
-                ),
+                themes: if let Some(error) = persisted.theme_error {
+                    workspace::theme_settings::ThemeSettings::load_failed(error)
+                } else {
+                    workspace::theme_settings::ThemeSettings::load(
+                        persisted.theme_css.as_deref(),
+                        persisted.active_theme.as_deref(),
+                    )
+                },
                 network_proxy_input: inputs.network_proxy,
                 network_proxy_error: None,
                 proxy_save: None,

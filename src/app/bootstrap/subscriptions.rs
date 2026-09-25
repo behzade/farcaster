@@ -14,6 +14,7 @@ pub(super) fn create(
     cx: &mut Context<FarcasterApp>,
 ) -> BootstrapSubscriptions {
     cx.on_app_quit(|this, cx| {
+        this.flush_theme_save();
         this.capture_composer_session(cx);
         let target = this.composer.sessions.current_target().to_owned();
         // Materialize the open draft only after quit is confirmed.
