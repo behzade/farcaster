@@ -19,6 +19,7 @@ use super::{
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(super) struct AcpRuntimeKey {
     program: OsString,
+    arguments: Vec<OsString>,
     environment_digest: [u8; 32],
 }
 
@@ -46,6 +47,7 @@ impl AcpRuntimeKey {
         }
         Self {
             program: command.get_program().to_owned(),
+            arguments: command.get_args().map(OsString::from).collect(),
             environment_digest: digest.finalize().into(),
         }
     }

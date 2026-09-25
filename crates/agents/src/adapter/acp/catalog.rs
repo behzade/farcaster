@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    ffi::OsString,
     path::Path,
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock, mpsc},
@@ -26,51 +25,61 @@ use super::super::{child_stderr, main_session};
 
 pub fn list_sessions(profile: &AcpProfile) -> Result<Vec<Value>, String> {
     let project = std::env::current_dir().map_err(|error| error.to_string())?;
-    with_connection_kind(profile, &project, "listing", |connection, _, _, _| {
-        let mut sessions = Vec::new();
-        let mut cursor = None;
-        let mut seen = std::collections::HashSet::new();
-        loop {
-            let params = cursor
-                .as_ref()
-                .map_or_else(|| json!({}), |cursor: &String| json!({"cursor":cursor}));
-            let response = connection.request_blocking("session/list", params)?;
-            sessions.extend(
-                response
-                    .get("sessions")
-                    .and_then(Value::as_array)
-                    .ok_or("ACP session/list omitted sessions")?
-                    .iter()
-                    .cloned(),
-            );
-            cursor = response
-                .get("nextCursor")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let Some(next) = &cursor else {
-                return Ok(sessions);
-            };
-            if !seen.insert(next.clone()) || seen.len() > 100 {
-                return Err("ACP session/list returned invalid pagination".into());
+    let config = default_catalog_config(profile);
+    with_connection_kind(
+        profile,
+        &config,
+        &project,
+        "listing",
+        |connection, _, _, _| {
+            let mut sessions = Vec::new();
+            let mut cursor = None;
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                let params = cursor
+                    .as_ref()
+                    .map_or_else(|| json!({}), |cursor: &String| json!({"cursor":cursor}));
+                let response = connection.request_blocking("session/list", params)?;
+                sessions.extend(
+                    response
+                        .get("sessions")
+                        .and_then(Value::as_array)
+                        .ok_or("ACP session/list omitted sessions")?
+                        .iter()
+                        .cloned(),
+                );
+                cursor = response
+                    .get("nextCursor")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let Some(next) = &cursor else {
+                    return Ok(sessions);
+                };
+                if !seen.insert(next.clone()) || seen.len() > 100 {
+                    return Err("ACP session/list returned invalid pagination".into());
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 pub fn load_configuration(
     profile: &AcpProfile,
+    config: &AgentLaunchConfig,
     project: &Path,
 ) -> Result<(main_session::MainSessionMetadata, String), String> {
-    load_configuration_with_cleanup(profile, project, |_| {})
+    load_configuration_with_cleanup(profile, config, project, |_| {})
 }
 
 pub fn load_configuration_with_cleanup(
     profile: &AcpProfile,
+    config: &AgentLaunchConfig,
     project: &Path,
     cleanup: impl FnOnce(&str) + Send + 'static,
 ) -> Result<(main_session::MainSessionMetadata, String), String> {
     with_connection(
         profile,
+        config,
         project,
         move |connection, profile, project, catalog_key| {
             let response = connection.request_blocking(
@@ -104,6 +113,7 @@ pub fn load_configuration_with_cleanup(
 
 pub fn load_history(
     profile: &AcpProfile,
+    config: &AgentLaunchConfig,
     path: &Path,
     project: &Path,
 ) -> Result<DiscoveredHistory, String> {
@@ -119,6 +129,7 @@ pub fn load_history(
     // configuration load, which spends seconds in session/new and model listing.
     with_connection_kind(
         profile,
+        config,
         project,
         "history",
         move |connection, profile, project, _| {
@@ -182,14 +193,12 @@ impl Drop for CatalogProcess {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CatalogLaunch {
     runtime: super::configuration::AcpRuntimeKey,
-    arguments: Vec<OsString>,
 }
 
 impl CatalogLaunch {
     fn from_command(command: &Command) -> Self {
         Self {
             runtime: super::configuration::AcpRuntimeKey::from_command(command),
-            arguments: command.get_args().map(OsString::from).collect(),
         }
     }
 }
@@ -208,6 +217,7 @@ fn catalog_processes() -> &'static Mutex<HashMap<CatalogKey, CatalogSlot>> {
 
 fn with_connection<T: Send + 'static>(
     profile: &AcpProfile,
+    config: &AgentLaunchConfig,
     project: &Path,
     operation: impl FnOnce(
         &mut AcpConnection,
@@ -218,13 +228,14 @@ fn with_connection<T: Send + 'static>(
     + Send
     + 'static,
 ) -> Result<T, String> {
-    with_connection_kind(profile, project, "session", operation)
+    with_connection_kind(profile, config, project, "session", operation)
 }
 
 // Listing has its own connection so catalog-only sessions created for model
 // discovery cannot appear as live sessions in the server's listing response.
 fn with_connection_kind<T: Send + 'static>(
     profile: &AcpProfile,
+    config: &AgentLaunchConfig,
     project: &Path,
     kind: &'static str,
     operation: impl FnOnce(
@@ -241,7 +252,7 @@ fn with_connection_kind<T: Send + 'static>(
     // across projects when both projects resolve to the same launch context.
     // Comparing the captured environment keeps project-specific PATH, account,
     // and proxy configuration behind the backend process boundary.
-    let (command, launch) = catalog_command(profile, project)?;
+    let (command, launch) = catalog_command(profile, config, project)?;
     // Only map access holds the global lock. Each backend/connection kind owns
     // its exchange lock, so a stalled agent cannot block another backend.
     let slot = {
@@ -317,17 +328,21 @@ fn with_connection_kind<T: Send + 'static>(
 
 fn catalog_command(
     profile: &AcpProfile,
+    config: &AgentLaunchConfig,
     project: &Path,
 ) -> Result<(Command, CatalogLaunch), String> {
-    let config = AgentLaunchConfig {
-        program: profile.program(),
-        access_mode: HarnessAccessMode::Sandboxed,
-        ..AgentLaunchConfig::default()
-    };
     let mut command = config.command(project)?;
     configure_command(&mut command, profile, config.access_mode)?;
     let launch = CatalogLaunch::from_command(&command);
     Ok((command, launch))
+}
+
+fn default_catalog_config(profile: &AcpProfile) -> AgentLaunchConfig {
+    AgentLaunchConfig {
+        program: profile.program(),
+        access_mode: HarnessAccessMode::Sandboxed,
+        ..AgentLaunchConfig::default()
+    }
 }
 
 fn spawn_catalog_child(

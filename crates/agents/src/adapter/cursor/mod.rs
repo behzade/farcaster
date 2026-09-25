@@ -111,13 +111,15 @@ pub(super) fn spawn_main(
 pub(super) use catalog::{delete as delete_session, rename as rename_session};
 
 pub(super) fn load_configuration(
+    config: &crate::AgentLaunchConfig,
     project: &Path,
 ) -> Result<super::main_session::MainSessionMetadata, String> {
-    let (metadata, _) = super::acp::load_configuration_with_cleanup(&PROFILE, project, |id| {
-        if let Err(error) = catalog::delete(id) {
-            zlog::warn!("Could not remove temporary Cursor catalog session: {error}");
-        }
-    })?;
+    let (metadata, _) =
+        super::acp::load_configuration_with_cleanup(&PROFILE, config, project, |id| {
+            if let Err(error) = catalog::delete(id) {
+                zlog::warn!("Could not remove temporary Cursor catalog session: {error}");
+            }
+        })?;
     Ok(metadata)
 }
 
@@ -128,7 +130,10 @@ pub(super) fn discover(
     catalog::discover(locator_root, query)
 }
 
-pub(super) fn load_history(path: &Path) -> Result<crate::DiscoveredHistory, String> {
+pub(super) fn load_history(
+    config: &crate::AgentLaunchConfig,
+    path: &Path,
+) -> Result<crate::DiscoveredHistory, String> {
     let started = Instant::now();
     let id = super::main_session::external_session_locator(PROFILE.backend, path)
         .ok_or_else(|| format!("invalid Cursor session locator: {}", path.display()))?;
@@ -141,7 +146,7 @@ pub(super) fn load_history(path: &Path) -> Result<crate::DiscoveredHistory, Stri
             prompt_deliveries: None,
         });
     }
-    let history = super::acp::load_history(&PROFILE, path, &stored_project);
+    let history = super::acp::load_history(&PROFILE, config, path, &stored_project);
     zlog::info!(
         "PERF operation=history.cursor.load elapsed_ms={:.2}",
         started.elapsed().as_secs_f64() * 1_000.0

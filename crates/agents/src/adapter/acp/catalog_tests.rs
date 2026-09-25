@@ -6,6 +6,118 @@ use crate::adapter::acp::events::AcpInbound;
 
 #[cfg(unix)]
 #[test]
+fn catalog_command_uses_profile_executable_args_and_environment() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("profile-agent");
+    std::fs::write(&executable, "#!/bin/sh\nexit 0\n").map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    let helper = project.path().join("localharness_external");
+    std::fs::write(&helper, "fixture").map_err(|error| error.to_string())?;
+
+    for profile in [
+        super::super::super::cursor::PROFILE,
+        super::super::super::antigravity::PROFILE,
+    ] {
+        let id = "00000000-0000-0000-0000-000000000136".to_owned();
+        let profiles = std::sync::Arc::new(crate::HarnessProfiles::default());
+        profiles.replace(vec![crate::HarnessProfile {
+            id: id.clone(),
+            name: "fixture".into(),
+            backend: profile.backend,
+            executable: executable.clone(),
+            data_directory: None,
+        }])?;
+        let config = AgentLaunchConfig {
+            program: "missing-default-agent".into(),
+            prefix_args: vec!["profile-arg".into()],
+            prompt_boundary_url: Some("http://profile.test".into()),
+            profiles,
+            profile_id: Some(id),
+            ..AgentLaunchConfig::default()
+        };
+        let (command, _) = catalog_command(&profile, &config, project.path())?;
+        assert_eq!(command.get_program(), executable.as_os_str());
+        assert_eq!(command.get_args().next(), Some("profile-arg".as_ref()));
+        assert!(command.get_envs().any(|(key, value)| {
+            key == "FARCASTER_PROMPT_BOUNDARY_URL" && value == Some("http://profile.test".as_ref())
+        }));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn antigravity_profile_history_uses_the_supplied_launch_command() -> Result<(), String> {
+    use crate::adapter::backend::BackendAdapter;
+    use std::os::unix::fs::PermissionsExt;
+
+    const SCRIPT: &str = r#"#!/bin/sh
+printf '%s|%s\n' "$1" "$FARCASTER_PROMPT_BOUNDARY_URL" > "$0.launch"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([^,}]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}' ;;
+    *'"method":"session/load"'*) result='{"configOptions":[]}' ;;
+    *'"method":"session/close"'*) result='{}' ;;
+    *) exit 2 ;;
+  esac
+  printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let executable = project.path().join("history-agent");
+    std::fs::write(&executable, SCRIPT).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(project.path().join("localharness_external"), "fixture")
+        .map_err(|error| error.to_string())?;
+    let profile = super::super::super::antigravity::PROFILE;
+    let profile_id = "00000000-0000-0000-0000-000000000135";
+    let profiles = std::sync::Arc::new(crate::HarnessProfiles::default());
+    profiles.replace(vec![crate::HarnessProfile {
+        id: profile_id.into(),
+        name: "history fixture".into(),
+        backend: profile.backend,
+        executable: executable.clone(),
+        data_directory: None,
+    }])?;
+    let config = AgentLaunchConfig {
+        prefix_args: vec!["history-arg".into()],
+        prompt_boundary_url: Some("http://history.test".into()),
+        profiles,
+        profile_id: Some(profile_id.into()),
+        ..AgentLaunchConfig::default()
+    };
+    let locator = project
+        .path()
+        .join(profile.backend.as_str())
+        .join("saved-session");
+    let history = super::super::super::antigravity::AntigravityAdapter.load_history_for_profile(
+        &config,
+        &locator,
+        project.path(),
+    )?;
+    assert!(history.messages.is_empty());
+    assert_eq!(
+        std::fs::read_to_string(executable.with_extension("launch"))
+            .map_err(|error| error.to_string())?,
+        "history-arg|http://history.test\n"
+    );
+    let requests = std::fs::read_to_string(executable.with_extension("requests"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        requests.contains("\"method\":\"session/load\""),
+        "{requests}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn failed_cursor_catalog_read_closes_and_cleans_up_its_empty_session() -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -32,7 +144,8 @@ done
     profile.command = Box::leak(executable.to_string_lossy().into_owned().into_boxed_str());
     profile.path_environment = "FARCASTER_UNUSED_CATALOG_TEST_PATH";
     let (sender, receiver) = mpsc::channel();
-    let result = load_configuration_with_cleanup(&profile, project.path(), move |id| {
+    let config = default_catalog_config(&profile);
+    let result = load_configuration_with_cleanup(&profile, &config, project.path(), move |id| {
         let _ = sender.send(id.to_owned());
     });
     assert!(result.is_err());
@@ -236,6 +349,10 @@ fn catalog_reuse_follows_launch_context_not_request_cwd() {
         &catalog_launch(Path::new("/other"), "work"),
         true
     ));
+    let mut other_args = Command::new("/agent");
+    other_args.arg("different").env("AGENT_ACCOUNT", "personal");
+    let other_args = CatalogLaunch::from_command(&other_args);
+    assert_ne!(existing.runtime, other_args.runtime);
 }
 
 #[test]
