@@ -162,6 +162,55 @@ impl Supervisor {
         })
     }
 
+    fn restore_selected_session_after_failed_move(&mut self, root: &Path) {
+        let Some(selected_path) = self.selected_session.as_ref() else {
+            return;
+        };
+        if self.selected != self.catalog_key
+            || self.failed_actor_shutdowns.contains_key(selected_path)
+            || !selected_path.is_file()
+        {
+            return;
+        }
+        let Some(session) = session_family_for_path(&self.catalog_sessions, root)
+            .filter(|family| family[0].path == root)
+            .and_then(|family| {
+                family
+                    .into_iter()
+                    .find(|session| session.path == *selected_path)
+            })
+        else {
+            return;
+        };
+        let session = session.clone();
+        let key = format!("session:{}", session.path.display());
+        let actor = SessionRuntimeHandle::spawn(
+            session.project.clone(),
+            self.process_command.clone(),
+            false,
+            Some(session.harness),
+            self.supervisor_thread.clone(),
+            self.host.clone(),
+        );
+        send_configured_command(
+            &actor,
+            RuntimeCommand::SelectSession {
+                path: session.path.clone(),
+                harness: session.harness,
+                session_id: session.id,
+                project: session.project.clone(),
+            },
+            &self.configurations,
+            saved_access_mode(self.catalog_state.as_ref(), &session.path),
+            agents::profile_id_from_locator(&session.path).as_deref(),
+        );
+        self.generation = self.generation.saturating_add(1);
+        self.selected = key.clone();
+        self.selected_project = session.project;
+        self.actor_paths.insert(session.path, key.clone());
+        self.actors.insert(key, actor);
+    }
+
     pub(super) fn handle_session_family_command(&mut self, command: &RuntimeCommand) -> bool {
         if let RuntimeCommand::StopSessionFamily { path } = command {
             if let Err(message) = self.stop_session_family_work(path, true) {
@@ -209,9 +258,14 @@ impl Supervisor {
                         .collect::<Vec<_>>();
                     agents::validate_session_move(&owned)
                 })
-                .and_then(|()| self.stop_session_family_work(path, false))
-                .and_then(|()| self.discard_family_queue(path));
+                .and_then(|()| self.stop_session_family_work(path, false));
             if let Err(message) = result {
+                let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                    generation: self.catalog_generation,
+                    message,
+                });
+            } else if let Err(message) = self.discard_family_queue(path) {
+                self.restore_selected_session_after_failed_move(path);
                 let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                     generation: self.catalog_generation,
                     message,
@@ -442,6 +496,7 @@ impl Supervisor {
                     }
                 }
                 Err(message) => {
+                    self.restore_selected_session_after_failed_move(path);
                     let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
                         generation: self.catalog_generation,
                         message,
