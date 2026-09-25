@@ -1161,6 +1161,7 @@ fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestR
 
 #[test]
 fn process_starts_directly_in_the_project_directory() -> TestResult {
+    let _mcp = crate::builtin_mcp::exclusive_for_test();
     let (temp, command) = fake("project-directory")?;
     let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
     let process_project = fs::read_to_string(temp.path().join("process-project"))?;

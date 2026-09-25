@@ -39,6 +39,7 @@ pub(super) fn render_body(
             div()
                 .w_full()
                 .min_h(gpui::relative(1.0))
+                .flex_none()
                 .py(THEME.space.md)
                 .flex()
                 .flex_col()

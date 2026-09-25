@@ -17,6 +17,8 @@ pub fn set_enabled(enabled: bool) {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+/// Hold across operations and assertions that require a stable MCP setting.
+/// Do not acquire this lock while holding another MCP test guard.
 pub fn exclusive_for_test() -> MutexGuard<'static, ()> {
     EXCLUSIVE
         .lock()
@@ -55,3 +57,7 @@ impl Drop for McpDisabledForTest {
         set_enabled(self.previous);
     }
 }
+
+#[cfg(test)]
+#[path = "builtin_mcp_tests.rs"]
+mod tests;
