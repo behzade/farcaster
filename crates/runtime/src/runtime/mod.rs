@@ -11,6 +11,7 @@ mod process;
 mod projection;
 mod prompt_receipts;
 mod prompts;
+pub mod remembered;
 mod session_controls;
 mod session_identity;
 mod session_loop;

@@ -8,6 +8,7 @@ use farcaster_storage::SharedStateStore;
 pub enum RuntimeMetric {
     SelectDocument,
     LoadHistory,
+    ProjectHistory,
     RuntimeRoute,
 }
 
