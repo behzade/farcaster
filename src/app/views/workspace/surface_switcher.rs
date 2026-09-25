@@ -11,7 +11,6 @@ use gpui::{
     prelude::FluentBuilder as _,
 };
 
-
 impl FarcasterApp {
     pub(in crate::app::views) fn render_workspace_bar(
         &self,

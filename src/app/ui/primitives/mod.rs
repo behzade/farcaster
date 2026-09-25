@@ -34,5 +34,5 @@ pub(crate) use panel::{Panel, PanelBounds, PanelState};
 pub(crate) use picker::{PickerDelegate, PickerRow};
 pub(crate) use reorder::{ReorderPosition, ReorderTargetExt};
 pub(crate) use search::SearchField;
-pub(crate) use tooltip::AppTooltip;
 pub(crate) use textarea::{create_submit_textarea, submit_textarea};
+pub(crate) use tooltip::AppTooltip;
