@@ -295,7 +295,11 @@ impl FarcasterApp {
 
     fn session_rail_rows(&self, active: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
         if self.sessions.group_by_project {
-            project_groups::project_rows(active, &self.sessions.collapsed_projects)
+            project_groups::grouped_rows(
+                active,
+                &self.sessions.folders,
+                &self.sessions.collapsed_projects,
+            )
         } else {
             folders::folder_rows(active, &self.sessions.folders)
         }

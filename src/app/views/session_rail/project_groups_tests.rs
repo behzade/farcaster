@@ -1,11 +1,14 @@
 use std::{collections::BTreeSet, path::Path, path::PathBuf};
 
-use super::{project_color, project_rows};
+use super::{grouped_rows, project_color, project_rows};
 use crate::{
     agents::Backend,
-    app::views::session_rail::{
-        folders::FolderRow,
-        groups::{ActiveSessionItem, SessionRailItem, SessionRailKind},
+    app::{
+        session_folders::{SessionFolder, SessionFolders},
+        views::session_rail::{
+            folders::FolderRow,
+            groups::{ActiveSessionItem, SessionRailItem, SessionRailKind},
+        },
     },
     sessions::{DraftSession, SessionSummary, UsageSummary},
 };
@@ -82,6 +85,27 @@ fn project_rows_keep_drafts_above_every_project() {
     );
 
     assert_eq!(row_ids(&rows), ["9", "/alpha", "1"]);
+}
+
+#[test]
+fn filed_chats_keep_their_folder_while_grouping() {
+    let alpha = PathBuf::from("/alpha");
+    let folders = SessionFolders {
+        folders: vec![SessionFolder {
+            id: 1,
+            name: "Work".into(),
+        }],
+        ..Default::default()
+    };
+    let mut folders = folders;
+    folders.assign(3, Some(1));
+    let rows = grouped_rows(
+        vec![rail_session("a1", 3, &alpha), rail_session("a2", 4, &alpha)],
+        &folders,
+        &BTreeSet::new(),
+    );
+
+    assert_eq!(row_ids(&rows), ["1:Work", "3", "/alpha", "4"]);
 }
 
 #[test]
