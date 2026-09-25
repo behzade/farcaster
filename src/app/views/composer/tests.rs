@@ -59,7 +59,7 @@ fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestApp
             .expect("actions rendered");
         assert!(row.right() <= px(360.0));
         assert!(body.size.height > px(0.0));
-        assert!(body.size.height <= crate::app::ui::theme::THEME.layout.tool_max_height);
+        assert!(body.size.height <= crate::app::ui::theme::theme().layout.tool_max_height);
         assert!(body.right() <= row.right());
         assert!(warning.top() >= px(0.0));
         assert!(warning.bottom() <= body.top());

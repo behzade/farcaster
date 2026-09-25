@@ -40,7 +40,7 @@
   --icon-prominent: 20px;
   --control-icon-button: 28px;
   --control-utility-row: 44px;
-  --control-archived-preview-row: 32px;
+  --control-archived-preview-row: 49px;
   --control-menu-row: 30px;
   --radius: 0px;
   --border-width: 1px;
@@ -62,7 +62,7 @@
   --layout-dialog-width: 560px;
   --layout-dialog-max-height: 680px;
   --layout-tool-max-height: 220px;
-  --layout-session-row-height: 32px;
+  --layout-session-row-height: 49px;
   --layout-status-row-height: 24px;
   --layout-notice-panel: 160px;
   --layout-notice-panel-min: 76px;

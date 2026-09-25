@@ -317,7 +317,7 @@ const STRUCTURE: Structure = Structure {
     controls: ControlScale {
         icon_button: px(28.0),
         utility_row: px(44.0),
-        archived_preview_row: px(32.0),
+        archived_preview_row: px(49.0),
         menu_row: px(30.0),
     },
     metrics: MetricScale {
@@ -345,7 +345,7 @@ const STRUCTURE: Structure = Structure {
         dialog_width: px(560.0),
         dialog_max_height: px(680.0),
         tool_max_height: px(220.0),
-        session_row_height: px(32.0),
+        session_row_height: px(49.0),
         status_row_height: px(24.0),
         notice_panel: px(160.0),
         notice_panel_min: px(76.0),
