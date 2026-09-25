@@ -4,6 +4,88 @@ use super::{
 };
 use crate::{conversation::QueueState, protocol::ExtensionUiRequest};
 
+#[gpui::test]
+fn saved_prompt_body_keeps_actions_in_view_for_large_text(cx: &mut gpui::TestAppContext) {
+    use gpui::{
+        InteractiveElement as _, ParentElement as _, ScrollDelta, ScrollWheelEvent, Styled as _,
+        div, point, px, size,
+    };
+
+    cx.update(gpui_component::init);
+    let cx = cx.add_empty_window();
+    let draw = |cx: &mut gpui::VisualTestContext, id: i64, text: &str| {
+        cx.draw(
+            point(px(0.0), px(0.0)),
+            size(px(360.0), px(500.0)),
+            |_, _| {
+                div()
+                    .w(px(360.0))
+                    .debug_selector(|| "saved-prompt-row".into())
+                    .child(
+                        div()
+                            .debug_selector(|| "saved-prompt-warning".into())
+                            .child("Delivery unconfirmed"),
+                    )
+                    .child(
+                        super::queue::saved_prompt_body(id, text)
+                            .debug_selector(|| "saved-prompt-body".into())
+                            .child(
+                                div()
+                                    .debug_selector(|| "saved-prompt-tail".into())
+                                    .child("end of saved text"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "saved-prompt-actions".into())
+                            .child("Send again   Remove"),
+                    )
+            },
+        );
+    };
+    for (index, text) in ["line\n".repeat(500), "x".repeat(2_000)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = 143 + index as i64;
+        draw(cx, id, &text);
+        let row = cx.debug_bounds("saved-prompt-row").expect("row rendered");
+        let warning = cx
+            .debug_bounds("saved-prompt-warning")
+            .expect("warning rendered");
+        let body = cx.debug_bounds("saved-prompt-body").expect("body rendered");
+        let actions = cx
+            .debug_bounds("saved-prompt-actions")
+            .expect("actions rendered");
+        assert!(row.right() <= px(360.0));
+        assert!(body.size.height > px(0.0));
+        assert!(body.size.height <= crate::app::ui::theme::THEME.layout.tool_max_height);
+        assert!(body.right() <= row.right());
+        assert!(warning.top() >= px(0.0));
+        assert!(warning.bottom() <= body.top());
+        assert!(actions.top() >= body.bottom());
+        assert!(actions.bottom() <= px(500.0));
+
+        if index == 0 {
+            assert!(
+                cx.debug_bounds("saved-prompt-tail")
+                    .is_none_or(|tail| tail.top() > body.bottom())
+            );
+            cx.simulate_event(ScrollWheelEvent {
+                position: body.center(),
+                delta: ScrollDelta::Pixels(point(px(0.0), px(-100_000.0))),
+                ..Default::default()
+            });
+            draw(cx, id, &text);
+            let tail = cx
+                .debug_bounds("saved-prompt-tail")
+                .expect("saved text tail rendered after scrolling");
+            assert!(tail.top() >= body.top() - px(1.0));
+            assert!(tail.bottom() <= body.bottom() + px(1.0));
+        }
+    }
+}
+
 #[test]
 fn primary_action_only_appears_for_submit_ready_content() {
     assert_eq!(composer_primary_action(false, true, false, false), None);

@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, IntoElement as _, ParentElement as _, Styled as _, div,
+    AnyElement, InteractiveElement as _, IntoElement as _, ParentElement as _, Styled as _, div,
     prelude::FluentBuilder as _, px,
 };
 
@@ -103,6 +103,17 @@ pub(super) fn queued_message_preview(message: &str) -> String {
         Some((first, _)) => format!("{}…", first.trim_end()),
         None => message.to_owned(),
     }
+}
+
+pub(super) fn saved_prompt_body(id: i64, text: &str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(format!("saved-prompt-body-{id}"))
+        .w_full()
+        .min_w_0()
+        .max_h(THEME.layout.tool_max_height)
+        .overflow_scroll()
+        .text_color(THEME.colors.text)
+        .child(text.to_owned())
 }
 
 fn queued_message_group(
@@ -238,11 +249,7 @@ pub(super) fn render(
                             "Delivery unconfirmed. Sending again may duplicate this message.",
                         ),
                     )
-                    .child(
-                        div()
-                            .text_color(THEME.colors.text)
-                            .child(saved.text.clone()),
-                    )
+                    .child(saved_prompt_body(saved.id, &saved.text))
                     .when(saved.image_count > 0, |row| {
                         row.child(format!("{} image(s) attached", saved.image_count))
                     })
