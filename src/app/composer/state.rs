@@ -10,17 +10,9 @@ impl FarcasterApp {
         self.navigation.chat.activation.clear();
         let current = input_snapshot(self.composer.input.read(cx));
         let current_target = self.composer.sessions.current_target().to_owned();
-        let discard = self.sync_current_draft(&current, &current_target);
-        let snapshot = if discard {
-            self.workspace.session_surfaces.remove(&current_target);
-            self.workspace.editor.session_tabs.remove(&current_target);
-            self.composer
-                .sessions
-                .discard_and_switch(&current_target, target)
-        } else {
-            self.capture_center_surface();
-            self.composer.sessions.switch_to(target, current)
-        };
+        self.sync_current_draft(&current_target);
+        self.capture_center_surface();
+        let snapshot = self.composer.sessions.switch_to(target, current);
         self.apply_composer_snapshot(snapshot, window, cx);
     }
 
