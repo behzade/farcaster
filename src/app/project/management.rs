@@ -72,6 +72,7 @@ impl FarcasterApp {
         if projects::add_unique(&mut self.project.registered, project.clone()) || restored {
             self.save_project_registry();
         }
+        self.warm_repository_observations(cx);
         self.notify_session_rail(cx);
         cx.notify();
         Some(project)
@@ -108,6 +109,7 @@ impl FarcasterApp {
         }
         self.project.path = project.clone();
         self.select_repository_project(project.clone(), cx);
+        self.warm_repository_observations(cx);
         if projects::select(
             &mut self.project.registered,
             &self.project.excluded,
