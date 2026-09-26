@@ -14,7 +14,7 @@ use super::{
     FarcasterApp, active_item_identity,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_drop_target, folder_header, folder_rows},
-    groups::{ActiveSessionItem, session_rail_lists},
+    groups::{ActiveSessionItem, session_rail_lists_for_roots},
     reconcile_list_rows,
     rendering::{active_session_drop_target, inactive_rail_style, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
@@ -28,7 +28,6 @@ use crate::{
     },
     app::ui::theme::theme,
     app::{PickerScope, ProjectPickerIntent},
-    sessions::root_session_for_path,
 };
 
 impl FarcasterApp {
@@ -46,15 +45,15 @@ impl FarcasterApp {
         let active_drop_entity = entity.clone();
         let search_focus = self.navigation.search_focus.clone();
         let selected_root = self.selected_rail_root().map(|session| session.id.clone());
-        let live_root = root_session_for_path(
-            &self.sessions.visible,
-            self.snapshot.live_session.as_deref(),
-        )
-        .map(|session| session.id.clone());
+        let live_root = self
+            .sessions
+            .visible
+            .root_for_path(self.snapshot.live_session.as_deref())
+            .map(|session| session.id.clone());
         let waiting_roots =
             roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents);
-        let lists = session_rail_lists(
-            &self.sessions.visible,
+        let lists = session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,

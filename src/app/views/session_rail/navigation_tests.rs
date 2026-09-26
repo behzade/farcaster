@@ -112,6 +112,7 @@ fn first_archive_expansion_highlights_the_requested_row_before_runtime_confirmat
             session
         })
         .collect::<Vec<_>>();
+    let sessions = SessionCatalog::from(sessions);
     let archive = session_rail_lists(&sessions, &[], None, &[]).archived;
     let previous = &archive[INACTIVE_PREVIEW_LIMIT - 1].session;
     let requested = &archive[INACTIVE_PREVIEW_LIMIT].session;

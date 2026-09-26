@@ -29,7 +29,6 @@ use crate::{
     agent_activity::AgentActivity,
     app::ui::primitives::{ButtonTone, activates_button, button, panel, section_heading},
     app::ui::theme::theme,
-    sessions::{descendant_sessions_for_root, root_session_for_path},
 };
 
 pub(crate) struct RepositoryView<'a> {
@@ -44,7 +43,7 @@ pub(in crate::app) type WorkerProfileNames =
     std::collections::HashMap<(std::path::PathBuf, crate::agents::Backend, String), String>;
 
 fn run_panel_agent_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<(
@@ -53,10 +52,11 @@ fn run_panel_agent_rows<'a>(
     &'a crate::sessions::SessionSummary,
     AgentSection,
 )> {
-    let Some(root) = root_session_for_path(sessions, selected) else {
+    let Some(root) = sessions.root_for_path(selected) else {
         return Vec::new();
     };
-    descendant_sessions_for_root(sessions, root)
+    sessions
+        .descendants(root)
         .into_iter()
         .filter_map(|(session, depth)| {
             let activity_key = crate::agent_activity::agent_activity_key(&session.path);
@@ -71,7 +71,7 @@ fn run_panel_agent_rows<'a>(
 }
 
 fn ordered_worker_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<(
@@ -88,11 +88,11 @@ fn ordered_worker_rows<'a>(
 }
 
 pub(in crate::app) fn worker_navigation_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<&'a crate::sessions::SessionSummary> {
-    let Some(root) = root_session_for_path(sessions, selected) else {
+    let Some(root) = sessions.root_for_path(selected) else {
         return Vec::new();
     };
     std::iter::once(root)
@@ -106,7 +106,7 @@ pub(in crate::app) fn worker_navigation_rows<'a>(
 
 #[cfg(test)]
 pub(crate) fn live_run_panel_agent_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<(
@@ -211,7 +211,7 @@ impl FarcasterApp {
             .as_ref()
             .map(|(path, _)| path.as_path())
             .or(self.snapshot.selected_session.as_deref());
-        let root = root_session_for_path(&self.sessions.all, selected);
+        let root = self.sessions.all.root_for_path(selected);
         let workers = ordered_worker_rows(&self.sessions.all, &self.activity.agents, selected);
         let selected_is_older = workers
             .iter()

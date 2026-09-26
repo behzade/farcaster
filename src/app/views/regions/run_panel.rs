@@ -156,9 +156,12 @@ impl Render for RunPanelView {
             .as_ref()
             .map(|(path, _)| path.clone())
             .or_else(|| app.read(cx).snapshot.selected_session.clone());
-        let root =
-            crate::sessions::root_session_for_path(&app.read(cx).sessions.all, selected.as_deref())
-                .map(|session| session.path.clone());
+        let root = app
+            .read(cx)
+            .sessions
+            .all
+            .root_for_path(selected.as_deref())
+            .map(|session| session.path.clone());
         if self.older_workers_root.as_ref() != root.as_ref() {
             self.older_workers_root = None;
         }

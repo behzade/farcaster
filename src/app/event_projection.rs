@@ -360,8 +360,8 @@ impl FarcasterApp {
             );
         }
         self.sessions.error = None;
-        self.sessions.visible = sessions;
-        self.sessions.all = all_sessions;
+        self.sessions.visible = sessions.into();
+        self.sessions.all = all_sessions.into();
         if let Some((activities, _exhaustive)) = activities {
             dirty.rail = true;
             for activity in activities.into_values() {
@@ -747,9 +747,10 @@ impl FarcasterApp {
                     update_session_row(&mut self.sessions.visible, session);
                 } else {
                     self.sessions.visible = crate::sessions::filter_session_tree(
-                        self.sessions.all.clone(),
+                        self.sessions.all.to_vec(),
                         query.trim(),
-                    );
+                    )
+                    .into();
                 }
                 dirty.rail = true;
                 dirty.run = true;

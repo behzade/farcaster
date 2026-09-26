@@ -10,15 +10,15 @@ use crate::{
         AppSurface,
         views::run_panel::{RECENT_WORKERS, worker_navigation_rows},
     },
-    sessions::{SessionSummary, root_session_for_path},
+    sessions::{SessionCatalog, SessionSummary},
 };
 
 fn selected_root<'a>(
-    sessions: &'a [SessionSummary],
+    sessions: &'a SessionCatalog,
     confirmed: Option<&Path>,
     requested: Option<&Path>,
 ) -> Option<&'a SessionSummary> {
-    root_session_for_path(sessions, requested.or(confirmed))
+    sessions.root_for_path(requested.or(confirmed))
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -1,7 +1,5 @@
 use super::super::FarcasterApp;
-use crate::sessions::{
-    SessionSummary, UsageSummary, descendant_sessions_for_root, root_session_for_path,
-};
+use crate::sessions::{SessionSummary, UsageSummary};
 
 #[derive(Default)]
 pub(super) struct ComposerUsage {
@@ -14,9 +12,12 @@ pub(super) struct ComposerUsage {
 }
 
 pub(super) fn composer_usage(app: &FarcasterApp) -> ComposerUsage {
-    let root = root_session_for_path(&app.sessions.all, app.snapshot.selected_session.as_deref());
+    let root = app
+        .sessions
+        .all
+        .root_for_path(app.snapshot.selected_session.as_deref());
     let descendants = root
-        .map(|root| descendant_sessions_for_root(&app.sessions.all, root))
+        .map(|root| app.sessions.all.descendants(root))
         .unwrap_or_default();
     let selected = app.snapshot.selected_session.as_deref();
     let live = selected

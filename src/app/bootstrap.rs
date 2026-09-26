@@ -216,8 +216,8 @@ impl FarcasterApp {
                 pending_trust_action: None,
             },
             sessions: session::SessionState {
-                visible: remembered_catalog.clone(),
-                all: remembered_catalog,
+                visible: remembered_catalog.clone().into(),
+                all: remembered_catalog.into(),
                 order: persisted.session_order,
                 folders: persisted.session_folders,
                 editing_folder: None,

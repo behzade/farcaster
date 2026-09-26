@@ -903,6 +903,7 @@ impl LiveChildFixture {
                     .then_some(sessions))
             },
         )?;
+        let sessions = crate::sessions::SessionCatalog::from(sessions);
         let child = sessions
             .iter()
             .find(|session| {

@@ -8,7 +8,6 @@ actions!(farcaster, [CycleWorkspaceForward, CycleWorkspaceBackward]);
 use crate::{
     protocol::{ExtensionUiRequest, PromptMode},
     runtime::RuntimeCommand,
-    sessions::root_session_for_path,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -251,20 +250,19 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn workspace_project(&self) -> PathBuf {
-        root_session_for_path(
-            &self.sessions.all,
-            self.snapshot.selected_session.as_deref(),
-        )
-        .map(|root| root.project.clone())
-        .or_else(|| {
-            let selected = self.sessions.selected_draft.as_deref()?;
-            self.sessions
-                .drafts
-                .iter()
-                .find(|draft| draft.id == selected)
-                .map(|draft| draft.project.clone())
-        })
-        .unwrap_or_else(|| self.project.path.clone())
+        self.sessions
+            .all
+            .root_for_path(self.snapshot.selected_session.as_deref())
+            .map(|root| root.project.clone())
+            .or_else(|| {
+                let selected = self.sessions.selected_draft.as_deref()?;
+                self.sessions
+                    .drafts
+                    .iter()
+                    .find(|draft| draft.id == selected)
+                    .map(|draft| draft.project.clone())
+            })
+            .unwrap_or_else(|| self.project.path.clone())
     }
 
     pub(in crate::app) fn capture_center_surface(&mut self) {
@@ -720,18 +718,17 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn active_workgraph_session(&self) -> Option<(String, String)> {
-        root_session_for_path(
-            &self.sessions.all,
-            self.snapshot.selected_session.as_deref(),
-        )
-        .map(|root| (root.id.clone(), root.path.display().to_string()))
+        self.sessions
+            .all
+            .root_for_path(self.snapshot.selected_session.as_deref())
+            .map(|root| (root.id.clone(), root.path.display().to_string()))
     }
 
     fn active_root_session_goal(&self) -> Option<Option<crate::agents::SessionGoal>> {
-        let root = root_session_for_path(
-            &self.sessions.all,
-            self.snapshot.selected_session.as_deref(),
-        )?;
+        let root = self
+            .sessions
+            .all
+            .root_for_path(self.snapshot.selected_session.as_deref())?;
         (self.snapshot.selected_session.as_deref() == Some(root.path.as_path()))
             .then(|| self.snapshot.session_goal.clone())
     }

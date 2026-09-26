@@ -27,10 +27,8 @@ use self::{
 };
 use super::super::FarcasterApp;
 use crate::{
-    app::ui::primitives::ReorderPosition,
-    app::ui::theme::theme,
-    sessions::DraftSession,
-    sessions::{SessionSummary, root_session_for_path},
+    app::ui::primitives::ReorderPosition, app::ui::theme::theme, sessions::DraftSession,
+    sessions::SessionSummary,
 };
 
 pub(in crate::app) use groups::SessionRailKind;
@@ -184,7 +182,10 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let sessions = self.numbered_session_targets();
-        let selected_id = root_session_for_path(&self.sessions.visible, Some(&path))
+        let selected_id = self
+            .sessions
+            .visible
+            .root_for_path(Some(&path))
             .map(|session| session.app_session_id);
         let replacement = selected_id
             .and_then(|id| {
@@ -213,11 +214,10 @@ impl FarcasterApp {
             .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
             .map(|draft| draft.app_session_id)
             .or_else(|| {
-                root_session_for_path(
-                    &self.sessions.visible,
-                    self.snapshot.selected_session.as_deref(),
-                )
-                .map(|session| session.app_session_id)
+                self.sessions
+                    .visible
+                    .root_for_path(self.snapshot.selected_session.as_deref())
+                    .map(|session| session.app_session_id)
             });
         let selected = selected_id.and_then(|selected_id| {
             sessions
