@@ -1152,7 +1152,7 @@ fn a_loading_chat_keeps_the_transcript_it_last_showed(cx: &mut gpui::TestAppCont
                 generation: 2,
                 snapshot: Arc::new(RuntimeSnapshot {
                     project: project.to_path_buf(),
-                    selected_session: Some(session),
+                    selected_session: Some(session.clone()),
                     status: "Loading history".into(),
                     ..Default::default()
                 }),
@@ -1164,6 +1164,21 @@ fn a_loading_chat_keeps_the_transcript_it_last_showed(cx: &mut gpui::TestAppCont
                     2,
                     "a loading snapshot must not clear the transcript on screen",
                 );
+            });
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 2,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    project: project.to_path_buf(),
+                    selected_session: Some(session),
+                    status: "Ready".into(),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(app.snapshot.conversation.items.is_empty());
+                assert!(app.views.transcript.read(cx).rows.is_empty());
             });
         },
     );

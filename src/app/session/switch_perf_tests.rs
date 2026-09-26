@@ -60,9 +60,14 @@ fn message_line(index: usize, filler: &str) -> String {
     } else {
         "assistant"
     };
-    format!(
-        "{{\"type\":\"message\",\"message\":{{\"role\":\"{role}\",\"content\":\"{index} {filler}\"}}}}\n"
-    )
+    let message = serde_json::json!({
+        "type": "message",
+        "message": {
+            "role": role,
+            "content": [{"type": "text", "text": format!("{index} {filler}")}],
+        },
+    });
+    format!("{message}\n")
 }
 
 fn append_messages(path: &Path, count: usize) {
@@ -84,10 +89,6 @@ fn projected(path: &Path, project: &Path) -> (Duration, Duration, usize) {
     conversation.replace_history(&history.messages);
     let project_cost = projecting.elapsed();
     (read, project_cost, conversation.items.len())
-}
-
-fn projected_items(path: &Path, project: &Path) -> usize {
-    projected(path, project).2
 }
 
 fn drive(cx: &mut VisualTestContext, app: &Entity<FarcasterApp>, duration: Duration) {
@@ -114,6 +115,7 @@ fn wait_for_items(
             window.draw(cx).clear(cx);
             let snapshot = app.read(cx).snapshot.clone();
             snapshot.selected_session.as_deref() == Some(path)
+                && snapshot.status == "Ready"
                 && snapshot.conversation.items.len() == items
         });
         if applied {
@@ -143,8 +145,8 @@ fn switch_to(
     app: &Entity<FarcasterApp>,
     path: &Path,
     project: &Path,
+    items: usize,
 ) -> Duration {
-    let items = projected_items(path, project);
     let started = Instant::now();
     cx.update(|window, cx| {
         app.update(cx, |app, _| {
@@ -236,13 +238,13 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
                 SWITCH_MESSAGES
             );
 
-            let first = switch_to(cx, app, &large, project);
+            let first = switch_to(cx, app, &large, project, SWITCH_MESSAGES);
             eprintln!("SWITCH_MEASURE first_visit_wall_ms={:.2}", millis(first));
 
-            let away = switch_to(cx, app, &small, project);
+            let away = switch_to(cx, app, &small, project, 4);
             eprintln!("SWITCH_MEASURE small_visit_wall_ms={:.2}", millis(away));
 
-            let resident = switch_to(cx, app, &large, project);
+            let resident = switch_to(cx, app, &large, project, SWITCH_MESSAGES);
             eprintln!(
                 "SWITCH_MEASURE resident_visit_wall_ms={:.2}",
                 millis(resident)
@@ -253,10 +255,8 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
             drive(cx, app, Duration::from_millis(250));
             eprintln!("SWITCH_MEASURE warm_refresh_end");
 
-            let before = projected_items(&large, project);
             append_messages(&large, 2);
-            let grown = projected_items(&large, project);
-            assert!(grown > before, "the appended messages must project");
+            let grown = SWITCH_MESSAGES + 2;
             eprintln!("SWITCH_MEASURE cold_refresh_begin items={grown}");
             refresh_document(cx, app, &large, project);
             wait_for_items(cx, app, &large, grown);

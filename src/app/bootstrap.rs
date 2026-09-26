@@ -18,26 +18,23 @@ fn warm_recent_history(
     sessions: &[SessionSummary],
     project: &Path,
     mut config: crate::agents::AgentLaunchConfig,
-) {
-    let most_recent = sessions
+) -> Option<std::thread::JoinHandle<Result<crate::sessions::LoadedHistory, String>>> {
+    let session = sessions
         .iter()
         .filter(|session| session.parent_session.is_none() && !session.archived)
-        .max_by_key(|session| (session.project == project, session.modified));
-    let Some(session) = most_recent else {
-        return;
-    };
+        .max_by_key(|session| (session.project == project, session.modified))?;
     let path = session.path.clone();
     let harness = session.harness;
     config.profile_id = crate::agents::profile_id_from_locator(&path);
     let project = session.project.clone();
-    let _ = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name("farcaster-history-warm".into())
         .spawn(move || {
             let _timing =
                 crate::app::infrastructure::performance::Timing::new("app.warm_recent_history");
-            let _ =
-                crate::agents::load_session_history_for_profile(&config, harness, &path, &project);
-        });
+            crate::agents::load_session_history_for_profile(&config, harness, &path, &project)
+        })
+        .ok()
 }
 
 impl FarcasterApp {
@@ -189,7 +186,7 @@ impl FarcasterApp {
             .and_then(|store| store.cached_sessions(""))
             .unwrap_or_default();
         drop(catalog_seed_timing);
-        warm_recent_history(
+        let _ = warm_recent_history(
             &remembered_catalog,
             &project,
             crate::agents::AgentLaunchConfig {

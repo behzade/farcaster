@@ -19,15 +19,21 @@ use std::{
 /// must not be served from memory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Stamp {
-    modified: Option<SystemTime>,
+    modified: SystemTime,
     len: u64,
 }
 
 impl Stamp {
     pub fn of(path: &Path) -> Option<Self> {
+        if !path.is_absolute() {
+            return None;
+        }
         let metadata = fs::metadata(path).ok()?;
+        if !metadata.is_file() {
+            return None;
+        }
         Some(Self {
-            modified: metadata.modified().ok(),
+            modified: metadata.modified().ok()?,
             len: metadata.len(),
         })
     }
@@ -72,7 +78,6 @@ impl<T: Clone> Remembered<T> {
 
     /// A source that disappeared stops matching its stamp on its own, so this
     /// is only for a caller that must drop an entry it is still holding.
-    #[cfg(test)]
     pub fn forget(&mut self, key: &Path) {
         self.entries.retain(|(remembered, _, _)| remembered != key);
     }

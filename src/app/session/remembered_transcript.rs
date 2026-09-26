@@ -23,7 +23,11 @@ pub(in crate::app) fn remember(snapshot: &Arc<RuntimeSnapshot>) {
     let Some(path) = snapshot.selected_session.clone() else {
         return;
     };
-    if snapshot.conversation.items.is_empty() {
+    if snapshot.status == "Loading history" {
+        return;
+    }
+    if snapshot.status != "Ready" || snapshot.conversation.items.is_empty() {
+        cache().forget(&path);
         return;
     }
     let stamp = Stamp::of(&path);
@@ -33,7 +37,7 @@ pub(in crate::app) fn remember(snapshot: &Arc<RuntimeSnapshot>) {
 /// What to show for `snapshot` while its history loads: the last read of that
 /// same session, or `snapshot` itself when nothing is remembered for it.
 pub(in crate::app) fn stand_in(snapshot: Arc<RuntimeSnapshot>) -> Arc<RuntimeSnapshot> {
-    if !snapshot.conversation.items.is_empty() {
+    if snapshot.status != "Loading history" || !snapshot.conversation.items.is_empty() {
         return snapshot;
     }
     let Some(path) = snapshot.selected_session.clone() else {
@@ -42,13 +46,17 @@ pub(in crate::app) fn stand_in(snapshot: Arc<RuntimeSnapshot>) -> Arc<RuntimeSna
     let Some(remembered) = cache().recall(&path, Stamp::of(&path).as_ref()) else {
         return snapshot;
     };
-    if remembered.conversation.items.is_empty() {
+    if remembered.project != snapshot.project
+        || remembered.harness != snapshot.harness
+        || remembered.profile_id != snapshot.profile_id
+    {
         return snapshot;
     }
     Arc::new(RuntimeSnapshot {
         conversation: remembered.conversation.clone(),
         transcript: remembered.transcript.clone(),
         stats: remembered.stats.clone(),
+        transcript_changed_from: Some(0),
         ..(*snapshot).clone()
     })
 }

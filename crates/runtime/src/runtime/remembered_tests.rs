@@ -2,7 +2,7 @@ use super::*;
 
 fn a_stamp(len: u64) -> Stamp {
     Stamp {
-        modified: None,
+        modified: SystemTime::UNIX_EPOCH,
         len,
     }
 }
@@ -105,4 +105,17 @@ fn remembering_a_key_again_replaces_its_value() {
         remembered.recall(path, Some(&a_stamp(1))).is_none(),
         "the replaced value is gone"
     );
+}
+
+#[test]
+fn stamps_require_an_absolute_regular_file() {
+    let directory = tempfile::tempdir().expect("directory");
+    assert!(Stamp::of(directory.path()).is_none());
+    assert!(Stamp::of(Path::new("Cargo.toml")).is_none());
+    assert!(Stamp::of(&directory.path().join("missing")).is_none());
+    let path = directory.path().join("session");
+    fs::write(&path, "first").expect("file");
+    let first = Stamp::of(&path).expect("stamp");
+    fs::write(&path, "longer content").expect("change file");
+    assert_ne!(Stamp::of(&path), Some(first));
 }

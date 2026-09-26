@@ -50,3 +50,51 @@ fn the_rail_paints_stored_chats_before_the_runtime_answers(cx: &mut gpui::TestAp
         },
     );
 }
+
+#[test]
+fn warming_uses_the_sessions_profile_and_rejects_a_removed_profile() {
+    let directory = tempfile::tempdir().expect("project");
+    let project = directory.path();
+    let profile = crate::agents::HarnessProfile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "Warm history".into(),
+        backend: Backend::Pi,
+        executable: PathBuf::from("pi"),
+        data_directory: None,
+    };
+    let config = crate::agents::AgentLaunchConfig::default();
+    config
+        .profiles
+        .replace(vec![profile.clone()])
+        .expect("profile");
+    let mut session = remembered_session(project, "recent", "Recent chat");
+    let path = project
+        .join("profiles")
+        .join(&profile.id)
+        .join("pi")
+        .join("recent.jsonl");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("profile directory");
+    std::fs::write(
+        &path,
+        concat!(
+            "{\"type\":\"session\",\"id\":\"recent\",\"cwd\":\"/project\"}\n",
+            "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
+        ),
+    )
+    .expect("history");
+    session.path = path;
+    let sessions = [session];
+    let history = warm_recent_history(&sessions, project, config.clone())
+        .expect("warm task")
+        .join()
+        .expect("warm thread")
+        .expect("profile history");
+    assert_eq!(history.messages.len(), 1);
+    config.profiles.replace(vec![]).expect("remove profile");
+    let error = warm_recent_history(&sessions, project, config)
+        .expect("warm task")
+        .join()
+        .expect("warm thread")
+        .expect_err("removed profile");
+    assert!(error.contains("unknown harness profile"), "{error}");
+}
