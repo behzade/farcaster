@@ -13,7 +13,7 @@ pub(crate) fn with_offline_app(
     test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &TestRuntime, &Path),
 ) {
     let (runtime, test_runtime) = super::runtime::RuntimeHandle::offline_for_test();
-    with_isolated_app(
+    with_runtime_app(
         test_name,
         cx,
         move |_| runtime,
@@ -24,15 +24,6 @@ pub(crate) fn with_offline_app(
 /// An app over a runtime the test builds for the project it is given, so a case
 /// can drive the app against a real runtime instead of the offline one.
 pub(crate) fn with_runtime_app(
-    test_name: &str,
-    cx: &mut TestAppContext,
-    runtime: impl FnOnce(&Path) -> super::runtime::RuntimeHandle,
-    test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &Path),
-) {
-    with_isolated_app(test_name, cx, runtime, test);
-}
-
-fn with_isolated_app(
     test_name: &str,
     cx: &mut TestAppContext,
     runtime: impl FnOnce(&Path) -> super::runtime::RuntimeHandle,
