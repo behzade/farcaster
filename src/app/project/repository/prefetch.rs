@@ -198,3 +198,7 @@ impl FarcasterApp {
 #[cfg(test)]
 #[path = "prefetch_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "offscreen_perf_tests.rs"]
+mod offscreen_perf_tests;

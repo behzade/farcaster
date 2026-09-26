@@ -167,3 +167,7 @@ impl FarcasterApp {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "writer_perf_tests.rs"]
+mod writer_perf_tests;

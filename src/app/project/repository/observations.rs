@@ -147,6 +147,14 @@ impl ObservationCache {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn snapshot(&self, project: &Path) -> Option<&WorkingCopySnapshot> {
+        self.projects
+            .iter()
+            .find(|(path, _)| path == project)
+            .and_then(|(_, observation)| observation.snapshot.as_ref())
+    }
+
     pub(super) fn busy(&self) -> bool {
         self.pending.is_some()
     }

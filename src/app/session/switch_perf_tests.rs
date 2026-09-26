@@ -276,6 +276,85 @@ fn switching_between_sessions_runs_every_measured_phase(cx: &mut gpui::TestAppCo
     );
 }
 
+#[gpui::test]
+fn hover_prefetch_and_cold_selection_load_the_same_transcript(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_runtime_app(
+        concat!(
+            module_path!(),
+            "::hover_prefetch_and_cold_selection_load_the_same_transcript"
+        ),
+        cx,
+        |project| {
+            let script = project.join("fake-pi.sh");
+            fs::write(&script, include_str!("../../../tests/fixtures/fake-pi.sh")).unwrap();
+            RuntimeHandle::spawn(
+                project.into(),
+                crate::sessions::DraftSession::with_id(
+                    Some(Backend::Pi),
+                    "prefetch-perf-draft".into(),
+                    project.into(),
+                ),
+                None,
+                AgentLaunchConfig::test_script(&script, vec!["quiet".into()]),
+                crate::app::runtime_host::host(),
+            )
+        },
+        |cx, app, project| {
+            let project = project.canonicalize().unwrap();
+            trust::apply(&project, TrustChoice::TrustProject).unwrap();
+            // Start the runtime before either measured selection.
+            let warmup = write_session_file(&project, "prefetch-warmup", 4);
+            switch_to(cx, app, &warmup, &project, 4);
+            cx.run_until_parked();
+            for index in 0..3 {
+                let cold = write_session_file(&project, &format!("cold-{index}"), SWITCH_MESSAGES);
+                let hovered =
+                    write_session_file(&project, &format!("hovered-{index}"), SWITCH_MESSAGES);
+                let bytes = fs::metadata(&hovered).unwrap().len();
+                let mut cold_wall = Duration::ZERO;
+                let mut hover_work = Duration::ZERO;
+                let mut prefetched_wall = Duration::ZERO;
+                // Separate files keep the baseline read from warming the hover case.
+                // Cold means a new app-cache key; the OS file cache is not flushed.
+                // Alternate order; no cache-internal APIs or timing thresholds.
+                for prefetch in [index % 2 == 0, index % 2 != 0] {
+                    if prefetch {
+                        let started = Instant::now();
+                        cx.update(|_, cx| {
+                            app.update(cx, |app, cx| {
+                                app.prefetch_session(
+                                    Backend::Pi,
+                                    hovered.clone(),
+                                    project.clone(),
+                                    cx,
+                                );
+                            })
+                        });
+                        // Drain the hover task on GPUI's deterministic executor.
+                        cx.run_until_parked();
+                        hover_work = started.elapsed();
+                        prefetched_wall = switch_to(cx, app, &hovered, &project, SWITCH_MESSAGES);
+                    } else {
+                        cold_wall = switch_to(cx, app, &cold, &project, SWITCH_MESSAGES);
+                    }
+                }
+                // Read only after both selections; this must not warm either case.
+                let cold_history =
+                    crate::agents::load_session_history(Backend::Pi, &cold, &project).unwrap();
+                let hovered_history =
+                    crate::agents::load_session_history(Backend::Pi, &hovered, &project).unwrap();
+                assert_eq!(cold_history.messages, hovered_history.messages);
+                eprintln!(
+                    "PREFETCH_MEASURE sample={index} bytes={bytes} items={SWITCH_MESSAGES} cold_selection_ms={:.2} hover_executor_ms={:.2} prefetched_selection_ms={:.2}",
+                    millis(cold_wall),
+                    millis(hover_work),
+                    millis(prefetched_wall)
+                );
+            }
+        },
+    );
+}
+
 fn millis(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
