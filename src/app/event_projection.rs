@@ -239,6 +239,11 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
+        // Selecting a session clears its transcript for as long as the history
+        // load takes. Paint the last read of that same session instead of an
+        // empty pane; the runtime's own snapshot replaces it when it lands.
+        crate::app::session::remembered_transcript::remember(&snapshot);
+        let snapshot = crate::app::session::remembered_transcript::stand_in(snapshot);
         if self
             .lifecycle
             .pending_session_switch

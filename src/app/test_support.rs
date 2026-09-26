@@ -12,10 +12,20 @@ pub(crate) fn with_offline_app(
     cx: &mut TestAppContext,
     test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &TestRuntime, &Path),
 ) {
+    with_prepared_offline_app(test_name, cx, |_| {}, test);
+}
+
+pub(crate) fn with_prepared_offline_app(
+    test_name: &str,
+    cx: &mut TestAppContext,
+    prepare: impl FnOnce(&Path),
+    test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &TestRuntime, &Path),
+) {
     let (runtime, test_runtime) = super::runtime::RuntimeHandle::offline_for_test();
-    with_runtime_app(
+    with_app(
         test_name,
         cx,
+        prepare,
         move |_| runtime,
         move |cx, app, project| test(cx, app, &test_runtime, project),
     );
@@ -29,6 +39,16 @@ pub(crate) fn with_runtime_app(
     runtime: impl FnOnce(&Path) -> super::runtime::RuntimeHandle,
     test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &Path),
 ) {
+    with_app(test_name, cx, |_| {}, runtime, test);
+}
+
+fn with_app(
+    test_name: &str,
+    cx: &mut TestAppContext,
+    prepare: impl FnOnce(&Path),
+    runtime: impl FnOnce(&Path) -> super::runtime::RuntimeHandle,
+    test: impl FnOnce(&mut VisualTestContext, &Entity<FarcasterApp>, &Path),
+) {
     let test_name = test_name
         .split_once("::")
         .map_or(test_name, |(_, test_name)| test_name);
@@ -38,6 +58,7 @@ pub(crate) fn with_runtime_app(
 
     let project = tempfile::tempdir().expect("isolated app project");
     let project_path = project.path().to_path_buf();
+    prepare(&project_path);
     cx.executor().allow_parking();
     cx.update(|cx| {
         gpui_component::init(cx);

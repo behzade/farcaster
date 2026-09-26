@@ -1111,3 +1111,60 @@ fn completion_notification_is_only_redundant_for_the_visible_active_session() {
         );
     }
 }
+
+#[gpui::test]
+fn a_loading_chat_keeps_the_transcript_it_last_showed(cx: &mut gpui::TestAppContext) {
+    use crate::conversation::ConversationState;
+    use serde_json::json;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::a_loading_chat_keeps_the_transcript_it_last_showed"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let session = project.join("chat.jsonl");
+            std::fs::write(&session, "{}").expect("write session file");
+            let mut conversation = ConversationState::default();
+            conversation.replace_history(&[
+                json!({"role":"user", "content":"hello"}),
+                json!({"role":"assistant", "content":[{"type":"text", "text":"hi"}]}),
+            ]);
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 1,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    project: project.to_path_buf(),
+                    selected_session: Some(session.clone()),
+                    conversation: Arc::new(conversation),
+                    status: "Ready".into(),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|_, cx| {
+                assert_eq!(app.read(cx).snapshot.conversation.items.len(), 2);
+            });
+
+            // Selecting the same chat again clears the runtime's snapshot until
+            // the history load finishes.
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 2,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    project: project.to_path_buf(),
+                    selected_session: Some(session),
+                    status: "Loading history".into(),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).snapshot.conversation.items.len(),
+                    2,
+                    "a loading snapshot must not clear the transcript on screen",
+                );
+            });
+        },
+    );
+}

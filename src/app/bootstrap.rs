@@ -6,6 +6,40 @@ mod regions;
 mod subscriptions;
 mod tasks;
 
+#[cfg(test)]
+#[path = "bootstrap_tests.rs"]
+mod tests;
+
+/// Load the history of the chat a launch is most likely to open next, so that
+/// selecting it is a cache hit instead of a load the user waits on. The chat
+/// last written in this project is that chat; the work leaves the launch path
+/// as soon as it starts.
+fn warm_recent_history(
+    sessions: &[SessionSummary],
+    project: &Path,
+    mut config: crate::agents::AgentLaunchConfig,
+) {
+    let most_recent = sessions
+        .iter()
+        .filter(|session| session.parent_session.is_none() && !session.archived)
+        .max_by_key(|session| (session.project == project, session.modified));
+    let Some(session) = most_recent else {
+        return;
+    };
+    let path = session.path.clone();
+    let harness = session.harness;
+    config.profile_id = crate::agents::profile_id_from_locator(&path);
+    let project = session.project.clone();
+    let _ = std::thread::Builder::new()
+        .name("farcaster-history-warm".into())
+        .spawn(move || {
+            let _timing =
+                crate::app::infrastructure::performance::Timing::new("app.warm_recent_history");
+            let _ =
+                crate::agents::load_session_history_for_profile(&config, harness, &path, &project);
+        });
+}
+
 impl FarcasterApp {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -146,6 +180,25 @@ impl FarcasterApp {
         let (composer_images, composer_pastes) =
             composer::attachments::restore(&persisted.composer_sessions);
 
+        // Paint the chats Farcaster already knows instead of an empty rail that
+        // fills once the runtime answers. The catalog is a stored read, so the
+        // first frame can show it; the runtime's own catalog reconciles into it.
+        let catalog_seed_timing =
+            crate::app::infrastructure::performance::StartupTiming::new("app.seed_session_catalog");
+        let remembered_catalog = crate::app::persistence::open()
+            .and_then(|store| store.cached_sessions(""))
+            .unwrap_or_default();
+        drop(catalog_seed_timing);
+        warm_recent_history(
+            &remembered_catalog,
+            &project,
+            crate::agents::AgentLaunchConfig {
+                profiles: harness_profiles.clone(),
+                app_proxy: persisted.saved_proxy.clone(),
+                ..Default::default()
+            },
+        );
+
         let mut this = Self {
             runtime,
             snapshot: Arc::new(RuntimeSnapshot {
@@ -166,8 +219,8 @@ impl FarcasterApp {
                 pending_trust_action: None,
             },
             sessions: session::SessionState {
-                visible: Vec::new(),
-                all: Vec::new(),
+                visible: remembered_catalog.clone(),
+                all: remembered_catalog,
                 order: persisted.session_order,
                 folders: persisted.session_folders,
                 editing_folder: None,
