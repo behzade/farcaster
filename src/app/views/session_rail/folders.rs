@@ -12,8 +12,8 @@ use crate::app::{
     ui::{
         assets::AppIcon,
         primitives::{
-            AppIconSize, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon, button,
-            disclosure_button, icon_control,
+            AppIconSize, AppTooltip as _, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon,
+            button, disclosure_button, icon_control,
         },
         theme::theme,
     },
@@ -39,7 +39,11 @@ pub(super) struct FolderHeader {
 pub(super) enum FolderRow {
     Session(Box<ActiveSessionItem>),
     Header(Box<FolderHeader>),
-    Project { path: PathBuf, collapsed: bool },
+    Project {
+        path: PathBuf,
+        label: String,
+        collapsed: bool,
+    },
     New,
 }
 
@@ -81,24 +85,22 @@ pub(super) fn folder_rows(
 
 pub(super) fn project_group_rows(
     items: Vec<ActiveSessionItem>,
-    folders: &SessionFolders,
     collapsed: &std::collections::HashSet<PathBuf>,
 ) -> Vec<FolderRow> {
-    let (filed, unfiled): (Vec<_>, Vec<_>) = items
-        .into_iter()
-        .partition(|item| folders.folder_for(item.app_session_id()).is_some());
     let mut projects = std::collections::BTreeMap::<PathBuf, Vec<ActiveSessionItem>>::new();
-    for item in unfiled {
+    for item in items {
         projects
             .entry(item.project().to_path_buf())
             .or_default()
             .push(item);
     }
+    let labels = project_labels(projects.keys().cloned().collect());
     let mut rows = Vec::new();
-    for (path, items) in projects {
+    for ((path, items), label) in projects.into_iter().zip(labels) {
         let is_collapsed = collapsed.contains(&path);
         rows.push(FolderRow::Project {
             path,
+            label,
             collapsed: is_collapsed,
         });
         if !is_collapsed {
@@ -109,12 +111,41 @@ pub(super) fn project_group_rows(
             );
         }
     }
-    rows.extend(folder_rows(filed, folders));
     rows
+}
+
+fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
+    let suffixes = paths
+        .iter()
+        .map(|path| {
+            let components = path.components().collect::<Vec<_>>();
+            (0..components.len())
+                .rev()
+                .map(|start| components[start..].iter().collect::<PathBuf>())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let mut counts = std::collections::HashMap::<&PathBuf, usize>::new();
+    for suffix in suffixes.iter().flatten() {
+        *counts.entry(suffix).or_default() += 1;
+    }
+    suffixes
+        .iter()
+        .zip(&paths)
+        .map(|(suffixes, path)| {
+            suffixes
+                .iter()
+                .find(|suffix| counts[suffix] == 1)
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        })
+        .collect()
 }
 
 pub(super) fn project_header(
     project: PathBuf,
+    label: String,
     collapsed: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
@@ -122,7 +153,6 @@ pub(super) fn project_header(
     let scope = entity.clone();
     let toggle_project = project.clone();
     let scope_project = project.clone();
-    let label = project.display().to_string();
     session_section_header()
         .id(format!("session-project-{}", project.display()))
         .w_full()
@@ -151,6 +181,8 @@ pub(super) fn project_header(
         .child(app_icon(AppIcon::Folder, AppIconSize::Control))
         .child(
             div()
+                .id(format!("project-label-{}", project.display()))
+                .app_tooltip(project.display().to_string())
                 .flex_1()
                 .min_w_0()
                 .whitespace_nowrap()

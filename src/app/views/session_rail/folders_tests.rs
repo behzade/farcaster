@@ -205,26 +205,21 @@ fn folder_drop_accepts_session_across_header_width(cx: &mut gpui::TestAppContext
 }
 
 #[test]
-fn project_groups_do_not_take_chats_out_of_custom_folders() {
+fn project_groups_include_filed_chats_and_preserve_membership() {
     let mut folders = SessionFolders::default();
     folders.create("Later".into(), Some(3));
-    let rows = project_group_rows(
-        vec![draft(3), draft(2), draft(1)],
-        &folders,
-        &Default::default(),
-    );
+    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)], &Default::default());
     assert!(
-        matches!(&rows[0], FolderRow::Project { path, collapsed: false } if path == std::path::Path::new("/project"))
+        matches!(&rows[0], FolderRow::Project { path, collapsed: false, .. } if path == std::path::Path::new("/project"))
     );
-    assert!(matches!(&rows[1], FolderRow::Session(item) if item.app_session_id() == 2));
-    assert!(matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 1));
-    assert!(matches!(&rows[3], FolderRow::Header(header) if header.name == "Later"));
-    assert!(matches!(&rows[4], FolderRow::Session(item) if item.app_session_id() == 3));
+    for (row, id) in rows[1..].iter().zip([3, 2, 1]) {
+        assert!(matches!(row, FolderRow::Session(item) if item.app_session_id() == id));
+    }
+    assert_eq!(rows.len(), 4);
     assert_eq!(folders.folders.len(), 1);
     let collapsed = std::collections::HashSet::from([PathBuf::from("/project")]);
-    let rows = project_group_rows(vec![draft(3), draft(2)], &folders, &collapsed);
-    assert_eq!(rows.len(), 3);
-    assert!(matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 3));
+    let rows = project_group_rows(vec![draft(3), draft(2)], &collapsed);
+    assert_eq!(rows.len(), 1);
     let flat = folder_rows(vec![draft(3), draft(2)], &folders);
     assert!(matches!(&flat[0], FolderRow::Session(item) if item.app_session_id() == 2));
     assert_eq!(folders.folder_for(3), Some(1));
@@ -262,9 +257,9 @@ fn project_grouping_defaults_to_flat_and_toggles_without_changing_folders(
                                 .any(|row| matches!(row, FolderRow::Project { .. })),
                             grouped
                         );
-                        assert!(rows.iter().any(
+                        assert_eq!(rows.iter().any(
                             |row| matches!(row, FolderRow::Header(header) if header.name == "Later")
-                        ));
+                        ), !grouped);
                         assert_eq!(
                             serde_json::to_string(&app.sessions.folders).expect("folders"),
                             folders
@@ -278,6 +273,86 @@ fn project_grouping_defaults_to_flat_and_toggles_without_changing_folders(
                         );
                     }
                 })
+            });
+        },
+    );
+}
+
+#[test]
+fn project_labels_use_the_shortest_unique_path_suffix() {
+    let paths = [
+        "/work/farcaster",
+        "/work/team/api",
+        "/home/team/api",
+        "/web/api",
+        "/",
+        "/api",
+    ]
+    .map(PathBuf::from)
+    .to_vec();
+    assert_eq!(
+        project_labels(paths),
+        [
+            "farcaster",
+            "work/team/api",
+            "home/team/api",
+            "web/api",
+            "/",
+            "/api"
+        ]
+    );
+}
+
+#[gpui::test]
+fn reordering_project_rows_keeps_hidden_folder_assignments(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::reordering_project_rows_keeps_hidden_folder_assignments"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.drafts = [draft(3), draft(2)]
+                        .into_iter()
+                        .map(|item| {
+                            let ActiveSessionItem::Draft(draft) = item else {
+                                unreachable!()
+                            };
+                            draft
+                        })
+                        .collect();
+                    app.sessions.folders.create("Later".into(), Some(3));
+                    let folders = serde_json::to_string(&app.sessions.folders).expect("folders");
+                    app.toggle_settings_project_groups(cx);
+                    app.sessions.drop_target =
+                        Some((2, crate::app::ui::primitives::ReorderPosition::After));
+                    app.complete_session_row_drop(
+                        &DraggedSession {
+                            app_session_id: 3,
+                            kind: SessionRailKind::Project,
+                            title: "Session".into(),
+                            project: "project".into(),
+                        },
+                        SessionRailKind::Project,
+                        window,
+                        cx,
+                    );
+                    assert_eq!(app.sessions.order, vec![2, 3]);
+                    assert_eq!(
+                        serde_json::to_string(&app.sessions.folders).expect("folders"),
+                        folders
+                    );
+                    app.toggle_settings_project_groups(cx);
+                    let rows = app.session_folder_rows(vec![draft(2), draft(3)]);
+                    assert!(
+                        matches!(&rows[1], FolderRow::Header(header) if header.name == "Later")
+                    );
+                    assert!(
+                        matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 3)
+                    );
+                });
             });
         },
     );

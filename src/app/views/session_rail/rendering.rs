@@ -139,7 +139,7 @@ pub(super) fn inactive_session_badge(
 }
 
 pub(super) fn archived_panel_height(rows: usize) -> Pixels {
-    theme().controls.icon_button + theme().controls.archived_preview_row * rows as f32
+    theme().controls.icon_button + super::session_row_height(false) * rows as f32
 }
 
 pub(super) fn rail_panel_slot(panel: RailPanel, archived: usize, collapsed: bool) -> PanelSlot {
@@ -158,8 +158,7 @@ pub(super) fn rail_panel_slot(panel: RailPanel, archived: usize, collapsed: bool
 }
 
 pub(super) fn archived_panel_rows(height: Pixels) -> usize {
-    ((height - theme().controls.icon_button) / theme().controls.archived_preview_row).max(0.0)
-        as usize
+    ((height - theme().controls.icon_button) / super::session_row_height(false)).max(0.0) as usize
 }
 
 #[cfg(test)]

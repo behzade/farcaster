@@ -40,8 +40,7 @@ pub(super) struct SessionRowInput {
     pub(super) title_editor: Option<Entity<InputState>>,
     pub(super) subagents: usize,
     pub(super) nested: bool,
-    pub(super) project_badge: bool,
-    pub(super) row_height: Pixels,
+    pub(super) compact: bool,
 }
 
 impl SessionRowInput {
@@ -55,8 +54,7 @@ impl SessionRowInput {
             title_editor: None,
             subagents: 0,
             nested: false,
-            project_badge: true,
-            row_height: theme().layout.session_row_height,
+            compact: false,
         }
     }
 }
@@ -96,11 +94,11 @@ impl RenderOnce for SessionRow {
                     title_editor,
                     subagents,
                     nested,
-                    project_badge,
-                    row_height,
+                    compact,
                 },
             entity,
         } = self;
+        let row_height = session_row_height(compact);
         let session = &item.session;
         let path = session.path.clone();
         let project = session.project.clone();
@@ -154,7 +152,10 @@ impl RenderOnce for SessionRow {
             .aria_label(accessible_label)
             .aria_selected(selected)
             .tab_index(0)
-            .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
+            .on_mouse_down(
+                MouseButton::Left,
+                crate::app::ui::primitives::preserve_pointer_focus,
+            )
             .size_full()
             .h(row_height)
             .relative()
@@ -176,7 +177,10 @@ impl RenderOnce for SessionRow {
                     color.unwrap_or(theme().colors.indicator),
                 ))
             })
-            .focus(|row| row.border(theme().border).border_color(theme().colors.indicator))
+            .focus(|row| {
+                row.border(theme().border)
+                    .border_color(theme().colors.indicator)
+            })
             .cursor(CursorStyle::PointingHand)
             .when(draggable, move |row| {
                 row.on_drag(drag, move |drag, _, _, cx| {
@@ -219,107 +223,95 @@ impl RenderOnce for SessionRow {
                     });
                 } else {
                     let _ = open_entity.update(cx, |this, cx| {
-                        this.select_session_and_focus(
-                            path.clone(),
-                            project.clone(),
-                            window,
-                            cx,
-                        )
+                        this.select_session_and_focus(path.clone(), project.clone(), window, cx)
                     });
                 }
             })
-            .child(
+            .child(session_row_content(
+                compact,
+                session_row_title(
+                    session.title.clone(),
+                    selected,
+                    is_archived,
+                    title_editor,
+                    cancel_entity,
+                ),
                 div()
-                    .w_full()
                     .min_w_0()
+                    .flex_1()
                     .flex()
                     .items_center()
-                    .gap(theme().space.sm)
+                    .gap(theme().size(3.0))
+                    .text_size(theme().type_scale.caption)
+                    .text_color(theme().colors.subtle)
                     .child(
                         div()
+                            .id(format!("move-project-{}", session.id))
                             .min_w_0()
-                            .flex_1()
-                            .overflow_hidden()
-                            .child(session_row_title(
-                                session.title.clone(),
-                                selected,
-                                is_archived,
-                                title_editor,
-                                cancel_entity,
-                            )),
-                    )
-                    .when(!nested && project_badge, |content| {
-                        content.child(
-                            div()
-                                .max_w(theme().size(120.0))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .gap(theme().size(3.0))
-                                .text_size(theme().type_scale.caption)
-                                .text_color(theme().colors.subtle)
-                                .child(
-                                    div()
-                                        .id(format!("move-project-{}", session.id))
-                                        .min_w_0()
-                                        .when(crate::agents::supports_session_move(session.harness), |label| {
-                                            label
-                                                .role(Role::Button)
-                                                .aria_label("Move session to another project")
-                                                .tab_index(0)
-                                                .on_mouse_down(MouseButton::Left, crate::app::ui::primitives::preserve_pointer_focus)
-                                                .rounded(theme().radius)
-                                                .cursor(CursorStyle::PointingHand)
-                                                .hover(|icon| icon.text_color(theme().colors.indicator))
-                                                .focus(|icon| {
-                                                    icon.border(theme().border)
-                                                        .border_color(theme().colors.indicator)
-                                                })
-                                                .app_tooltip("Move to project…")
-                                                .on_click(move |_, window, cx| {
-                                                    cx.stop_propagation();
-                                                    let _ = move_entity.update(cx, |this, cx| {
-                                                        this.open_picker(
-                                                            PickerScope::Projects(ProjectPickerIntent::MoveSession {
-                                                                path: move_path.clone(),
-                                                                source_project: move_project.clone(),
-                                                            }),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                })
+                            .when(
+                                crate::agents::supports_session_move(session.harness),
+                                |label| {
+                                    label
+                                        .role(Role::Button)
+                                        .aria_label("Move session to another project")
+                                        .tab_index(0)
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            crate::app::ui::primitives::preserve_pointer_focus,
+                                        )
+                                        .rounded(theme().radius)
+                                        .cursor(CursorStyle::PointingHand)
+                                        .hover(|icon| icon.text_color(theme().colors.indicator))
+                                        .focus(|icon| {
+                                            icon.border(theme().border)
+                                                .border_color(theme().colors.indicator)
                                         })
-                                        .child(
-                                            div()
-                                                .min_w_0()
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .text_ellipsis()
-                                                .child(project_label(&session.project)),
-                                        ),
-                                ),
-                        )
-                    })
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(theme().space.xs)
-                            .child(archive_action)
-                            .when_some(
-                                session_status_icon(target_app_session_id, &status_text),
-                                |cluster, icon| cluster.child(icon),
+                                        .app_tooltip("Move to project…")
+                                        .on_click(move |_, window, cx| {
+                                            cx.stop_propagation();
+                                            let _ = move_entity.update(cx, |this, cx| {
+                                                this.open_picker(
+                                                    PickerScope::Projects(
+                                                        ProjectPickerIntent::MoveSession {
+                                                            path: move_path.clone(),
+                                                            source_project: move_project.clone(),
+                                                        },
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        })
+                                },
                             )
-                            .child(session_provider_slot(
-                                session.harness,
-                                action_group.clone(),
-                                delete_action,
-                            ))
-                            .child(session_row_age(age)),
-                    ),
-            );
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(project_label(&session.project)),
+                            ),
+                    )
+                    .into_any_element(),
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(theme().space.xs)
+                    .child(archive_action)
+                    .when_some(
+                        session_status_icon(target_app_session_id, &status_text),
+                        |cluster, icon| cluster.child(icon),
+                    )
+                    .child(session_provider_slot(
+                        session.harness,
+                        action_group.clone(),
+                        delete_action,
+                    ))
+                    .child(session_row_age(age))
+                    .into_any_element(),
+            ));
         let row = row.app_tooltip_element(move |_, _| session_tooltip_content(&hover_details));
         let hover_entity = entity.clone();
         let hover_path = session.path.clone();
@@ -532,41 +524,46 @@ fn session_context_menu(
                         ColorTarget::Session(app_session_id),
                     )
                 });
-            menu = menu.submenu("Move to folder", window, cx, move |mut menu, _, cx| {
-                use crate::app::session_folders::FolderDestination;
-                let Some(app) = move_entity.upgrade() else {
-                    return menu;
-                };
-                let folders = &app.read(cx).sessions.folders;
-                let current =
-                    folders.destination(app_session_id, kind == SessionRailKind::Archived);
-                for (destination, label) in folders.destinations() {
-                    let target_entity = move_entity.clone();
-                    let target_path = move_path.clone();
-                    menu = menu.item(
-                        PopupMenuItem::new(label)
-                            .checked(destination == current)
-                            .disabled(
-                                destination == current
-                                    || (app_session_id <= 0
-                                        && matches!(destination, FolderDestination::Folder(_))),
-                            )
-                            .on_click(move |_, window, cx| {
-                                let _ = target_entity.update(cx, |this, cx| {
-                                    this.move_session_to_folder(
-                                        app_session_id,
-                                        target_path.clone(),
-                                        destination,
-                                        kind == SessionRailKind::Archived,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }),
-                    );
-                }
-                menu
-            });
+            let show_folders = entity
+                .upgrade()
+                .is_some_and(|app| !app.read(cx).settings.group_sessions_by_project);
+            if show_folders {
+                menu = menu.submenu("Move to folder", window, cx, move |mut menu, _, cx| {
+                    use crate::app::session_folders::FolderDestination;
+                    let Some(app) = move_entity.upgrade() else {
+                        return menu;
+                    };
+                    let folders = &app.read(cx).sessions.folders;
+                    let current =
+                        folders.destination(app_session_id, kind == SessionRailKind::Archived);
+                    for (destination, label) in folders.destinations() {
+                        let target_entity = move_entity.clone();
+                        let target_path = move_path.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(label)
+                                .checked(destination == current)
+                                .disabled(
+                                    destination == current
+                                        || (app_session_id <= 0
+                                            && matches!(destination, FolderDestination::Folder(_))),
+                                )
+                                .on_click(move |_, window, cx| {
+                                    let _ = target_entity.update(cx, |this, cx| {
+                                        this.move_session_to_folder(
+                                            app_session_id,
+                                            target_path.clone(),
+                                            destination,
+                                            kind == SessionRailKind::Archived,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                });
+            }
 
             let delete_path = path.clone();
             let delete_entity = entity.clone();
@@ -709,3 +706,54 @@ pub(super) fn relative_age(modified: SystemTime) -> String {
         format!("{}d", age.as_secs() / (24 * 60 * 60))
     }
 }
+
+pub(in crate::app::views) fn session_row_height(compact: bool) -> Pixels {
+    if compact {
+        theme().layout.session_row_height
+    } else {
+        theme().layout.session_row_height + theme().controls.icon_button
+    }
+}
+
+pub(super) fn session_row_content(
+    compact: bool,
+    title: AnyElement,
+    project: AnyElement,
+    actions: AnyElement,
+) -> AnyElement {
+    let title = div().min_w_0().overflow_hidden().child(title);
+    if compact {
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(theme().space.sm)
+            .child(title.flex_1())
+            .child(actions)
+            .into_any_element()
+    } else {
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(title.w_full())
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(theme().space.sm)
+                    .child(project)
+                    .child(actions),
+            )
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+#[path = "rows_tests.rs"]
+mod tests;

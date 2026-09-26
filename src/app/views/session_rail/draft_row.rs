@@ -12,7 +12,7 @@ use super::{
     hover::{draft_hover_details, session_tooltip_content},
     rows::{
         archive_action, project_badge, project_label, relative_age, session_provider_slot,
-        session_row_age, session_status_icon,
+        session_row_age, session_row_content, session_row_height, session_status_icon,
     },
 };
 use crate::{
@@ -45,6 +45,7 @@ pub(super) struct DraftRowInput {
     pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) nested: bool,
+    pub(super) compact: bool,
 }
 
 #[derive(IntoElement)]
@@ -79,6 +80,7 @@ impl RenderOnce for DraftRow {
                     archived,
                     drop_position,
                     nested,
+                    compact,
                 },
             entity,
         } = self;
@@ -109,7 +111,7 @@ impl RenderOnce for DraftRow {
         let action_group = format!("draft-actions-{id}");
         let hover_details = draft_hover_details(&draft, status);
         div()
-            .h(theme().layout.session_row_height)
+            .h(session_row_height(compact))
             .w_full()
             .child(
                 div()
@@ -124,7 +126,7 @@ impl RenderOnce for DraftRow {
                         crate::app::ui::primitives::preserve_pointer_focus,
                     )
                     .size_full()
-                    .h(theme().layout.session_row_height)
+                    .h(session_row_height(compact))
                     .relative()
                     .flex()
                     .items_stretch()
@@ -188,77 +190,64 @@ impl RenderOnce for DraftRow {
                             this.resume_draft_and_focus(id.clone(), project.clone(), window, cx);
                         });
                     })
-                    .child(
+                    .child(session_row_content(
+                        compact,
                         div()
-                            .w_full()
                             .min_w_0()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_size(theme().type_scale.body_small)
+                            .font_weight(if selected {
+                                FontWeight::SEMIBOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(if archived && !selected {
+                                theme().colors.muted
+                            } else {
+                                theme().colors.text
+                            })
+                            .child(title)
+                            .into_any_element(),
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(project_badge(&draft.project))
+                            .into_any_element(),
+                        div()
+                            .flex_none()
                             .flex()
                             .items_center()
-                            .gap(theme().space.sm)
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_size(theme().type_scale.body_small)
-                                    .font_weight(if selected {
-                                        FontWeight::SEMIBOLD
-                                    } else {
-                                        FontWeight::NORMAL
-                                    })
-                                    .text_color(if archived && !selected {
-                                        theme().colors.muted
-                                    } else {
-                                        theme().colors.text
-                                    })
-                                    .child(title),
+                            .gap(theme().space.xs)
+                            .child(archive_draft_action(
+                                &archive_id,
+                                archived,
+                                action_group.clone(),
+                                archive_entity,
+                            ))
+                            .when_some(
+                                session_status_icon(
+                                    target_app_session_id,
+                                    if is_draft { "" } else { status },
+                                ),
+                                |cluster, icon| cluster.child(icon),
                             )
-                            .when(!nested, |row| {
-                                row.child(
-                                    div()
-                                        .max_w(theme().size(120.0))
-                                        .flex_none()
-                                        .child(project_badge(&draft.project)),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .gap(theme().space.xs)
-                                    .child(archive_draft_action(
-                                        &archive_id,
-                                        archived,
-                                        action_group.clone(),
-                                        archive_entity,
-                                    ))
-                                    .when_some(
-                                        session_status_icon(
-                                            target_app_session_id,
-                                            if is_draft { "" } else { status },
-                                        ),
-                                        |cluster, icon| cluster.child(icon),
-                                    )
-                                    .child(session_provider_slot(
-                                        draft.harness,
-                                        action_group.clone(),
-                                        DeleteButton::new(
-                                            format!("discard-{discard_id}"),
-                                            "Discard draft",
-                                        )
-                                        .reveal_on(action_group.clone())
-                                        .on_delete(move |window, cx| {
-                                            let _ = discard_entity.update(cx, |this, cx| {
-                                                this.discard_draft(&discard_id, window, cx);
-                                            });
-                                        })
-                                        .into_any_element(),
-                                    ))
-                                    .child(session_row_age(age)),
-                            ),
-                    ),
+                            .child(session_provider_slot(
+                                draft.harness,
+                                action_group.clone(),
+                                DeleteButton::new(format!("discard-{discard_id}"), "Discard draft")
+                                    .reveal_on(action_group.clone())
+                                    .on_delete(move |window, cx| {
+                                        let _ = discard_entity.update(cx, |this, cx| {
+                                            this.discard_draft(&discard_id, window, cx);
+                                        });
+                                    })
+                                    .into_any_element(),
+                            ))
+                            .child(session_row_age(age))
+                            .into_any_element(),
+                    )),
             )
             .into_any_element()
     }

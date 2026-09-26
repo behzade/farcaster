@@ -3,7 +3,7 @@ use crate::app::ui::primitives::panel_bounds;
 use gpui::{point, px, size};
 #[test]
 fn the_archive_resizes_freely_up_to_the_room_the_stack_measured() {
-    let row = theme().controls.archived_preview_row;
+    let row = super::super::session_row_height(false);
     let room = px(472.0);
     let mut state = crate::app::ui::primitives::ResizeState::default();
     let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 3, false));

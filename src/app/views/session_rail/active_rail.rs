@@ -143,7 +143,10 @@ impl FarcasterApp {
         };
         let active_drop_list = session_list.clone();
         let mut active_rows = self.session_folder_rows(active_rows);
-        active_rows.push(FolderRow::New);
+        let compact = self.settings.group_sessions_by_project;
+        if !compact {
+            active_rows.push(FolderRow::New);
+        }
         let nested_rows = active_rows
             .iter()
             .scan(false, |nested, row| {
@@ -208,6 +211,7 @@ impl FarcasterApp {
                                 archived: false,
                                 drop_position,
                                 nested: nested_rows.get(index).copied().unwrap_or(false),
+                                compact,
                             },
                             active_row_entity.clone(),
                         )
@@ -246,8 +250,7 @@ impl FarcasterApp {
                                     .copied()
                                     .unwrap_or(0),
                                 nested: nested_rows.get(index).copied().unwrap_or(false),
-                                project_badge: true,
-                                row_height: theme().layout.session_row_height,
+                                compact,
                             },
                             active_row_entity.clone(),
                         )
@@ -260,9 +263,16 @@ impl FarcasterApp {
                     active_title_input.clone(),
                     active_row_entity.clone(),
                 ),
-                Some(FolderRow::Project { path, collapsed }) => {
-                    project_header(path.clone(), *collapsed, active_row_entity.clone())
-                }
+                Some(FolderRow::Project {
+                    path,
+                    label,
+                    collapsed,
+                }) => project_header(
+                    path.clone(),
+                    label.clone(),
+                    *collapsed,
+                    active_row_entity.clone(),
+                ),
                 Some(FolderRow::New) => new_folder_row(
                     editing_folder == Some(None),
                     active_title_input.clone(),

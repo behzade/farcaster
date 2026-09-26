@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use gpui::{Context, IntoElement as _, ListAlignment, ListState, Pixels, Render, WeakEntity};
 
+use super::super::session_rail::session_row_height;
 use super::super::{FarcasterApp, SessionRailKind};
 use crate::app::ui::theme::theme;
 
@@ -12,6 +13,7 @@ pub(crate) struct SessionRailView {
     pub(crate) reveal: Option<String>,
     width: Pixels,
     resize_start: Option<(Pixels, Pixels)>,
+    grouped: bool,
 }
 
 pub(crate) struct InactiveSessionRailView {
@@ -35,6 +37,7 @@ impl SessionRailView {
             reveal: None,
             width: theme().layout.session_rail,
             resize_start: None,
+            grouped: false,
         }
     }
 
@@ -70,7 +73,7 @@ impl InactiveSessionRailView {
         Self {
             app,
             kind,
-            list: session_list().with_uniform_item_height(theme().layout.session_row_height),
+            list: session_list().with_uniform_item_height(session_row_height(false)),
             rows: RefCell::new(Vec::new()),
             reveal: None,
         }
@@ -84,6 +87,13 @@ impl Render for SessionRailView {
         let Some(app) = self.app.upgrade() else {
             return gpui::div().into_any_element();
         };
+        let grouped = app.read(cx).settings.group_sessions_by_project;
+        if self.grouped != grouped {
+            // Changing modes changes row heights; discard cached measurements.
+            self.list.reset(0);
+            self.rows.borrow_mut().clear();
+            self.grouped = grouped;
+        }
         let content = app
             .read(cx)
             .render_sessions(

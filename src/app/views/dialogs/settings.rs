@@ -83,7 +83,7 @@ pub(in crate::app::views) fn render(
                         .child(toggle_setting(
                             "session-project-groups-toggle",
                             "Group sessions by project",
-                            "Group chats outside custom folders by their project.",
+                            "Group all chats by project. Turn off to use custom folders.",
                             app.settings.group_sessions_by_project,
                             entity.clone(),
                             FarcasterApp::toggle_settings_project_groups,

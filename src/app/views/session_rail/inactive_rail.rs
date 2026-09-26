@@ -91,6 +91,7 @@ impl FarcasterApp {
                         archived: true,
                         drop_position: None,
                         nested: false,
+                        compact: false,
                     },
                     row_entity.clone(),
                 )
@@ -112,7 +113,6 @@ impl FarcasterApp {
                     SessionRowInput {
                         title_editor: editing.then(|| title_input.clone()),
                         subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
-                        project_badge: false,
                         ..SessionRowInput::standard(selected, badge)
                     },
                     row_entity.clone(),

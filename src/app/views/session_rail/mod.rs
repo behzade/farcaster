@@ -37,6 +37,7 @@ use crate::{
 
 pub(in crate::app) use groups::SessionRailKind;
 pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
+pub(super) use rows::session_row_height;
 pub(in crate::app) use rows::{project_label, status_visual};
 
 #[cfg(test)]
@@ -300,11 +301,7 @@ impl FarcasterApp {
 
     fn session_folder_rows(&self, items: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
         if self.settings.group_sessions_by_project {
-            folders::project_group_rows(
-                items,
-                &self.sessions.folders,
-                &self.sessions.collapsed_projects,
-            )
+            folders::project_group_rows(items, &self.sessions.collapsed_projects)
         } else {
             folders::folder_rows(items, &self.sessions.folders)
         }
@@ -546,9 +543,11 @@ impl FarcasterApp {
             self.clear_session_drop_target(cx);
             return;
         };
-        let target_folder = self.sessions.folders.folder_for(target);
-        if !self.assign_session_folder(drag.app_session_id, target_folder, cx) {
-            return;
+        if !self.settings.group_sessions_by_project {
+            let target_folder = self.sessions.folders.folder_for(target);
+            if !self.assign_session_folder(drag.app_session_id, target_folder, cx) {
+                return;
+            }
         }
         let visible = session_rail_lists(
             &self.sessions.visible,
