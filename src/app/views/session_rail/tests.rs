@@ -153,11 +153,12 @@ fn zero_shortcut_selects_first_unsubmitted_draft(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
-fn delete_controls_only_exist_on_archived_rows(cx: &mut gpui::TestAppContext) {
+fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppContext) {
     use gpui::{IntoElement as _, ParentElement as _, Styled as _};
     struct RowHarness {
         app: gpui::WeakEntity<crate::app::FarcasterApp>,
         draft: bool,
+        submitted: bool,
         archived: bool,
         compact: bool,
     }
@@ -168,8 +169,11 @@ fn delete_controls_only_exist_on_archived_rows(cx: &mut gpui::TestAppContext) {
             _: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
             let row = if self.draft {
+                let mut draft =
+                    DraftSession::with_id(Some(Backend::Pi), "draft".into(), "/project".into());
+                draft.submitted = self.submitted;
                 super::draft_row::DraftRow::new(
-                    &DraftSession::with_id(Some(Backend::Pi), "draft".into(), "/project".into()),
+                    &draft,
                     super::draft_row::DraftRowInput {
                         selected: false,
                         status: "Draft".into(),
@@ -201,17 +205,18 @@ fn delete_controls_only_exist_on_archived_rows(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
             module_path!(),
-            "::delete_controls_only_exist_on_archived_rows"
+            "::row_actions_distinguish_drafts_from_submitted_chats"
         ),
         cx,
         |cx, app, _, _| {
-            for draft in [false, true] {
+            for (draft, submitted) in [(false, true), (true, false), (true, true)] {
                 for compact in [false, true] {
                     for archived in [false, true] {
                         cx.update(|window, cx| {
                             window.replace_root(cx, |_, _| RowHarness {
                                 app: app.downgrade(),
                                 draft,
+                                submitted,
                                 archived,
                                 compact,
                             });
@@ -219,8 +224,12 @@ fn delete_controls_only_exist_on_archived_rows(cx: &mut gpui::TestAppContext) {
                         });
                         assert_eq!(
                             cx.debug_bounds("session-delete-action").is_some(),
-                            archived,
-                            "draft={draft}, compact={compact}, archived={archived}"
+                            !submitted || archived,
+                            "draft={draft}, submitted={submitted}, compact={compact}, archived={archived}"
+                        );
+                        assert_eq!(
+                            cx.debug_bounds("session-archive-action").is_some(),
+                            submitted || archived
                         );
                     }
                 }

@@ -25,8 +25,7 @@ pub struct DraftSession {
     pub session_path: Option<PathBuf>,
     #[serde(default)]
     pub title: Option<String>,
-    /// A chat the user filed away. Chats carry this from the moment they are
-    /// created, so one that was never messaged is archived like any other.
+    /// Archive state for submitted chats awaiting a session record.
     #[serde(default)]
     pub archived: bool,
 }
@@ -63,7 +62,7 @@ impl DraftSession {
     }
 
     pub fn set_archived(&mut self, archived: bool) -> bool {
-        if self.archived == archived {
+        if self.archived == archived || (archived && !self.submitted) {
             return false;
         }
         self.archived = archived;

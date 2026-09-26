@@ -5,6 +5,20 @@ use farcaster_contracts::Backend;
 use super::*;
 
 #[test]
+fn only_submitted_chats_can_be_archived_but_legacy_drafts_can_be_restored() {
+    let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), "/project".into());
+    assert!(!draft.set_archived(true));
+    assert!(!draft.archived);
+    draft.submitted = true;
+    assert!(draft.set_archived(true));
+    assert!(draft.set_archived(false));
+    // Existing archived drafts remain recoverable after upgrading.
+    draft.submitted = false;
+    draft.archived = true;
+    assert!(draft.set_archived(false));
+}
+
+#[test]
 fn only_unsubmitted_drafts_can_change_project() {
     let mut draft = DraftSession::new(
         Some(Backend::Pi),

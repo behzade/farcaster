@@ -384,8 +384,7 @@ fn session_archive_action(
     })
 }
 
-/// The archive control every chat row leads with, so a draft filed away before
-/// anything was sent behaves like a chat one did.
+/// Shared Archive and Restore control for chat rows.
 pub(super) fn archive_action(
     id: &str,
     is_archived: bool,
@@ -403,6 +402,7 @@ pub(super) fn archive_action(
     };
     div()
         .id(format!("archive-{id}"))
+        .debug_selector(|| "session-archive-action".into())
         .role(Role::Button)
         .aria_label(format!("{label} session"))
         .tab_index(0)
@@ -587,7 +587,7 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-/// Archived rows replace the provider icon with Delete on hover.
+/// Rows with a delete or discard action replace the provider icon on hover.
 pub(super) fn session_provider_slot(
     harness: impl Into<Option<Backend>>,
     reveal_group: String,

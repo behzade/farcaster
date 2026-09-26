@@ -304,9 +304,7 @@ impl FarcasterApp {
         }
     }
 
-    /// Filing a chat away is a property of the chat itself, so a chat that was
-    /// never messaged is archived and restored exactly like one that was. A
-    /// chat that already writes into a session takes the session with it.
+    /// Archive submitted chats and keep their session record in sync.
     pub(in crate::app) fn request_draft_archive(
         &mut self,
         id: String,

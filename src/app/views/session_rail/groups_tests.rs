@@ -38,12 +38,13 @@ fn drafts_and_sessions_share_one_order() {
 }
 
 #[test]
-fn a_chat_that_was_never_messaged_is_archived_like_any_other() {
+fn submitted_chats_can_be_archived_before_their_session_record_arrives() {
     let project = PathBuf::from("/project");
     let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), project.clone());
     draft.app_session_id = 2;
     let mut archived = DraftSession::with_id(Some(Backend::Pi), "old".into(), project.clone());
     archived.app_session_id = 1;
+    archived.submitted = true;
     assert!(archived.set_archived(true));
 
     let lists = session_rail_lists(&[], &[draft, archived], None, &[]);

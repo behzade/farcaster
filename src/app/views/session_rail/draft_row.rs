@@ -217,12 +217,14 @@ impl RenderOnce for DraftRow {
                             .flex()
                             .items_center()
                             .gap(theme().space.xs)
-                            .child(archive_draft_action(
-                                &archive_id,
-                                archived,
-                                action_group.clone(),
-                                archive_entity,
-                            ))
+                            .when(draft.submitted || archived, |cluster| {
+                                cluster.child(archive_draft_action(
+                                    &archive_id,
+                                    archived,
+                                    action_group.clone(),
+                                    archive_entity,
+                                ))
+                            })
                             .when_some(
                                 session_status_icon(
                                     target_app_session_id,
@@ -233,7 +235,7 @@ impl RenderOnce for DraftRow {
                             .child(session_provider_slot(
                                 draft.harness,
                                 action_group.clone(),
-                                archived.then(|| {
+                                (!draft.submitted || archived).then(|| {
                                     DeleteButton::new(
                                         format!("discard-{discard_id}"),
                                         "Discard draft",
