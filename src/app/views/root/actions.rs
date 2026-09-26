@@ -193,7 +193,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
         }
     }))
     .on_action(cx.listener(|this, _: &SwitchSession0, window, cx| {
-        this.switch_to_session_number(10, window, cx);
+        this.switch_to_session_number(0, window, cx);
     }))
     .on_action(cx.listener(|this, _: &SwitchSession1, window, cx| {
         this.switch_to_session_number(1, window, cx);
