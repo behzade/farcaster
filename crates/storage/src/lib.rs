@@ -130,7 +130,7 @@ pub enum WindowState {
     Fullscreen,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PanelLayout {
     pub session_rail_hidden: bool,
     pub run_panel_hidden: bool,
@@ -138,6 +138,19 @@ pub struct PanelLayout {
     pub notifications_height: Option<f32>,
     pub archived_expanded: bool,
     pub archived_height: Option<f32>,
+}
+
+impl Default for PanelLayout {
+    fn default() -> Self {
+        Self {
+            session_rail_hidden: false,
+            run_panel_hidden: false,
+            notifications_collapsed: true,
+            notifications_height: None,
+            archived_expanded: false,
+            archived_height: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
