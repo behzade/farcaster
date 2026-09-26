@@ -35,8 +35,11 @@ fn runtime_selection_matches_model_identity_and_effort() {
             "",
         )
     });
-    assert_eq!(selected_row(&rows, &commands, &snapshot, None), Some(1));
-    assert_eq!(selected_row(&[], &commands, &snapshot, None), None);
+    assert_eq!(
+        selected_row(&rows, &commands, &snapshot, None, None),
+        Some(1)
+    );
+    assert_eq!(selected_row(&[], &commands, &snapshot, None, None), None);
 }
 
 #[test]
@@ -86,9 +89,15 @@ fn opencode_default_row_is_first_and_matches_only_the_unset_variant() {
         commands.get(&rows[0].id),
         Some(PickerCommand::SetRuntime { effort: None, .. })
     ));
-    assert_eq!(selected_row(&rows, &commands, &snapshot, None), Some(0));
+    assert_eq!(
+        selected_row(&rows, &commands, &snapshot, None, None),
+        Some(0)
+    );
     snapshot.prefill_thinking_level = Some("high".into());
-    assert_eq!(selected_row(&rows, &commands, &snapshot, None), Some(3));
+    assert_eq!(
+        selected_row(&rows, &commands, &snapshot, None, None),
+        Some(3)
+    );
     let rows = effort_picker_rows(&snapshot, &model, &mut commands);
     assert!(
         !rows[0]
@@ -141,5 +150,86 @@ fn direct_model_rows_still_select_a_non_reasoning_model_with_a_reported_level() 
             "",
         )
     });
-    assert_eq!(selected_row(&rows, &commands, &snapshot, None), Some(1));
+    assert_eq!(
+        selected_row(&rows, &commands, &snapshot, None, None),
+        Some(1)
+    );
+}
+
+#[test]
+fn harness_selection_matches_the_profile_choice_and_command() {
+    let snapshot = crate::runtime::RuntimeSnapshot::default();
+    let mut commands = HashMap::new();
+    let rows = [
+        picker_row(
+            &mut commands,
+            "harness:pi",
+            PickerCommand::SetHarness(Backend::Pi),
+            AppIcon::List,
+            "Pi",
+            Some("Current".into()),
+            None,
+            "",
+        ),
+        picker_row(
+            &mut commands,
+            "profile:first",
+            PickerCommand::SetHarnessProfile(Backend::Pi, "first".into()),
+            AppIcon::List,
+            "First",
+            Some("Current".into()),
+            None,
+            "",
+        ),
+        picker_row(
+            &mut commands,
+            "profile:other-backend",
+            PickerCommand::SetHarnessProfile(Backend::OpenCode, "target".into()),
+            AppIcon::List,
+            "Other backend",
+            Some("Current".into()),
+            None,
+            "",
+        ),
+        picker_row(
+            &mut commands,
+            "profile:target",
+            PickerCommand::SetHarnessProfile(Backend::Pi, "target".into()),
+            AppIcon::List,
+            "Target",
+            Some("Other detail".into()),
+            None,
+            "",
+        ),
+    ];
+
+    let selected = selected_row(
+        &rows,
+        &commands,
+        &snapshot,
+        Some(Backend::Pi),
+        Some("target"),
+    );
+    assert_eq!(selected, Some(3));
+    assert!(matches!(
+        commands.get(&rows[selected.expect("profile row")].id),
+        Some(PickerCommand::SetHarnessProfile(Backend::Pi, id)) if id == "target"
+    ));
+
+    let selected = selected_row(&rows, &commands, &snapshot, Some(Backend::Pi), None);
+    assert_eq!(selected, Some(0));
+    assert!(matches!(
+        commands.get(&rows[selected.expect("stock row")].id),
+        Some(PickerCommand::SetHarness(Backend::Pi))
+    ));
+    assert_eq!(
+        selected_row(
+            &rows,
+            &commands,
+            &snapshot,
+            Some(Backend::Pi),
+            Some("missing")
+        ),
+        None
+    );
 }

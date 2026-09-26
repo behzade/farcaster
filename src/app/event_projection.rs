@@ -239,6 +239,11 @@ impl FarcasterApp {
         dirty: &mut DirtyRegions,
         cx: &mut Context<Self>,
     ) {
+        // Selecting a session clears its transcript for as long as the history
+        // load takes. Paint the last read of that same session instead of an
+        // empty pane; the runtime's own snapshot replaces it when it lands.
+        crate::app::session::remembered_transcript::remember(&snapshot);
+        let snapshot = crate::app::session::remembered_transcript::stand_in(snapshot);
         if self
             .lifecycle
             .pending_session_switch
@@ -355,8 +360,8 @@ impl FarcasterApp {
             );
         }
         self.sessions.error = None;
-        self.sessions.visible = sessions;
-        self.sessions.all = all_sessions;
+        self.sessions.visible = sessions.into();
+        self.sessions.all = all_sessions.into();
         self.remember_rail_projects(
             self.sessions
                 .all
@@ -749,9 +754,10 @@ impl FarcasterApp {
                     update_session_row(&mut self.sessions.visible, session);
                 } else {
                     self.sessions.visible = crate::sessions::filter_session_tree(
-                        self.sessions.all.clone(),
+                        self.sessions.all.to_vec(),
                         query.trim(),
-                    );
+                    )
+                    .into();
                 }
                 dirty.rail = true;
                 dirty.run = true;

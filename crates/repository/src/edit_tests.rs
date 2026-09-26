@@ -228,6 +228,85 @@ fn git_discard_handles_renames_and_new_files() {
     }
 }
 
+const RENAME_BASE: &str = "base\none\ntwo\nthree\nfour\nfive\n";
+const RENAME_CHANGED: &str = "base\none\ntwo\nthree\nfour\nfive\nchanged\n";
+
+fn review_source_then_rename(repo: &EditRepo) -> RepositoryEditReview {
+    repo.base();
+    repo.write("selected", RENAME_BASE);
+    repo.command(&["add", "selected"]);
+    repo.command(&["commit", "-m", "long source"]);
+    repo.write("selected", RENAME_CHANGED);
+    repo.write("other", "other changed\n");
+    let review = repo.review(&["selected", "other"]);
+    repo.command(&["mv", "selected", "renamed"]);
+    assert!(
+        repo.backend
+            .snapshot()
+            .expect("snapshot after rename")
+            .changes
+            .iter()
+            .any(|change| {
+                change.kind == ChangeKind::Renamed
+                    && change.relative_path == PathBuf::from("renamed")
+                    && change.original_relative_path == Some(PathBuf::from("selected"))
+            })
+    );
+    review
+}
+
+#[test]
+fn git_commit_follows_selected_source_renamed_after_review() {
+    let repo = EditRepo::new(RepositoryKind::Git);
+    let review = review_source_then_rename(&repo);
+
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Commit, "commit both")
+        .expect("commit renamed source and other selected file");
+
+    assert_eq!(repo.command(&["show", "HEAD:renamed"]), RENAME_CHANGED);
+    assert_eq!(repo.command(&["show", "HEAD:other"]), "other changed\n");
+    assert_eq!(repo.command(&["status", "--porcelain"]), "");
+}
+
+#[test]
+fn git_discard_follows_selected_source_renamed_after_review() {
+    let repo = EditRepo::new(RepositoryKind::Git);
+    let review = review_source_then_rename(&repo);
+
+    repo.backend
+        .apply_edit(&review, RepositoryEdit::Discard, "")
+        .expect("discard renamed source and other selected file");
+
+    assert_eq!(repo.read("selected"), RENAME_BASE);
+    assert_eq!(repo.read("other"), "base\n");
+    assert!(!repo.root().join("renamed").exists());
+    assert_eq!(repo.command(&["status", "--porcelain"]), "");
+}
+
+#[test]
+fn git_edit_rejects_unmatched_selection_before_touching_other_files() {
+    for action in [RepositoryEdit::Commit, RepositoryEdit::Discard] {
+        let repo = EditRepo::new(RepositoryKind::Git);
+        repo.base();
+        repo.write("selected", "changed\n");
+        repo.write("other", "other changed\n");
+        let review = repo.review(&["selected", "other"]);
+        repo.command(&["restore", "selected"]);
+        let head = repo.command(&["rev-parse", "HEAD"]);
+
+        assert!(
+            repo.backend
+                .apply_edit(&review, action, "commit both")
+                .is_err()
+        );
+
+        assert_eq!(repo.command(&["rev-parse", "HEAD"]), head);
+        assert_eq!(repo.read("other"), "other changed\n");
+        assert_eq!(repo.command(&["status", "--porcelain"]), " M other\n");
+    }
+}
+
 #[test]
 fn git_initial_commit_selects_only_chosen_new_file() {
     let repo = EditRepo::new(RepositoryKind::Git);
@@ -262,6 +341,9 @@ fn review_rejects_empty_selection_and_paths_outside_project() {
 
 #[test]
 fn jj_commit_selected_and_discard_keep_other_changes() {
+    if !jj_installed() {
+        return;
+    }
     let repo = EditRepo::new(RepositoryKind::Jujutsu);
     repo.base();
     repo.write("selected", "chosen\n");
@@ -289,6 +371,9 @@ fn jj_commit_selected_and_discard_keep_other_changes() {
 
 #[test]
 fn jj_discard_uses_current_contents_after_review() {
+    if !jj_installed() {
+        return;
+    }
     let repo = EditRepo::new(RepositoryKind::Jujutsu);
     repo.base();
     repo.write("selected", "reviewed\n");

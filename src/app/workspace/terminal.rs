@@ -96,7 +96,6 @@ impl FarcasterApp {
             terminal
         };
 
-        self.retain_workspace_draft(cx);
         self.hide_terminal(cx);
         self.workspace.terminal.view = Some(terminal);
         self.workspace.terminal.project = Some(project);
@@ -104,27 +103,35 @@ impl FarcasterApp {
         self.reveal_native_center_surface(AppSurface::Terminal, window, cx);
     }
 
-    fn clear_terminal_process(&mut self) {
-        if let Some(project) = self.workspace.terminal.project.take() {
-            self.workspace.terminal.project_terminals.remove(&project);
-        }
-        self.workspace.terminal.view = None;
-    }
-
-    /// Repaints every live terminal with the active theme without restarting it.
-    pub(in crate::app) fn apply_terminal_theme(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn refresh_terminal_themes(&mut self, cx: &mut Context<Self>) {
         let theme = crate::app::ui::theme::terminal_theme();
-        for terminal in self.workspace.terminal.project_terminals.values() {
-            terminal.update(cx, |terminal, _| {
-                if terminal.is_alive() {
-                    let _ = terminal.update_theme(theme);
-                }
-            });
+        let mut failures = Vec::new();
+        for (project, terminal) in &self.workspace.terminal.project_terminals {
+            if !terminal.read(cx).is_alive() {
+                continue;
+            }
+            if let Err(error) = terminal.update(cx, |terminal, cx| {
+                terminal.update_theme(theme.clone())?;
+                cx.notify();
+                Ok::<_, String>(())
+            }) {
+                failures.push(format!("{}: {error}", project.display()));
+            }
+        }
+        if !failures.is_empty() {
+            self.notify_workspace_error("Terminal theme", failures.join("\n"), cx);
         }
         if self.workspace.native_surface_covered && self.workspace.surface == AppSurface::Terminal {
             self.set_terminal_hidden_rendering(true, cx);
         }
         self.refresh_covered_workspace_snapshot(cx);
+    }
+
+    fn clear_terminal_process(&mut self) {
+        if let Some(project) = self.workspace.terminal.project.take() {
+            self.workspace.terminal.project_terminals.remove(&project);
+        }
+        self.workspace.terminal.view = None;
     }
 
     /// Lets a covered terminal keep rendering while an overlay presents it, so a

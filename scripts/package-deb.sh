@@ -18,29 +18,40 @@ ln -s ../lib/farcaster/farcaster "$package_root/usr/bin/farcaster"
 
 # Ghostty needs LLVM 21's runtime. Keep it private so installation needs no
 # third-party apt repository and cannot replace another application's libc++.
+# Some builds use the system unwinder instead of LLVM's libunwind.
 libraries=()
-linked_libraries=$(ldd "$binary")
+: > "$stage/debian/shlibs.local"
+linked_libraries=$(LC_ALL=C ldd "$binary")
 for soname in libc++.so.1 libc++abi.so.1 libunwind.so.1; do
     library=$(awk -v name="$soname" '$1 == name && $2 == "=>" { print $3; exit }' <<< "$linked_libraries")
-    if [ -z "$library" ]; then
-        echo "Missing expected LLVM runtime: $soname" >&2
+    if [ -z "$library" ] && [ "$soname" = libunwind.so.1 ]; then
+        continue
+    fi
+    if [ -z "$library" ] || [ ! -f "$library" ]; then
+        echo "Missing or unresolved LLVM runtime: $soname" >&2
         exit 1
     fi
+    library=$(realpath "$library")
+    ownership=$(dpkg-query --search "$library")
+    owner=${ownership%": $library"}
+    if [[ ! "$owner" =~ ^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$ ]]; then
+        echo "Expected one Debian package owner for $library: $ownership" >&2
+        exit 1
+    fi
+    package=${owner%%:*}
     install -m755 "$library" "$package_root/usr/lib/farcaster/lib/$soname"
     patchelf --set-rpath "\$ORIGIN" "$package_root/usr/lib/farcaster/lib/$soname"
+    install -m644 "/usr/share/doc/$package/copyright" "$package_root/usr/share/licenses/farcaster/$package-copyright"
     libraries+=("-e$package_root/usr/lib/farcaster/lib/$soname")
+    printf '%s 1 farcaster\n' "${soname%.so.1}" >> "$stage/debian/shlibs.local"
 done
 patchelf --set-rpath "\$ORIGIN/lib" "$package_root/usr/lib/farcaster/farcaster"
-for package in libc++1-21 libc++abi1-21 libunwind-21; do
-    install -m644 "/usr/share/doc/$package/copyright" "$package_root/usr/share/licenses/farcaster/$package-copyright"
-done
 
 # dpkg derives versioned dependencies from the ELF symbols, including those
-# used by the private runtimes. Only those three bundled packages are excluded.
+# used by the private runtimes. Only bundled libraries get the self-dependency.
 printf 'Source: farcaster\nSection: devel\nPriority: optional\nMaintainer: Farcaster contributors <noreply@github.com>\n\nPackage: farcaster\nArchitecture: any\nDescription: Native desktop client for coding agents\n' > "$stage/debian/control"
 # Tell shlibdeps which package supplies the private libraries, then omit the
 # resulting self-dependency. Other libraries still require real symbol metadata.
-printf 'libc++ 1 farcaster\nlibc++abi 1 farcaster\nlibunwind 1 farcaster\n' > "$stage/debian/shlibs.local"
 dependencies=$(
     cd "$stage"
     dpkg-shlibdeps -O -e"$package_root/usr/lib/farcaster/farcaster" "${libraries[@]}" \

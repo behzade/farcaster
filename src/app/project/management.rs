@@ -92,6 +92,8 @@ impl FarcasterApp {
             return;
         }
         self.save_project_registry();
+        self.forget_repository_project(project);
+        self.warm_repository_observations(cx);
         let scope = self
             .navigation
             .picker

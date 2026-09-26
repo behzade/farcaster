@@ -16,6 +16,7 @@ pub(in crate::app) struct ThemeSettings {
     subscriptions: Vec<Subscription>,
     save: Option<Task<()>>,
     loaded: bool,
+    dirty: bool,
 }
 
 impl Default for ThemeSettings {
@@ -31,6 +32,7 @@ impl Default for ThemeSettings {
             subscriptions: Vec::new(),
             save: None,
             loaded: true,
+            dirty: false,
         }
     }
 }
@@ -42,6 +44,11 @@ impl ThemeSettings {
         };
         match ThemeLibrary::from_css(css, selected) {
             Ok(library) => Self {
+                draft: library
+                    .user_themes()
+                    .iter()
+                    .find(|theme| theme.name == library.selected_name())
+                    .cloned(),
                 library,
                 ..Self::default()
             },
@@ -56,6 +63,14 @@ impl ThemeSettings {
     pub(in crate::app) fn editable(&self) -> bool {
         self.loaded
     }
+
+    pub(in crate::app) fn load_failed(error: String) -> Self {
+        Self {
+            error: Some(error),
+            loaded: false,
+            ..Self::default()
+        }
+    }
 }
 
 impl FarcasterApp {
@@ -67,7 +82,7 @@ impl FarcasterApp {
             definition.tokens,
         );
         install_component_theme(cx);
-        self.apply_terminal_theme(cx);
+        self.refresh_terminal_themes(cx);
         self.notify_appearance(cx);
         cx.refresh_windows();
     }
@@ -347,6 +362,7 @@ impl FarcasterApp {
                 match contents {
                     Ok(css) => match this.settings.themes.library.import(&css) {
                         Ok(names) => {
+                            this.settings.themes.dirty = true;
                             this.settings.themes.status =
                                 Some(format!("Imported {}.", names.join(", ")));
                             this.settings.themes.error = None;
@@ -384,11 +400,23 @@ impl FarcasterApp {
         let css = self.settings.themes.library.to_css();
         let selected = self.settings.themes.library.selected_name().to_owned();
         let store = crate::app::infrastructure::persistence::open()?;
-        store.save_theme_css(&css)?;
-        store.save_active_theme(&selected)
+        store.save_theme_settings(&css, &selected)?;
+        self.settings.themes.dirty = false;
+        Ok(())
+    }
+
+    pub(in crate::app) fn flush_theme_save(&mut self) {
+        self.settings.themes.save = None;
+        if self.settings.themes.dirty
+            && let Err(error) = self.persist_themes()
+        {
+            zlog::error!("Save themes on quit: {error}");
+            self.settings.themes.error = Some(error);
+        }
     }
 
     fn schedule_theme_save(&mut self, cx: &mut Context<Self>) {
+        self.settings.themes.dirty = true;
         self.settings.themes.save = Some(cx.spawn(async move |weak, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(400))

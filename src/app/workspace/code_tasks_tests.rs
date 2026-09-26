@@ -18,13 +18,17 @@ fn same_chat_submissions_keep_distinct_results() {
     tasks.associate("session:one", Some(std::path::Path::new("/session/one")));
 
     assert!(tasks.finish(None, "session:one").is_none());
-    let second = tasks.finish(Some("second"), "session:one").unwrap();
+    let second = tasks
+        .finish(Some("second"), "session:one")
+        .expect("second submission resolves");
     assert_eq!(second.submission_id, "second");
     assert_eq!(
         second.session.as_deref(),
         Some(std::path::Path::new("/session/one"))
     );
-    let first = tasks.finish(Some("first"), "session:one").unwrap();
+    let first = tasks
+        .finish(Some("first"), "session:one")
+        .expect("first submission resolves");
     assert_eq!(first.submission_id, "first");
     assert!(tasks.pending.is_empty());
 }
@@ -34,7 +38,10 @@ fn a_result_without_an_id_only_matches_one_pending_chat() {
     let mut tasks = CodeTasks::default();
     tasks.track(chat("only", "session:one"));
     assert_eq!(
-        tasks.finish(None, "session:one").unwrap().submission_id,
+        tasks
+            .finish(None, "session:one")
+            .expect("only submission resolves")
+            .submission_id,
         "only"
     );
 }

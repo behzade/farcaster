@@ -235,17 +235,14 @@ pub fn spawn_main(
             client.fork_session(&session_id, None)?
         }
     };
-    let session_id = session.id;
+    let session_id = session.id.clone();
     let incoming = start_event_reader(&server, &session_id, launch.wake.clone())?;
     let directory = launch.project.to_string_lossy().into_owned();
     let mut metadata = load_main_metadata(&mut client, &directory)?;
     if let Err(error) = complete_model_catalog(command, &launch.project, &mut metadata) {
         zlog::warn!("OpenCode started without a refreshed model catalog: {error}");
     }
-    let selection = match session.model {
-        Some(selection) => Some(selection),
-        None => client.default_model(&launch.project.to_string_lossy())?,
-    };
+    let selection = resolve_session_model(&mut client, launch, &session, super::model_override())?;
     let context_window = selection
         .as_ref()
         .and_then(|selected| {
@@ -300,6 +297,37 @@ pub fn spawn_main(
         session_id,
         metadata,
     ))
+}
+
+/// Resolve the model a main session runs with. `FARCASTER_OPENCODE_MODEL` only
+/// decides sessions Farcaster starts from scratch; a resumed session keeps the
+/// model saved on it, and a fork keeps the model inherited from the session it
+/// was forked from.
+fn resolve_session_model<T: super::contract::OpenCodeHttpTransport>(
+    client: &mut super::client::OpenCodeClient<T>,
+    launch: &crate::SessionLaunch,
+    session: &super::contract::OpenCodeSession,
+    override_model: Option<super::contract::OpenCodeModelSelection>,
+) -> Result<Option<super::contract::OpenCodeModelSelection>, String> {
+    let override_model = match &launch.start {
+        crate::SessionStart::New => override_model,
+        crate::SessionStart::Resume(_) | crate::SessionStart::Fork(_) => None,
+    };
+    match override_model {
+        Some(override_model) => {
+            client.select_model(
+                &session.id,
+                &override_model.provider_id,
+                &override_model.id,
+                override_model.variant.as_deref(),
+            )?;
+            Ok(Some(override_model))
+        }
+        None => match session.model.clone() {
+            Some(selection) => Ok(Some(selection)),
+            None => client.default_model(&launch.project.to_string_lossy()),
+        },
+    }
 }
 
 fn complete_model_catalog(
@@ -2180,7 +2208,7 @@ fn configure_farcaster_mcp(
                 "servers": {
                     "farcaster": {
                         "type": "remote",
-                        "url": farcaster_mcp::URL,
+                        "url": farcaster_mcp::url(),
                         "headers": {(farcaster_mcp::CALLER_HEADER): caller_token},
                         "oauth": false,
                         "codemode": true

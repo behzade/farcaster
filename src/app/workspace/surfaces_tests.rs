@@ -1,6 +1,65 @@
 use super::*;
 
 #[gpui::test]
+fn move_and_model_access_dialogs_block_workspace_surface_cycle(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::move_and_model_access_dialogs_block_workspace_surface_cycle"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let source = project.join("running-session.jsonl");
+            let session = crate::sessions::SessionSummary::from_cached(
+                "running-session".into(),
+                source.clone(),
+                project.to_path_buf(),
+                "Running session".into(),
+                String::new(),
+                String::new(),
+                None,
+                std::time::SystemTime::now(),
+                0,
+                Default::default(),
+                false,
+                true,
+                String::new(),
+            );
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.all.push(session);
+                    app.set_surface(AppSurface::Terminal, cx);
+                    app.move_session(source, project.join("target"), window, cx);
+                    assert!(app.sessions.pending_move.is_some());
+                    app.cycle_workspace_surface(true, window, cx);
+                    assert_eq!(app.workspace.surface, AppSurface::Terminal);
+
+                    app.close_move_confirmation(window, cx);
+                    app.navigation.pending_model_access =
+                        Some(crate::app::navigation::PendingModelAccess {
+                            focus: cx.focus_handle(),
+                            model: serde_json::from_value(serde_json::json!({
+                                "id": "test-model", "name": "Test model", "provider": "test"
+                            }))
+                            .expect("model fixture"),
+                            modes: Vec::new(),
+                            effort: None,
+                            apply_effort: false,
+                            return_focus: None,
+                        });
+                    app.cycle_workspace_surface(true, window, cx);
+                    assert_eq!(app.workspace.surface, AppSurface::Terminal);
+
+                    app.close_model_access_confirmation(window, cx);
+                    app.cycle_workspace_surface(true, window, cx);
+                    assert_eq!(app.workspace.surface, AppSurface::Chat);
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn hovering_the_workspace_bar_obscures_the_native_surface(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(

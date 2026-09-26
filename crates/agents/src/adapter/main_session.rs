@@ -212,63 +212,55 @@ impl WorkerSessionTransport {
         } else {
             result
         };
-        match result {
-            Ok(()) => {
-                let mut enqueue = None;
-                let mut awaiting_delivery_proof = false;
-                if let Some(delivery) = self
-                    .prompt_deliveries
-                    .iter_mut()
-                    .find(|delivery| delivery.request_id == id)
-                {
-                    let newly_admitted = !delivery.acknowledged;
-                    delivery.acknowledged = true;
-                    if newly_admitted && !delivery.delivered {
-                        self.pending.push_back(delivery.event("accepted"));
-                        if !delivery.aborted {
-                            enqueue = Some((delivery.mode, delivery.message.clone()));
-                        }
-                    }
-                    awaiting_delivery_proof =
-                        delivery.defer_response_until_delivery && !delivery.delivered;
-                }
-                if let Some((mode, message)) = enqueue {
-                    self.enqueue_message(mode, message, id.clone());
-                }
-                if awaiting_delivery_proof {
-                    // Admission is not delivery proof. Keep the pending prompt and
-                    // defer the terminal reply until delivery proves admission, or
-                    // until an abort cancellation terminally rejects it.
-                    self.pending_prompts.insert(
-                        id,
-                        PendingPrompt {
-                            requested_mode,
-                            state: PendingPromptState::Admitted,
-                        },
-                    );
-                    return;
-                }
-                self.finish_prompt_success(&id, requested_mode);
+        if let Err(error) = result {
+            if let Some(delivery) = self
+                .prompt_deliveries
+                .iter()
+                .find(|delivery| delivery.request_id == id)
+            {
+                self.pending.push_back(delivery.event("rejected"));
             }
-            Err(error) => {
-                if let Some(delivery) = self
-                    .prompt_deliveries
-                    .iter()
-                    .find(|delivery| delivery.request_id == id)
-                {
-                    self.pending.push_back(delivery.event("rejected"));
-                }
-                self.prompt_deliveries
-                    .retain(|delivery| delivery.request_id != id);
-                let response = SessionResponse::failure(
-                    Some(id),
-                    SessionOperation::Prompt(requested_mode),
-                    error,
-                );
-                self.pending.push_back(SessionEvent::Response(response));
-                return;
-            }
+            self.prompt_deliveries
+                .retain(|delivery| delivery.request_id != id);
+            let response =
+                SessionResponse::failure(Some(id), SessionOperation::Prompt(requested_mode), error);
+            self.pending.push_back(SessionEvent::Response(response));
+            return;
         }
+        let mut enqueue = None;
+        let mut awaiting_delivery_proof = false;
+        if let Some(delivery) = self
+            .prompt_deliveries
+            .iter_mut()
+            .find(|delivery| delivery.request_id == id)
+        {
+            let newly_admitted = !delivery.acknowledged;
+            delivery.acknowledged = true;
+            if newly_admitted && !delivery.delivered {
+                self.pending.push_back(delivery.event("accepted"));
+                if !delivery.aborted {
+                    enqueue = Some((delivery.mode, delivery.message.clone()));
+                }
+            }
+            awaiting_delivery_proof = delivery.defer_response_until_delivery && !delivery.delivered;
+        }
+        if let Some((mode, message)) = enqueue {
+            self.enqueue_message(mode, message, id.clone());
+        }
+        if awaiting_delivery_proof {
+            // Admission is not delivery proof. Keep the pending prompt and
+            // defer the terminal reply until delivery proves admission, or
+            // until an abort cancellation terminally rejects it.
+            self.pending_prompts.insert(
+                id,
+                PendingPrompt {
+                    requested_mode,
+                    state: PendingPromptState::Admitted,
+                },
+            );
+            return;
+        }
+        self.finish_prompt_success(&id, requested_mode);
         self.prompt_deliveries.retain(|delivery| {
             !(delivery.request_id == id && delivery.acknowledged && delivery.delivered)
         });
@@ -1016,6 +1008,18 @@ impl SessionTransport for WorkerSessionTransport {
                 self.worker.select_model(&provider, &model_id)?;
                 self.model = Some((provider.clone(), model_id.clone()));
                 self.sync_model_selection();
+                let selected_model = self.catalog_model(&provider, &model_id);
+                if !selected_model.service_tiers.is_empty() {
+                    if self
+                        .metadata
+                        .service_tier
+                        .as_ref()
+                        .is_some_and(|tier| !selected_model.service_tiers.contains(tier))
+                    {
+                        self.metadata.service_tier = None;
+                    }
+                    self.metadata.service_tiers = selected_model.service_tiers.clone();
+                }
                 self.usage.context_window = self
                     .model
                     .as_ref()
@@ -1028,10 +1032,7 @@ impl SessionTransport for WorkerSessionTransport {
                     .and_then(|model| model.get("contextWindow"))
                     .and_then(Value::as_u64)
                     .unwrap_or(0);
-                self.response(
-                    Some(id.clone()),
-                    Payload::SelectModel(self.catalog_model(&provider, &model_id)),
-                );
+                self.response(Some(id.clone()), Payload::SelectModel(selected_model));
             }
             SessionCommand::SelectReasoning { level } => {
                 self.worker.select_effort(&level)?;

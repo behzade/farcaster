@@ -320,7 +320,7 @@ const STRUCTURE: Structure = Structure {
     controls: ControlScale {
         icon_button: px(28.0),
         utility_row: px(44.0),
-        archived_preview_row: px(32.0),
+        archived_preview_row: px(49.0),
         menu_row: px(30.0),
     },
     metrics: MetricScale {

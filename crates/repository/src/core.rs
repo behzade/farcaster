@@ -20,19 +20,26 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     path::{Component, Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
 use port::{CommandExecutor, CommandMode, CommandOutput, RepositoryOperations};
 
 static REPOSITORY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-pub(crate) use file_counts::parse as parse_file_counts;
+pub(crate) use file_counts::{parse as parse_file_counts, untracked as untracked_file_counts};
+
+#[derive(Default)]
+pub(crate) struct UntrackedTotals {
+    pub additions: u64,
+    pub binary: bool,
+}
 
 pub(crate) fn finish_working_copy_totals(
     snapshot: &mut WorkingCopySnapshot,
     file_counts: &BTreeMap<(ChangeLayer, PathBuf), Option<(usize, usize)>>,
     patch: &[u8],
+    untracked: UntrackedTotals,
 ) -> (Option<u64>, Option<u64>) {
     for change in &mut snapshot.changes {
         change.counts = file_counts
@@ -40,7 +47,14 @@ pub(crate) fn finish_working_copy_totals(
             .copied()
             .flatten();
     }
-    patch_counts(&String::from_utf8_lossy(patch))
+    if untracked.binary {
+        return (None, None);
+    }
+    let (additions, deletions) = patch_counts(&String::from_utf8_lossy(patch));
+    (
+        additions.map(|additions| additions.saturating_add(untracked.additions)),
+        deletions,
+    )
 }
 
 #[derive(Clone)]
@@ -79,6 +93,43 @@ impl RepositoryBackend {
     pub fn snapshot(&self) -> Result<WorkingCopySnapshot, RepositoryError> {
         let _operation = repository_operation()?;
         self.operations.snapshot(self)
+    }
+
+    /// Observe only when the operation lock is free and authorization still
+    /// allows execution. A busy lock or denied authorization returns `None`.
+    pub fn try_snapshot_with_totals(
+        &self,
+        allowed: impl FnOnce() -> bool,
+    ) -> Result<Option<(WorkingCopySnapshot, Option<u64>, Option<u64>)>, RepositoryError> {
+        self.try_snapshot_with_totals_using(
+            REPOSITORY_OPERATION_LOCK.get_or_init(|| Mutex::new(())),
+            allowed,
+        )
+    }
+
+    fn try_snapshot_with_totals_using(
+        &self,
+        lock: &Mutex<()>,
+        allowed: impl FnOnce() -> bool,
+    ) -> Result<Option<(WorkingCopySnapshot, Option<u64>, Option<u64>)>, RepositoryError> {
+        let _operation = match lock.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => return Ok(None),
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(RepositoryError::InvalidRepository(
+                    "repository operation lock is poisoned".into(),
+                ));
+            }
+        };
+        if !allowed() {
+            return Ok(None);
+        }
+        let mut snapshot = self.operations.snapshot(self)?;
+        let (additions, deletions) = self
+            .operations
+            .working_copy_totals(self, &mut snapshot)
+            .unwrap_or((None, None));
+        Ok(Some((snapshot, additions, deletions)))
     }
 
     pub fn working_copy_totals(
@@ -413,3 +464,7 @@ pub(super) fn patch_counts(patch: &str) -> (Option<u64>, Option<u64>) {
     }
     (Some(additions), Some(deletions))
 }
+
+#[cfg(test)]
+#[path = "core_tests.rs"]
+mod tests;

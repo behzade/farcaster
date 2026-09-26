@@ -174,7 +174,7 @@ impl RuntimeOwner {
                 snapshot.thinking_levels.clone(),
                 snapshot.session_identity().model.cloned(),
                 snapshot.pending_initial_model,
-                snapshot.prefill_thinking_level.clone(),
+                snapshot.session_identity().effort.map(str::to_owned),
                 snapshot.selected_service_tier().map(str::to_owned),
                 snapshot.pending_initial_service_tier,
             )
@@ -241,11 +241,13 @@ impl RuntimeOwner {
             pending_tier,
         )) = configuration
         {
+            self.pending_session_controls
+                .restore_selection(selected_model.as_ref(), effort.as_deref());
             let snapshot = self.active_snapshot_mut();
             snapshot.models = models;
             snapshot.thinking_levels = thinking_levels;
             snapshot.prefill_model = selected_model;
-            snapshot.pending_initial_model = pending_model;
+            snapshot.pending_initial_model = pending_model || snapshot.prefill_model.is_some();
             snapshot.prefill_thinking_level = effort;
             snapshot.prefill_service_tier = tier;
             snapshot.pending_initial_service_tier = pending_tier;

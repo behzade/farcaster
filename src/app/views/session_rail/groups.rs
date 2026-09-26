@@ -70,6 +70,20 @@ pub(super) fn session_rail_lists(
     project_filter: Option<&Path>,
     manual_order: &[i64],
 ) -> SessionRailLists {
+    session_rail_lists_for_roots(
+        root_sessions(sessions),
+        drafts,
+        project_filter,
+        manual_order,
+    )
+}
+
+pub(super) fn session_rail_lists_for_roots<'a>(
+    roots: impl IntoIterator<Item = &'a SessionSummary>,
+    drafts: &[DraftSession],
+    project_filter: Option<&Path>,
+    manual_order: &[i64],
+) -> SessionRailLists {
     let mut active = drafts
         .iter()
         .filter(|draft| project_filter.is_none_or(|filter| filter == draft.project))
@@ -94,7 +108,7 @@ pub(super) fn session_rail_lists(
         .map(ActiveSessionItem::Draft)
         .collect::<Vec<_>>();
 
-    for session in root_sessions(sessions)
+    for session in roots
         .into_iter()
         .filter(|session| project_filter.is_none_or(|filter| filter == session.project))
     {

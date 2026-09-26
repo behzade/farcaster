@@ -1,4 +1,8 @@
-use super::super::{backend::BackendAdapter, queued_session::SteeringBoundary};
+use super::super::{
+    backend::BackendAdapter,
+    history_cache::{FileStamp, HistoryCache},
+    queued_session::SteeringBoundary,
+};
 use crate::{
     AgentLaunchConfig, ConfigurationCatalog, SessionLaunch, SessionStart, SessionTransport,
     WorkerSessionFactory, contract::AgentBackendDescriptor,
@@ -11,6 +15,8 @@ use std::{
 };
 
 pub(in crate::adapter) struct PiAdapter;
+
+static HISTORY: HistoryCache<PathBuf, FileStamp, LoadedHistory> = HistoryCache::new();
 
 impl BackendAdapter for PiAdapter {
     fn descriptor(&self) -> AgentBackendDescriptor {
@@ -140,7 +146,11 @@ impl BackendAdapter for PiAdapter {
         super::PiRpcProcess::rename_session(config, project, session, name)
     }
     fn load_history(&self, path: &Path, _project: &Path) -> Result<LoadedHistory, String> {
-        super::session_files::load_history(path)
+        HISTORY.load(
+            path.to_path_buf(),
+            || FileStamp::read(path),
+            || super::session_files::load_history(path),
+        )
     }
     fn discover_sessions(
         &self,

@@ -14,8 +14,8 @@ mod reviews;
 #[cfg(any(test, feature = "test-support"))]
 pub use lifecycle::with_test_worker_pool;
 pub use lifecycle::{
-    McpServer, finish_session_family_worker_stop, set_enabled, set_worker_app_proxy, start,
-    stop_session_family_workers, worker_snapshots,
+    McpServer, finish_session_family_worker_stop, install_listener, set_enabled,
+    set_worker_app_proxy, start, stop_session_family_workers, worker_snapshots,
 };
 pub use notice_board::{NoticeBoard, NoticeView};
 pub use workers::{SendParams, send};
@@ -39,6 +39,7 @@ use rmcp::{
 };
 
 const BIND_ADDRESS: &str = "127.0.0.1:8765";
+
 const MCP_PATH: &str = "/mcp";
 const CALLER_HEADER: &str = "farcaster-caller";
 

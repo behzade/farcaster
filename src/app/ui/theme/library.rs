@@ -118,7 +118,49 @@ impl ThemeDefinition {
     }
 
     pub(crate) fn validate(&self) -> Result<(), String> {
-        validate_theme_name(&self.name).map(|_| ())
+        validate_theme_name(&self.name)?;
+        self.validate_lengths()
+    }
+
+    fn validate_lengths(&self) -> Result<(), String> {
+        for (key, value) in &self.lengths {
+            let value = f32::from(*value);
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!(
+                    "--{} must be a finite, nonnegative length.",
+                    key.name()
+                ));
+            }
+        }
+        if self.length(LengthKey::Metric(MetricKey::reading)) <= px(0.0) {
+            return Err("--font-reading must be greater than zero.".to_owned());
+        }
+        for (min, max) in [
+            (MetricKey::session_rail_min, MetricKey::session_rail_max),
+            (MetricKey::run_panel_min, MetricKey::run_panel_max),
+            (MetricKey::notice_panel_min, MetricKey::notice_panel_max),
+        ] {
+            self.validate_bounds(LengthKey::Metric(min), LengthKey::Metric(max))?;
+        }
+        // Composer clearance and transcript tail reserve clamp between these sizes.
+        for (min, max) in [("size-12", "size-28"), ("size-72", "size-280")] {
+            self.validate_bounds(
+                LengthKey::from_name(min).expect("known size token"),
+                LengthKey::from_name(max).expect("known size token"),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_bounds(&self, min: LengthKey, max: LengthKey) -> Result<(), String> {
+        if self.length(min) > self.length(max) {
+            return Err(format!(
+                "--{} must not exceed --{}.",
+                min.name(),
+                max.name()
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -327,15 +369,17 @@ impl ThemeLibrary {
         if imported.is_empty() {
             return Err("This file does not define a Farcaster theme.".to_owned());
         }
+        let mut staged = self.clone();
         let mut names = Vec::with_capacity(imported.len());
         for definition in imported {
-            let name = self.unique_name(&definition.name);
-            self.upsert(ThemeDefinition {
+            let name = staged.unique_name(&definition.name);
+            staged.upsert(ThemeDefinition {
                 name: name.clone(),
                 ..definition
             })?;
             names.push(name);
         }
+        *self = staged;
         Ok(names)
     }
 
@@ -350,13 +394,19 @@ impl ThemeLibrary {
         if self.find(&base).is_none() {
             return base;
         }
-        for suffix in 2..1000 {
-            let candidate = format!("{base} {suffix}");
+        let mut number = 2usize;
+        loop {
+            let suffix = format!(" {number}");
+            let prefix = base
+                .chars()
+                .take(MAX_THEME_NAME_LEN - suffix.len())
+                .collect::<String>();
+            let candidate = format!("{}{suffix}", prefix.trim_end());
             if self.find(&candidate).is_none() {
                 return candidate;
             }
+            number += 1;
         }
-        base
     }
 }
 
@@ -418,7 +468,7 @@ pub(crate) fn parse_hex(value: &str) -> Option<Rgba> {
 fn theme_block(definition: &ThemeDefinition) -> String {
     let mut css = format!(
         ":root[data-theme=\"{}\"][data-appearance=\"{}\"] {{\n",
-        definition.name,
+        definition.name.replace('\\', "\\\\"),
         definition.appearance.name()
     );
     for key in ColorKey::ALL {
@@ -469,7 +519,7 @@ fn ordinal_in<T: PartialEq>(values: &[T], value: &T) -> usize {
 }
 
 fn themes_from_css(css: &str) -> Result<Vec<ThemeDefinition>, String> {
-    let css = strip_comments(css);
+    let css = strip_comments(css)?;
     let mut themes = Vec::new();
     let mut rest = css.as_str();
     while let Some(open) = rest.find('{') {
@@ -483,6 +533,9 @@ fn themes_from_css(css: &str) -> Result<Vec<ThemeDefinition>, String> {
             continue;
         }
         themes.push(theme_from_block(&selector, &body)?);
+    }
+    if !rest.trim().is_empty() {
+        return Err("Unexpected text outside a theme block.".to_owned());
     }
     Ok(themes)
 }
@@ -573,13 +626,15 @@ fn theme_from_block(selector: &str, body: &str) -> Result<ThemeDefinition, Strin
             .join(", ");
         return Err(format!("{name} is missing: {missing}"));
     }
-    Ok(ThemeDefinition {
+    let definition = ThemeDefinition {
         name,
         appearance,
         colors,
         tokens,
         lengths,
-    })
+    };
+    definition.validate()?;
+    Ok(definition)
 }
 
 fn parse_length(value: &str) -> Option<Pixels> {
@@ -593,29 +648,71 @@ fn parse_length(value: &str) -> Option<Pixels> {
 }
 
 fn attribute(selector: &str, name: &str) -> Option<String> {
-    let start = selector.find(&format!("{name}="))? + name.len() + 1;
-    let rest = selector[start..].trim_start();
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let rest = &rest[quote.len_utf8()..];
-    let end = rest.find(quote)?;
-    Some(rest[..end].to_owned())
-}
-
-fn strip_comments(css: &str) -> String {
-    let mut stripped = String::with_capacity(css.len());
-    let mut rest = css;
-    while let Some(start) = rest.find("/*") {
-        stripped.push_str(&rest[..start]);
-        match rest[start..].find("*/") {
-            Some(end) => rest = &rest[start + end + 2..],
-            None => return stripped,
+    let mut rest = selector;
+    while let Some(start) = rest.find('[') {
+        let (key, value) = rest[start + 1..].split_once('=')?;
+        let value = value.trim_start();
+        let mut chars = value.char_indices();
+        let (_, quote @ ('"' | '\'')) = chars.next()? else {
+            return None;
+        };
+        let mut parsed = String::new();
+        loop {
+            let (index, character) = chars.next()?;
+            if character == quote {
+                rest = value[index + character.len_utf8()..]
+                    .trim_start()
+                    .strip_prefix(']')?;
+                break;
+            }
+            if character == '\\' {
+                parsed.push(chars.next()?.1);
+            } else {
+                parsed.push(character);
+            }
+        }
+        if key.trim() == name {
+            return Some(parsed);
         }
     }
-    stripped.push_str(rest);
-    stripped
+    None
+}
+
+fn strip_comments(css: &str) -> Result<String, String> {
+    let mut stripped = String::with_capacity(css.len());
+    let mut chars = css.chars().peekable();
+    let mut quote = None;
+    while let Some(character) = chars.next() {
+        if let Some(delimiter) = quote {
+            stripped.push(character);
+            if character == '\\' {
+                let escaped = chars.next().ok_or("A quoted theme value is incomplete.")?;
+                stripped.push(escaped);
+            } else if character == delimiter {
+                quote = None;
+            }
+        } else if character == '/' && chars.peek() == Some(&'*') {
+            chars.next();
+            loop {
+                let next = chars
+                    .next()
+                    .ok_or("A CSS comment is missing its closing */.")?;
+                if next == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    break;
+                }
+            }
+        } else {
+            if character == '"' || character == '\'' {
+                quote = Some(character);
+            }
+            stripped.push(character);
+        }
+    }
+    if quote.is_some() {
+        return Err("A quoted theme value is incomplete.".to_owned());
+    }
+    Ok(stripped)
 }
 
 #[cfg(test)]

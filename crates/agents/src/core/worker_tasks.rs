@@ -234,11 +234,11 @@ impl WorkerProfiles {
                 let mut index = 2;
                 let name = loop {
                     let suffix = format!("_{index}");
-                    let candidate = format!(
-                        "{}{}",
-                        &profile.name[..profile.name.len().min(48 - suffix.len())],
-                        suffix
-                    );
+                    let mut end = profile.name.len().min(48 - suffix.len());
+                    while !profile.name.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    let candidate = format!("{}{}", &profile.name[..end], suffix);
                     if names.insert(candidate.to_ascii_lowercase()) {
                         break candidate;
                     }

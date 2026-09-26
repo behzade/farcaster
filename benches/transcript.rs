@@ -214,6 +214,7 @@ mod sessions {
     }
 }
 
+pub(crate) use farcaster_storage as storage;
 #[path = "../src/app/ui/assets.rs"]
 mod assets;
 #[path = "../src/app/views/attachments.rs"]

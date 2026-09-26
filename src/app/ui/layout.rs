@@ -17,14 +17,6 @@ pub(crate) fn compact_min_width() -> f32 {
     f32::from(theme().layout.compact_min_width)
 }
 
-pub(crate) fn draft_top_padding(height: Pixels) -> Pixels {
-    let ratio = 0.18;
-    gpui::px((f32::from(height) * ratio).clamp(
-        f32::from(theme().size(24.0)),
-        f32::from(theme().size(160.0)),
-    ))
-}
-
 pub(crate) fn composer_bottom_clearance(height: Pixels) -> Pixels {
     let ratio = 0.06;
     gpui::px(

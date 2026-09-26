@@ -105,6 +105,43 @@ fn saved_ordered_routes_migrate_without_losing_choices() {
 }
 
 #[test]
+fn saved_multibyte_name_with_ordered_routes_returns_validation_error() {
+    let saved = serde_json::json!({
+        "profiles": [{
+            "name": "€".repeat(16),
+            "description": "Saved profile",
+            "models": [execution("first"), execution("second")]
+        }]
+    });
+
+    let error = WorkerProfiles::from_saved(saved).unwrap_err();
+    assert!(error.contains("profile names must be"), "{error}");
+}
+
+#[test]
+fn saved_max_length_ascii_name_keeps_ordered_routes() {
+    let name = "a".repeat(48);
+    let migrated_name = format!("{}_2", &name[..46]);
+    let saved = serde_json::json!({
+        "profiles": [{
+            "name": name,
+            "description": "Saved profile",
+            "models": [execution("first"), execution("second")]
+        }]
+    });
+
+    let profiles = WorkerProfiles::from_saved(saved).unwrap();
+    for (profile_name, model) in [(name.as_str(), "first"), (migrated_name.as_str(), "second")] {
+        let profile = profiles
+            .profiles
+            .iter()
+            .find(|profile| profile.name == profile_name)
+            .unwrap();
+        assert_eq!(profile.models[0].model, model);
+    }
+}
+
+#[test]
 fn legacy_tasks_remain_custom_profiles() {
     let route = serde_json::json!({"harness":"pi", "provider":"openai-codex", "model":"test", "effort":null});
     let saved = serde_json::json!({"tasks":[{"name":"audit", "specified":route, "guided":route, "independent":route}]});

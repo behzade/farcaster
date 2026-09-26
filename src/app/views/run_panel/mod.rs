@@ -1,6 +1,8 @@
 pub(in crate::app) mod agents;
 mod background_jobs;
 pub(crate) use crate::app::ui::change_tree;
+#[cfg(test)]
+mod order_tests;
 mod performance;
 mod repository;
 mod repository_controls;
@@ -27,7 +29,6 @@ use crate::{
     agent_activity::AgentActivity,
     app::ui::primitives::{ButtonTone, activates_button, button, panel, section_heading},
     app::ui::theme::theme,
-    sessions::{descendant_sessions_for_root, root_session_for_path},
 };
 
 pub(crate) struct RepositoryView<'a> {
@@ -42,7 +43,7 @@ pub(in crate::app) type WorkerProfileNames =
     std::collections::HashMap<(std::path::PathBuf, crate::agents::Backend, String), String>;
 
 fn run_panel_agent_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<(
@@ -51,10 +52,11 @@ fn run_panel_agent_rows<'a>(
     &'a crate::sessions::SessionSummary,
     AgentSection,
 )> {
-    let Some(root) = root_session_for_path(sessions, selected) else {
+    let Some(root) = sessions.root_for_path(selected) else {
         return Vec::new();
     };
-    descendant_sessions_for_root(sessions, root)
+    sessions
+        .descendants(root)
         .into_iter()
         .filter_map(|(session, depth)| {
             let activity_key = crate::agent_activity::agent_activity_key(&session.path);
@@ -69,7 +71,7 @@ fn run_panel_agent_rows<'a>(
 }
 
 fn ordered_worker_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<(
@@ -79,22 +81,18 @@ fn ordered_worker_rows<'a>(
     AgentSection,
 )> {
     let mut workers = run_panel_agent_rows(sessions, activities, selected);
-    workers.sort_by(|left, right| {
-        right
-            .2
-            .timestamp
-            .cmp(&left.2.timestamp)
-            .then_with(|| left.2.id.cmp(&right.2.id))
+    workers.sort_by(|(_, _, left, _), (_, _, right, _)| {
+        (right.created_at, &right.id).cmp(&(left.created_at, &left.id))
     });
     workers
 }
 
 pub(in crate::app) fn worker_navigation_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<&'a crate::sessions::SessionSummary> {
-    let Some(root) = root_session_for_path(sessions, selected) else {
+    let Some(root) = sessions.root_for_path(selected) else {
         return Vec::new();
     };
     std::iter::once(root)
@@ -108,7 +106,7 @@ pub(in crate::app) fn worker_navigation_rows<'a>(
 
 #[cfg(test)]
 pub(crate) fn live_run_panel_agent_rows<'a>(
-    sessions: &'a [crate::sessions::SessionSummary],
+    sessions: &'a crate::sessions::SessionCatalog,
     activities: &std::collections::HashMap<String, AgentActivity>,
     selected: Option<&std::path::Path>,
 ) -> Vec<(
@@ -170,7 +168,7 @@ impl FarcasterApp {
                                     });
                                 },
                             ))
-                            .child(section_heading("Older workers")),
+                            .child(section_heading("Workers")),
                     )
                     .child(
                         div()
@@ -213,13 +211,15 @@ impl FarcasterApp {
             .as_ref()
             .map(|(path, _)| path.as_path())
             .or(self.snapshot.selected_session.as_deref());
-        let root = root_session_for_path(&self.sessions.all, selected);
+        let root = self.sessions.all.root_for_path(selected);
         let workers = ordered_worker_rows(&self.sessions.all, &self.activity.agents, selected);
-        let older_count = workers.len().saturating_sub(RECENT_WORKERS);
         let selected_is_older = workers
             .iter()
             .skip(RECENT_WORKERS)
             .any(|(_, _, session, _)| selected == Some(session.path.as_path()));
+        let hidden_count = workers
+            .len()
+            .saturating_sub(RECENT_WORKERS + usize::from(selected_is_older));
         let root_path = root.map(|session| session.path.clone());
         let older_panel = run_panel.clone();
         let conversation = inspector_section()
@@ -284,10 +284,10 @@ impl FarcasterApp {
                         )
                     }),
             )
-            .when(older_count > 0, |section| {
+            .when(hidden_count > 0, |section| {
                 section.child(button(
                     "show-older-workers",
-                    format!("Show older workers ({older_count})"),
+                    format!("Show more (+{hidden_count})"),
                     ButtonTone::Quiet,
                     true,
                     move |_, cx| {

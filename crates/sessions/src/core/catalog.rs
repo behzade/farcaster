@@ -101,7 +101,7 @@ impl<'a> SessionRootIndex<'a> {
         }
     }
 
-    fn parent(&self, session: &SessionSummary) -> Option<&'a SessionSummary> {
+    pub(super) fn parent(&self, session: &SessionSummary) -> Option<&'a SessionSummary> {
         if let Some(id) = session.parent_app_session_id {
             // An unresolved cached parent must not bind to a native-ID homonym.
             return self.by_app_id.get(&id).copied();

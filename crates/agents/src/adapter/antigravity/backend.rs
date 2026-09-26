@@ -26,10 +26,11 @@ impl BackendAdapter for AntigravityAdapter {
     }
     fn configuration_catalog(
         &self,
-        _config: &AgentLaunchConfig,
+        config: &AgentLaunchConfig,
         project: &Path,
     ) -> Result<ConfigurationCatalog, String> {
-        let (metadata, _) = acp::load_configuration(&super::PROFILE, project)?;
+        let command = self.launch_configuration(config);
+        let (metadata, _) = acp::load_configuration(&super::PROFILE, &command, project)?;
         super::super::configuration_catalog(metadata)
     }
     fn steering_boundary(&self) -> SteeringBoundary {
@@ -50,6 +51,25 @@ impl BackendAdapter for AntigravityAdapter {
         Ok(Vec::new())
     }
     fn external_history(&self, path: &Path, project: &Path) -> Result<DiscoveredHistory, String> {
-        super::load_history(path, project)
+        super::load_history(
+            &self.launch_configuration(&AgentLaunchConfig::default()),
+            path,
+            project,
+        )
+    }
+    fn load_history_for_profile(
+        &self,
+        config: &AgentLaunchConfig,
+        path: &Path,
+        project: &Path,
+    ) -> Result<farcaster_sessions::LoadedHistory, String> {
+        let history = super::load_history(&self.launch_configuration(config), path, project)?;
+        Ok(farcaster_sessions::LoadedHistory {
+            messages: history.messages,
+            model: history.model,
+            thinking_level: history.thinking_level,
+            pending_question: None,
+            prompt_deliveries: history.prompt_deliveries,
+        })
     }
 }

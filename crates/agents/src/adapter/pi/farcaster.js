@@ -208,7 +208,10 @@ class McpClient {
     };
     if (this.session) headers["Mcp-Session-Id"] = this.session;
     Object.assign(headers, standardHeaders(body));
-    const timeout = AbortSignal.timeout(8000);
+    // The no-catalog profile setup can ask six sequential questions, each with
+    // a 300s server wait. Keep the request bounded beyond that full path.
+    const interactive = body.method === "tools/call" && body.params?.name === "worker_send";
+    const timeout = AbortSignal.timeout(interactive ? 6 * 300000 + 10000 : 8000);
     const response = await fetch(this.url, {
       method: "POST",
       headers,

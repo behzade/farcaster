@@ -128,7 +128,7 @@ impl RuntimeOwner {
                 let result = harness
                     .ok_or_else(|| "Choose a backend before loading history.".to_owned())
                     .and_then(|harness| {
-                        history_cache::load_cached_history(harness, &path, &project)
+                        agents::load_session_history_for_profile(&config, harness, &path, &project)
                     });
                 if let Ok(history) = &result {
                     operation.set_work(history.messages.len());
@@ -248,6 +248,7 @@ impl RuntimeOwner {
         {
             zlog::error!("Reconcile saved prompt deliveries: {error}");
         }
+        let projection = self.host.timer(RuntimeMetric::ProjectHistory);
         if let Some(state) = self.state.as_ref() {
             if let Err(error) = state.with(|store| {
                 annotate_history_presentations(Some(store), &result.path, &mut history.messages);
@@ -270,6 +271,7 @@ impl RuntimeOwner {
             HarnessConfigurationStore::history_model(&models, history.model.as_ref());
         let mut conversation = ConversationState::default();
         conversation.replace_history(&history.messages);
+        drop(projection);
         self.transcript_changed_from = Some(0);
         self.snapshot = RuntimeSnapshot {
             connected: true,

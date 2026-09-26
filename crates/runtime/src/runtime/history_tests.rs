@@ -5,6 +5,68 @@ const ONE_PIXEL_PNG: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 #[test]
+fn refresh_history_preserves_config_and_selects_profile_from_locator() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let profile_id = uuid::Uuid::new_v4().to_string();
+    let root = temp.path().join("custom-claude");
+    let project = root.join("projects/fixture");
+    std::fs::create_dir_all(&project).expect("Claude project directory");
+    let row = json!({
+        "type": "user", "uuid": "u", "parentUuid": null,
+        "message": {"role": "user", "content": "custom profile history"}
+    });
+    std::fs::write(
+        project.join(format!("{session_id}.jsonl")),
+        format!("{row}\n"),
+    )
+    .expect("Claude history");
+    let locator = temp
+        .path()
+        .join("profiles")
+        .join(&profile_id)
+        .join("claude")
+        .join(session_id);
+    let (mut owner, _events) = crate::runtime::tests::owner_without_process(temp.path().into());
+    owner.harness = Some(Backend::Claude);
+    owner
+        .process_command
+        .profiles
+        .replace(vec![agents::HarnessProfile {
+            id: profile_id,
+            name: "Custom Claude".into(),
+            backend: Backend::Claude,
+            executable: PathBuf::from("claude"),
+            data_directory: Some(root),
+        }])
+        .expect("saved profile");
+    // The selected history's locator, rather than the active process's profile,
+    // determines which saved data directory the history worker reads.
+    let active_profile = uuid::Uuid::new_v4().to_string();
+    owner.process_command.profile_id = Some(active_profile.clone());
+    let (sender, receiver) = std::sync::mpsc::channel();
+    owner.history_tx = sender;
+    for kind in [HistoryLoadKind::Selection, HistoryLoadKind::DocumentRefresh] {
+        owner.refresh_history(locator.clone(), temp.path().into(), kind);
+        let result = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("history worker result");
+        assert_eq!(result.path, locator);
+        assert_eq!(result.project, temp.path());
+        let history = result.result.expect("profile-aware runtime history");
+        assert_eq!(history.messages.len(), 1);
+        assert_eq!(
+            history.messages[0]["content"][0]["text"],
+            "custom profile history"
+        );
+        assert_eq!(
+            owner.process_command.profile_id.as_deref(),
+            Some(active_profile.as_str())
+        );
+    }
+}
+
+#[test]
 fn dismissed_queue_row_does_not_return_on_history_refresh_or_reopen() -> Result<(), String> {
     use crate::runtime::tests::owner_without_process;
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;

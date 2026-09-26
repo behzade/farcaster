@@ -1,6 +1,7 @@
 use crate::agents::Backend;
 use std::{
     collections::BTreeMap,
+    fs,
     path::Path,
     sync::{
         Arc, Condvar, Mutex,
@@ -252,6 +253,123 @@ fn stopping_for_move_keeps_family_unarchived_and_discards_only_its_queue() -> Re
         assert_eq!(remaining.len(), 1, "{remaining:?}");
         assert_eq!(remaining[0].id, unrelated_prompt);
         assert_ne!(remaining[0].id, root_prompt);
+        Ok(())
+    })
+}
+
+#[test]
+fn failed_move_restores_selected_actor_and_command_route() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let root = summary(temp.path(), "root", None);
+    fs::write(
+        &root.path,
+        format!(
+            "{}\n",
+            json!({"type":"session","version":3,"id":"root","cwd":temp.path()})
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut state = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    state.replace_sessions(std::slice::from_ref(&root))?;
+    let pool = lifecycle_pool(temp.path(), Arc::new(LifecycleFactory::default()))?;
+    let (mut supervisor, events) = supervisor_for_family(state, vec![root.clone()]);
+    let key = format!("session:{}", root.path.display());
+    let (actor_commands, actor_command_rx) = mpsc::channel();
+    let (_actor_events_tx, actor_events) = mpsc::channel();
+    let join = thread::spawn(move || {
+        while let Ok(command) = actor_command_rx.recv() {
+            if matches!(command, RuntimeCommand::Shutdown) {
+                break;
+            }
+        }
+        Ok(())
+    });
+    supervisor.actors.insert(
+        key.clone(),
+        SessionRuntimeHandle {
+            commands: actor_commands,
+            events: actor_events,
+            thread: join.thread().clone(),
+            join,
+        },
+    );
+    supervisor
+        .actor_paths
+        .insert(root.path.clone(), key.clone());
+    supervisor.selected = key.clone();
+    supervisor.selected_session = Some(root.path.clone());
+    let host_state = supervisor.host.state_store()?;
+    host_state.with(|store| {
+        store.replace_sessions(std::slice::from_ref(&root))?;
+        store.enqueue_prompt(
+            &key,
+            Backend::Pi,
+            temp.path(),
+            Some(&root.path),
+            crate::protocol::PromptMode::Normal,
+            "do not replay",
+            &[],
+        )?;
+        Ok(())
+    })?;
+
+    farcaster_mcp_server::with_test_worker_pool(pool, || {
+        assert!(
+            supervisor.handle_session_family_command(&RuntimeCommand::StopAndMoveSession {
+                path: root.path.clone(),
+                target_project: temp.path().join("missing-project"),
+            },)
+        );
+        assert_eq!(supervisor.selected, key);
+        assert_eq!(supervisor.actor_paths.get(&root.path), Some(&key));
+        assert!(supervisor.actors.contains_key(&key));
+        assert!(root.path.is_file());
+        assert!(host_state.with(|store| store.queued_prompts())?.is_empty());
+        let failure_events = events.try_iter().collect::<Vec<_>>();
+        assert!(failure_events.iter().any(|event| matches!(
+            event,
+            RuntimeEvent::SessionsFailed { message, .. }
+                if message.contains("resolve target project")
+        )));
+        assert!(
+            failure_events
+                .iter()
+                .all(|event| !matches!(event, RuntimeEvent::SessionMoved { .. }))
+        );
+
+        let (commands, command_rx) = mpsc::channel();
+        supervisor.command_rx = command_rx;
+        commands
+            .send(RuntimeCommand::SelectSession {
+                path: root.path.clone(),
+                harness: root.harness,
+                session_id: root.id.clone(),
+                project: root.project.clone(),
+            })
+            .map_err(|error| error.to_string())?;
+        assert!(supervisor.process_next_command());
+        assert_eq!(supervisor.selected, key);
+        assert!(supervisor.actors.contains_key(&key));
+        let mut selected_snapshot = false;
+        for _ in 0..100 {
+            supervisor.drain_actor_events();
+            selected_snapshot |= events.try_iter().any(|event| {
+                matches!(
+                    event,
+                    RuntimeEvent::Snapshot { snapshot, .. }
+                        if snapshot.harness == Some(root.harness)
+                            && snapshot.selected_session.as_deref() == Some(root.path.as_path())
+                )
+            });
+            if selected_snapshot {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            selected_snapshot,
+            "the restored actor must load the selected chat"
+        );
         Ok(())
     })
 }

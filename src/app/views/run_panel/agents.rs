@@ -58,6 +58,7 @@ pub(super) fn conversation_row(id: impl Into<ElementId>, selected: bool) -> gpui
 }
 
 impl FarcasterApp {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn agent_card(
         &self,
         activity: &AgentActivity,
@@ -146,7 +147,6 @@ impl FarcasterApp {
             .py(theme().size(3.0))
             .flex()
             .items_stretch()
-            .hover(|card| card.bg(theme().colors.highlight))
             .focus(|card| card.bg(theme().colors.highlight))
             .cursor_pointer()
             .on_click(move |_, window, cx| {

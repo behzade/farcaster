@@ -2,21 +2,24 @@ use std::path::Path;
 
 use gpui::{Context, Window};
 
-use super::{FarcasterApp, VisibleSessionTarget, groups::ActiveSessionItem, session_rail_lists};
+use super::{
+    FarcasterApp, VisibleSessionTarget, groups::ActiveSessionItem,
+    groups::session_rail_lists_for_roots,
+};
 use crate::{
     app::{
         AppSurface,
         views::run_panel::{RECENT_WORKERS, worker_navigation_rows},
     },
-    sessions::{SessionSummary, root_session_for_path},
+    sessions::{SessionCatalog, SessionSummary},
 };
 
 fn selected_root<'a>(
-    sessions: &'a [SessionSummary],
+    sessions: &'a SessionCatalog,
     confirmed: Option<&Path>,
     requested: Option<&Path>,
 ) -> Option<&'a SessionSummary> {
-    root_session_for_path(sessions, requested.or(confirmed))
+    sessions.root_for_path(requested.or(confirmed))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -130,8 +133,8 @@ impl FarcasterApp {
             return;
         }
         let active = self.visible_session_targets();
-        let archived = session_rail_lists(
-            &self.sessions.visible,
+        let archived = session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,

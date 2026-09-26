@@ -15,10 +15,9 @@ use tempfile::tempdir;
 use std::os::unix::fs::symlink;
 
 use crate::{
-    CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, StateStore,
-    WindowPlacement, WindowState,
+    CachedConfigurationCatalog, CachedSessionControlDefaults, ComposerRecord, PanelLayout,
+    StateStore, WindowPlacement, WindowState,
     agents::ConfigurationCatalog,
-    PanelLayout,
     projects::{self, Registry},
     protocol::{Model, PromptImage, PromptMode},
     sessions::{DraftSession, SessionImport, SessionSummary, UsageSummary},
@@ -425,20 +424,11 @@ fn theme_settings_round_trip_and_start_empty() -> Result<(), Box<dyn std::error:
     assert_eq!(store.load_theme_css()?, None);
     assert_eq!(store.load_active_theme()?, None);
 
-    let mut library = crate::app::ui::theme::ThemeLibrary::default();
-    let mut definition = crate::app::ui::theme::builtin::BUILT_IN_THEMES[1].clone();
-    definition.name = "Paper".to_owned();
-    library.upsert(definition)?;
-    library.select("Paper")?;
-    store.save_theme_css(&library.to_css())?;
-    store.save_active_theme(library.selected_name())?;
-
+    let css = "theme fixture";
+    store.save_theme_settings(css, "Paper")?;
     let reopened = StateStore::open_at(&database)?;
-    let css = reopened.load_theme_css()?.expect("themes should persist");
-    let selected = reopened.load_active_theme()?;
-    let restored = crate::app::ui::theme::ThemeLibrary::from_css(&css, selected.as_deref())?;
-    assert_eq!(restored.selected_name(), "Paper");
-    assert_eq!(restored.user_themes().len(), 1);
+    assert_eq!(reopened.load_theme_css()?.as_deref(), Some(css));
+    assert_eq!(reopened.load_active_theme()?.as_deref(), Some("Paper"));
     Ok(())
 }
 
@@ -1328,18 +1318,18 @@ fn archiving_a_chat_survives_the_registry_before_anything_is_sent()
         drafts: vec![draft],
     };
 
-    projects::save_registry(&mut store, &registry(draft.clone()))?;
-    assert!(!projects::load_registry(&store)?.drafts[0].archived);
+    store.save_registry(&registry(draft.clone()))?;
+    assert!(!store.load_registry()?.drafts[0].archived);
 
     let mut archived = draft;
     assert!(archived.set_archived(true));
-    projects::save_registry(&mut store, &registry(archived))?;
-    assert!(projects::load_registry(&store)?.drafts[0].archived);
+    store.save_registry(&registry(archived))?;
+    assert!(store.load_registry()?.drafts[0].archived);
 
-    let mut restored = projects::load_registry(&store)?.drafts.remove(0);
+    let mut restored = store.load_registry()?.drafts.remove(0);
     assert!(restored.set_archived(false));
-    projects::save_registry(&mut store, &registry(restored))?;
-    assert!(!projects::load_registry(&store)?.drafts[0].archived);
+    store.save_registry(&registry(restored))?;
+    assert!(!store.load_registry()?.drafts[0].archived);
     Ok(())
 }
 
@@ -2461,5 +2451,27 @@ fn typed_backend_persistence_preserves_unselected_drafts_and_rejects_unknown_nam
         [],
     )?;
     assert!(store.load_registry().is_err());
+    Ok(())
+}
+
+#[test]
+fn theme_save_rolls_back_library_when_selection_write_fails()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempdir()?;
+    let database = temp.path().join("themes.sqlite3");
+    let store = StateStore::open_at(&database)?;
+    store.save_theme_settings("original", "Original")?;
+    Connection::open(&database)?.execute_batch(
+        "CREATE TRIGGER reject_theme_selection BEFORE UPDATE ON meta
+         WHEN NEW.key='theme_selected' BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+    )?;
+    assert!(
+        store
+            .save_theme_settings("replacement", "Replacement")
+            .is_err()
+    );
+    let reopened = StateStore::open_at(&database)?;
+    assert_eq!(reopened.load_theme_css()?.as_deref(), Some("original"));
+    assert_eq!(reopened.load_active_theme()?.as_deref(), Some("Original"));
     Ok(())
 }

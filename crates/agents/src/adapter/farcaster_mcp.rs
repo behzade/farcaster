@@ -1,11 +1,6 @@
-pub const URL: &str = "http://127.0.0.1:8765/mcp";
+pub use crate::builtin_mcp::url;
 pub const CALLER_HEADER: &str = "farcaster-caller";
 
 pub(super) fn enabled() -> bool {
     crate::builtin_mcp::enabled()
-}
-
-#[cfg(any(test, feature = "test-support"))]
-pub(super) fn set_enabled(enabled: bool) {
-    crate::builtin_mcp::set_enabled(enabled);
 }

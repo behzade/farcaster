@@ -18,6 +18,9 @@ use super::super::{
     main_session::{external_session_locator, external_session_path},
 };
 
+#[path = "history_cache.rs"]
+mod history_cache;
+
 const INTERACTIVE_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer", "unknown"];
 const AGENT_SOURCE_KINDS: &[&str] = &[
     "subAgent",
@@ -39,7 +42,7 @@ pub(super) fn discover_with_config(
     locator_root: &Path,
     query: &str,
 ) -> Result<Vec<DiscoveredSession>, String> {
-    with_connection_and_home_using(Some(config), |connection, home| {
+    with_connection_and_home_using(Some(config), None, |connection, home| {
         discover_with_client(connection, home, locator_root, query)
     })
 }
@@ -164,23 +167,25 @@ fn thread_list_params(archived: bool, query: &str, source_kinds: &[&str]) -> Val
 }
 
 pub fn rename_session(session_id: &str, name: &str) -> Result<(), String> {
-    rename_session_using(None, session_id, name)
+    rename_session_using(None, None, session_id, name)
 }
 
 pub(super) fn rename_session_with_config(
     config: &crate::AgentLaunchConfig,
+    project: &Path,
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    rename_session_using(Some(config), session_id, name)
+    rename_session_using(Some(config), Some(project), session_id, name)
 }
 
 fn rename_session_using(
     config: Option<&crate::AgentLaunchConfig>,
+    project: Option<&Path>,
     session_id: &str,
     name: &str,
 ) -> Result<(), String> {
-    with_connection_and_home_using(config, |connection, _| {
+    with_connection_and_home_using(config, project, |connection, _| {
         let id = connection.send_request(
             "thread/name/set",
             json!({"threadId": session_id, "name": name}),
@@ -204,70 +209,124 @@ fn delete_session_using(
     config: Option<&crate::AgentLaunchConfig>,
     session_id: &str,
 ) -> Result<(), String> {
-    with_connection_and_home_using(config, |connection, _| {
+    with_connection_and_home_using(config, None, |connection, _| {
         let id = connection.send_request("thread/delete", json!({"threadId": session_id}))?;
         connection.wait_response::<Value>(&id).map(|_| ())
     })
 }
 
 pub fn load_history(path: &Path) -> Result<DiscoveredHistory, String> {
-    load_history_using(None, path)
+    load_history_using(None, path, None)
 }
 
 pub(super) fn load_history_with_config(
     config: &crate::AgentLaunchConfig,
     path: &Path,
+    project: &Path,
 ) -> Result<DiscoveredHistory, String> {
-    load_history_using(Some(config), path)
+    load_history_using(Some(config), path, Some(project))
 }
 
 fn load_history_using(
     config: Option<&crate::AgentLaunchConfig>,
     path: &Path,
+    project: Option<&Path>,
 ) -> Result<DiscoveredHistory, String> {
     let locator = external_session_locator(Backend::Codex, path)
         .ok_or_else(|| format!("invalid Codex session locator: {}", path.display()))?;
-    with_connection_and_home_using(config, |connection, codex_home| {
-        let id = connection.send_request(
-            "thread/read",
-            json!({"threadId": locator, "includeTurns": true}),
-        )?;
-        let response: Value = connection.wait_response(&id)?;
-        let thread = response.get("thread").unwrap_or(&response);
-        let mut messages = Vec::new();
-        let mut delivered = Vec::new();
-        for turn in thread
-            .get("turns")
+    with_connection_and_home_and_scope_using(config, project, |connection, codex_home, scope| {
+        if scope.has_sqlite_home_override()
+            || !history_cache::has_revision(codex_home, &locator)
+            || !can_cache_persisted_history(connection, codex_home)
+        {
+            return read_history(connection, codex_home, &locator);
+        }
+        history_cache::load(codex_home, &locator, scope, || {
+            read_history(connection, codex_home, &locator)
+        })
+    })
+}
+
+fn can_cache_persisted_history<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    home: &Path,
+) -> bool {
+    let check = || -> Result<bool, String> {
+        // A reused/daemon-backed server can return unflushed live turns. Cache
+        // only when the server confirms it has no loaded threads.
+        let id = connection.send_request("thread/loaded/list", json!({}))?;
+        let loaded: Value = connection.wait_response(&id)?;
+        if !loaded
+            .get("data")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            return Ok(false);
+        }
+        // CODEX_HOME and SQLite's configured home can differ. The cache follows
+        // the existing identity reader, so bypass it for a relocated state DB.
+        let id = connection.send_request("config/read", json!({"includeLayers": false}))?;
+        let config: Value = connection.wait_response(&id)?;
+        let Some(config) = config.get("config").and_then(Value::as_object) else {
+            return Ok(false);
+        };
+        Ok(match config.get("sqlite_home") {
+            None | Some(Value::Null) => true,
+            Some(Value::String(path)) => std::fs::canonicalize(path)
+                .ok()
+                .zip(std::fs::canonicalize(home).ok())
+                .is_some_and(|(left, right)| left == right),
+            _ => false,
+        })
+    };
+    let mut check = check;
+    check().unwrap_or(false)
+}
+
+fn read_history<R: std::io::BufRead, W: std::io::Write>(
+    connection: &mut CodexConnection<R, W>,
+    codex_home: &Path,
+    locator: &str,
+) -> Result<DiscoveredHistory, String> {
+    let id = connection.send_request(
+        "thread/read",
+        json!({"threadId": locator, "includeTurns": true}),
+    )?;
+    let response: Value = connection.wait_response(&id)?;
+    let thread = response.get("thread").unwrap_or(&response);
+    let mut messages = Vec::new();
+    let mut delivered = Vec::new();
+    for turn in thread
+        .get("turns")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for item in turn
+            .get("items")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
         {
-            for item in turn
-                .get("items")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(id) = delivered_submission_id(item) {
-                    delivered.push(id.to_owned());
-                }
-                messages.extend(history_messages(item));
+            if let Some(id) = delivered_submission_id(item) {
+                delivered.push(id.to_owned());
             }
+            messages.extend(history_messages(item));
         }
-        let identity = stored_identities(codex_home, &[&locator])?.remove(&locator);
-        let (model, thinking_level) = identity.map_or((None, None), |identity| {
-            (Some((identity.provider, identity.model)), identity.effort)
-        });
-        Ok(DiscoveredHistory {
-            messages,
-            model,
-            thinking_level,
-            prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
-                delivered,
-                pending: Vec::new(),
-                absence_is_not_delivered: false,
-            }),
-        })
+    }
+    let identity = stored_identities(codex_home, &[locator])?.remove(locator);
+    let (model, thinking_level) = identity.map_or((None, None), |identity| {
+        (Some((identity.provider, identity.model)), identity.effort)
+    });
+    Ok(DiscoveredHistory {
+        messages,
+        model,
+        thinking_level,
+        prompt_deliveries: Some(farcaster_sessions::PromptDeliveryReconciliation {
+            delivered,
+            pending: Vec::new(),
+            absence_is_not_delivered: false,
+        }),
     })
 }
 
@@ -293,16 +352,30 @@ fn with_connection<T>(
 fn with_connection_and_home<T>(
     operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
-    with_connection_and_home_using(None, operation)
+    with_connection_and_home_using(None, None, operation)
 }
 
 fn with_connection_and_home_using<T>(
     config: Option<&crate::AgentLaunchConfig>,
+    project: Option<&Path>,
     operation: impl FnOnce(&mut CatalogConnection, &Path) -> Result<T, String>,
 ) -> Result<T, String> {
+    with_connection_and_home_and_scope_using(config, project, |connection, home, _| {
+        operation(connection, home)
+    })
+}
+
+fn with_connection_and_home_and_scope_using<T>(
+    config: Option<&crate::AgentLaunchConfig>,
+    project: Option<&Path>,
+    operation: impl FnOnce(&mut CatalogConnection, &Path, history_cache::Scope) -> Result<T, String>,
+) -> Result<T, String> {
     let mut command = if let Some(config) = config.filter(|config| config.profile_id.is_some()) {
-        let project =
-            std::env::current_dir().map_err(|error| format!("Codex catalog project: {error}"))?;
+        let project = match project {
+            Some(project) => project.to_path_buf(),
+            None => std::env::current_dir()
+                .map_err(|error| format!("Codex catalog project: {error}"))?,
+        };
         config.command(&project)?
     } else {
         Command::new(
@@ -312,6 +385,7 @@ fn with_connection_and_home_using<T>(
         )
     };
     command.args(["app-server", "--stdio"]);
+    let scope = history_cache::Scope::new(&command, config, project);
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -320,7 +394,7 @@ fn with_connection_and_home_using<T>(
         .map_err(|error| format!("start Codex catalog app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-catalog")?;
     let result = connect(&mut child)
-        .and_then(|(mut connection, codex_home)| operation(&mut connection, &codex_home));
+        .and_then(|(mut connection, codex_home)| operation(&mut connection, &codex_home, scope));
     let _ = child.kill();
     let _ = child.wait();
     result
@@ -431,9 +505,19 @@ fn summary(
         thread,
         &["updatedAt", "updated_at", "createdAt", "created_at"],
     );
-    let timestamp = string(thread, &["createdAt", "created_at"])
-        .unwrap_or_default()
-        .to_owned();
+    let timestamp = ["createdAt", "created_at"]
+        .into_iter()
+        .find_map(|key| {
+            let value = thread.get(key)?;
+            if let Some(value) = value.as_str() {
+                return Some(value.to_owned());
+            }
+            time::OffsetDateTime::from_unix_timestamp(value.as_i64()?)
+                .ok()?
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
+        .unwrap_or_default();
     let parent_session = string(thread, &["parentThreadId", "parent_thread_id"])
         .map(str::to_owned)
         .or_else(|| crate::core::CallerRegistry::shared().session_parent(Backend::Codex, id));

@@ -209,14 +209,20 @@ fn model_reselection_during_history_resume_updates_the_loading_snapshot() {
         })
         .to_vec();
     let first = owner.snapshot.models[0].clone();
-    let later = owner.snapshot.models[1].clone();
+    let mut later = owner.snapshot.models[1].clone();
+    later.service_tiers = vec!["standard".into()];
+    owner.snapshot.models[1] = later.clone();
     owner.snapshot.prefill_model = Some(first.clone());
     owner.snapshot.pending_initial_model = true;
+    owner.snapshot.prefill_service_tier = Some("fast".into());
+    owner.snapshot.pending_initial_service_tier = true;
     owner.parked_snapshot = Some(RuntimeSnapshot {
         selected_session: Some("/saved".into()),
         models: owner.snapshot.models.clone(),
         prefill_model: Some(first.clone()),
         pending_initial_model: true,
+        prefill_service_tier: Some("fast".into()),
+        pending_initial_service_tier: true,
         ..RuntimeSnapshot::default()
     });
     owner.process = Some(Box::new(AckTransport));
@@ -225,12 +231,21 @@ fn model_reselection_during_history_resume_updates_the_loading_snapshot() {
         .set(SessionControl::Model(first.provider, first.id));
 
     owner.set_model(later);
+    assert_eq!(owner.snapshot.selected_service_tier(), None);
+    assert_eq!(
+        owner
+            .parked_snapshot
+            .as_ref()
+            .and_then(RuntimeSnapshot::selected_service_tier),
+        None
+    );
     owner.startup_state_loaded = true;
     owner.startup_history_loaded = true;
     owner.pending_session_controls.restore_preview = true;
     owner.maybe_send_pending_session_controls();
 
     assert!(!owner.snapshot.history_preview);
+    assert_eq!(owner.snapshot.selected_service_tier(), None);
     assert_eq!(
         owner
             .snapshot
@@ -353,6 +368,7 @@ fn pending_reset_survives_coalescing_and_is_not_an_empty_queue() {
     let mut pending = PendingSessionControls::default();
     pending.set(SessionControl::Thinking(Some("high".into())));
     pending.set(SessionControl::Thinking(None));
+    pending.restore_selection(None, Some("high"));
     assert!(!pending.is_empty());
     assert_eq!(
         pending
@@ -484,4 +500,181 @@ fn cursor_draft_model_change_clears_an_unsupported_tier() {
             model_id: "plain".into(),
         }]
     );
+}
+
+#[test]
+fn live_model_change_clears_an_unsupported_tier_and_queued_control() {
+    let (mut owner, events) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Cursor);
+    owner.snapshot.harness = Some(Backend::Cursor);
+    owner.active_session = Some("/session".into());
+    owner.snapshot.selected_session = owner.active_session.clone();
+    owner.process = Some(Box::new(AckTransport));
+    let old: Model = serde_json::from_value(serde_json::json!({
+        "id":"old", "name":"Old", "provider":"cursor",
+        "serviceTiers":["standard", "priority"]
+    }))
+    .expect("decode old model");
+    let plain: Model = serde_json::from_value(serde_json::json!({
+        "id":"plain", "name":"Plain", "provider":"cursor",
+        "serviceTiers":["standard"]
+    }))
+    .expect("decode plain model");
+    owner.snapshot.models = vec![old, plain.clone()];
+    owner.snapshot.session = Some(
+        serde_json::from_value(serde_json::json!({
+            "model":{"id":"old","name":"Old","provider":"cursor"},
+            "serviceTier":"priority","sessionId":"session",
+            "isStreaming":false,"isCompacting":false,
+            "autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0
+        }))
+        .expect("decode live state"),
+    );
+    let previous_state = owner.snapshot.session.clone().expect("live state");
+    owner.snapshot.prefill_service_tier = Some("priority".into());
+    owner
+        .pending_session_controls
+        .set(SessionControl::ServiceTier("priority".into()));
+
+    owner.set_model(plain);
+
+    assert_eq!(owner.snapshot.selected_service_tier(), None);
+    assert_eq!(owner.snapshot.prefill_service_tier, None);
+    assert_eq!(
+        owner
+            .snapshot
+            .session
+            .as_ref()
+            .and_then(|s| s.service_tier.as_deref()),
+        None
+    );
+    assert!(!owner.pending_session_controls.service_tier_pending());
+    assert!(owner.pending_session_controls.model_pending());
+    owner.publish_session_metadata();
+    assert!(events.try_iter().any(|event| matches!(
+        event,
+        RuntimeEvent::SessionMetadata(metadata) if metadata.service_tier.is_none()
+    )));
+
+    owner.startup_state_loaded = true;
+    owner.startup_history_loaded = true;
+    owner.maybe_send_pending_session_controls();
+    owner.apply_response(crate::agents::SessionResponse::failure(
+        Some("refresh".into()),
+        SessionOperation::SelectModel,
+        "model unavailable".into(),
+    ));
+    owner.apply_response(crate::agents::SessionResponse::success(
+        None,
+        crate::agents::SessionResponsePayload::LoadState(Box::new(previous_state)),
+    ));
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+}
+
+#[test]
+fn live_model_change_keeps_a_supported_tier_and_rejects_an_invalid_access_choice() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Claude);
+    owner.snapshot.harness = Some(Backend::Claude);
+    owner.process = Some(Box::new(AckTransport));
+    owner.snapshot.session = Some(
+        serde_json::from_value(serde_json::json!({
+            "model":{"id":"old","name":"Old","provider":"claude"},
+            "serviceTier":"priority","sessionId":"session",
+            "isStreaming":false,"isCompacting":false,
+            "autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0
+        }))
+        .expect("decode live state"),
+    );
+    owner.snapshot.prefill_service_tier = Some("priority".into());
+    let supported: Model = serde_json::from_value(serde_json::json!({
+        "id":"supported", "name":"Supported", "provider":"claude",
+        "serviceTiers":["standard", "priority"],
+        "access_modes":["sandboxed", "full"]
+    }))
+    .expect("decode supported model");
+    let limited: Model = serde_json::from_value(serde_json::json!({
+        "id":"limited", "name":"Limited", "provider":"claude",
+        "serviceTiers":["standard"],
+        "access_modes":["full"]
+    }))
+    .expect("decode limited model");
+
+    owner.set_model(supported);
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+    owner.set_model_with_access_mode(limited, HarnessAccessMode::Sandboxed);
+
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("priority"));
+    assert_eq!(
+        owner.snapshot.prefill_service_tier.as_deref(),
+        Some("priority")
+    );
+    assert_eq!(
+        owner
+            .snapshot
+            .session
+            .as_ref()
+            .and_then(|s| s.service_tier.as_deref()),
+        Some("priority")
+    );
+
+    owner.snapshot.prefill_service_tier = Some("standard".into());
+    owner
+        .snapshot
+        .session
+        .as_mut()
+        .expect("live state")
+        .service_tier = Some("standard".into());
+    let default_tier: Model = serde_json::from_value(serde_json::json!({
+        "id":"default", "name":"Default", "provider":"claude"
+    }))
+    .expect("decode default model");
+    owner.set_model(default_tier);
+    assert_eq!(owner.snapshot.selected_service_tier(), Some("standard"));
+}
+
+#[test]
+fn queued_access_mode_model_change_clears_an_unsupported_tier() {
+    let (mut owner, _) =
+        super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+    owner.harness = Some(Backend::Claude);
+    owner.snapshot.harness = Some(Backend::Claude);
+    owner.process_command.access_mode = HarnessAccessMode::Auto;
+    owner.process = Some(Box::new(IdleTransport));
+    owner.snapshot.session = Some(
+        serde_json::from_value(serde_json::json!({
+            "model":{"id":"old","name":"Old","provider":"claude"},
+            "serviceTier":"priority","sessionId":"session",
+            "isStreaming":false,"isCompacting":false,
+            "autoCompactionEnabled":true,"messageCount":0,"pendingMessageCount":0
+        }))
+        .expect("decode live state"),
+    );
+    owner.snapshot.prefill_service_tier = Some("priority".into());
+    owner
+        .pending_session_controls
+        .tier_sent("old-tier".into(), "priority".into());
+    owner
+        .pending_session_controls
+        .set(SessionControl::ServiceTier("standard".into()));
+    let model: Model = serde_json::from_value(serde_json::json!({
+        "id":"limited", "name":"Limited", "provider":"claude",
+        "serviceTiers":["standard"],
+        "access_modes":["sandboxed", "full"]
+    }))
+    .expect("decode limited model");
+
+    owner.set_model(model);
+
+    assert_eq!(owner.snapshot.selected_service_tier(), None);
+    assert_eq!(owner.pending_session_controls.sent_tier, None);
+    owner.pending_session_controls.reset_transport();
+    assert_eq!(
+        owner.pending_session_controls.service_tier.as_deref(),
+        Some("standard")
+    );
+    assert!(owner.pending_session_controls.model_pending());
+    assert_eq!(owner.snapshot.access_mode, HarnessAccessMode::Sandboxed);
 }

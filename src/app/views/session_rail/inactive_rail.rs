@@ -9,7 +9,7 @@ use gpui_component::scroll::Scrollbar;
 use super::{
     FarcasterApp,
     draft_row::{DraftRow, DraftRowInput},
-    groups::{ActiveSessionItem, SessionRailKind, session_rail_lists},
+    groups::{ActiveSessionItem, SessionRailKind, session_rail_lists_for_roots},
     reconcile_list_rows,
     rendering::{inactive_session_badge, session_section_drop_target, subagent_counts},
     rows::{SessionRow, SessionRowInput},
@@ -24,10 +24,7 @@ fn archived_item_identity(item: &ActiveSessionItem) -> String {
         ActiveSessionItem::Session(item) => session_item_identity(item),
     }
 }
-use crate::{
-    app::session::status::roots_waiting_for_descendants, app::ui::theme::theme,
-    sessions::root_session_for_path,
-};
+use crate::{app::session::status::roots_waiting_for_descendants, app::ui::theme::theme};
 
 impl FarcasterApp {
     pub(in crate::app::views) fn render_inactive_sessions(
@@ -39,14 +36,14 @@ impl FarcasterApp {
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
         let selected_root = self.selected_rail_root().map(|session| session.id.clone());
-        let live_root = root_session_for_path(
-            &self.sessions.visible,
-            self.snapshot.live_session.as_deref(),
-        )
-        .map(|session| session.id.clone());
+        let live_root = self
+            .sessions
+            .visible
+            .root_for_path(self.snapshot.live_session.as_deref())
+            .map(|session| session.id.clone());
         let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
-        let lists = session_rail_lists(
-            &self.sessions.visible,
+        let lists = session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,

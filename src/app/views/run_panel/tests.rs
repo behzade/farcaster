@@ -161,7 +161,7 @@ fn production_rows_include_restored_children_from_an_empty_activity_map() {
         String::new(),
     );
     child.harness = Backend::Codex;
-    let sessions = [root, child.clone()];
+    let sessions = crate::sessions::SessionCatalog::from(vec![root, child.clone()]);
 
     let rows = run_panel_agent_rows(
         &sessions,
@@ -220,6 +220,7 @@ fn worker_navigation_keeps_creation_order_when_statuses_differ() {
         crate::agent_activity::agent_activity_key(&sessions[2].path),
         limited,
     )]);
+    let sessions = crate::sessions::SessionCatalog::from(sessions);
     let rows = worker_navigation_rows(&sessions, &activities, Some(Path::new("/project/child-3")));
     let ids = rows
         .iter()
@@ -279,8 +280,9 @@ fn production_rows_resolve_same_native_id_by_scoped_session_path() {
             second,
         ),
     ]);
-    let sessions = [root_one, child_one, root_two, child_two.clone()];
+    let sessions = vec![root_one, child_one, root_two, child_two.clone()];
 
+    let sessions = crate::sessions::SessionCatalog::from(sessions);
     let rows = run_panel_agent_rows(&sessions, &activities, Some(Path::new("/two/root")));
 
     assert_eq!(rows.len(), 1);

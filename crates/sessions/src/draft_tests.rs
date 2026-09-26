@@ -23,6 +23,24 @@ fn only_unsubmitted_drafts_can_change_project() {
 }
 
 #[test]
+fn choosing_stock_harness_clears_a_profile_on_the_same_backend() {
+    let mut draft = DraftSession::new(
+        Some(Backend::Pi),
+        "draft".into(),
+        1,
+        PathBuf::from("/project"),
+        1,
+    );
+    assert!(draft.change_profile(Backend::Pi, "custom".into()));
+    assert_eq!(draft.profile_id.as_deref(), Some("custom"));
+
+    assert!(draft.change_harness(Some(Backend::Pi)));
+    assert_eq!(draft.harness, Some(Backend::Pi));
+    assert_eq!(draft.profile_id, None);
+    assert!(!draft.change_harness(Some(Backend::Pi)));
+}
+
+#[test]
 fn drafts_without_a_backend_do_not_decode_as_pi() {
     let draft = serde_json::json!({"id": "missing", "project": "/project", "created_ms": 3});
     assert!(serde_json::from_value::<DraftSession>(draft).is_err());

@@ -153,7 +153,9 @@ impl FarcasterApp {
         if let Some((generation, title)) = self.extensions.pending_title.take() {
             cx.defer_in(window, move |this, window, _| {
                 if this.runtime_generation == generation {
-                    window.set_window_title(&title);
+                    window.set_window_title(&crate::app::infrastructure::isolation::window_title(
+                        &title,
+                    ));
                 }
             });
         }

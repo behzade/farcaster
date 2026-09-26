@@ -79,7 +79,7 @@ impl BackendAdapter for CodexAdapter {
         launch: SessionLaunch,
     ) -> Result<Box<dyn SessionTransport>, String> {
         let history = launch_history(&launch, |path| {
-            super::catalog::load_history_with_config(config, path)
+            super::catalog::load_history_with_config(config, path, &launch.project)
         })?;
         let command = self.launch_configuration(config);
         let (worker, locator, metadata) = super::spawn_main(&command, &launch)?;
@@ -88,12 +88,12 @@ impl BackendAdapter for CodexAdapter {
     fn rename_session(
         &self,
         config: &AgentLaunchConfig,
-        _project: &Path,
+        project: &Path,
         _session: &Path,
         id: &str,
         name: &str,
     ) -> Result<(), String> {
-        super::catalog::rename_session_with_config(config, id, name)
+        super::catalog::rename_session_with_config(config, project, id, name)
     }
     fn discover(&self, root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {
         super::discover(root, query)
@@ -119,9 +119,9 @@ impl BackendAdapter for CodexAdapter {
         &self,
         config: &AgentLaunchConfig,
         path: &Path,
-        _project: &Path,
+        project: &Path,
     ) -> Result<farcaster_sessions::LoadedHistory, String> {
-        let history = super::catalog::load_history_with_config(config, path)?;
+        let history = super::catalog::load_history_with_config(config, path, project)?;
         Ok(farcaster_sessions::LoadedHistory {
             messages: history.messages,
             model: history.model,

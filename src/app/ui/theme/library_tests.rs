@@ -283,3 +283,217 @@ fn css_comments_are_ignored() {
         "Ocean"
     );
 }
+
+#[test]
+fn unsafe_lengths_are_rejected_by_shared_acceptance_paths() {
+    for (name, value) in [
+        ("space-xs", f32::NAN),
+        ("space-xs", f32::INFINITY),
+        ("space-xs", f32::NEG_INFINITY),
+        ("space-xs", -1.0),
+        ("size-480", -1.0),
+        ("font-reading", 0.0),
+    ] {
+        let mut invalid = definition("Unsafe");
+        invalid.set_length(LengthKey::from_name(name).expect("token"), pxf(value));
+        assert!(invalid.validate().is_err(), "{name}: {value}");
+        assert!(invalid.to_css().is_err(), "{name}: {value}");
+        // Bypass export validation to represent an externally supplied file.
+        let css = theme_block(&invalid);
+        assert!(ThemeDefinition::from_css(&css).is_err(), "{name}: {value}");
+        assert!(ThemeLibrary::from_css(&css, Some("Unsafe")).is_err());
+        let mut library = custom_library();
+        let before = library.clone();
+        assert!(library.upsert(invalid).is_err());
+        assert_eq!(library, before);
+        assert!(library.import(&css).is_err());
+        assert_eq!(library, before);
+    }
+}
+
+#[test]
+fn bounds_include_defaults_and_allow_equal_endpoints() {
+    for (min, max) in [
+        ("layout-session-rail-min", "layout-session-rail-max"),
+        ("layout-run-panel-min", "layout-run-panel-max"),
+        ("layout-notice-panel-min", "layout-notice-panel-max"),
+        ("size-12", "size-28"),
+        ("size-72", "size-280"),
+    ] {
+        let min = LengthKey::from_name(min).expect("minimum token");
+        let max = LengthKey::from_name(max).expect("maximum token");
+        let defaults = definition("Bounds");
+        for (key, value) in [
+            (min, defaults.length(max) + pxf(1.0)),
+            (max, defaults.length(min) - pxf(1.0)),
+        ] {
+            let mut invalid = defaults.clone();
+            invalid.set_length(key, value);
+            assert!(invalid.validate().is_err(), "{}", key.name());
+            assert!(ThemeDefinition::from_css(&theme_block(&invalid)).is_err());
+            let mut library = custom_library();
+            let before = library.clone();
+            assert!(library.upsert(invalid).is_err());
+            assert_eq!(library, before);
+        }
+        let mut equal = defaults;
+        equal.set_length(min, pxf(500.0));
+        equal.set_length(max, pxf(500.0));
+        let css = equal.to_css().expect("equal bounds are valid");
+        assert_eq!(ThemeDefinition::from_css(&css).expect("load bounds"), equal);
+    }
+}
+
+#[test]
+fn zero_spacing_is_valid_without_disabling_reading_text() {
+    let mut definition = definition("Compact");
+    for token in ["space-xs", "radius", "border-width", "size-480"] {
+        definition.set_length(LengthKey::from_name(token).expect("token"), pxf(0.0));
+    }
+    let css = definition.to_css().expect("zero spacing is valid");
+    assert_eq!(
+        ThemeDefinition::from_css(&css).expect("load theme"),
+        definition
+    );
+}
+
+#[test]
+fn comment_markers_in_names_survive_export_and_saved_library_reload() {
+    for name in ["A/*", "A/*x*/B", "A*/B", "A'/*", "آبی/*"] {
+        let mut library = custom_library();
+        library.rename("Ocean", name).expect("rename theme");
+        library
+            .upsert(definition("Following"))
+            .expect("add later theme");
+        library.select(name).expect("select renamed theme");
+        let exported = library.export(name).expect("export name");
+        assert_eq!(
+            ThemeDefinition::from_css(&exported)
+                .expect("load export")
+                .name,
+            name
+        );
+        assert_eq!(
+            ThemeLibrary::from_css(&library.to_css(), Some(name)).expect("reload library"),
+            library,
+        );
+    }
+}
+
+#[test]
+fn quoted_names_do_not_change_selector_attributes() {
+    for name in [
+        r"A\",
+        r"A\/*",
+        r"A\\'/*",
+        "data-appearance=Night",
+        "[data-theme=Night]",
+    ] {
+        let mut definition = definition(name);
+        definition.appearance = Appearance::Light;
+        let css = definition.to_css().expect("export name");
+        assert_eq!(
+            ThemeDefinition::from_css(&css).expect("load name"),
+            definition
+        );
+    }
+    let css = css("A/*").replace("data-theme=\"A/*\"", "data-theme = 'A/*'");
+    assert_eq!(
+        ThemeDefinition::from_css(&css)
+            .expect("single quoted name")
+            .name,
+        "A/*"
+    );
+}
+
+#[test]
+fn comments_outside_names_do_not_hide_later_themes() {
+    let css = format!(
+        "/* header */{}/* between */{}/* end */",
+        css("Dusk"),
+        css("Dawn")
+    );
+    let library = ThemeLibrary::from_css(&css, Some("Dawn")).expect("load comments");
+    assert_eq!(library.user_themes().len(), 2);
+    assert_eq!(library.selected_name(), "Dawn");
+}
+
+#[test]
+fn incomplete_comments_and_trailing_content_fail_without_partial_import() {
+    for css in [
+        format!("/* incomplete {}", css("Dusk")),
+        format!("{}/* incomplete", css("Dusk")),
+        format!("{} trailing text", css("Dusk")),
+        format!("{} :root[data-theme=\"Incomplete", css("Dusk")),
+    ] {
+        let mut library = custom_library();
+        library.select("Ocean").expect("select original");
+        let before = library.clone();
+        assert!(ThemeLibrary::from_css(&css, None).is_err());
+        assert!(library.import(&css).is_err());
+        assert_eq!(library, before);
+    }
+}
+
+#[test]
+fn collision_suffixes_fit_long_unicode_names() {
+    for character in ["x", "آ"] {
+        for length in [MAX_THEME_NAME_LEN - 1, MAX_THEME_NAME_LEN] {
+            let name = character.repeat(length);
+            let mut library = ThemeLibrary::default();
+            library.upsert(definition(&name)).expect("add original");
+            let original = library.find(&name).expect("original");
+            let css = library.export(&name).expect("export original");
+            for number in 2..=12 {
+                let names = library.import(&css).expect("import long name");
+                let suffix = format!(" {number}");
+                let expected = format!(
+                    "{}{suffix}",
+                    character.repeat(MAX_THEME_NAME_LEN - suffix.len())
+                );
+                assert_eq!(names, vec![expected]);
+                assert!(names[0].chars().count() <= MAX_THEME_NAME_LEN);
+            }
+            assert_eq!(library.find(&name).expect("preserved original"), original);
+            assert_eq!(library.user_themes().len(), 12);
+        }
+    }
+}
+
+#[test]
+fn collisions_past_the_old_limit_never_replace_an_existing_theme() {
+    let mut library = custom_library();
+    library
+        .themes
+        .extend((2..=1000).map(|number| definition(&format!("Ocean {number}"))));
+    let mut imported = definition("Ocean");
+    imported.colors.canvas = parse_hex("#123456").expect("hex");
+    let original = library.find("Ocean").expect("original");
+    assert_eq!(
+        library
+            .import(&imported.to_css().expect("export"))
+            .expect("import"),
+        vec!["Ocean 1001".to_owned()],
+    );
+    assert_eq!(library.find("Ocean").expect("preserved original"), original);
+    assert_eq!(library.user_themes().len(), 1001);
+}
+
+#[test]
+fn importing_multiple_collisions_is_atomic() {
+    let mut library = custom_library();
+    library.select("Ocean").expect("select original");
+    let before = library.clone();
+    let mut invalid = definition("Unsafe");
+    invalid.set_length(LengthKey::Metric(MetricKey::reading), pxf(0.0));
+    let invalid_css = format!("{}{}{}", css("Ocean"), css("New"), theme_block(&invalid));
+    assert!(library.import(&invalid_css).is_err());
+    assert_eq!(library, before);
+
+    let css = format!("{}{}", css("Ocean"), css("Ocean"));
+    assert_eq!(
+        library.import(&css).expect("import batch"),
+        vec!["Ocean 2", "Ocean 3"]
+    );
+    assert_eq!(library.selected_name(), "Ocean");
+}

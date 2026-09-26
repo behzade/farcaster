@@ -14,6 +14,9 @@ mod title_native_tests;
 #[path = "close_lifecycle_tests.rs"]
 mod close_lifecycle_tests;
 
+#[path = "selection_lifecycle_tests.rs"]
+mod selection_lifecycle_tests;
+
 const GENERATED: &str = "Inspect archive contents";
 
 fn isolated_title(name: &str, run: impl FnOnce()) {
@@ -33,6 +36,7 @@ struct BackendState {
     release_title: bool,
     empty_title: bool,
     reject_rename: bool,
+    fail_turn: bool,
     requests: Vec<Value>,
     main: Option<UnixStream>,
     event_stream: Option<std::net::TcpStream>,
@@ -147,6 +151,7 @@ fn read_request(peer: &mut Peer, stop: &AtomicBool) -> Option<Value> {
         match peer.reader.read_line(&mut line) {
             Ok(0) => return None,
             Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => return None,
             Err(error)
                 if matches!(
                     error.kind(),
@@ -277,6 +282,7 @@ fn serve(
             peer.reply(&request, result);
         }
         if matches!(method, "turn/start" | "thread/queue/add") {
+            let failed = state.lock().expect("fixture state").fail_turn;
             let text = if ephemeral {
                 let Some(title) = title_output(&state, &stop) else {
                     return;
@@ -301,7 +307,8 @@ fn serve(
                 ),
                 (
                     "turn/completed",
-                    json!({"threadId":id,"turn":{"id":"turn-1","status":"completed"}}),
+                    json!({"threadId":id,"turn":{"id":"turn-1",
+                        "status":if failed {"failed"} else {"completed"}}}),
                 ),
             ] {
                 if method == "item/completed" {
@@ -359,6 +366,7 @@ impl Scenario {
             .expect("test lock should not be poisoned")
             .name = name.map(str::to_owned);
         let project = std::env::current_dir().expect("fixture directory");
+        crate::agents::set_test_project_environment(&project, std::env::vars_os().collect());
         fs::write(project.join("main.jsonl"), "").expect("write fixture session");
         let (mut owner, incoming_events) = owner_without_process(project.clone());
         owner.harness = harness.into();

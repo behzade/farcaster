@@ -50,13 +50,14 @@ fn conversation_project_in(home: &std::path::Path, session_id: &str) -> Option<s
 }
 
 pub(super) fn load_history(
+    config: &crate::AgentLaunchConfig,
     path: &std::path::Path,
     fallback_project: &std::path::Path,
 ) -> Result<crate::DiscoveredHistory, String> {
     let id = super::main_session::external_session_locator(PROFILE.backend, path)
         .ok_or_else(|| format!("invalid Antigravity session locator: {}", path.display()))?;
     let project = conversation_project(&id).unwrap_or_else(|| fallback_project.to_owned());
-    super::acp::load_history(&PROFILE, path, &project)
+    super::acp::load_history(&PROFILE, config, path, &project)
 }
 
 pub(super) fn configure(command: &mut std::process::Command) -> Result<(), String> {

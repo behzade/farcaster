@@ -237,6 +237,9 @@ impl FarcasterApp {
             }
         }
         let (rows, commands) = self.picker_rows(scope.clone());
+        let active_profile_id = (scope == PickerScope::Harnesses)
+            .then(|| self.active_profile_id())
+            .flatten();
         let selected = configuration::selected_row(
             &rows,
             &commands,
@@ -244,6 +247,7 @@ impl FarcasterApp {
             (scope == PickerScope::Harnesses)
                 .then(|| self.active_harness())
                 .flatten(),
+            active_profile_id.as_deref(),
         )
         .map(|row| IndexPath {
             row,

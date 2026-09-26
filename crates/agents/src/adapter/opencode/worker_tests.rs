@@ -695,33 +695,35 @@ fn sandboxed_permission_requests_keep_native_choices() {
 
 #[test]
 fn native_startup_merges_direct_farcaster_mcp() {
-    let mut command = std::process::Command::new("opencode");
-    command.env(
+    crate::builtin_mcp::with_url_for_test("http://127.0.0.1:32123/mcp", || {
+        let mut command = std::process::Command::new("opencode");
+        command.env(
             "OPENCODE_CONFIG_CONTENT",
             r#"{"model":"provider/model","mcp":{"servers":{"other":{"type":"remote","url":"https://example.test/mcp"}}}}"#,
         );
-    configure_farcaster_mcp(&mut command, "caller-1").expect("MCP config");
-    let value = command
-        .get_envs()
-        .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
-        .and_then(|(_, value)| value)
-        .and_then(|value| serde_json::from_str::<Value>(&value.to_string_lossy()).ok())
-        .expect("inline config");
-    assert_eq!(value["model"], "provider/model");
-    assert_eq!(
-        value["mcp"]["servers"]["other"]["url"],
-        "https://example.test/mcp"
-    );
-    assert_eq!(
-        value["mcp"]["servers"]["farcaster"]["url"],
-        farcaster_mcp::URL
-    );
-    assert_eq!(
-        value["mcp"]["servers"]["farcaster"]["headers"][farcaster_mcp::CALLER_HEADER],
-        "caller-1"
-    );
-    assert_eq!(value["mcp"]["servers"]["farcaster"]["codemode"], true);
-    assert_eq!(value["mcp"]["servers"]["farcaster"]["oauth"], false);
+        configure_farcaster_mcp(&mut command, "caller-1").expect("MCP config");
+        let value = command
+            .get_envs()
+            .find(|(name, _)| *name == "OPENCODE_CONFIG_CONTENT")
+            .and_then(|(_, value)| value)
+            .and_then(|value| serde_json::from_str::<Value>(&value.to_string_lossy()).ok())
+            .expect("inline config");
+        assert_eq!(value["model"], "provider/model");
+        assert_eq!(
+            value["mcp"]["servers"]["other"]["url"],
+            "https://example.test/mcp"
+        );
+        assert_eq!(
+            value["mcp"]["servers"]["farcaster"]["url"],
+            "http://127.0.0.1:32123/mcp"
+        );
+        assert_eq!(
+            value["mcp"]["servers"]["farcaster"]["headers"][farcaster_mcp::CALLER_HEADER],
+            "caller-1"
+        );
+        assert_eq!(value["mcp"]["servers"]["farcaster"]["codemode"], true);
+        assert_eq!(value["mcp"]["servers"]["farcaster"]["oauth"], false);
+    });
 }
 
 #[test]
@@ -776,6 +778,152 @@ fn promotion_failures_do_not_skip_later_followups_or_interrupt() {
         json!({"delivery":"steer"})
     );
     assert!(requests[2].path.ends_with("/interrupt?resume=true"));
+}
+
+#[test]
+fn model_override_only_decides_new_sessions() -> Result<(), String> {
+    use super::super::{
+        client::OpenCodeClient,
+        contract::{
+            OpenCodeHttpMethod, OpenCodeHttpRequest, OpenCodeHttpResponse, OpenCodeHttpTransport,
+            OpenCodeModelSelection, OpenCodeSession,
+        },
+    };
+
+    struct Transport {
+        responses: VecDeque<OpenCodeHttpResponse>,
+        requests: Vec<OpenCodeHttpRequest>,
+    }
+    impl OpenCodeHttpTransport for Transport {
+        fn execute(
+            &mut self,
+            request: OpenCodeHttpRequest,
+        ) -> Result<OpenCodeHttpResponse, String> {
+            self.requests.push(request);
+            self.responses
+                .pop_front()
+                .ok_or_else(|| "missing response".into())
+        }
+    }
+    let response = |status, body: Value| OpenCodeHttpResponse {
+        status,
+        body: serde_json::to_vec(&body).expect("test response serializes"),
+    };
+    let session = |model: Value| -> OpenCodeSession {
+        serde_json::from_value(json!({
+            "id": "ses_1",
+            "location": {"directory": "/project"},
+            "model": model,
+        }))
+        .expect("session fixture")
+    };
+    let launch = |start: crate::SessionStart| crate::SessionLaunch {
+        harness: Backend::OpenCode,
+        session_id: None,
+        project: std::path::PathBuf::from("/project"),
+        start,
+        wake: None,
+        service_tier: None,
+    };
+    let override_model = OpenCodeModelSelection {
+        provider_id: "opencode".into(),
+        id: "big-pickle".into(),
+        variant: Some("high".into()),
+    };
+
+    // A new session starts on the override.
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::from([response(204, Value::Null)]),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::New),
+        &session(Value::Null),
+        Some(override_model.clone()),
+    )?;
+    assert_eq!(selected, Some(override_model.clone()));
+    let requests = client.into_transport().requests;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/api/session/ses_1/model");
+    assert_eq!(
+        serde_json::from_slice::<Value>(requests[0].body.as_deref().expect("override body"))
+            .expect("override JSON"),
+        json!({"model": {"providerID": "opencode", "id": "big-pickle", "variant": "high"}})
+    );
+
+    // Resuming keeps the model saved on the session.
+    let saved = OpenCodeModelSelection {
+        provider_id: "anthropic".into(),
+        id: "sonnet".into(),
+        variant: Some("low".into()),
+    };
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::new(),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::Resume(
+            "/project/opencode/ses_1".into(),
+        )),
+        &session(json!({"providerID": "anthropic", "id": "sonnet", "variant": "low"})),
+        Some(override_model.clone()),
+    )?;
+    assert_eq!(selected, Some(saved));
+    assert!(
+        client.into_transport().requests.is_empty(),
+        "resuming must keep the saved model"
+    );
+
+    // A fork keeps the model inherited from the session it was forked from.
+    let inherited = OpenCodeModelSelection {
+        provider_id: "google".into(),
+        id: "gemini-3-pro".into(),
+        variant: None,
+    };
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::new(),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::Fork("/project/opencode/ses_1".into())),
+        &session(json!({"providerID": "google", "id": "gemini-3-pro"})),
+        Some(override_model),
+    )?;
+    assert_eq!(selected, Some(inherited));
+    assert!(
+        client.into_transport().requests.is_empty(),
+        "forks must inherit the source session's model"
+    );
+
+    // Without a saved model a new session still falls back to the backend default.
+    let mut client = OpenCodeClient::new(Transport {
+        responses: VecDeque::from([response(
+            200,
+            json!({"data": {"providerID": "opencode", "id": "fallback"}}),
+        )]),
+        requests: Vec::new(),
+    });
+    let selected = resolve_session_model(
+        &mut client,
+        &launch(crate::SessionStart::New),
+        &session(Value::Null),
+        None,
+    )?;
+    assert_eq!(
+        selected,
+        Some(OpenCodeModelSelection {
+            provider_id: "opencode".into(),
+            id: "fallback".into(),
+            variant: None,
+        })
+    );
+    let requests = client.into_transport().requests;
+    assert_eq!(requests[0].method, OpenCodeHttpMethod::Get);
+    assert!(requests[0].path.starts_with("/api/model/default?"));
+    Ok(())
 }
 
 #[test]

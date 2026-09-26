@@ -469,6 +469,7 @@ fn cli_launch_and_image_envelopes_are_source_typed() {
 
 #[test]
 fn catalog_probe_and_main_resume_launch_without_sending_a_prompt() {
+    let _mcp = crate::builtin_mcp::exclusive_for_test();
     let (directory, command) = setup();
     let metadata =
         load_configuration(&command, directory.path()).expect("test operation should succeed");

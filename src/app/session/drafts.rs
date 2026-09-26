@@ -267,28 +267,9 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    /// Workspace processes may hold unsaved work even with an empty composer.
-    /// Keep this sticky for the draft's lifetime, not just while a surface is visible.
-    pub(in crate::app) fn retain_workspace_draft(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::app) fn sync_current_draft(&mut self, target: &str) {
         let Some(id) = self.sessions.selected_draft.as_deref() else {
             return;
-        };
-        let target = self.composer.sessions.current_target().to_owned();
-        if target != draft_target(id) || !self.composer.sessions.retain_current() {
-            return;
-        }
-        let composer = self.composer.sessions.current();
-        self.sync_current_draft(&composer, &target);
-        self.notify_session_rail(cx);
-    }
-
-    pub(in crate::app) fn sync_current_draft(
-        &mut self,
-        composer: &crate::app::composer::sessions::ComposerSnapshot,
-        target: &str,
-    ) -> bool {
-        let Some(id) = self.sessions.selected_draft.as_deref() else {
-            return false;
         };
         let id = id.to_owned();
         let id = id.as_str();
@@ -296,19 +277,8 @@ impl FarcasterApp {
             || self.sessions.submitted_drafts.contains_key(id)
             || has_pending_submission(&self.composer.pending_submissions, target)
         {
-            return false;
+            return;
         }
-        let has_content = draft_has_content(composer)
-            || self
-                .composer
-                .images
-                .get(target)
-                .is_some_and(|images| !images.is_empty())
-            || self
-                .composer
-                .pastes
-                .get(target)
-                .is_some_and(|pastes| !pastes.is_empty());
         let app_session_id = self
             .sessions
             .draft_session_ids
@@ -322,28 +292,16 @@ impl FarcasterApp {
                     .map(|draft| draft.app_session_id)
             })
             .unwrap_or_default();
-        let retain = has_content || self.composer.sessions.is_retained(target);
         let changed = sync_materialized_draft(
             &mut self.sessions.drafts,
             id,
             app_session_id,
             &self.project.path,
             self.snapshot.harness,
-            retain,
         );
         if changed {
-            if self.sessions.drafts.iter().any(|draft| draft.id == id) {
-                self.save_session_draft(id);
-            } else {
-                self.remove_session_draft(id);
-                self.sessions.draft_session_ids.remove(id);
-            }
+            self.save_session_draft(id);
         }
-        if !has_content {
-            self.composer.images.remove(target);
-            self.composer.pastes.remove(target);
-        }
-        !retain
     }
 
     /// Filing a chat away is a property of the chat itself, so a chat that was
@@ -589,10 +547,6 @@ fn provisional_session_title(prompt: &str) -> Option<String> {
     let title = words.chars().take(MAX_CHARS).collect::<String>();
     let title = title.trim_end_matches(['.', ':', ';']).trim();
     (!title.is_empty()).then(|| title.to_owned())
-}
-
-fn draft_has_content(composer: &crate::app::composer::sessions::ComposerSnapshot) -> bool {
-    !composer.text.trim().is_empty()
 }
 
 fn clear_promoted_selection(selected_draft: &mut Option<String>, promoted_id: &str) {

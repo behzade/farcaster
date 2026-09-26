@@ -662,23 +662,35 @@ impl StateStore {
     pub fn save_panel_layout(&self, layout: &PanelLayout) -> Result<(), String> {
         let json = serde_json::to_string(layout)
             .map_err(|error| format!("encode panel layout: {error}"))?;
-        self.save_meta_value("panel_layout", &json, "panel layout")
+        self.connection.execute(
+            "INSERT INTO meta(key,value) VALUES('panel_layout',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [json],
+        ).map_err(|error| format!("save panel layout: {error}"))?;
+        Ok(())
     }
 
     pub fn load_theme_css(&self) -> Result<Option<String>, String> {
         self.load_meta_value("theme_css", "themes")
     }
 
-    pub fn save_theme_css(&self, css: &str) -> Result<(), String> {
-        self.save_meta_value("theme_css", css, "themes")
+    pub fn save_theme_settings(&self, css: &str, selected: &str) -> Result<(), String> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("start theme save: {error}"))?;
+        for (key, value) in [("theme_css", css), ("theme_selected", selected)] {
+            transaction.execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value],
+            ).map_err(|error| format!("save themes: {error}"))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| format!("commit themes: {error}"))
     }
 
     pub fn load_active_theme(&self) -> Result<Option<String>, String> {
         self.load_meta_value("theme_selected", "active theme")
-    }
-
-    pub fn save_active_theme(&self, name: &str) -> Result<(), String> {
-        self.save_meta_value("theme_selected", name, "active theme")
     }
 
     fn load_meta_value(&self, key: &str, subject: &str) -> Result<Option<String>, String> {
@@ -688,17 +700,6 @@ impl StateStore {
             })
             .optional()
             .map_err(|error| format!("load {subject}: {error}"))
-    }
-
-    fn save_meta_value(&self, key: &str, value: &str, subject: &str) -> Result<(), String> {
-        self.connection
-            .execute(
-                "INSERT INTO meta(key,value) VALUES(?1,?2)
-                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                params![key, value],
-            )
-            .map(|_| ())
-            .map_err(|error| format!("save {subject}: {error}"))
     }
 
     pub fn load_session_folders(&self) -> Result<crate::sessions::SessionFolders, String> {

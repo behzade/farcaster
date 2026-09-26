@@ -12,7 +12,7 @@ use super::{
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, new_folder_row, project_header},
-    groups::{ActiveSessionItem, session_rail_lists},
+    groups::{ActiveSessionItem, session_rail_lists_for_roots},
     reconcile_list_rows,
     rendering::{active_session_drop_target, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
@@ -28,7 +28,6 @@ use crate::{
         feedback, icon_button, panel_space,
     },
     app::ui::theme::theme,
-    sessions::root_session_for_path,
 };
 
 fn notification_tone(tone: crate::protocol::NotifyTone) -> FeedbackTone {
@@ -114,15 +113,15 @@ impl FarcasterApp {
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
         let selected_root = self.selected_rail_root().map(|session| session.id.clone());
-        let live_root = root_session_for_path(
-            &self.sessions.visible,
-            self.snapshot.live_session.as_deref(),
-        )
-        .map(|session| session.id.clone());
+        let live_root = self
+            .sessions
+            .visible
+            .root_for_path(self.snapshot.live_session.as_deref())
+            .map(|session| session.id.clone());
         let waiting_roots =
             roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents);
-        let lists = session_rail_lists(
-            &self.sessions.visible,
+        let lists = session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,

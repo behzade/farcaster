@@ -1,5 +1,22 @@
 use super::*;
 
+use futures::future::{Either, select};
+use std::future::Future;
+
+const NOTICE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+struct NoticeRefresh {
+    active: bool,
+}
+
+impl NoticeRefresh {
+    fn update(&mut self, active: bool) -> bool {
+        let redraw = self.active || active;
+        self.active = active;
+        redraw
+    }
+}
+
 pub(super) struct BootstrapTasks {
     pub(super) runtime_events: Task<()>,
     pub(super) workgraph_updates: Task<()>,
@@ -55,8 +72,30 @@ pub(super) fn spawn(
         }
     });
     let worker_notices = cx.spawn(async move |weak, cx| {
-        while notice_updates.recv().await.is_ok() {
-            if weak.update(cx, |_, cx| cx.notify()).is_err() {
+        let mut refresh = match weak.update(cx, |this, _| NoticeRefresh {
+            active: !this.worker_notices.snapshot(&this.project.path).is_empty(),
+        }) {
+            Ok(refresh) => refresh,
+            Err(_) => return,
+        };
+        loop {
+            if !wait_for_notice_refresh(
+                &notice_updates,
+                cx.background_executor().timer(NOTICE_REFRESH_INTERVAL),
+            )
+            .await
+            {
+                break;
+            }
+            if weak
+                .update(cx, |this, cx| {
+                    let active = !this.worker_notices.snapshot(&this.project.path).is_empty();
+                    if refresh.update(active) {
+                        cx.notify();
+                    }
+                })
+                .is_err()
+            {
                 break;
             }
         }
@@ -69,6 +108,22 @@ pub(super) fn spawn(
         worker_notices,
     }
 }
+
+async fn wait_for_notice_refresh(
+    updates: &async_channel::Receiver<()>,
+    timer: impl Future<Output = ()>,
+) -> bool {
+    let update = updates.recv();
+    futures::pin_mut!(update, timer);
+    match select(update, timer).await {
+        Either::Left((result, _)) => result.is_ok(),
+        Either::Right(((), _)) => true,
+    }
+}
+
+#[cfg(test)]
+#[path = "tasks_tests.rs"]
+mod tests;
 
 pub(super) fn start_performance_monitor(
     window: &Window,

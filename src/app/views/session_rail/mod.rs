@@ -21,7 +21,7 @@ use self::{
     drag::DraggedSession,
     groups::{
         ActiveSessionItem, SessionRailItem, merge_visible_session_order, reordered_session_ids,
-        session_rail_lists,
+        session_rail_lists_for_roots,
     },
     rendering::{archived_panel_rows, rail_panel_slot},
 };
@@ -33,7 +33,7 @@ use crate::{
     },
     app::ui::theme::theme,
     sessions::DraftSession,
-    sessions::{SessionSummary, root_session_for_path},
+    sessions::SessionSummary,
 };
 
 pub(in crate::app) use group_drag::GroupTarget;
@@ -207,11 +207,10 @@ impl FarcasterApp {
             .and_then(|id| self.sessions.drafts.iter().find(|draft| draft.id == id))
             .map(|draft| draft.app_session_id)
             .or_else(|| {
-                root_session_for_path(
-                    &self.sessions.visible,
-                    self.snapshot.selected_session.as_deref(),
-                )
-                .map(|session| session.app_session_id)
+                self.sessions
+                    .visible
+                    .root_for_path(self.snapshot.selected_session.as_deref())
+                    .map(|session| session.app_session_id)
             })
     }
 
@@ -222,7 +221,10 @@ impl FarcasterApp {
         cx: &mut gpui::Context<Self>,
     ) {
         let sessions = self.selectable_session_targets();
-        let selected_id = root_session_for_path(&self.sessions.visible, Some(&path))
+        let selected_id = self
+            .sessions
+            .visible
+            .root_for_path(Some(&path))
             .map(|session| session.app_session_id);
         let replacement = selected_id
             .and_then(|id| {
@@ -321,8 +323,8 @@ impl FarcasterApp {
     }
 
     fn visible_active_items(&self) -> Vec<ActiveSessionItem> {
-        session_rail_lists(
-            &self.sessions.visible,
+        session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,
@@ -421,8 +423,8 @@ impl FarcasterApp {
     }
 
     fn archived_session_count(&self) -> usize {
-        session_rail_lists(
-            &self.sessions.visible,
+        session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,
@@ -557,8 +559,8 @@ impl FarcasterApp {
                 return;
             }
         }
-        let visible = session_rail_lists(
-            &self.sessions.visible,
+        let visible = session_rail_lists_for_roots(
+            self.sessions.visible.roots(),
             &self.sessions.drafts,
             self.sessions.project_filter.as_deref(),
             &self.sessions.order,
@@ -569,8 +571,8 @@ impl FarcasterApp {
         .collect::<Vec<_>>();
         if let Some(order) = reordered_session_ids(&visible, drag.app_session_id, target, position)
         {
-            let all = session_rail_lists(
-                &self.sessions.visible,
+            let all = session_rail_lists_for_roots(
+                self.sessions.visible.roots(),
                 &self.sessions.drafts,
                 None,
                 &self.sessions.order,

@@ -45,6 +45,28 @@ fn icon_and_control_tokens_keep_icons_optically_proportional() {
 }
 
 #[test]
+fn bundled_session_rows_have_room_for_two_lines_and_padding() {
+    for definition in BUILT_IN_THEMES.iter() {
+        let theme = Theme::from_definition(definition);
+        // Flat session and draft rows add a metadata/control line to the
+        // compact row height. Both lines must fit their text and padding.
+        let metadata_height = theme.type_scale.line_body.max(theme.icons.inline);
+        let required =
+            theme.type_scale.line_body + metadata_height + theme.size(2.0) + theme.size(4.0) * 2.0;
+        assert!(
+            theme.layout.session_row_height + theme.controls.icon_button >= required,
+            "{}",
+            definition.name
+        );
+        assert!(
+            theme.controls.archived_preview_row >= required,
+            "{}",
+            definition.name
+        );
+    }
+}
+
+#[test]
 fn bundled_themes_parse_and_keep_distinct_names() {
     assert_eq!(BUILT_IN_THEMES.len(), 3);
     let mut names = Vec::new();

@@ -353,10 +353,15 @@ pub(super) fn selected_row(
     commands: &HashMap<String, PickerCommand>,
     snapshot: &crate::runtime::RuntimeSnapshot,
     harness: Option<Backend>,
+    profile_id: Option<&str>,
 ) -> Option<usize> {
     if let Some(harness) = harness {
-        return rows.iter().position(|row| {
-            matches!(commands.get(&row.id), Some(PickerCommand::SetHarness(id)) if *id == harness)
+        return rows.iter().position(|row| match commands.get(&row.id) {
+            Some(PickerCommand::SetHarness(id)) => *id == harness && profile_id.is_none(),
+            Some(PickerCommand::SetHarnessProfile(id, selected_profile)) => {
+                *id == harness && profile_id == Some(selected_profile.as_str())
+            }
+            _ => false,
         });
     }
 

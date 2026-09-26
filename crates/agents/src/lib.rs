@@ -12,6 +12,8 @@ pub use profiles::{HarnessProfile, HarnessProfiles, profile_id_from_locator};
 
 pub use adapter::profile_data_environment_key;
 pub use adapter::project_shell_environment;
+#[cfg(feature = "test-support")]
+pub use adapter::set_test_project_environment;
 pub use adapter::{
     annotate_history_message, app_shell_environment, apply_project_trust, available_access_modes,
     backend_display_name, backend_statuses, default_login_shell, delete_session_family,

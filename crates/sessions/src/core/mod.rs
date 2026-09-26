@@ -1,4 +1,6 @@
 mod catalog;
+mod catalog_cache;
+pub use catalog_cache::SessionCatalog;
 mod metrics;
 mod path;
 mod persistence;

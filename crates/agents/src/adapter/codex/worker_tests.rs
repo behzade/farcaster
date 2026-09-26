@@ -1125,35 +1125,38 @@ fn codex_usage_separates_cached_tokens_from_reported_input() {
 
 #[test]
 fn native_startup_configures_required_farcaster_mcp() {
-    let mut command = std::process::Command::new("codex");
-    configure_codex_app_server(&mut command, crate::HarnessAccessMode::Full);
-    configure_farcaster_mcp(&mut command, "caller-1");
-    let arguments = command
-        .get_args()
-        .map(|argument| argument.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        &arguments[..5],
-        [
-            "--dangerously-bypass-approvals-and-sandbox",
-            "app-server",
-            "--stdio",
-            "--enable",
-            "mcp_2026_07_28",
-        ]
-    );
-    assert!(arguments.contains(&format!(
-        "mcp_servers.farcaster.url=\"{}\"",
-        farcaster_mcp::URL
-    )));
-    assert!(arguments.contains(
-        &"mcp_servers.farcaster.http_headers={\"farcaster-caller\"=\"caller-1\"}".to_owned()
-    ));
-    assert!(arguments.contains(&"mcp_servers.farcaster.required=true".to_owned()));
-    assert!(
-        arguments
-            .contains(&"mcp_servers.farcaster.default_tools_approval_mode=\"approve\"".to_owned())
-    );
+    crate::builtin_mcp::with_url_for_test("http://127.0.0.1:32123/mcp", || {
+        let mut command = std::process::Command::new("codex");
+        configure_codex_app_server(&mut command, crate::HarnessAccessMode::Full);
+        configure_farcaster_mcp(&mut command, "caller-1");
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &arguments[..5],
+            [
+                "--dangerously-bypass-approvals-and-sandbox",
+                "app-server",
+                "--stdio",
+                "--enable",
+                "mcp_2026_07_28",
+            ]
+        );
+        assert!(
+            arguments
+                .contains(&"mcp_servers.farcaster.url=\"http://127.0.0.1:32123/mcp\"".to_owned())
+        );
+        assert!(arguments.contains(
+            &"mcp_servers.farcaster.http_headers={\"farcaster-caller\"=\"caller-1\"}".to_owned()
+        ));
+        assert!(arguments.contains(&"mcp_servers.farcaster.required=true".to_owned()));
+        assert!(
+            arguments.contains(
+                &"mcp_servers.farcaster.default_tools_approval_mode=\"approve\"".to_owned()
+            )
+        );
+    });
 }
 
 #[test]

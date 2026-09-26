@@ -20,6 +20,7 @@ pub(super) struct PersistedState {
     pub(super) theme_css: Option<String>,
     pub(super) active_theme: Option<String>,
     pub(super) panel_layout: crate::app::infrastructure::persistence::PanelLayout,
+    pub(super) theme_error: Option<String>,
 }
 
 pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedState {
@@ -147,15 +148,18 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             Default::default()
         });
 
+    let mut theme_error = None;
     let theme_css = crate::app::infrastructure::persistence::open()
         .and_then(|store| store.load_theme_css())
         .unwrap_or_else(|load_error| {
+            theme_error = Some(load_error.clone());
             error.get_or_insert(load_error);
             None
         });
     let active_theme = crate::app::infrastructure::persistence::open()
         .and_then(|store| store.load_active_theme())
         .unwrap_or_else(|load_error| {
+            theme_error.get_or_insert(load_error.clone());
             error.get_or_insert(load_error);
             None
         });
@@ -187,5 +191,6 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         theme_css,
         active_theme,
         panel_layout,
+        theme_error,
     }
 }

@@ -63,6 +63,8 @@ pub struct SessionSummary {
     pub title: String,
     pub first_user_message: String,
     pub timestamp: String,
+    /// Backend creation time, or the stored creation time when unavailable.
+    pub created_at: Option<SystemTime>,
     pub parent_session: Option<String>,
     pub parent_harness: Option<Backend>,
     /// Resolved application identity; a parent need not share this session's project.
@@ -93,6 +95,7 @@ impl SessionSummary {
             project: value.project,
             title: value.title,
             first_user_message: value.first_user_message,
+            created_at: super::activity::parse_iso_timestamp(&value.timestamp),
             timestamp: value.timestamp,
             parent_session: value.parent_session,
             parent_harness,
@@ -191,6 +194,7 @@ impl SessionSummary {
             project,
             title,
             first_user_message,
+            created_at: super::activity::parse_iso_timestamp(&timestamp),
             timestamp,
             parent_session,
             parent_harness,

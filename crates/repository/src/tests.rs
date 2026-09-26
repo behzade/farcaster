@@ -450,7 +450,7 @@ fn linked_git_worktree_is_an_independent_working_copy() {
 
 #[test]
 fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
-    if Command::new("jj").arg("--version").output().is_err() {
+    if !jj_installed() {
         return;
     }
     let temp = TestDirectory::new("jj-command");
@@ -494,7 +494,7 @@ fn jj_snapshot_and_lazy_diff_use_the_current_change_only() {
 fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
     use std::time::{Duration, Instant};
 
-    if Command::new("jj").arg("--version").output().is_err() {
+    if !jj_installed() {
         return;
     }
     let temp = TestDirectory::new("jj-watch-commits");
@@ -586,6 +586,174 @@ fn jj_watcher_detects_metadata_only_commits_and_settles_after_refresh() {
         backend.snapshot().expect("test operation should succeed");
         assert_quiet();
     }
+}
+
+#[test]
+fn git_untracked_files_report_their_own_line_counts() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+    let temp = TestDirectory::new("git-untracked");
+    let repository = temp.path().join("repo");
+    let home = temp.path().join("home");
+    let config = temp.path().join("config");
+    fs::create_dir_all(&repository).expect("create repository directory");
+    fs::create_dir_all(&home).expect("create home directory");
+    fs::create_dir_all(&config).expect("create config directory");
+    run_git(&repository, &home, &config, &["init"]);
+    run_git(
+        &repository,
+        &home,
+        &config,
+        &["config", "user.name", "Pi Test"],
+    );
+    run_git(
+        &repository,
+        &home,
+        &config,
+        &["config", "user.email", "pi@example.invalid"],
+    );
+    fs::write(repository.join("new.txt"), "one\ntwo\nthree").expect("write untracked file");
+    fs::create_dir_all(repository.join("sub")).expect("create nested directory");
+    fs::write(repository.join("sub/nested.txt"), "only\n").expect("write nested untracked file");
+
+    let options = RepositoryOptions {
+        environment: isolated_environment(&home, &config),
+        ..RepositoryOptions::default()
+    };
+    let backend =
+        RepositoryBackend::discover_with_options(&repository, BackendPreference::Git, options)
+            .expect("discover Git")
+            .expect("Git repository");
+    let mut snapshot = backend.snapshot().expect("capture Git snapshot");
+    assert_eq!(
+        backend
+            .working_copy_totals(&mut snapshot)
+            .expect("count untracked lines"),
+        (Some(4), Some(0))
+    );
+    for (path, counts) in [("new.txt", Some((3, 0))), ("sub/nested.txt", Some((1, 0)))] {
+        let change = snapshot
+            .changes
+            .iter()
+            .find(|change| change.relative_path == Path::new(path))
+            .expect("untracked row");
+        assert_eq!(change.layer, ChangeLayer::GitUntracked);
+        assert_eq!(change.kind, ChangeKind::Untracked);
+        assert_eq!(change.counts, counts, "{path}");
+    }
+}
+
+#[test]
+fn git_binary_untracked_files_leave_totals_unknown() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+    let temp = TestDirectory::new("git-untracked-binary");
+    let repository = temp.path().join("repo");
+    let home = temp.path().join("home");
+    let config = temp.path().join("config");
+    fs::create_dir_all(&repository).expect("create repository directory");
+    fs::create_dir_all(&home).expect("create home directory");
+    fs::create_dir_all(&config).expect("create config directory");
+    run_git(&repository, &home, &config, &["init"]);
+    fs::write(repository.join("blob.bin"), [0_u8, 1, 2, b'\n']).expect("write binary file");
+
+    let options = RepositoryOptions {
+        environment: isolated_environment(&home, &config),
+        ..RepositoryOptions::default()
+    };
+    let backend =
+        RepositoryBackend::discover_with_options(&repository, BackendPreference::Git, options)
+            .expect("discover Git")
+            .expect("Git repository");
+    let mut snapshot = backend.snapshot().expect("capture Git snapshot");
+    assert_eq!(
+        backend
+            .working_copy_totals(&mut snapshot)
+            .expect("count binary untracked file"),
+        (None, None)
+    );
+    assert_eq!(snapshot.changes[0].counts, None);
+}
+
+#[cfg(unix)]
+#[test]
+fn git_untracked_symlink_counts_the_link_not_its_destination() {
+    assert_untracked_symlink_totals(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn git_untracked_symlink_to_fifo_uses_the_command_timeout() {
+    assert_untracked_symlink_totals(true);
+}
+
+#[cfg(unix)]
+fn assert_untracked_symlink_totals(fifo: bool) {
+    let temp = TestDirectory::new("git-untracked-symlink");
+    let repository = temp.path().join("repo");
+    let home = temp.path().join("home");
+    let config = temp.path().join("config");
+    for directory in [&repository, &home, &config] {
+        fs::create_dir_all(directory).expect("create test directory");
+    }
+    run_git(&repository, &home, &config, &["init"]);
+    let destination = temp.path().join("destination");
+    if fifo {
+        assert!(
+            Command::new("mkfifo")
+                .arg(&destination)
+                .status()
+                .expect("create FIFO")
+                .success()
+        );
+    } else {
+        fs::write(&destination, "one\ntwo\nthree\n").expect("write symlink destination");
+    }
+    std::os::unix::fs::symlink(&destination, repository.join("link"))
+        .expect("create untracked symlink");
+    let backend = RepositoryBackend::discover_with_options(
+        &repository,
+        BackendPreference::Git,
+        RepositoryOptions {
+            environment: isolated_environment(&home, &config),
+            timeout: std::time::Duration::from_secs(1),
+            ..RepositoryOptions::default()
+        },
+    )
+    .expect("discover Git")
+    .expect("Git repository");
+    let mut snapshot = backend.snapshot().expect("capture Git snapshot");
+    assert_eq!(snapshot.changes.len(), 1);
+    if fifo {
+        // Git itself opens this destination, but unlike an in-process read its
+        // execution is bounded by the repository command timeout.
+        assert!(matches!(
+            backend.working_copy_totals(&mut snapshot),
+            Err(RepositoryError::CommandTimedOut { .. })
+        ));
+        return;
+    }
+    let diff = backend
+        .load_diff(snapshot.changes[0].target.clone())
+        .expect("Git diffs the symlink");
+    assert_eq!((diff.additions, diff.deletions), (Some(1), Some(0)));
+    assert_eq!(
+        backend
+            .working_copy_totals(&mut snapshot)
+            .expect("count link"),
+        (diff.additions, diff.deletions)
+    );
+    assert_eq!(snapshot.changes[0].counts, Some((1, 0)));
+}
+
+fn jj_installed() -> bool {
+    if Command::new("jj").arg("--version").output().is_err() {
+        eprintln!("jj not installed, skipping");
+        return false;
+    }
+    true
 }
 
 fn run_git(repository: &Path, home: &Path, config: &Path, arguments: &[&str]) {

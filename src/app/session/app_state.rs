@@ -1,8 +1,8 @@
 use crate::app::*;
 
 pub(in crate::app) struct SessionState {
-    pub(in crate::app) visible: Vec<SessionSummary>,
-    pub(in crate::app) all: Vec<SessionSummary>,
+    pub(in crate::app) visible: crate::sessions::SessionCatalog,
+    pub(in crate::app) all: crate::sessions::SessionCatalog,
     pub(in crate::app) order: Vec<i64>,
     pub(in crate::app) folders: session_folders::SessionFolders,
     pub(in crate::app) collapsed_projects: HashSet<PathBuf>,

@@ -49,11 +49,13 @@ mod persistence_tests;
 #[path = "projects.rs"]
 mod project_storage;
 mod prompts;
+mod relocation;
 mod reviews;
 mod schema;
 #[path = "sessions.rs"]
 mod session_storage;
 mod settings;
+mod snapshot;
 mod traits;
 mod transcript;
 
@@ -61,6 +63,8 @@ pub use composer_worker::ComposerPersistenceWorker;
 use draft_storage::{remove_draft_row, save_draft};
 pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
+pub use relocation::relocate_snapshot_session_locators;
+pub use snapshot::snapshot_database;
 
 const SCHEMA_VERSION: i64 = 21;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(10);

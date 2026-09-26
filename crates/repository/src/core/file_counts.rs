@@ -3,6 +3,25 @@ use std::{
     path::{Path, PathBuf},
 };
 
+// Git calls a file binary when its first bytes contain a NUL byte.
+const BINARY_SNIFF_BYTES: usize = 8000;
+
+pub(crate) fn untracked(contents: &[u8]) -> Option<(usize, usize)> {
+    if contents
+        .iter()
+        .take(BINARY_SNIFF_BYTES)
+        .any(|byte| *byte == 0)
+    {
+        return None;
+    }
+    let lines = contents.iter().filter(|byte| **byte == b'\n').count();
+    let lines = match contents.last() {
+        Some(last) if *last != b'\n' => lines + 1,
+        _ => lines,
+    };
+    Some((lines, 0))
+}
+
 pub(crate) fn parse(patch: &str) -> BTreeMap<PathBuf, Option<(usize, usize)>> {
     let mut files = BTreeMap::new();
     for section in patch.split("\ndiff --git ") {

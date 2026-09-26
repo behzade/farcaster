@@ -143,15 +143,27 @@ impl FarcasterApp {
         cx: &mut Context<Self>,
     ) {
         self.prefetch_repository_observation(project.clone(), cx);
-        if crate::app::runtime::history_cache::history_is_fresh(&path) {
-            return;
-        }
-        let Some((harness, _)) = crate::agents::external_session_identity(&path) else {
+        let Some(target) = self.target_for_path(&path) else {
             return;
         };
+        let mut config = crate::agents::AgentLaunchConfig {
+            profiles: self.settings.harness_profiles.clone(),
+            profile_id: crate::agents::profile_id_from_locator(&path),
+            ..Default::default()
+        };
         cx.background_spawn(async move {
-            let _ =
-                crate::app::runtime::history_cache::load_cached_history(harness, &path, &project);
+            let Ok(proxy) =
+                crate::app::persistence::open().and_then(|store| store.load_network_proxy())
+            else {
+                return;
+            };
+            config.app_proxy = proxy;
+            let _ = crate::agents::load_session_history_for_profile(
+                &config,
+                target.harness,
+                &path,
+                &project,
+            );
         })
         .detach();
     }

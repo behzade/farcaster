@@ -714,6 +714,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             project,
             title,
             first_user_message,
+            created_at: parse_iso_timestamp(&timestamp),
             timestamp,
             parent_harness: parent_session.as_ref().map(|_| Backend::Pi),
             parent_app_session_id: None,

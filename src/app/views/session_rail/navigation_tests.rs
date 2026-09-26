@@ -1,5 +1,6 @@
 use super::*;
 use crate::agents::Backend;
+use crate::app::views::session_rail::groups::session_rail_lists;
 
 fn archived_session(item: &ActiveSessionItem) -> &SessionSummary {
     match item {
@@ -124,6 +125,7 @@ fn first_archive_expansion_highlights_the_requested_row_before_runtime_confirmat
             session
         })
         .collect::<Vec<_>>();
+    let sessions = SessionCatalog::from(sessions);
     let archive = session_rail_lists(&sessions, &[], None, &[]).archived;
     let previous = archived_session(&archive[0]);
     let requested = archived_session(&archive[1]);

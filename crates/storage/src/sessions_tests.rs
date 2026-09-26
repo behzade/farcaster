@@ -24,6 +24,41 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
 }
 
 #[test]
+fn creation_time_uses_persisted_fallback_without_following_activity() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let update = metadata("worker");
+    let created = store.update_session_metadata(&update)?;
+    store
+        .connection
+        .execute(
+            "UPDATE sessions SET created_ms=1000 WHERE id=?1",
+            [created.app_session_id],
+        )
+        .map_err(|error| error.to_string())?;
+    let fallback = UNIX_EPOCH + Duration::from_secs(1);
+    let refreshed = store.update_session_metadata(&update)?;
+    assert_eq!(refreshed.created_at, Some(fallback));
+    assert!(refreshed.modified > fallback);
+
+    for (timestamp, seconds) in [("", 1), ("invalid", 1), ("1970-01-01T00:00:02Z", 2)] {
+        store
+            .connection
+            .execute(
+                "UPDATE sessions SET timestamp=?1 WHERE id=?2",
+                params![timestamp, created.app_session_id],
+            )
+            .map_err(|error| error.to_string())?;
+        let cached = store.cached_sessions("")?;
+        assert_eq!(
+            cached[0].created_at,
+            Some(UNIX_EPOCH + Duration::from_secs(seconds))
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn session_access_mode_round_trips_by_locator() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
     let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;

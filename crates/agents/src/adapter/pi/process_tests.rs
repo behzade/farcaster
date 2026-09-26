@@ -6,18 +6,15 @@ use tempfile::tempdir;
 
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-struct DisabledMcp;
+struct DisabledMcp {
+    _guard: crate::builtin_mcp::McpDisabledForTest,
+}
 
 impl DisabledMcp {
     fn new() -> Self {
-        crate::adapter::farcaster_mcp::set_enabled(false);
-        Self
-    }
-}
-
-impl Drop for DisabledMcp {
-    fn drop(&mut self) {
-        crate::adapter::farcaster_mcp::set_enabled(true);
+        Self {
+            _guard: crate::builtin_mcp::McpDisabledForTest::new(),
+        }
     }
 }
 
@@ -1164,25 +1161,28 @@ fn installed_pi_abort_and_apply_steering_control_real_stream_requests() -> TestR
 
 #[test]
 fn process_starts_directly_in_the_project_directory() -> TestResult {
-    let (temp, command) = fake("project-directory")?;
-    let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
-    let process_project = fs::read_to_string(temp.path().join("process-project"))?;
-    assert_eq!(
-        fs::canonicalize(process_project)?,
-        fs::canonicalize(temp.path())?,
-    );
-    assert_eq!(
-        fs::read_to_string(temp.path().join("process-mcp-url"))?,
-        "http://127.0.0.1:8765/mcp"
-    );
-    assert_eq!(
-        fs::read_to_string(temp.path().join("process-mcp-header"))?,
-        "farcaster-caller"
-    );
-    assert!(!fs::read_to_string(temp.path().join("process-mcp-caller"))?.is_empty());
-    assert!(!temp.path().join(".mcp.json").exists());
-    rpc.terminate()?;
-    Ok(())
+    crate::builtin_mcp::with_url_for_test("http://127.0.0.1:32123/mcp", || {
+        let _mcp = crate::builtin_mcp::exclusive_for_test();
+        let (temp, command) = fake("project-directory")?;
+        let mut rpc = PiRpcProcess::spawn(&command, temp.path(), None)?;
+        let process_project = fs::read_to_string(temp.path().join("process-project"))?;
+        assert_eq!(
+            fs::canonicalize(process_project)?,
+            fs::canonicalize(temp.path())?,
+        );
+        assert_eq!(
+            fs::read_to_string(temp.path().join("process-mcp-url"))?,
+            "http://127.0.0.1:32123/mcp"
+        );
+        assert_eq!(
+            fs::read_to_string(temp.path().join("process-mcp-header"))?,
+            "farcaster-caller"
+        );
+        assert!(!fs::read_to_string(temp.path().join("process-mcp-caller"))?.is_empty());
+        assert!(!temp.path().join(".mcp.json").exists());
+        rpc.terminate()?;
+        Ok(())
+    })
 }
 
 #[test]

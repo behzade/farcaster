@@ -6,13 +6,18 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::super::main_session::{external_session_locator, external_session_path};
+use super::super::{
+    history_cache::{FileStamp, HistoryCache},
+    main_session::{external_session_locator, external_session_path},
+};
 use super::{
     BACKEND,
     events::{history_messages, string, text},
 };
 use crate::{DiscoveredHistory, DiscoveredSession};
 use serde_json::Value;
+
+static HISTORY: HistoryCache<(PathBuf, bool), FileStamp, DiscoveredHistory> = HistoryCache::new();
 
 fn projects_root() -> Result<PathBuf, String> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -296,7 +301,11 @@ fn load_history_in(root: &Path, path: &Path) -> Result<DiscoveredHistory, String
                         .join(format!("agent-{agent}.jsonl"))
                 },
             );
-            read(&path).map(|rows| history(&rows, agent.is_some()))
+            HISTORY.load(
+                (path.clone(), agent.is_some()),
+                || FileStamp::read(&path),
+                || read(&path).map(|rows| history(&rows, agent.is_some())),
+            )
         }
         [] => Err(format!("Claude transcript {id} not found")),
         _ => Err(format!(

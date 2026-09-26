@@ -32,10 +32,28 @@ fn main() -> std::process::ExitCode {
         Err(error) => return fail(format!("import app shell environment: {error}")),
     };
 
+    let (requested_project, isolated) =
+        app::infrastructure::isolation::split(std::env::args_os().skip(1));
+    let isolation = if isolated {
+        let source = match app::paths::data_dir() {
+            Ok(path) => path,
+            Err(error) => return fail(error),
+        };
+        match app::infrastructure::isolation::install(&source) {
+            Ok(isolation) => Some(isolation),
+            Err(error) => return fail(error),
+        }
+    } else {
+        None
+    };
+
     zlog::init();
     zlog::init_output_stderr();
     if let Err(error) = init_log_file() {
         zlog::error!("Failed to initialize application log file: {error}");
+    }
+    if let Some(isolation) = &isolation {
+        zlog::info!("{}", isolation.summary());
     }
     if let Some(elapsed_ms) = shell_import_ms {
         zlog::info!("STARTUP operation=main.import_shell_environment elapsed_ms={elapsed_ms}");
@@ -49,7 +67,7 @@ fn main() -> std::process::ExitCode {
         Ok(store) => store,
         Err(error) => return fail(format!("initialize state database: {error}")),
     };
-    let project = match app::launch::resolve_project(std::env::args_os().nth(1).map(Into::into)) {
+    let project = match app::launch::resolve_project(requested_project) {
         Ok(project) => project,
         Err(error) => return fail(error),
     };

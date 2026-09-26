@@ -540,7 +540,7 @@ fn promoted_draft_completion_clears_status_and_saved_attachments(cx: &mut gpui::
         |cx, app, runtime, project| {
             let target = "draft:completion";
             let submission_id = "submission-completion";
-            let path = project.join("completed-session");
+            let path = crate::sessions::normalize_session_path(&project.join("completed-session"));
             let session_key = session_target(&path);
             cx.update(|_, cx| {
                 app.update(cx, |app, _| {
@@ -857,9 +857,17 @@ fn child_activity_event_invalidates_and_renders_the_real_run_sidebar(
                 window.draw(cx).clear(cx);
             });
             assert!(
-                cx.debug_bounds(card_selector).is_none(),
-                "activity invalidation must remove a completed child from the collapsed section"
+                cx.debug_bounds(card_selector).is_some(),
+                "a completed child remains visible among recent workers"
             );
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).activity.agents[&activity_key].lifecycle,
+                    crate::agent_activity::AgentLifecycle::Completed(
+                        crate::agent_activity::AgentOutcome::Complete
+                    )
+                );
+            });
             let inferred_incomplete =
                 AgentActivity::from_native_child("child".into(), child_path, "worker", false, None);
             runtime.send_event(RuntimeEvent::AgentActivityUpdated(inferred_incomplete));
@@ -1163,6 +1171,78 @@ fn folder_removal_waits_for_all_delete_receipts_and_keeps_failures(cx: &mut gpui
                     assert!(app.sessions.deleting_folders.is_empty());
                     assert_eq!(app.sessions.folders.folder_for(42), None);
                 })
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn a_loading_chat_keeps_the_transcript_it_last_showed(cx: &mut gpui::TestAppContext) {
+    use crate::conversation::ConversationState;
+    use serde_json::json;
+
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::a_loading_chat_keeps_the_transcript_it_last_showed"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let session = project.join("chat.jsonl");
+            std::fs::write(&session, "{}").expect("write session file");
+            let mut conversation = ConversationState::default();
+            conversation.replace_history(&[
+                json!({"role":"user", "content":"hello"}),
+                json!({"role":"assistant", "content":[{"type":"text", "text":"hi"}]}),
+            ]);
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 1,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    project: project.to_path_buf(),
+                    selected_session: Some(session.clone()),
+                    conversation: Arc::new(conversation),
+                    status: "Ready".into(),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|_, cx| {
+                assert_eq!(app.read(cx).snapshot.conversation.items.len(), 2);
+            });
+
+            // Selecting the same chat again clears the runtime's snapshot until
+            // the history load finishes.
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 2,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    project: project.to_path_buf(),
+                    selected_session: Some(session.clone()),
+                    status: "Loading history".into(),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).snapshot.conversation.items.len(),
+                    2,
+                    "a loading snapshot must not clear the transcript on screen",
+                );
+            });
+            runtime.send_event(RuntimeEvent::Snapshot {
+                generation: 2,
+                snapshot: Arc::new(RuntimeSnapshot {
+                    project: project.to_path_buf(),
+                    selected_session: Some(session),
+                    status: "Ready".into(),
+                    ..Default::default()
+                }),
+            });
+            cx.update(|_, cx| app.update(cx, |app, cx| app.drain_runtime(cx)));
+            cx.update(|_, cx| {
+                let app = app.read(cx);
+                assert!(app.snapshot.conversation.items.is_empty());
+                assert!(app.views.transcript.read(cx).rows.is_empty());
             });
         },
     );

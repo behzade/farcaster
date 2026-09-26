@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, FocusHandle, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Pixels, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
     prelude::FluentBuilder as _,
 };
 
@@ -21,7 +21,6 @@ pub(super) fn render_body(
     composer: impl IntoElement,
     heading: Option<AnyElement>,
     composer_focus: FocusHandle,
-    viewport_height: Pixels,
 ) -> impl IntoElement {
     div()
         .id("chat-body")
@@ -30,9 +29,6 @@ pub(super) fn render_body(
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .items_center()
-        .pt(crate::app::ui::layout::draft_top_padding(viewport_height))
-        .pb(theme().space.md)
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             if !window.default_prevented() {
                 composer_focus.focus(window, cx);
@@ -42,14 +38,25 @@ pub(super) fn render_body(
         .child(
             div()
                 .w_full()
-                .max_w(theme().layout.conversation_width)
-                .px(theme().space.md)
+                .min_h(gpui::relative(1.0))
                 .flex_none()
+                .py(theme().space.md)
                 .flex()
                 .flex_col()
-                .gap(theme().space.md)
-                .when_some(heading, |body, heading| body.child(heading))
-                .child(composer),
+                .justify_center()
+                .items_center()
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(theme().layout.conversation_width)
+                        .px(theme().space.md)
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap(theme().space.md)
+                        .when_some(heading, |body, heading| body.child(heading))
+                        .child(composer),
+                ),
         )
 }
 
