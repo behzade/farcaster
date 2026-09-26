@@ -233,14 +233,19 @@ impl RenderOnce for DraftRow {
                             .child(session_provider_slot(
                                 draft.harness,
                                 action_group.clone(),
-                                DeleteButton::new(format!("discard-{discard_id}"), "Discard draft")
+                                archived.then(|| {
+                                    DeleteButton::new(
+                                        format!("discard-{discard_id}"),
+                                        "Discard draft",
+                                    )
                                     .reveal_on(action_group.clone())
                                     .on_delete(move |window, cx| {
                                         let _ = discard_entity.update(cx, |this, cx| {
                                             this.discard_draft(&discard_id, window, cx);
                                         });
                                     })
-                                    .into_any_element(),
+                                    .into_any_element()
+                                }),
                             ))
                             .child(session_row_age(age))
                             .into_any_element(),

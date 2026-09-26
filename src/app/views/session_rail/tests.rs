@@ -115,6 +115,120 @@ fn session_numbers_stop_at_nine() {
     assert_eq!(numbered[8].app_session_id(), 9);
 }
 
+#[gpui::test]
+fn zero_shortcut_selects_first_unsubmitted_draft(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::zero_shortcut_selects_first_unsubmitted_draft"
+        ),
+        cx,
+        |cx, app, _, project| {
+            let drafts = [(30, true), (20, false), (10, false)].map(|(id, submitted)| {
+                let mut draft =
+                    DraftSession::with_id(Some(Backend::Pi), format!("draft-{id}"), project.into());
+                draft.app_session_id = id;
+                draft.submitted = submitted;
+                draft
+            });
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.sessions.drafts = drafts.to_vec();
+                    app.sessions.order = vec![30, 20, 10];
+                    app.sessions.selected_draft = Some("draft-10".into());
+                    app.navigation.chat.focus.focus(window, cx);
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            });
+            cx.simulate_keystrokes(&crate::app::ui::keybindings::application_key("0"));
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).sessions.selected_draft.as_deref(),
+                    Some("draft-20")
+                );
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn delete_controls_only_exist_on_archived_rows(cx: &mut gpui::TestAppContext) {
+    use gpui::{IntoElement as _, ParentElement as _, Styled as _};
+    struct RowHarness {
+        app: gpui::WeakEntity<crate::app::FarcasterApp>,
+        draft: bool,
+        archived: bool,
+        compact: bool,
+    }
+    impl gpui::Render for RowHarness {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            let row = if self.draft {
+                super::draft_row::DraftRow::new(
+                    &DraftSession::with_id(Some(Backend::Pi), "draft".into(), "/project".into()),
+                    super::draft_row::DraftRowInput {
+                        selected: false,
+                        status: "Draft".into(),
+                        archived: self.archived,
+                        drop_position: None,
+                        compact: self.compact,
+                    },
+                    self.app.clone(),
+                )
+                .into_any_element()
+            } else {
+                let kind = if self.archived {
+                    SessionRailKind::Archived
+                } else {
+                    SessionRailKind::Project
+                };
+                let mut input = super::rows::SessionRowInput::standard(false, None);
+                input.compact = self.compact;
+                super::rows::SessionRow::new(
+                    &item("chat", 1, "/project", kind, false),
+                    input,
+                    self.app.clone(),
+                )
+                .into_any_element()
+            };
+            gpui::div().w(px(332.0)).h(px(90.0)).child(row)
+        }
+    }
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::delete_controls_only_exist_on_archived_rows"
+        ),
+        cx,
+        |cx, app, _, _| {
+            for draft in [false, true] {
+                for compact in [false, true] {
+                    for archived in [false, true] {
+                        cx.update(|window, cx| {
+                            window.replace_root(cx, |_, _| RowHarness {
+                                app: app.downgrade(),
+                                draft,
+                                archived,
+                                compact,
+                            });
+                            window.draw(cx).clear(cx);
+                        });
+                        assert_eq!(
+                            cx.debug_bounds("session-delete-action").is_some(),
+                            archived,
+                            "draft={draft}, compact={compact}, archived={archived}"
+                        );
+                    }
+                }
+            }
+        },
+    );
+}
+
 #[test]
 fn minimal_row_reconciliation_preserves_equal_prefix_and_suffix() {
     let current = vec!["one", "two", "three"];

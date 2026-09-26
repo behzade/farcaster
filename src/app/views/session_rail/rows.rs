@@ -137,12 +137,14 @@ impl RenderOnce for SessionRow {
             action_group.clone(),
             entity.clone(),
         );
-        let delete_action = session_delete_action(
-            &session.id,
-            session.path.clone(),
-            action_group.clone(),
-            entity.clone(),
-        );
+        let delete_action = is_archived.then(|| {
+            session_delete_action(
+                &session.id,
+                session.path.clone(),
+                action_group.clone(),
+                entity.clone(),
+            )
+        });
         let row = div()
             .id(format!("session-{}", session.id))
             .role(Role::Button)
@@ -561,17 +563,19 @@ fn session_context_menu(
                 });
             }
 
-            let delete_path = path.clone();
-            let delete_entity = entity.clone();
-            menu = menu.separator().item(
-                PopupMenuItem::new("Delete permanently")
-                    .icon(AppIcon::Trash)
-                    .on_click(move |_, window, cx| {
-                        let _ = delete_entity.update(cx, |this, cx| {
-                            this.request_session_delete(delete_path.clone(), window, cx);
-                        });
-                    }),
-            );
+            if kind == SessionRailKind::Archived {
+                let delete_path = path.clone();
+                let delete_entity = entity.clone();
+                menu = menu.separator().item(
+                    PopupMenuItem::new("Delete permanently")
+                        .icon(AppIcon::Trash)
+                        .on_click(move |_, window, cx| {
+                            let _ = delete_entity.update(cx, |this, cx| {
+                                this.request_session_delete(delete_path.clone(), window, cx);
+                            });
+                        }),
+                );
+            }
             menu
         })
         .mouse_button(MouseButton::Right)
@@ -583,13 +587,11 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-/// The provider icon and the row's delete affordance share one slot: the icon
-/// is what a chat shows at rest, and the delete replaces it while the row is
-/// hovered, so neither one moves the other controls.
+/// Archived rows replace the provider icon with Delete on hover.
 pub(super) fn session_provider_slot(
     harness: impl Into<Option<Backend>>,
     reveal_group: String,
-    delete_action: AnyElement,
+    delete_action: Option<AnyElement>,
 ) -> AnyElement {
     div()
         .relative()
@@ -604,21 +606,26 @@ pub(super) fn session_provider_slot(
                 .flex()
                 .items_center()
                 .justify_center()
-                .group_hover(reveal_group, |icon| icon.opacity(0.0))
+                .when(delete_action.is_some(), |icon| {
+                    icon.group_hover(reveal_group, |icon| icon.opacity(0.0))
+                })
                 .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline)),
         )
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(delete_action),
-        )
+        .when_some(delete_action, |slot, delete_action| {
+            slot.child(
+                div()
+                    .debug_selector(|| "session-delete-action".into())
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(delete_action),
+            )
+        })
         .into_any_element()
 }
 
