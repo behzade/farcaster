@@ -39,20 +39,6 @@ fn notification_tone(tone: crate::protocol::NotifyTone) -> FeedbackTone {
 }
 
 impl FarcasterApp {
-    fn render_rail_notices(&self, entity: WeakEntity<Self>) -> Option<AnyElement> {
-        let task_notice = self.render_code_task_notice(entity)?;
-        Some(
-            div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .px(theme().size(10.0))
-                .pb(theme().space.sm)
-                .child(task_notice)
-                .into_any_element(),
-        )
-    }
-
     fn render_rail_panel(
         &self,
         panel: RailPanel,
@@ -504,10 +490,6 @@ impl FarcasterApp {
                             ),
                     )
                     .child(archived_panel)
-                    .when_some(
-                        self.render_rail_notices(entity.clone()),
-                        |stack, notices| stack.child(notices),
-                    )
                     .child(self.render_notification_panel(entity)),
             )
             .into_any_element()

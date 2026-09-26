@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Context, FocusHandle, IntoElement as _, ParentElement as _, Styled as _,
-    WeakEntity, div, prelude::FluentBuilder as _,
+    AnyElement, Context, FocusHandle, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 
 use super::{
@@ -9,7 +9,7 @@ use super::{
 };
 use crate::app::ui::{
     assets::AppIcon,
-    primitives::{ButtonTone, icon_button, modal},
+    primitives::{ButtonTone, FeedbackTone, feedback, icon_button, modal},
     theme::theme,
 };
 
@@ -22,6 +22,8 @@ impl FarcasterApp {
         work_active: bool,
         cx: &Context<Self>,
     ) -> gpui::Div {
+        let task_notice = self.render_code_task_notice(entity.clone());
+        let has_notices = !self.extensions.active.notifications.is_empty() || task_notice.is_some();
         let workgraph_focus = self.views.workgraph.read(cx).focus_handle();
         let sessions_sheet = self.overlays.view.sessions.then(|| {
             panel_sheet(
@@ -167,11 +169,45 @@ impl FarcasterApp {
                 dialogs::image_preview::render(self, entity.clone()),
                 |root, preview| root.child(preview),
             )
+            .when(has_notices, |root| {
+                root.child(
+                    div()
+                        .debug_selector(|| "floating-notices".into())
+                        .absolute()
+                        .top(theme().space.md)
+                        .right(theme().space.md)
+                        .w(theme().layout.run_panel)
+                        .max_w_full()
+                        .flex()
+                        .flex_col()
+                        .gap(theme().space.xs)
+                        .children(task_notice)
+                        .children(self.extensions.active.notifications.iter().enumerate().map(
+                            |(index, notice)| {
+                                feedback(
+                                    ("notification", index),
+                                    notice.message.clone(),
+                                    match notice.tone {
+                                        crate::protocol::NotifyTone::Error => FeedbackTone::Error,
+                                        crate::protocol::NotifyTone::Warning => {
+                                            FeedbackTone::Warning
+                                        }
+                                        crate::protocol::NotifyTone::Info => FeedbackTone::Info,
+                                    },
+                                )
+                            },
+                        )),
+                )
+            })
             .when(self.lifecycle.pending_quit.is_some(), |root| {
                 root.child(dialogs::quit_confirmation::render(self, entity.clone()))
             })
     }
 }
+
+#[cfg(test)]
+#[path = "overlays_tests.rs"]
+mod tests;
 
 fn panel_sheet(
     id: &'static str,
