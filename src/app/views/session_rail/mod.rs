@@ -179,19 +179,16 @@ impl FarcasterApp {
             }
             return;
         }
-        let rows = folders::project_group_rows(
-            self.visible_active_items(),
-            &self.sessions.folders,
-            &self.sessions.collapsed_projects,
-        )
-        .into_iter()
-        .filter_map(|row| match row {
-            folders::FolderRow::Session(item) => Some(*item),
-            folders::FolderRow::Header(_)
-            | folders::FolderRow::Project { .. }
-            | folders::FolderRow::New => None,
-        })
-        .collect::<Vec<_>>();
+        let rows = self
+            .session_folder_rows(self.visible_active_items())
+            .into_iter()
+            .filter_map(|row| match row {
+                folders::FolderRow::Session(item) => Some(*item),
+                folders::FolderRow::Header(_)
+                | folders::FolderRow::Project { .. }
+                | folders::FolderRow::New => None,
+            })
+            .collect::<Vec<_>>();
         if let Some(target) = numbered_session_items(&rows)
             .get(number - 1)
             .and_then(|item| VisibleSessionTarget::from_item(item))
@@ -301,15 +298,23 @@ impl FarcasterApp {
         targets
     }
 
+    fn session_folder_rows(&self, items: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
+        if self.settings.group_sessions_by_project {
+            folders::project_group_rows(
+                items,
+                &self.sessions.folders,
+                &self.sessions.collapsed_projects,
+            )
+        } else {
+            folders::folder_rows(items, &self.sessions.folders)
+        }
+    }
+
     fn visible_session_targets(&self) -> Vec<VisibleSessionTarget> {
-        folders::project_group_rows(
-            self.visible_active_items(),
-            &self.sessions.folders,
-            &self.sessions.collapsed_projects,
-        )
-        .into_iter()
-        .filter_map(VisibleSessionTarget::from_row)
-        .collect()
+        self.session_folder_rows(self.visible_active_items())
+            .into_iter()
+            .filter_map(VisibleSessionTarget::from_row)
+            .collect()
     }
 
     fn visible_active_items(&self) -> Vec<ActiveSessionItem> {

@@ -229,3 +229,56 @@ fn project_groups_do_not_take_chats_out_of_custom_folders() {
     assert!(matches!(&flat[0], FolderRow::Session(item) if item.app_session_id() == 2));
     assert_eq!(folders.folder_for(3), Some(1));
 }
+
+#[gpui::test]
+fn project_grouping_defaults_to_flat_and_toggles_without_changing_folders(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::project_grouping_defaults_to_flat_and_toggles_without_changing_folders"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    assert!(!app.settings.group_sessions_by_project);
+                    assert!(
+                        !crate::app::persistence::open()
+                            .expect("store")
+                            .load_group_sessions_by_project()
+                            .expect("load")
+                    );
+                    app.sessions.folders.create("Later".into(), Some(3));
+                    let folders = serde_json::to_string(&app.sessions.folders).expect("folders");
+                    for grouped in [false, true, false] {
+                        if app.settings.group_sessions_by_project != grouped {
+                            app.toggle_settings_project_groups(cx);
+                        }
+                        let rows = app.session_folder_rows(vec![draft(3), draft(2)]);
+                        assert_eq!(
+                            rows.iter()
+                                .any(|row| matches!(row, FolderRow::Project { .. })),
+                            grouped
+                        );
+                        assert!(rows.iter().any(
+                            |row| matches!(row, FolderRow::Header(header) if header.name == "Later")
+                        ));
+                        assert_eq!(
+                            serde_json::to_string(&app.sessions.folders).expect("folders"),
+                            folders
+                        );
+                        assert_eq!(
+                            crate::app::persistence::open()
+                                .expect("reopen")
+                                .load_group_sessions_by_project()
+                                .expect("load"),
+                            grouped
+                        );
+                    }
+                })
+            });
+        },
+    );
+}

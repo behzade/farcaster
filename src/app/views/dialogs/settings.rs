@@ -80,6 +80,17 @@ pub(in crate::app::views) fn render(
                                 FeedbackTone::Error,
                             ))
                         })
+                        .child(toggle_setting(
+                            "session-project-groups-toggle",
+                            "Group sessions by project",
+                            "Group chats outside custom folders by their project.",
+                            app.settings.group_sessions_by_project,
+                            entity.clone(),
+                            FarcasterApp::toggle_settings_project_groups,
+                        ))
+                        .when_some(app.settings.session_grouping_error.clone(), |content, error| {
+                            content.child(feedback("settings-session-grouping-error", error, FeedbackTone::Error))
+                        })
                         .child(transcript_font_size(app.views.transcript.read(cx).font_size, entity.clone()))
                         .child(toggle_setting(
                             "transcript-folders-toggle",

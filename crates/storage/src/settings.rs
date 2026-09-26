@@ -102,6 +102,29 @@ impl StateStore {
         .map_err(|error| format!("save preferred harness profile: {error}"))
     }
 
+    pub fn load_group_sessions_by_project(&self) -> Result<bool, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='group_sessions_by_project'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|value| value.as_deref() == Some("true"))
+            .map_err(|error| format!("load session grouping setting: {error}"))
+    }
+
+    pub fn save_group_sessions_by_project(&self, expanded: bool) -> Result<(), String> {
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('group_sessions_by_project', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [if expanded { "true" } else { "false" }],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save session grouping setting: {error}"))
+    }
+
     pub fn load_expand_transcript_folders(&self) -> Result<bool, String> {
         self.connection
             .query_row(

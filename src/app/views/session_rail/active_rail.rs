@@ -11,7 +11,7 @@ use super::{
     FarcasterApp, RailPanel, active_item_identity,
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
-    folders::{FolderRow, folder_header, new_folder_row, project_group_rows, project_header},
+    folders::{FolderRow, folder_header, new_folder_row, project_header},
     groups::{ActiveSessionItem, session_rail_lists},
     reconcile_list_rows,
     rendering::{active_session_drop_target, subagent_counts},
@@ -132,13 +132,17 @@ impl FarcasterApp {
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
-        let last_active_row = None;
+        let last_active_row = if !self.settings.group_sessions_by_project
+            && self.sessions.folders.folders.is_empty()
+        {
+            active_rows
+                .last()
+                .map(|item| (active_entry_count - 1, item.app_session_id()))
+        } else {
+            None
+        };
         let active_drop_list = session_list.clone();
-        let mut active_rows = project_group_rows(
-            active_rows,
-            &self.sessions.folders,
-            &self.sessions.collapsed_projects,
-        );
+        let mut active_rows = self.session_folder_rows(active_rows);
         active_rows.push(FolderRow::New);
         let nested_rows = active_rows
             .iter()
