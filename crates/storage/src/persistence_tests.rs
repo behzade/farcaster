@@ -1305,7 +1305,7 @@ fn draft_harness_survives_project_saves() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
-fn archiving_a_chat_survives_the_registry_before_anything_is_sent()
+fn archiving_a_submitted_chat_survives_the_registry_before_its_session_arrives()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempdir()?;
     let project = temp.path().join("project");
@@ -1322,6 +1322,8 @@ fn archiving_a_chat_survives_the_registry_before_anything_is_sent()
     assert!(!store.load_registry()?.drafts[0].archived);
 
     let mut archived = draft;
+    assert!(!archived.set_archived(true));
+    archived.submitted = true;
     assert!(archived.set_archived(true));
     store.save_registry(&registry(archived))?;
     assert!(store.load_registry()?.drafts[0].archived);
