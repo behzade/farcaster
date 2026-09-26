@@ -181,6 +181,30 @@ fn visible_queue_overlays_a_local_submission_already_reflected_by_the_backend() 
 }
 
 #[test]
+fn visible_queue_matches_the_trimmed_payload_and_keeps_repeated_submissions() {
+    let mut local = pending();
+    local.text = "  same text\n".into();
+    let mut repeated = local.clone();
+    repeated.id = "second".into();
+    repeated.submitted_at += Duration::from_millis(1);
+    let mut pending = std::collections::HashMap::from([(local.id.clone(), local)]);
+    let native = crate::conversation::QueueState {
+        steering: vec!["same text".into()],
+        steering_ids: vec!["backend-steer".into()],
+        ..Default::default()
+    };
+
+    let visible = visible_prompt_queue(&native, &pending, "session:compacting");
+    assert_eq!(visible.steering, ["  same text\n"]);
+    assert_eq!(visible.steering_ids, ["backend-steer"]);
+
+    pending.insert(repeated.id.clone(), repeated);
+    let visible = visible_prompt_queue(&native, &pending, "session:compacting");
+    assert_eq!(visible.steering.len(), 2);
+    assert_eq!(visible.steering_ids, ["backend-steer", "second"]);
+}
+
+#[test]
 fn visible_queue_preserves_the_count_of_repeated_submissions() {
     let first_at = Instant::now();
     let mut first = pending();

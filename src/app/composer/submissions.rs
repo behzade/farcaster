@@ -426,7 +426,9 @@ pub(in crate::app) fn visible_prompt_queue(
         };
         let preview = pending_queue_preview(submission);
         if let Some(index) = messages.iter().enumerate().find_map(|(index, message)| {
-            (!matched[index] && message == &submission.text).then_some(index)
+            // Submission trims the editor value; the local copy retains it for recovery.
+            (!matched[index] && (message == &submission.text || message == submission.text.trim()))
+                .then_some(index)
         }) {
             matched[index] = true;
             messages[index] = preview;
