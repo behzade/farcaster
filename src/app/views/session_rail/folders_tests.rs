@@ -38,7 +38,7 @@ fn folder_headers_follow_unfiled_sessions_and_keep_empty_folders() {
 }
 
 #[test]
-fn flat_folders_show_sessions_even_with_a_saved_collapsed_state() {
+fn collapsed_folders_show_the_count_and_hide_their_chats() {
     let mut folders = SessionFolders {
         folders: vec![SessionFolder {
             id: 1,
@@ -57,8 +57,9 @@ fn flat_folders_show_sessions_even_with_a_saved_collapsed_state() {
     };
     assert_eq!(header.color, 3);
 
-    assert_eq!(rows.len(), 3);
-    assert!(matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 3));
+    assert!(header.collapsed);
+    assert_eq!(header.count, 1);
+    assert_eq!(rows.len(), 2);
 }
 
 #[test]
@@ -208,7 +209,7 @@ fn folder_drop_accepts_session_across_header_width(cx: &mut gpui::TestAppContext
 fn project_groups_include_filed_chats_and_preserve_membership() {
     let mut folders = SessionFolders::default();
     folders.create("Later".into(), Some(3));
-    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)]);
+    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)], &Default::default());
     assert!(
         matches!(&rows[0], FolderRow::Project { path, .. } if path == std::path::Path::new("/project"))
     );
@@ -351,6 +352,103 @@ fn reordering_project_rows_keeps_hidden_folder_assignments(cx: &mut gpui::TestAp
                     );
                 });
             });
+        },
+    );
+}
+
+#[gpui::test]
+fn flat_group_title_clicks_toggle_chats_and_counts_in_both_modes(cx: &mut gpui::TestAppContext) {
+    use gpui::{point, px, size};
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::flat_group_title_clicks_toggle_chats_and_counts_in_both_modes"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.sessions.drafts = [draft(3), draft(2)]
+                        .into_iter()
+                        .map(|item| {
+                            let ActiveSessionItem::Draft(draft) = item else {
+                                unreachable!()
+                            };
+                            draft
+                        })
+                        .collect();
+                    app.sessions
+                        .folders
+                        .create("A long folder title that will be clipped".into(), Some(3));
+                    app.sessions.folders.assign(2, Some(1));
+                })
+            });
+            for grouped in [false, true] {
+                cx.update(|_, cx| {
+                    app.update(cx, |app, cx| {
+                        if app.settings.group_sessions_by_project != grouped {
+                            app.toggle_settings_project_groups(cx);
+                        }
+                    })
+                });
+                for collapsed in [false, true, false] {
+                    cx.update(|_, cx| {
+                        let rows = app.read(cx).session_folder_rows(vec![draft(3), draft(2)]);
+                        assert_eq!(rows.len(), if collapsed { 1 } else { 3 });
+                        match &rows[0] {
+                            FolderRow::Header(header) => {
+                                assert_eq!(header.collapsed, collapsed);
+                                assert_eq!(header.count, 2);
+                            }
+                            FolderRow::Project {
+                                collapsed: folded,
+                                count,
+                                ..
+                            } => {
+                                assert_eq!(*folded, collapsed);
+                                assert_eq!(*count, 2);
+                            }
+                            _ => panic!("expected a group header"),
+                        }
+                    });
+                    cx.draw(
+                        point(px(0.0), px(0.0)),
+                        size(px(220.0), px(800.0)),
+                        |_, cx| {
+                            div()
+                                .w(px(220.0))
+                                .h(px(800.0))
+                                .child(app.read(cx).views.session_rail.clone())
+                        },
+                    );
+                    let title = cx.debug_bounds("session-group-title").expect("title");
+                    let count = cx.debug_bounds("session-group-count");
+                    assert_eq!(count.is_some(), collapsed);
+                    if let Some(count) = count {
+                        assert!(count.right() <= title.right());
+                    }
+                    cx.simulate_click(title.center(), Default::default());
+                }
+                cx.update(|_, cx| {
+                    let state = app.read(cx);
+                    let rows = state.session_folder_rows(vec![draft(3)]);
+                    assert_eq!(rows.len(), 1);
+                    assert!(match &rows[0] {
+                        FolderRow::Header(header) => header.count == 1,
+                        FolderRow::Project { count, .. } => *count == 1,
+                        _ => false,
+                    });
+                    if !grouped {
+                        let saved = crate::app::persistence::open()
+                            .expect("store")
+                            .load_session_folders()
+                            .expect("folders");
+                        assert!(saved.folders[0].collapsed);
+                    }
+                    assert_eq!(state.sessions.folders.folder_for(3), Some(1));
+                    assert_eq!(state.project.path, project);
+                });
+            }
         },
     );
 }

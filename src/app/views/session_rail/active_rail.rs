@@ -249,9 +249,18 @@ impl FarcasterApp {
                     active_title_input.clone(),
                     active_row_entity.clone(),
                 ),
-                Some(FolderRow::Project { path, label }) => {
-                    project_header(path.clone(), label.clone(), active_row_entity.clone())
-                }
+                Some(FolderRow::Project {
+                    path,
+                    label,
+                    collapsed,
+                    count,
+                }) => project_header(
+                    path.clone(),
+                    label.clone(),
+                    *collapsed,
+                    *count,
+                    active_row_entity.clone(),
+                ),
                 Some(FolderRow::New) => new_folder_row(
                     editing_folder == Some(None),
                     active_title_input.clone(),

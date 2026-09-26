@@ -12,8 +12,8 @@ use crate::app::{
     ui::{
         assets::AppIcon,
         primitives::{
-            AppIconSize, AppTooltip as _, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon,
-            button, icon_control,
+            AppIconSize, AppTooltip as _, ButtonTone, ContextMenuTrigger, DeleteButton,
+            activates_button, app_icon, button, icon_control,
         },
         theme::theme,
     },
@@ -21,6 +21,7 @@ use crate::app::{
 use gpui::{
     Anchor, AnyElement, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
     ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
+    prelude::FluentBuilder as _,
 };
 use gpui_component::{
     input::{Input, InputState},
@@ -32,13 +33,20 @@ pub(super) struct FolderHeader {
     pub(super) id: u64,
     pub(super) name: String,
     pub(super) color: u8,
+    pub(super) collapsed: bool,
+    pub(super) count: usize,
 }
 
 #[derive(Clone)]
 pub(super) enum FolderRow {
     Session(Box<ActiveSessionItem>),
     Header(Box<FolderHeader>),
-    Project { path: PathBuf, label: String },
+    Project {
+        path: PathBuf,
+        label: String,
+        collapsed: bool,
+        count: usize,
+    },
     New,
 }
 
@@ -65,17 +73,24 @@ pub(super) fn folder_rows(
             id: folder.id,
             name: folder.name.clone(),
             color: folder.color,
+            collapsed: folder.collapsed,
+            count: members.len(),
         })));
-        rows.extend(
-            members
-                .into_iter()
-                .map(|item| FolderRow::Session(Box::new(item))),
-        );
+        if !folder.collapsed {
+            rows.extend(
+                members
+                    .into_iter()
+                    .map(|item| FolderRow::Session(Box::new(item))),
+            );
+        }
     }
     rows
 }
 
-pub(super) fn project_group_rows(items: Vec<ActiveSessionItem>) -> Vec<FolderRow> {
+pub(super) fn project_group_rows(
+    items: Vec<ActiveSessionItem>,
+    collapsed: &std::collections::HashSet<PathBuf>,
+) -> Vec<FolderRow> {
     let mut projects = std::collections::BTreeMap::<PathBuf, Vec<ActiveSessionItem>>::new();
     for item in items {
         projects
@@ -86,12 +101,20 @@ pub(super) fn project_group_rows(items: Vec<ActiveSessionItem>) -> Vec<FolderRow
     let labels = project_labels(projects.keys().cloned().collect());
     let mut rows = Vec::new();
     for ((path, items), label) in projects.into_iter().zip(labels) {
-        rows.push(FolderRow::Project { path, label });
-        rows.extend(
-            items
-                .into_iter()
-                .map(|item| FolderRow::Session(Box::new(item))),
-        );
+        let collapsed = collapsed.contains(&path);
+        rows.push(FolderRow::Project {
+            path,
+            label,
+            collapsed,
+            count: items.len(),
+        });
+        if !collapsed {
+            rows.extend(
+                items
+                    .into_iter()
+                    .map(|item| FolderRow::Session(Box::new(item))),
+            );
+        }
     }
     rows
 }
@@ -125,32 +148,93 @@ fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn project_header(
-    project: PathBuf,
+fn group_title(
+    id: String,
     label: String,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    let scope = entity.clone();
-    let scope_project = project.clone();
-    session_section_header()
-        .id(format!("session-project-{}", project.display()))
-        .w_full()
-        .px(theme().space.sm)
+    collapsed: bool,
+    count: usize,
+    on_press: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let on_press = std::rc::Rc::new(on_press);
+    let click = on_press.clone();
+    div()
+        .id(id)
+        .debug_selector(|| "session-group-title".into())
+        .role(gpui::Role::Button)
+        .aria_label(format!("{label}, {count} chats"))
+        .aria_expanded(!collapsed)
+        .tab_index(0)
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .flex()
+        .items_center()
+        .gap(theme().space.xs)
         .cursor_pointer()
-        .on_click(move |_, _, cx| {
-            let _ = scope.update(cx, |this, cx| {
-                this.select_project(scope_project.clone(), cx)
-            });
+        .focus_visible(|title| {
+            title
+                .border(theme().border)
+                .border_color(theme().colors.indicator)
+        })
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            click(window, cx);
+        })
+        .on_key_down(move |event, window, cx| {
+            if activates_button(event) {
+                cx.stop_propagation();
+                on_press(window, cx);
+            }
         })
         .child(
             div()
-                .id(format!("project-label-{}", project.display()))
-                .app_tooltip(project.display().to_string())
-                .flex_1()
                 .min_w_0()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .child(label),
+        )
+        .when(collapsed, |title| {
+            title.child(
+                div()
+                    .debug_selector(|| "session-group-count".into())
+                    .flex_none()
+                    .text_color(theme().colors.subtle)
+                    .child(format!("({count})")),
+            )
+        })
+}
+
+pub(super) fn project_header(
+    project: PathBuf,
+    label: String,
+    collapsed: bool,
+    count: usize,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let toggle = entity.clone();
+    let toggle_project = project.clone();
+    session_section_header()
+        .id(format!("session-project-{}", project.display()))
+        .w_full()
+        .px(theme().space.sm)
+        .child(
+            group_title(
+                format!("project-label-{}", project.display()),
+                label,
+                collapsed,
+                count,
+                move |_, cx| {
+                    let _ = toggle.update(cx, |this, cx| {
+                        if !this.sessions.collapsed_projects.remove(&toggle_project) {
+                            this.sessions
+                                .collapsed_projects
+                                .insert(toggle_project.clone());
+                        }
+                        this.notify_session_rail(cx);
+                    });
+                },
+            )
+            .app_tooltip(project.display().to_string()),
         )
         .child(
             icon_control(
@@ -219,7 +303,14 @@ pub(super) fn folder_header(
     input: Entity<InputState>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let FolderHeader { id, name, color } = folder;
+    let FolderHeader {
+        id,
+        name,
+        color,
+        collapsed,
+        count,
+    } = folder;
+    let toggle = entity.clone();
     let drop_entity = entity.clone();
     let edit_entity = entity.clone();
     let new_entity = entity.clone();
@@ -272,13 +363,21 @@ pub(super) fn folder_header(
         });
     });
     row = row.child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .text_color(palette_color(color))
-            .child(name),
+        group_title(
+            format!("folder-label-{id}"),
+            name,
+            collapsed,
+            count,
+            move |_, cx| {
+                let _ = toggle.update(cx, |this, cx| {
+                    let mut next = this.sessions.folders.clone();
+                    if next.set_collapsed(id, !collapsed) {
+                        this.save_session_folders(next, cx);
+                    }
+                });
+            },
+        )
+        .text_color(palette_color(color)),
     );
 
     row = row.child(
