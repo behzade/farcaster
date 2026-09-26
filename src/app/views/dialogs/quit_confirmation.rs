@@ -16,8 +16,8 @@ pub(in crate::app::views) fn render(
     let on_cancel = move |window: &mut gpui::Window, cx: &mut gpui::App| {
         let _ = dismiss.update(cx, |this, cx| this.close_quit_confirmation(window, cx));
     };
-    let on_confirm = move |_: &mut gpui::Window, cx: &mut gpui::App| {
-        let _ = entity.update(cx, |this, cx| this.confirm_application_quit(cx));
+    let on_confirm = move |window: &mut gpui::Window, cx: &mut gpui::App| {
+        let _ = entity.update(cx, |this, cx| this.confirm_application_quit(window, cx));
     };
     confirmation_modal(
         "quit-application",

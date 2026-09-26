@@ -17,7 +17,3 @@ pub(in crate::app) fn new(
 pub(in crate::app) fn save(draft: &sessions::DraftSession) -> Result<i64, String> {
     sessions::save_draft(&mut *crate::app::persistence::open()?, draft)
 }
-
-pub(in crate::app) fn remove(id: &str) -> Result<(), String> {
-    sessions::remove_draft(&mut *crate::app::persistence::open()?, id)
-}

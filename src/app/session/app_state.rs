@@ -1,6 +1,7 @@
 use crate::app::*;
 
 pub(in crate::app) struct SessionState {
+    pub(in crate::app) writer: super::state_writer::SessionStateWriter,
     pub(in crate::app) visible: crate::sessions::SessionCatalog,
     pub(in crate::app) all: crate::sessions::SessionCatalog,
     pub(in crate::app) order: Vec<i64>,

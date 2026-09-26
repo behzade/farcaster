@@ -19,7 +19,12 @@ pub(super) fn create(
         let target = this.composer.sessions.current_target().to_owned();
         // Materialize the open draft only after quit is confirmed.
         this.sync_current_draft(&target);
-        async {}
+        let flush = this.sessions.writer.flush();
+        async move {
+            if let Err(error) = flush.await {
+                zlog::error!("Session state could not be saved during shutdown: {error}");
+            }
+        }
     })
     .detach();
     let composer = subscribe_composer(&inputs.composer, window, cx);

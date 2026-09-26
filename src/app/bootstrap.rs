@@ -218,6 +218,7 @@ impl FarcasterApp {
                 pending_trust_action: None,
             },
             sessions: session::SessionState {
+                writer: session::state_writer::SessionStateWriter::new(cx),
                 visible: remembered_catalog.clone().into(),
                 all: remembered_catalog.into(),
                 order: persisted.session_order,
@@ -393,6 +394,7 @@ impl FarcasterApp {
                 performance_monitor: performance.monitor,
                 pending_session_switch: None,
                 pending_quit: None,
+                saving_before_quit: false,
                 _performance_task: performance.task,
                 _window_placement_subscription: subscriptions.window_placement,
                 _event_task: tasks.runtime_events,

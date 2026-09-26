@@ -21,27 +21,71 @@ use crate::{
 use crate::sessions::submitted_draft_associations;
 
 impl FarcasterApp {
-    pub(in crate::app) fn save_session_draft(&mut self, id: &str) {
+    pub(in crate::app) fn save_session_draft(&mut self, id: &str) -> bool {
         let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) else {
-            return;
+            return true;
         };
         let project = draft.project.clone();
-        match super::draft_store::save(draft) {
-            Ok(app_session_id) => {
-                draft.app_session_id = app_session_id;
-                self.sessions
-                    .draft_session_ids
-                    .insert(id.to_owned(), app_session_id);
+        if draft.app_session_id <= 0 {
+            match super::draft_store::save(draft) {
+                Ok(app_session_id) => {
+                    draft.app_session_id = app_session_id;
+                    self.sessions
+                        .draft_session_ids
+                        .insert(id.to_owned(), app_session_id);
+                }
+                Err(error) => {
+                    self.sessions.error = Some(error);
+                    return false;
+                }
             }
-            Err(error) => self.sessions.error = Some(error),
+        }
+        if let Err(error) = self.sessions.writer.save_draft(draft.clone()) {
+            self.sessions.error = Some(error);
+            return false;
         }
         self.remember_rail_projects([project]);
+        true
     }
 
     pub(in crate::app) fn remove_session_draft(&mut self, id: &str) {
-        if let Err(error) = super::draft_store::remove(id) {
+        if let Err(error) = self.sessions.writer.remove_draft(id.to_owned()) {
             self.sessions.error = Some(error);
         }
+    }
+
+    fn finish_draft_change(
+        &mut self,
+        mut previous: DraftSession,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        action: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
+    ) {
+        let id = previous.id.clone();
+        if !self.save_session_draft(&id) {
+            if let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) {
+                previous.app_session_id = draft.app_session_id;
+                *draft = previous;
+            }
+            self.notify_session_rail(cx);
+            return;
+        }
+        // These explicit handoffs already require durable state on main: the
+        // runtime reads the draft profile from storage when NewSession arrives.
+        match futures::executor::block_on(self.sessions.writer.flush()) {
+            Ok(()) => action(self, window, cx),
+            Err(error) => {
+                if let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) {
+                    previous.app_session_id = draft.app_session_id;
+                    *draft = previous;
+                    let _ = self.sessions.writer.save_draft(draft.clone());
+                }
+                self.sessions.error = Some(error);
+            }
+        }
+        self.notify_session_rail(cx);
+        self.notify_composer(cx);
+        cx.notify();
     }
 
     pub(in crate::app) fn available_projects(&self) -> Vec<PathBuf> {
@@ -189,6 +233,7 @@ impl FarcasterApp {
             .iter_mut()
             .find(|draft| draft.id == id)
             .expect("selected draft was materialized");
+        let previous = draft.clone();
         self.sessions.preferred_harness = Some(harness);
         self.sessions.preferred_profile_id = profile_id.clone();
         let changed = match profile_id {
@@ -199,20 +244,20 @@ impl FarcasterApp {
             return;
         }
         let project = draft.project.clone();
-        self.save_session_draft(&id);
-        self.send_project_command(
-            &project,
-            RuntimeCommand::NewSession {
-                id,
-                harness: Some(harness),
-                project: project.clone(),
-            },
-            window,
-            cx,
-        );
-        self.notify_session_rail(cx);
-        self.notify_composer(cx);
-        cx.notify();
+        self.finish_draft_change(previous, window, cx, move |app, window, cx| {
+            if app.sessions.selected_draft.as_deref() == Some(id.as_str()) {
+                app.send_project_command(
+                    &project,
+                    RuntimeCommand::NewSession {
+                        id,
+                        harness: Some(harness),
+                        project: project.clone(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+        });
     }
 
     pub(in crate::app) fn change_draft_project(
@@ -233,6 +278,12 @@ impl FarcasterApp {
         {
             return;
         }
+        let previous = self
+            .sessions
+            .drafts
+            .iter()
+            .find(|draft| draft.id == id)
+            .cloned();
         let changed =
             if let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) {
                 draft.change_project(project.clone())
@@ -242,34 +293,35 @@ impl FarcasterApp {
         if !changed {
             return;
         }
-        self.save_session_draft(&id);
-        self.select_project(project.clone(), cx);
-        self.send_project_command(
-            &project,
-            RuntimeCommand::NewSession {
-                id,
-                harness: self
-                    .sessions
-                    .drafts
-                    .iter()
-                    .find(|draft| {
-                        draft.id == self.sessions.selected_draft.as_deref().unwrap_or_default()
-                    })
-                    .map(|draft| draft.harness)
-                    .unwrap_or_else(|| self.active_harness().to_owned()),
-                project: project.clone(),
-            },
-            window,
-            cx,
-        );
-        self.notify_session_rail(cx);
-        self.notify_composer(cx);
-        cx.notify();
+        let action = move |app: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            if app.sessions.selected_draft.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            app.select_project(project.clone(), cx);
+            app.send_project_command(
+                &project,
+                RuntimeCommand::NewSession {
+                    harness: app.active_harness(),
+                    id,
+                    project: project.clone(),
+                },
+                window,
+                cx,
+            );
+        };
+        if let Some(previous) = previous {
+            self.finish_draft_change(previous, window, cx, action);
+        } else {
+            action(self, window, cx);
+            self.notify_session_rail(cx);
+            self.notify_composer(cx);
+            cx.notify();
+        }
     }
 
-    pub(in crate::app) fn sync_current_draft(&mut self, target: &str) {
+    pub(in crate::app) fn sync_current_draft(&mut self, target: &str) -> bool {
         let Some(id) = self.sessions.selected_draft.as_deref() else {
-            return;
+            return true;
         };
         let id = id.to_owned();
         let id = id.as_str();
@@ -277,7 +329,7 @@ impl FarcasterApp {
             || self.sessions.submitted_drafts.contains_key(id)
             || has_pending_submission(&self.composer.pending_submissions, target)
         {
-            return;
+            return true;
         }
         let app_session_id = self
             .sessions
@@ -299,9 +351,10 @@ impl FarcasterApp {
             &self.project.path,
             self.snapshot.harness,
         );
-        if changed {
-            self.save_session_draft(id);
+        if changed || app_session_id <= 0 {
+            return self.save_session_draft(id);
         }
+        true
     }
 
     /// Archive submitted chats and keep their session record in sync.
@@ -309,22 +362,22 @@ impl FarcasterApp {
         &mut self,
         id: String,
         archived: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(index) = self.sessions.drafts.iter().position(|draft| draft.id == id) else {
             return;
         };
+        let previous = self.sessions.drafts[index].clone();
         if !self.sessions.drafts[index].set_archived(archived) {
             return;
         }
         let session = self.sessions.drafts[index].session_path.clone();
-        self.save_session_draft(&id);
-        if let Some(path) = session {
-            self.set_session_archived(path, archived, cx);
-        }
-        self.notify_session_rail(cx);
-        cx.notify();
+        self.finish_draft_change(previous, window, cx, move |app, _, cx| {
+            if let Some(path) = session {
+                app.set_session_archived(path, archived, cx);
+            }
+        });
     }
 
     pub(in crate::app) fn begin_draft_submission(&mut self, target: &str, prompt: &str) {

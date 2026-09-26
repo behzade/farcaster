@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use gpui::{Context, Window};
 
-use super::{FarcasterApp, persistence};
+use super::FarcasterApp;
 use crate::sessions::DraftSession;
 #[cfg(test)]
 pub(crate) use crate::sessions::SessionFolder;
@@ -71,7 +71,7 @@ impl FarcasterApp {
         }
         let mut next = self.sessions.folders.clone();
         next.remember_projects(new);
-        match persistence::open().and_then(|store| store.save_session_folders(&next)) {
+        match self.sessions.writer.save_folders(next.clone()) {
             Ok(()) => self.sessions.folders = next,
             Err(error) => self.sessions.error = Some(error),
         }
@@ -94,8 +94,18 @@ impl FarcasterApp {
             FolderDestination::Folder(id) => Some(id),
             _ => None,
         };
+        let previous = self.sessions.folders.folder_for(session);
         if self.assign_session_folder(session, folder, cx) && archived {
-            self.request_session_archive(path, false, window, cx);
+            match futures::executor::block_on(self.sessions.writer.flush()) {
+                Ok(()) => self.request_session_archive(path, false, window, cx),
+                Err(error) => {
+                    let mut next = self.sessions.folders.clone();
+                    next.assign(session, previous);
+                    self.save_session_folders(next, cx);
+                    self.sessions.error = Some(error);
+                    self.notify_session_rail(cx);
+                }
+            }
         }
     }
 
@@ -118,7 +128,7 @@ impl FarcasterApp {
         next: SessionFolders,
         cx: &mut Context<Self>,
     ) -> bool {
-        match persistence::open().and_then(|store| store.save_session_folders(&next)) {
+        match self.sessions.writer.save_folders(next.clone()) {
             Ok(()) => {
                 self.sessions.folders = next;
                 self.notify_session_rail(cx);

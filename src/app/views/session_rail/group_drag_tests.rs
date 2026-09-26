@@ -103,6 +103,8 @@ fn dragging_group_titles_persists_order_without_toggling_or_refiling(
                     assert_eq!(app.sessions.collapsed_projects.len(), 2);
                     assert_eq!(app.sessions.folders.folder_for(1), Some(1));
                     assert_eq!(app.sessions.folders.folder_for(2), Some(2));
+                    futures::executor::block_on(app.sessions.writer.flush())
+                        .expect("folder changes saved");
                     let saved = crate::app::persistence::open()
                         .expect("store")
                         .load_session_folders()

@@ -159,7 +159,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn save_project_registry(&mut self) {
-        if let Err(error) = project_registry::save(&projects::ProjectList {
+        if let Err(error) = self.sessions.writer.save_projects(projects::ProjectList {
             projects: self.project.registered.clone(),
             excluded_projects: self.project.excluded.clone(),
         }) {

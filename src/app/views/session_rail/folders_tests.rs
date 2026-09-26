@@ -454,6 +454,8 @@ fn flat_group_title_clicks_toggle_chats_and_counts_in_both_modes(cx: &mut gpui::
                         _ => false,
                     });
                     if !grouped {
+                        futures::executor::block_on(state.sessions.writer.flush())
+                            .expect("folder changes saved");
                         let saved = crate::app::persistence::open()
                             .expect("store")
                             .load_session_folders()

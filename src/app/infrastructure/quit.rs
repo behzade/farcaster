@@ -40,6 +40,9 @@ pub(super) fn install_window(window: &Window, cx: &App) {
 
 impl FarcasterApp {
     pub(crate) fn request_application_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lifecycle.saving_before_quit {
+            return;
+        }
         if let Some(pending) = &self.lifecycle.pending_quit {
             pending.focus.focus(window, cx);
             return;
@@ -53,7 +56,7 @@ impl FarcasterApp {
             &self.activity.background_jobs,
         );
         if !active {
-            cx.quit();
+            self.quit_after_saving(cx);
             return;
         }
 
@@ -80,10 +83,45 @@ impl FarcasterApp {
         cx.notify();
     }
 
-    pub(in crate::app) fn confirm_application_quit(&mut self, cx: &mut Context<Self>) {
-        if self.lifecycle.pending_quit.take().is_some() {
-            cx.quit();
+    pub(in crate::app) fn confirm_application_quit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.lifecycle.pending_quit.is_some() {
+            self.close_quit_confirmation(window, cx);
+            self.quit_after_saving(cx);
         }
+    }
+
+    fn quit_after_saving(&mut self, cx: &mut Context<Self>) {
+        self.capture_composer_session(cx);
+        let target = self.composer.sessions.current_target().to_owned();
+        if !self.sync_current_draft(&target) {
+            self.lifecycle.saving_before_quit = false;
+            self.notify_session_rail(cx);
+            return;
+        }
+        self.lifecycle.saving_before_quit = true;
+        let revision = self.sessions.writer.revision();
+        let flush = self.sessions.writer.flush();
+        cx.spawn(async move |weak, cx| {
+            let result = flush.await;
+            let _ = weak.update(cx, |app, cx| match result {
+                Ok(()) if app.sessions.writer.revision() == revision => {
+                    app.lifecycle.saving_before_quit = false;
+                    cx.quit();
+                }
+                Ok(()) => app.quit_after_saving(cx),
+                Err(error) => {
+                    app.lifecycle.saving_before_quit = false;
+                    app.sessions.error = Some(error);
+                    app.notify_session_rail(cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 }
 

@@ -107,7 +107,7 @@ impl StateStore {
     }
 }
 
-fn save_projects(
+pub(super) fn save_projects(
     transaction: &Transaction<'_>,
     projects: &[PathBuf],
     excluded_projects: &[PathBuf],
