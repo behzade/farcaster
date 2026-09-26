@@ -3,6 +3,7 @@ mod colors;
 mod draft_row;
 mod drag;
 mod folders;
+mod group_drag;
 mod groups;
 mod hover;
 mod inactive_rail;
@@ -35,6 +36,7 @@ use crate::{
     sessions::{SessionSummary, root_session_for_path},
 };
 
+pub(in crate::app) use group_drag::GroupTarget;
 pub(in crate::app) use groups::SessionRailKind;
 pub(in crate::app) use hover::{session_hover_details, session_tooltip_content};
 pub(super) use rows::session_row_height;
@@ -301,7 +303,11 @@ impl FarcasterApp {
 
     fn session_folder_rows(&self, items: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
         if self.settings.group_sessions_by_project {
-            folders::project_group_rows(items, &self.sessions.collapsed_projects)
+            folders::project_group_rows(
+                items,
+                &self.sessions.collapsed_projects,
+                &self.sessions.folders.project_order,
+            )
         } else {
             folders::folder_rows(items, &self.sessions.folders)
         }
@@ -503,6 +509,7 @@ impl FarcasterApp {
 
     pub(super) fn begin_session_drag(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.drop_target = None;
+        self.sessions.group_drop_target = None;
         self.notify_session_rail(cx);
     }
 
@@ -521,6 +528,7 @@ impl FarcasterApp {
 
     pub(super) fn clear_session_drop_target(&mut self, cx: &mut gpui::Context<Self>) {
         self.sessions.drop_target = None;
+        self.sessions.group_drop_target = None;
         self.notify_session_rail(cx);
     }
 

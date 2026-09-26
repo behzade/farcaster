@@ -64,7 +64,8 @@ fn group_colors_support_default_and_preserve_legacy_values() {
     assert!(folders.set_color(1, Some(4)));
     assert!(folders.set_project_color("/project".into(), Some(2)));
     let mut restored: SessionFolders =
-        serde_json::from_str(&serde_json::to_string(&folders).unwrap()).unwrap();
+        serde_json::from_str(&serde_json::to_string(&folders).expect("encode folders"))
+            .expect("decode folders");
     assert_eq!(restored.folders[0].color, Some(4));
     assert_eq!(
         restored.project_colors.get(&PathBuf::from("/project")),
@@ -73,4 +74,47 @@ fn group_colors_support_default_and_preserve_legacy_values() {
     assert_eq!(restored.folder_for(7), Some(1));
     assert!(restored.set_project_color("/project".into(), None));
     assert!(restored.project_colors.is_empty());
+}
+
+#[test]
+fn group_orders_are_independent_and_keep_hidden_groups() {
+    let mut folders = SessionFolders::default();
+    for name in ["First", "Hidden", "Last"] {
+        folders.create(name.into(), None);
+    }
+    folders.assign(7, Some(1));
+    folders.set_collapsed(1, true);
+    folders.set_color(1, Some(3));
+    assert!(folders.remember_projects(["/a", "/hidden", "/z"].map(PathBuf::from)));
+    assert!(folders.reorder_folder(3, 1, false));
+    assert_eq!(
+        folders.folders.iter().map(|f| f.id).collect::<Vec<_>>(),
+        [3, 1, 2]
+    );
+    assert!(folders.reorder_project(
+        std::path::Path::new("/z"),
+        std::path::Path::new("/a"),
+        false
+    ));
+    assert_eq!(
+        folders.project_order,
+        ["/z", "/a", "/hidden"].map(PathBuf::from)
+    );
+    assert!(!folders.reorder_folder(3, 1, false));
+    assert!(!folders.reorder_folder(99, 1, false));
+    assert!(!folders.reorder_folder(1, 1, true));
+    assert!(folders.reorder_folder(3, 2, true));
+    assert_eq!(
+        folders.folders.iter().map(|f| f.id).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert_eq!(folders.folder_for(7), Some(1));
+    assert!(folders.folders[0].collapsed);
+    assert_eq!(folders.folders[0].color, Some(3));
+    assert!(folders.remember_projects(["/new", "/a", "/new"].map(PathBuf::from)));
+    assert_eq!(
+        folders.project_order,
+        ["/z", "/a", "/hidden", "/new"].map(PathBuf::from)
+    );
+    assert!(!folders.remember_projects(["/a"].map(PathBuf::from)));
 }

@@ -17,7 +17,7 @@ pub(super) use regions::{
     ComposerView, InactiveSessionRailView, RunPanelView, SessionRailView, TranscriptView,
     WorkGraphDetailView,
 };
-pub(in crate::app) use session_rail::SessionRailKind;
+pub(in crate::app) use session_rail::{GroupTarget, SessionRailKind};
 
 use super::FarcasterApp;
 

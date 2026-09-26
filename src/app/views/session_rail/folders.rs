@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use super::{
-    FarcasterApp,
+    FarcasterApp, ReorderPosition,
     colors::{ColorTarget, color_menu, palette_color},
     drag::DraggedSession,
+    group_drag::{GroupTarget, draggable_title, group_drop_target},
     groups::{ActiveSessionItem, SessionRailKind},
     rendering::session_section_header,
 };
@@ -90,6 +91,7 @@ pub(super) fn folder_rows(
 pub(super) fn project_group_rows(
     items: Vec<ActiveSessionItem>,
     collapsed: &std::collections::HashSet<PathBuf>,
+    order: &[PathBuf],
 ) -> Vec<FolderRow> {
     let mut projects = std::collections::BTreeMap::<PathBuf, Vec<ActiveSessionItem>>::new();
     for item in items {
@@ -99,8 +101,15 @@ pub(super) fn project_group_rows(
             .push(item);
     }
     let labels = project_labels(projects.keys().cloned().collect());
+    let mut groups = projects.into_iter().zip(labels).collect::<Vec<_>>();
+    let positions = order
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (path, index))
+        .collect::<std::collections::HashMap<_, _>>();
+    groups.sort_by_key(|((path, _), _)| positions.get(path).copied().unwrap_or(usize::MAX));
     let mut rows = Vec::new();
-    for ((path, items), label) in projects.into_iter().zip(labels) {
+    for ((path, items), label) in groups {
         let collapsed = collapsed.contains(&path);
         rows.push(FolderRow::Project {
             path,
@@ -210,33 +219,48 @@ pub(super) fn project_header(
     collapsed: bool,
     count: usize,
     color: Option<u8>,
+    drop_position: Option<ReorderPosition>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
+    let drop_entity = entity.clone();
+    let drag_entity = entity.clone();
+    let target = GroupTarget::Project(project.clone());
+    let drag_target = target.clone();
+    let drag_label = label.clone();
     let menu_entity = entity.clone();
     let menu_project = project.clone();
     let toggle = entity.clone();
     let toggle_project = project.clone();
-    session_section_header()
+    let row = session_section_header()
         .id(format!("session-project-{}", project.display()))
+        .debug_selector({
+            let project = project.clone();
+            move || format!("session-project-{}", project.display())
+        })
         .group("session-project-header")
         .w_full()
         .px(theme().space.sm)
         .child(
-            group_title(
-                format!("project-label-{}", project.display()),
-                label,
-                collapsed,
-                count,
-                move |_, cx| {
-                    let _ = toggle.update(cx, |this, cx| {
-                        if !this.sessions.collapsed_projects.remove(&toggle_project) {
-                            this.sessions
-                                .collapsed_projects
-                                .insert(toggle_project.clone());
-                        }
-                        this.notify_session_rail(cx);
-                    });
-                },
+            draggable_title(
+                group_title(
+                    format!("project-label-{}", project.display()),
+                    label,
+                    collapsed,
+                    count,
+                    move |_, cx| {
+                        let _ = toggle.update(cx, |this, cx| {
+                            if !this.sessions.collapsed_projects.remove(&toggle_project) {
+                                this.sessions
+                                    .collapsed_projects
+                                    .insert(toggle_project.clone());
+                            }
+                            this.notify_session_rail(cx);
+                        });
+                    },
+                ),
+                drag_target,
+                drag_label,
+                drag_entity,
             )
             .text_color(color.map_or(theme().colors.muted, palette_color))
             .app_tooltip(project.display().to_string()),
@@ -269,8 +293,8 @@ pub(super) fn project_header(
                 cx.stop_propagation();
                 let _ = entity.update(cx, |this, cx| this.new_session(project.clone(), window, cx));
             }),
-        )
-        .into_any_element()
+        );
+    group_drop_target(row, target, drop_position, drop_entity).into_any_element()
 }
 
 pub(super) fn new_folder_row(
@@ -324,8 +348,11 @@ pub(super) fn folder_header(
     folder: FolderHeader,
     editing: bool,
     input: Entity<InputState>,
+    drop_position: Option<ReorderPosition>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
+    let drag_entity = entity.clone();
+    let reorder_entity = entity.clone();
     let FolderHeader {
         id,
         name,
@@ -343,6 +370,7 @@ pub(super) fn folder_header(
     let section = div().w_full().flex().flex_col();
     let mut row = session_section_header()
         .id(format!("session-folder-{id}"))
+        .debug_selector(move || format!("session-folder-{id}"))
         .group("session-folder-header")
         .w_full()
         .px(theme().space.sm)
@@ -384,20 +412,27 @@ pub(super) fn folder_header(
             this.clear_session_drop_target(cx);
         });
     });
+    row = group_drop_target(row, GroupTarget::Folder(id), drop_position, reorder_entity);
+    let drag_label = name.clone();
     row = row.child(
-        group_title(
-            format!("folder-label-{id}"),
-            name,
-            collapsed,
-            count,
-            move |_, cx| {
-                let _ = toggle.update(cx, |this, cx| {
-                    let mut next = this.sessions.folders.clone();
-                    if next.set_collapsed(id, !collapsed) {
-                        this.save_session_folders(next, cx);
-                    }
-                });
-            },
+        draggable_title(
+            group_title(
+                format!("folder-label-{id}"),
+                name,
+                collapsed,
+                count,
+                move |_, cx| {
+                    let _ = toggle.update(cx, |this, cx| {
+                        let mut next = this.sessions.folders.clone();
+                        if next.set_collapsed(id, !collapsed) {
+                            this.save_session_folders(next, cx);
+                        }
+                    });
+                },
+            ),
+            GroupTarget::Folder(id),
+            drag_label,
+            drag_entity,
         )
         .text_color(color.map_or(theme().colors.muted, palette_color)),
     );

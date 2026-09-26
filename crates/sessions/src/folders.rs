@@ -12,6 +12,8 @@ pub struct SessionFolders {
     pub session_colors: BTreeMap<i64, u8>,
     #[serde(default)]
     pub project_colors: BTreeMap<PathBuf, u8>,
+    #[serde(default)]
+    pub project_order: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -36,6 +38,46 @@ pub enum FolderDestination {
 }
 
 impl SessionFolders {
+    pub fn remember_projects(&mut self, projects: impl IntoIterator<Item = PathBuf>) -> bool {
+        let known = self
+            .project_order
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        let new = projects
+            .into_iter()
+            .filter(|project| !known.contains(project))
+            .collect::<std::collections::BTreeSet<_>>();
+        let changed = !new.is_empty();
+        self.project_order.extend(new);
+        changed
+    }
+
+    pub fn reorder_folder(&mut self, source: u64, target: u64, after: bool) -> bool {
+        let Some(source) = self.folders.iter().position(|folder| folder.id == source) else {
+            return false;
+        };
+        let Some(target) = self.folders.iter().position(|folder| folder.id == target) else {
+            return false;
+        };
+        reorder(&mut self.folders, source, target, after)
+    }
+
+    pub fn reorder_project(
+        &mut self,
+        source: &std::path::Path,
+        target: &std::path::Path,
+        after: bool,
+    ) -> bool {
+        let Some(source) = self.project_order.iter().position(|path| path == source) else {
+            return false;
+        };
+        let Some(target) = self.project_order.iter().position(|path| path == target) else {
+            return false;
+        };
+        reorder(&mut self.project_order, source, target, after)
+    }
+
     pub fn destination(&self, session: i64, archived: bool) -> FolderDestination {
         if archived {
             FolderDestination::Archived
@@ -168,6 +210,20 @@ impl SessionFolders {
         self.folders.retain(|folder| folder.id != id);
         self.membership.retain(|_, folder| *folder != id);
     }
+}
+
+fn reorder<T>(items: &mut Vec<T>, source: usize, target: usize, after: bool) -> bool {
+    if source == target {
+        return false;
+    }
+    let gap = target + usize::from(after);
+    let destination = gap - usize::from(source < gap);
+    if source == destination {
+        return false;
+    }
+    let item = items.remove(source);
+    items.insert(destination, item);
+    true
 }
 
 #[cfg(test)]

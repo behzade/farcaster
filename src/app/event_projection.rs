@@ -357,6 +357,13 @@ impl FarcasterApp {
         self.sessions.error = None;
         self.sessions.visible = sessions;
         self.sessions.all = all_sessions;
+        self.remember_rail_projects(
+            self.sessions
+                .all
+                .iter()
+                .map(|session| session.project.clone())
+                .collect::<Vec<_>>(),
+        );
         if let Some((activities, _exhaustive)) = activities {
             dirty.rail = true;
             for activity in activities.into_values() {

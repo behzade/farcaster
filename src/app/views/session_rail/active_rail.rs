@@ -147,6 +147,7 @@ impl FarcasterApp {
         if !compact {
             active_rows.push(FolderRow::New);
         }
+        let group_drop_target = self.sessions.group_drop_target.clone();
         let project_colors = self.sessions.folders.project_colors.clone();
         let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
         reconcile_list_rows(
@@ -248,6 +249,10 @@ impl FarcasterApp {
                     (**folder).clone(),
                     editing_folder == Some(Some(folder.id)),
                     active_title_input.clone(),
+                    group_drop_target
+                        .as_ref()
+                        .filter(|(target, _)| target == &super::GroupTarget::Folder(folder.id))
+                        .map(|(_, position)| *position),
                     active_row_entity.clone(),
                 ),
                 Some(FolderRow::Project {
@@ -261,6 +266,10 @@ impl FarcasterApp {
                     *collapsed,
                     *count,
                     project_colors.get(path).copied(),
+                    group_drop_target
+                        .as_ref()
+                        .filter(|(target, _)| target == &super::GroupTarget::Project(path.clone()))
+                        .map(|(_, position)| *position),
                     active_row_entity.clone(),
                 ),
                 Some(FolderRow::New) => new_folder_row(

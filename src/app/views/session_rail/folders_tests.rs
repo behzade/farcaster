@@ -209,7 +209,7 @@ fn folder_drop_accepts_session_across_header_width(cx: &mut gpui::TestAppContext
 fn project_groups_include_filed_chats_and_preserve_membership() {
     let mut folders = SessionFolders::default();
     folders.create("Later".into(), Some(3));
-    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)], &Default::default());
+    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)], &Default::default(), &[]);
     assert!(
         matches!(&rows[0], FolderRow::Project { path, .. } if path == std::path::Path::new("/project"))
     );

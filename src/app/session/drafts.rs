@@ -25,6 +25,7 @@ impl FarcasterApp {
         let Some(draft) = self.sessions.drafts.iter_mut().find(|draft| draft.id == id) else {
             return;
         };
+        let project = draft.project.clone();
         match super::draft_store::save(draft) {
             Ok(app_session_id) => {
                 draft.app_session_id = app_session_id;
@@ -34,6 +35,7 @@ impl FarcasterApp {
             }
             Err(error) => self.sessions.error = Some(error),
         }
+        self.remember_rail_projects([project]);
     }
 
     pub(in crate::app) fn remove_session_draft(&mut self, id: &str) {

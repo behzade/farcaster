@@ -173,6 +173,7 @@ impl FarcasterApp {
                 collapsed_projects: HashSet::new(),
                 editing_folder: None,
                 drop_target: None,
+                group_drop_target: None,
                 drafts: persisted.drafts,
                 draft_session_ids: persisted.draft_session_ids,
                 selected_draft: Some(persisted.selected_draft),
@@ -344,6 +345,13 @@ impl FarcasterApp {
             },
             worker_notices: notice_board,
         };
+        this.remember_rail_projects(
+            this.sessions
+                .drafts
+                .iter()
+                .map(|draft| draft.project.clone())
+                .collect::<Vec<_>>(),
+        );
         this.activate_theme(cx);
         this.initialize_chat_navigation(window, cx);
         this.request_repository_refresh(cx);

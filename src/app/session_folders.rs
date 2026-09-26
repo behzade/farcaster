@@ -57,6 +57,26 @@ pub(in crate::app) fn folder_deletion(
 }
 
 impl FarcasterApp {
+    pub(in crate::app) fn remember_rail_projects(
+        &mut self,
+        projects: impl IntoIterator<Item = PathBuf>,
+    ) {
+        let known = &self.sessions.folders.project_order;
+        let new = projects
+            .into_iter()
+            .filter(|project| !known.contains(project))
+            .collect::<Vec<_>>();
+        if new.is_empty() {
+            return;
+        }
+        let mut next = self.sessions.folders.clone();
+        next.remember_projects(new);
+        match persistence::open().and_then(|store| store.save_session_folders(&next)) {
+            Ok(()) => self.sessions.folders = next,
+            Err(error) => self.sessions.error = Some(error),
+        }
+    }
+
     pub(in crate::app) fn move_session_to_folder(
         &mut self,
         session: i64,
