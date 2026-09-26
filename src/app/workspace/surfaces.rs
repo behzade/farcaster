@@ -194,7 +194,9 @@ impl FarcasterApp {
     pub(in crate::app) fn native_workspace_surface_ready(&self) -> bool {
         match self.workspace.surface {
             AppSurface::Editor => {
-                self.workspace.editor.ready && self.workspace.editor.view.is_some()
+                self.workspace.editor.ready
+                    && (self.workspace.editor.view.is_some()
+                        || self.workspace.editor.terminal_editor_view.is_some())
             }
             AppSurface::Terminal => self.workspace.terminal.view.is_some(),
             AppSurface::Chat | AppSurface::Work => false,
