@@ -377,6 +377,7 @@ impl FarcasterApp {
                     persisted.panel_layout.archived_height,
                     !persisted.panel_layout.archived_expanded,
                 ),
+                sidebar_resize: None,
                 panel_space: None,
             },
             overlays: views::AppOverlays {

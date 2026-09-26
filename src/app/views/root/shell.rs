@@ -3,11 +3,12 @@ use gpui::{
     Styled as _, StyledImage as _, WeakEntity, div, img, prelude::FluentBuilder as _,
 };
 
-use super::{super::FarcasterApp, draft};
+use super::{super::FarcasterApp, draft, sidebar_resize::Sidebar};
 use crate::app::{
     AppSurface,
     ui::{
         layout::{LayoutMode, composer_bottom_clearance, shows_left_inline, shows_right_inline},
+        primitives::AppTooltip as _,
         theme::theme,
     },
 };
@@ -138,6 +139,7 @@ impl FarcasterApp {
     }
 
     pub(in crate::app) fn finish_resizes(&mut self, cx: &mut gpui::Context<Self>) {
+        self.views.sidebar_resize = None;
         self.finish_session_rail_resize(cx);
         self.finish_run_panel_resize(cx);
         self.finish_rail_panel_resize(cx);
@@ -189,11 +191,15 @@ impl FarcasterApp {
                                     .clone()
                                     .cached(gpui::StyleRefinement::default().size_full()),
                             )
-                            .child(resize_handle("session-rail-resize", true, move |x, cx| {
-                                let _ = resize.update(cx, |this, cx| {
-                                    this.begin_session_rail_resize(x, cx);
-                                });
-                            })),
+                            .child(resize_handle(
+                                "session-rail-resize",
+                                true,
+                                move |position, cx| {
+                                    let _ = resize.update(cx, |this, cx| {
+                                        this.begin_sidebar_resize(Sidebar::Sessions, position, cx);
+                                    });
+                                },
+                            )),
                     )
                 },
             )
@@ -224,11 +230,19 @@ impl FarcasterApp {
                                         .into_any_element()
                                 },
                             )
-                            .child(resize_handle("run-panel-resize", false, move |x, cx| {
-                                let _ = resize.update(cx, |this, cx| {
-                                    this.begin_run_panel_resize(x, cx);
-                                });
-                            })),
+                            .child(resize_handle(
+                                "run-panel-resize",
+                                false,
+                                move |position, cx| {
+                                    let _ = resize.update(cx, |this, cx| {
+                                        this.begin_sidebar_resize(
+                                            Sidebar::SourceControl,
+                                            position,
+                                            cx,
+                                        );
+                                    });
+                                },
+                            )),
                     )
                 },
             )
@@ -239,10 +253,12 @@ impl FarcasterApp {
 fn resize_handle(
     id: &'static str,
     right: bool,
-    on_begin: impl Fn(gpui::Pixels, &mut gpui::App) + 'static,
+    on_begin: impl Fn(gpui::Point<gpui::Pixels>, &mut gpui::App) + 'static,
 ) -> impl gpui::IntoElement {
     div()
         .id(id)
+        .debug_selector(move || id.to_owned())
+        .app_tooltip("Drag to resize · Click to hide")
         .absolute()
         .top_0()
         .bottom_0()
@@ -253,7 +269,7 @@ fn resize_handle(
         .group(id)
         .on_mouse_down(gpui::MouseButton::Left, move |event, _, cx| {
             cx.stop_propagation();
-            on_begin(event.position.x, cx);
+            on_begin(event.position, cx);
         })
         .child(
             div()

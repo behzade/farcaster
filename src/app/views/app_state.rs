@@ -12,6 +12,7 @@ pub(in crate::app) struct AppViews {
     pub(in crate::app) workgraph_inspector_issue: Option<u64>,
     pub(in crate::app) notification_panel: ResizeState,
     pub(in crate::app) archived_panel: ResizeState,
+    pub(in crate::app) sidebar_resize: Option<super::root::SidebarResize>,
     pub(in crate::app) panel_space: Option<gpui::Pixels>,
 }
 

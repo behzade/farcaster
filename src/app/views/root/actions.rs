@@ -227,8 +227,7 @@ fn bind_actions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
 fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) -> gpui::Div {
     root.on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
         if event.dragging() {
-            this.update_session_rail_resize(event.position.x, cx);
-            this.update_run_panel_resize(event.position.x, cx);
+            this.update_sidebar_resize(event.position, cx);
             this.update_rail_panel_resize(event.position.y, cx);
         } else {
             this.finish_resizes(cx);
@@ -236,7 +235,9 @@ fn bind_pointer_interactions(root: gpui::Div, cx: &mut Context<FarcasterApp>) ->
     }))
     .on_mouse_up(
         gpui::MouseButton::Left,
-        cx.listener(|this, _, _, cx| this.finish_resizes(cx)),
+        cx.listener(|this, event: &gpui::MouseUpEvent, _, cx| {
+            this.release_sidebar_resize(event.position, cx)
+        }),
     )
     .on_mouse_up_out(
         gpui::MouseButton::Left,

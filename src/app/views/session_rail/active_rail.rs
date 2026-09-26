@@ -107,7 +107,6 @@ impl FarcasterApp {
         session_list_rows: &RefCell<Vec<String>>,
     ) -> impl IntoElement {
         let new_entity = entity.clone();
-        let rail_toggle_entity = entity.clone();
         let actions_entity = entity.clone();
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
@@ -349,17 +348,6 @@ impl FarcasterApp {
                                     .flex()
                                     .items_center()
                                     .gap(theme().space.xs)
-                                    .child(icon_button(
-                                        "hide-session-rail",
-                                        AppIcon::SidebarLeft,
-                                        "Hide sessions",
-                                        ButtonTone::Quiet,
-                                        move |_, cx| {
-                                            let _ = rail_toggle_entity.update(cx, |this, cx| {
-                                                this.toggle_session_rail(cx)
-                                            });
-                                        },
-                                    ))
                                     .child(icon_button(
                                         "session-actions",
                                         AppIcon::List,

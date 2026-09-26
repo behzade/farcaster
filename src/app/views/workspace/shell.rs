@@ -63,21 +63,20 @@ impl FarcasterApp {
                     },
                 ))
             })
-            .when(shows_right_inline(mode), |controls| {
-                controls.child(icon_button(
-                    "toggle-run-panel",
-                    AppIcon::SidebarLeft,
-                    if self.workspace.run_panel_hidden {
-                        "Show source control"
-                    } else {
-                        "Hide source control"
-                    },
-                    ButtonTone::Quiet,
-                    move |_, cx| {
-                        let _ = panel_toggle.update(cx, |this, cx| this.toggle_run_panel(cx));
-                    },
-                ))
-            })
+            .when(
+                shows_right_inline(mode) && self.workspace.run_panel_hidden,
+                |controls| {
+                    controls.child(icon_button(
+                        "toggle-run-panel",
+                        AppIcon::SidebarLeft,
+                        "Show source control",
+                        ButtonTone::Quiet,
+                        move |_, cx| {
+                            let _ = panel_toggle.update(cx, |this, cx| this.toggle_run_panel(cx));
+                        },
+                    ))
+                },
+            )
     }
 }
 
@@ -96,11 +95,11 @@ fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl
                     .top(theme().size(1.0))
                     .right(theme().size(1.0))
                     .child(number_slot(
-                        if count > 99 {
+                        div().text_color(theme().colors.text).child(if count > 99 {
                             "99+".to_owned()
                         } else {
                             count.to_string()
-                        },
+                        }),
                         theme().layout.counter_slot,
                     )),
             )
