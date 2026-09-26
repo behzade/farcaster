@@ -44,7 +44,7 @@ fn collapsed_folders_show_the_count_and_hide_their_chats() {
             id: 1,
             name: "Work".into(),
             collapsed: true,
-            color: 3,
+            color: Some(3),
             ..Default::default()
         }],
         ..Default::default()
@@ -55,7 +55,7 @@ fn collapsed_folders_show_the_count_and_hide_their_chats() {
     let FolderRow::Header(header) = &rows[1] else {
         panic!("expected the folder header")
     };
-    assert_eq!(header.color, 3);
+    assert_eq!(header.color, Some(3));
 
     assert!(header.collapsed);
     assert_eq!(header.count, 1);
@@ -426,6 +426,21 @@ fn flat_group_title_clicks_toggle_chats_and_counts_in_both_modes(cx: &mut gpui::
                     assert_eq!(count.is_some(), collapsed);
                     if let Some(count) = count {
                         assert!(count.right() <= title.right());
+                    }
+                    if !collapsed {
+                        let menu = cx
+                            .debug_bounds("session-group-menu")
+                            .expect("options button");
+                        cx.simulate_click(menu.center(), Default::default());
+                        cx.simulate_keystrokes("escape");
+                        cx.update(|_, cx| {
+                            assert_eq!(
+                                app.read(cx)
+                                    .session_folder_rows(vec![draft(3), draft(2)])
+                                    .len(),
+                                3
+                            );
+                        });
                     }
                     cx.simulate_click(title.center(), Default::default());
                 }

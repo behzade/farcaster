@@ -10,6 +10,8 @@ pub struct SessionFolders {
     pub membership: BTreeMap<i64, u64>,
     #[serde(default)]
     pub session_colors: BTreeMap<i64, u8>,
+    #[serde(default)]
+    pub project_colors: BTreeMap<PathBuf, u8>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -17,7 +19,7 @@ pub struct SessionFolder {
     pub id: u64,
     pub name: String,
     #[serde(default)]
-    pub color: u8,
+    pub color: Option<u8>,
     #[serde(default)]
     pub collapsed: bool,
     #[serde(default)]
@@ -66,11 +68,10 @@ impl SessionFolders {
             .max()
             .unwrap_or(0)
             + 1;
-        let color = self.next_color();
         self.folders.push(SessionFolder {
             id,
             name,
-            color,
+            color: None,
             collapsed: false,
             pinned: false,
             project: None,
@@ -80,11 +81,11 @@ impl SessionFolders {
         }
     }
 
-    pub fn set_color(&mut self, id: u64, color: u8) -> bool {
+    pub fn set_color(&mut self, id: u64, color: Option<u8>) -> bool {
         let Some(folder) = self.folders.iter_mut().find(|folder| folder.id == id) else {
             return false;
         };
-        let color = color % u8::try_from(FOLDER_COLOR_COUNT).unwrap_or(1);
+        let color = color.map(|color| color % u8::try_from(FOLDER_COLOR_COUNT).unwrap_or(1));
         if folder.color == color {
             return false;
         }
@@ -138,18 +139,14 @@ impl SessionFolders {
         });
     }
 
-    fn next_color(&self) -> u8 {
-        (0..FOLDER_COLOR_COUNT)
-            .find(|index| {
-                !self
-                    .folders
-                    .iter()
-                    .any(|folder| usize::from(folder.color) == *index)
-            })
-            .map_or_else(
-                || u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0),
-                |index| u8::try_from(index).unwrap_or(0),
-            )
+    pub fn set_project_color(&mut self, project: PathBuf, color: Option<u8>) -> bool {
+        match color {
+            Some(color) => {
+                let color = color % u8::try_from(FOLDER_COLOR_COUNT).unwrap_or(1);
+                self.project_colors.insert(project, color) != Some(color)
+            }
+            None => self.project_colors.remove(&project).is_some(),
+        }
     }
 
     pub fn assign(&mut self, session: i64, folder: Option<u64>) {

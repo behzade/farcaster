@@ -8,9 +8,10 @@ use crate::{
     sessions::FOLDER_COLOR_COUNT,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::app) enum ColorTarget {
     Folder(u64),
+    Project(std::path::PathBuf),
     Session(i64),
 }
 
@@ -51,17 +52,20 @@ pub(super) fn color_menu(
             u8::try_from(index).unwrap_or(0),
             current,
             entity.clone(),
-            target,
+            target.clone(),
         ));
     }
-    match target {
-        ColorTarget::Folder(_) => menu,
-        ColorTarget::Session(_) => menu
-            .separator()
-            .item(PopupMenuItem::new("No colour").on_click(move |_, _, cx| {
-                let _ = entity.update(cx, |app, cx| app.set_rail_color(target, None, cx));
-            })),
-    }
+    let default_label = match &target {
+        ColorTarget::Session(_) => "No colour",
+        ColorTarget::Folder(_) | ColorTarget::Project(_) => "Default",
+    };
+    menu.separator().item(
+        PopupMenuItem::new(default_label)
+            .checked(current.is_none())
+            .on_click(move |_, _, cx| {
+                let _ = entity.update(cx, |app, cx| app.set_rail_color(target.clone(), None, cx));
+            }),
+    )
 }
 
 fn color_swatch(
@@ -83,7 +87,9 @@ fn color_swatch(
     .checked(current == Some(index))
     .disabled(current == Some(index))
     .on_click(move |_, _, cx| {
-        let _ = entity.update(cx, |app, cx| app.set_rail_color(target, Some(index), cx));
+        let _ = entity.update(cx, |app, cx| {
+            app.set_rail_color(target.clone(), Some(index), cx)
+        });
     })
 }
 
@@ -91,7 +97,8 @@ impl FarcasterApp {
     fn set_rail_color(&mut self, target: ColorTarget, color: Option<u8>, cx: &mut Context<Self>) {
         let mut next = self.sessions.folders.clone();
         let changed = match target {
-            ColorTarget::Folder(id) => color.is_some_and(|color| next.set_color(id, color)),
+            ColorTarget::Folder(id) => next.set_color(id, color),
+            ColorTarget::Project(project) => next.set_project_color(project, color),
             ColorTarget::Session(session) => next.set_session_color(session, color),
         };
         if !changed {

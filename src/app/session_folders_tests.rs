@@ -49,6 +49,8 @@ fn session_folders_survive_database_reopen() {
     let path = directory.path().join("state.sqlite");
     let mut folders = folders();
     folders.assign(42, Some(2));
+    folders.set_color(2, Some(3));
+    folders.set_project_color("/project".into(), Some(4));
     {
         let store = StateStore::open_at(&path).expect("open store");
         assert!(
@@ -66,6 +68,11 @@ fn session_folders_survive_database_reopen() {
         .expect("restore folders");
     assert_eq!(restored.folders[1].name, "Personal");
     assert_eq!(restored.folder_for(42), Some(2));
+    assert_eq!(restored.folders[1].color, Some(3));
+    assert_eq!(
+        restored.project_colors.get(&PathBuf::from("/project")),
+        Some(&4)
+    );
 }
 
 #[test]
@@ -83,7 +90,7 @@ fn creating_folder_from_drop_moves_only_the_dragged_session() {
 }
 
 #[test]
-fn folder_colors_stay_distinct_after_a_folder_is_removed() {
+fn new_folders_use_the_default_heading_color() {
     let mut folders = SessionFolders::default();
     folders.create("First".into(), None);
     folders.create("Second".into(), None);
@@ -95,7 +102,7 @@ fn folder_colors_stay_distinct_after_a_folder_is_removed() {
             .iter()
             .map(|folder| folder.color)
             .collect::<Vec<_>>(),
-        [1, 0]
+        [None, None]
     );
 }
 

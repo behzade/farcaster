@@ -12,8 +12,8 @@ use crate::app::{
     ui::{
         assets::AppIcon,
         primitives::{
-            AppIconSize, AppTooltip as _, ButtonTone, ContextMenuTrigger, DeleteButton,
-            activates_button, app_icon, button, icon_control,
+            AppIconSize, AppTooltip as _, ButtonTone, ContextMenuTrigger, activates_button,
+            app_icon, button, icon_control,
         },
         theme::theme,
     },
@@ -25,14 +25,14 @@ use gpui::{
 };
 use gpui_component::{
     input::{Input, InputState},
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
 };
 
 #[derive(Clone)]
 pub(super) struct FolderHeader {
     pub(super) id: u64,
     pub(super) name: String,
-    pub(super) color: u8,
+    pub(super) color: Option<u8>,
     pub(super) collapsed: bool,
     pub(super) count: usize,
 }
@@ -209,12 +209,16 @@ pub(super) fn project_header(
     label: String,
     collapsed: bool,
     count: usize,
+    color: Option<u8>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
+    let menu_entity = entity.clone();
+    let menu_project = project.clone();
     let toggle = entity.clone();
     let toggle_project = project.clone();
     session_section_header()
         .id(format!("session-project-{}", project.display()))
+        .group("session-project-header")
         .w_full()
         .px(theme().space.sm)
         .child(
@@ -234,7 +238,26 @@ pub(super) fn project_header(
                     });
                 },
             )
+            .text_color(color.map_or(theme().colors.muted, palette_color))
             .app_tooltip(project.display().to_string()),
+        )
+        .child(
+            group_menu_button(
+                format!("project-menu-{}", project.display()),
+                "session-project-header",
+            )
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
+                let entity = menu_entity.clone();
+                let project = menu_project.clone();
+                menu.submenu("Color", window, cx, move |menu, _, _| {
+                    color_menu(
+                        menu,
+                        color,
+                        entity.clone(),
+                        ColorTarget::Project(project.clone()),
+                    )
+                })
+            }),
         )
         .child(
             icon_control(
@@ -315,7 +338,6 @@ pub(super) fn folder_header(
     let edit_entity = entity.clone();
     let new_entity = entity.clone();
     let context_entity = entity.clone();
-    let delete_entity = entity.clone();
     let hover_entity = entity.clone();
     let cancel_entity = entity;
     let section = div().w_full().flex().flex_col();
@@ -377,19 +399,15 @@ pub(super) fn folder_header(
                 });
             },
         )
-        .text_color(palette_color(color)),
+        .text_color(color.map_or(theme().colors.muted, palette_color)),
     );
 
+    let folder_menu = move |menu, window: &mut gpui::Window, cx: &mut gpui::Context<PopupMenu>| {
+        custom_folder_menu(menu, id, color, context_entity.clone(), window, cx)
+    };
     row = row.child(
-        DeleteButton::new(format!("delete-folder-{id}"), "Delete folder")
-            .reveal_on("session-folder-header")
-            .on_delete(move |_, cx| {
-                let _ = delete_entity.update(cx, |this, cx| {
-                    let mut next = this.sessions.folders.clone();
-                    next.remove(id);
-                    this.save_session_folders(next, cx);
-                });
-            }),
+        group_menu_button(format!("folder-menu-{id}"), "session-folder-header")
+            .dropdown_menu_with_anchor(Anchor::TopRight, folder_menu.clone()),
     );
     row = row.child(
         div()
@@ -423,36 +441,58 @@ pub(super) fn folder_header(
             ),
     );
     let header = ContextMenuTrigger::new(format!("folder-context-{id}"), row.into_any_element())
-        .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, window, cx| {
-            let rename = context_entity.clone();
-            let colour = context_entity.clone();
-            let delete = context_entity.clone();
-            let delete_chats = context_entity.clone();
-            menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
-                let _ = rename.update(cx, |this, cx| this.begin_folder_edit(Some(id), window, cx));
-            }))
-            .submenu("Colour", window, cx, move |menu, _, _| {
-                color_menu(menu, Some(color), colour.clone(), ColorTarget::Folder(id))
-            })
-            .separator()
-            .item(
-                PopupMenuItem::new("Delete folder").on_click(move |_, _, cx| {
-                    let _ = delete.update(cx, |this, cx| {
-                        let mut next = this.sessions.folders.clone();
-                        next.remove(id);
-                        this.save_session_folders(next, cx);
-                    });
-                }),
-            )
-            .item(
-                PopupMenuItem::new("Delete folder and chats…").on_click(move |_, window, cx| {
-                    let _ = delete_chats
-                        .update(cx, |this, cx| this.request_folder_delete(id, window, cx));
-                }),
-            )
-        })
+        .dropdown_menu_with_anchor(Anchor::TopLeft, folder_menu)
         .mouse_button(MouseButton::Right);
     section.child(header).into_any_element()
+}
+
+fn group_menu_button(id: String, group: &'static str) -> ContextMenuTrigger {
+    ContextMenuTrigger::new(
+        id.clone(),
+        icon_control(format!("{id}-button"), "Group options")
+            .debug_selector(|| "session-group-menu".into())
+            .opacity(0.0)
+            .group_hover(group, |button| button.opacity(1.0))
+            .focus(|button| button.opacity(1.0))
+            .child("⋯")
+            .into_any_element(),
+    )
+    .w(theme().controls.icon_button)
+    .flex_none()
+}
+
+fn custom_folder_menu(
+    menu: PopupMenu,
+    id: u64,
+    color: Option<u8>,
+    entity: WeakEntity<FarcasterApp>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<PopupMenu>,
+) -> PopupMenu {
+    let rename = entity.clone();
+    let colour = entity.clone();
+    let delete = entity.clone();
+    menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
+        let _ = rename.update(cx, |this, cx| this.begin_folder_edit(Some(id), window, cx));
+    }))
+    .submenu("Color", window, cx, move |menu, _, _| {
+        color_menu(menu, color, colour.clone(), ColorTarget::Folder(id))
+    })
+    .separator()
+    .item(
+        PopupMenuItem::new("Delete folder").on_click(move |_, _, cx| {
+            let _ = delete.update(cx, |this, cx| {
+                let mut next = this.sessions.folders.clone();
+                next.remove(id);
+                this.save_session_folders(next, cx);
+            });
+        }),
+    )
+    .item(
+        PopupMenuItem::new("Delete folder and chats…").on_click(move |_, window, cx| {
+            let _ = entity.update(cx, |this, cx| this.request_folder_delete(id, window, cx));
+        }),
+    )
 }
 
 pub(super) fn folder_drop_target(

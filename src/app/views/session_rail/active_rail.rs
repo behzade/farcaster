@@ -147,6 +147,7 @@ impl FarcasterApp {
         if !compact {
             active_rows.push(FolderRow::New);
         }
+        let project_colors = self.sessions.folders.project_colors.clone();
         let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
         reconcile_list_rows(
             &session_list,
@@ -259,6 +260,7 @@ impl FarcasterApp {
                     label.clone(),
                     *collapsed,
                     *count,
+                    project_colors.get(path).copied(),
                     active_row_entity.clone(),
                 ),
                 Some(FolderRow::New) => new_folder_row(
