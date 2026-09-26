@@ -66,7 +66,7 @@ impl FarcasterApp {
             .when(shows_right_inline(mode), |controls| {
                 controls.child(icon_button(
                     "toggle-run-panel",
-                    AppIcon::GitBranch,
+                    AppIcon::SidebarLeft,
                     if self.workspace.run_panel_hidden {
                         "Show source control"
                     } else {
