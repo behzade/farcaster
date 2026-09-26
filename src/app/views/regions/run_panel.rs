@@ -19,11 +19,9 @@ pub(crate) struct RunPanelView {
     activity_scroll: ScrollHandle,
     activity_anchor: ScrollAnchor,
     review_scroll: ScrollHandle,
-    older_workers_scroll: ScrollHandle,
-    older_workers_anchor: ScrollAnchor,
     pub(crate) review_tree: super::super::run_panel::change_tree::ChangeTreeState,
     review_id: Option<u64>,
-    older_workers_root: Option<std::path::PathBuf>,
+    expanded_workers_root: Option<std::path::PathBuf>,
     last_selected: Option<std::path::PathBuf>,
     reveal_selected: bool,
     worker_profiles_generation: Option<u64>,
@@ -33,7 +31,6 @@ pub(crate) struct RunPanelView {
 impl RunPanelView {
     pub(crate) fn new(app: WeakEntity<FarcasterApp>) -> Self {
         let activity_scroll = ScrollHandle::new();
-        let older_workers_scroll = ScrollHandle::new();
         Self {
             app,
             changes: Default::default(),
@@ -46,11 +43,9 @@ impl RunPanelView {
             activity_anchor: ScrollAnchor::for_handle(activity_scroll.clone()),
             activity_scroll,
             review_scroll: ScrollHandle::new(),
-            older_workers_anchor: ScrollAnchor::for_handle(older_workers_scroll.clone()),
-            older_workers_scroll,
             review_tree: Default::default(),
             review_id: None,
-            older_workers_root: None,
+            expanded_workers_root: None,
             last_selected: None,
             reveal_selected: false,
             worker_profiles_generation: None,
@@ -89,20 +84,18 @@ impl RunPanelView {
         self.resize_start.take().is_some()
     }
 
-    pub(crate) fn show_older_workers(&mut self, root: std::path::PathBuf, selected_is_older: bool) {
-        self.older_workers_root = Some(root);
-        self.reveal_selected = selected_is_older;
-        self.older_workers_scroll
-            .set_offset(gpui::point(gpui::px(0.0), gpui::px(0.0)));
+    pub(crate) fn expand_workers(&mut self, root: std::path::PathBuf) {
+        self.expanded_workers_root = Some(root);
+        self.reveal_selected = false;
     }
 
-    pub(crate) fn close_older_workers(&mut self) {
-        self.older_workers_root = None;
+    pub(crate) fn collapse_workers(&mut self) {
+        self.expanded_workers_root = None;
         self.reveal_selected = true;
     }
 
-    pub(crate) fn older_workers_open_for(&self, root: &std::path::Path) -> bool {
-        self.older_workers_root.as_deref() == Some(root)
+    pub(crate) fn workers_expanded_for(&self, root: &std::path::Path) -> bool {
+        self.expanded_workers_root.as_deref() == Some(root)
     }
 }
 
@@ -162,31 +155,18 @@ impl Render for RunPanelView {
             .all
             .root_for_path(selected.as_deref())
             .map(|session| session.path.clone());
-        if self.older_workers_root.as_ref() != root.as_ref() {
-            self.older_workers_root = None;
+        if self.expanded_workers_root.as_ref() != root.as_ref()
+            || app.read(cx).sessions.selected_draft.is_some()
+            || (self.last_selected != selected && selected == root)
+        {
+            self.expanded_workers_root = None;
         }
         if self.last_selected != selected || self.reveal_selected {
             self.last_selected = selected;
             self.reveal_selected = false;
             if root.is_some() && self.last_selected.is_some() {
-                if self.older_workers_root.is_some() {
-                    self.older_workers_anchor.scroll_to(window, cx);
-                } else {
-                    self.activity_anchor.scroll_to(window, cx);
-                }
+                self.activity_anchor.scroll_to(window, cx);
             }
-        }
-        if self.older_workers_root.is_some() {
-            return app
-                .read(cx)
-                .render_older_workers_panel(
-                    self.app.clone(),
-                    cx.entity().downgrade(),
-                    &self.older_workers_scroll,
-                    &self.older_workers_anchor,
-                    &self.saved_worker_profiles,
-                )
-                .into_any_element();
         }
         if self.search.is_none() {
             let input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files…"));
@@ -227,9 +207,12 @@ impl Render for RunPanelView {
             .render_run_panel(
                 self.app.clone(),
                 cx.entity().downgrade(),
-                &self.activity_scroll,
-                &self.activity_anchor,
-                &self.saved_worker_profiles,
+                &super::super::run_panel::WorkerListView {
+                    scroll: &self.activity_scroll,
+                    anchor: &self.activity_anchor,
+                    saved_profiles: &self.saved_worker_profiles,
+                    expanded: self.expanded_workers_root.is_some(),
+                },
                 &super::super::run_panel::RepositoryView {
                     state: &self.changes,
                     search,

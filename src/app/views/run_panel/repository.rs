@@ -51,6 +51,7 @@ impl FarcasterApp {
         let trust = entity.clone();
 
         div()
+            .debug_selector(|| "run-panel-repository".into())
             .flex_1()
             .min_h_0()
             .min_w_0()

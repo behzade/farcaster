@@ -201,6 +201,7 @@ impl Render for WorkGraphSidebarView {
             .child(section_heading(title));
         let visible = sidebar_visible(&self.state, self.session_id.is_some());
         div()
+            .debug_selector(|| "run-panel-plan".into())
             .when(!visible, |sidebar| sidebar.hidden())
             .when(visible, |sidebar| {
                 sidebar

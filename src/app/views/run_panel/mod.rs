@@ -2,6 +2,8 @@ pub(in crate::app) mod agents;
 mod background_jobs;
 pub(crate) use crate::app::ui::change_tree;
 #[cfg(test)]
+mod expanded_tests;
+#[cfg(test)]
 mod order_tests;
 mod performance;
 mod repository;
@@ -36,6 +38,13 @@ pub(crate) struct RepositoryView<'a> {
     pub(crate) search: &'a gpui::Entity<gpui_component::input::InputState>,
     pub(crate) query: &'a str,
     pub(crate) scroll: &'a ScrollHandle,
+}
+
+pub(super) struct WorkerListView<'a> {
+    pub scroll: &'a ScrollHandle,
+    pub anchor: &'a ScrollAnchor,
+    pub saved_profiles: &'a WorkerProfileNames,
+    pub expanded: bool,
 }
 
 pub(in crate::app) const RECENT_WORKERS: usize = 3;
@@ -119,92 +128,14 @@ pub(crate) fn live_run_panel_agent_rows<'a>(
 }
 
 impl FarcasterApp {
-    pub(super) fn render_older_workers_panel(
-        &self,
-        entity: WeakEntity<Self>,
-        run_panel: WeakEntity<RunPanelView>,
-        scroll: &ScrollHandle,
-        anchor: &ScrollAnchor,
-        saved_profiles: &WorkerProfileNames,
-    ) -> impl IntoElement {
-        let selected = self
-            .lifecycle
-            .pending_session_switch
-            .as_ref()
-            .map(|(path, _)| path.as_path())
-            .or(self.snapshot.selected_session.as_deref());
-        let workers = ordered_worker_rows(&self.sessions.all, &self.activity.agents, selected);
-        let back_panel = run_panel.clone();
-        panel()
-            .size_full()
-            .rounded_none()
-            .border_0()
-            .bg(theme().colors.inspector)
-            .child(
-                div()
-                    .size_full()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .flex_none()
-                            .px(theme().size(15.0))
-                            .py(theme().space.sm)
-                            .border_b(theme().border)
-                            .border_color(theme().colors.border)
-                            .flex()
-                            .items_center()
-                            .gap(theme().space.sm)
-                            .child(button(
-                                "close-older-workers",
-                                "Back",
-                                ButtonTone::Quiet,
-                                true,
-                                move |_, cx| {
-                                    let _ = back_panel.update(cx, |view, cx| {
-                                        view.close_older_workers();
-                                        cx.notify();
-                                    });
-                                },
-                            ))
-                            .child(section_heading("Workers")),
-                    )
-                    .child(
-                        div()
-                            .id("older-workers-list")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .track_scroll(scroll)
-                            .px(theme().size(15.0))
-                            .py(theme().space.sm)
-                            .children(workers.iter().skip(RECENT_WORKERS).filter_map(
-                                |(activity, depth, session, _)| {
-                                    self.agent_card(
-                                        activity,
-                                        session,
-                                        *depth,
-                                        selected == Some(session.path.as_path()),
-                                        anchor,
-                                        saved_profiles,
-                                        entity.clone(),
-                                    )
-                                },
-                            )),
-                    ),
-            )
-    }
-
     pub(super) fn render_run_panel(
         &self,
         entity: WeakEntity<Self>,
         run_panel: WeakEntity<RunPanelView>,
-        scroll: &ScrollHandle,
-        anchor: &ScrollAnchor,
-        saved_profiles: &WorkerProfileNames,
+        worker_view: &WorkerListView<'_>,
         browser: &RepositoryView<'_>,
     ) -> impl IntoElement {
+        let expanded = worker_view.expanded;
         let selected = self
             .lifecycle
             .pending_session_switch
@@ -221,7 +152,7 @@ impl FarcasterApp {
             .len()
             .saturating_sub(RECENT_WORKERS + usize::from(selected_is_older));
         let root_path = root.map(|session| session.path.clone());
-        let older_panel = run_panel.clone();
+        let expand_panel = run_panel.clone();
         let conversation = inspector_section()
             .when_some(root, |section, root| {
                 let is_selected = selected == Some(root.path.as_path());
@@ -231,15 +162,22 @@ impl FarcasterApp {
                 let key_path = path.clone();
                 let key_project = project.clone();
                 let key_app = app.clone();
+                let main_panel = run_panel.clone();
+                let key_panel = run_panel.clone();
                 section.child(
                     conversation_row("run-panel-main-agent", is_selected)
-                        .anchor_scroll(is_selected.then(|| anchor.clone()))
+                        .debug_selector(|| "run-panel-main-agent".into())
+                        .anchor_scroll(is_selected.then(|| worker_view.anchor.clone()))
                         .aria_label("Show main agent transcript")
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             crate::app::ui::primitives::preserve_pointer_focus,
                         )
                         .on_click(move |_, window, cx| {
+                            let _ = main_panel.update(cx, |view, cx| {
+                                view.collapse_workers();
+                                cx.notify();
+                            });
                             let _ = app.update(cx, |this, cx| {
                                 this.select_session_and_focus(
                                     path.clone(),
@@ -252,6 +190,10 @@ impl FarcasterApp {
                         .on_key_down(move |event, window, cx| {
                             if activates_button(event) {
                                 cx.stop_propagation();
+                                let _ = key_panel.update(cx, |view, cx| {
+                                    view.collapse_workers();
+                                    cx.notify();
+                                });
                                 let _ = key_app.update(cx, |this, cx| {
                                     this.select_session_and_focus(
                                         key_path.clone(),
@@ -270,7 +212,9 @@ impl FarcasterApp {
                     .iter()
                     .enumerate()
                     .filter(|(index, (_, _, session, _))| {
-                        *index < RECENT_WORKERS || selected == Some(session.path.as_path())
+                        expanded
+                            || *index < RECENT_WORKERS
+                            || selected == Some(session.path.as_path())
                     })
                     .filter_map(|(_, (activity, depth, session, _))| {
                         self.agent_card(
@@ -278,57 +222,67 @@ impl FarcasterApp {
                             session,
                             *depth,
                             selected == Some(session.path.as_path()),
-                            anchor,
-                            saved_profiles,
+                            worker_view.anchor,
+                            worker_view.saved_profiles,
                             entity.clone(),
                         )
                     }),
             )
-            .when(hidden_count > 0, |section| {
-                section.child(button(
-                    "show-older-workers",
-                    format!("Show more (+{hidden_count})"),
-                    ButtonTone::Quiet,
-                    true,
-                    move |_, cx| {
-                        if let Some(root) = root_path.clone() {
-                            let _ = older_panel.update(cx, |view, cx| {
-                                view.show_older_workers(root, selected_is_older);
-                                cx.notify();
-                            });
-                        }
-                    },
-                ))
+            .when(!expanded && hidden_count > 0, |section| {
+                section.child(
+                    button(
+                        "show-older-workers",
+                        format!("Show more (+{hidden_count})"),
+                        ButtonTone::Quiet,
+                        true,
+                        move |_, cx| {
+                            if let Some(root) = root_path.clone() {
+                                let _ = expand_panel.update(cx, |view, cx| {
+                                    view.expand_workers(root);
+                                    cx.notify();
+                                });
+                            }
+                        },
+                    )
+                    .debug_selector(|| "show-more-workers".into()),
+                )
             });
         let activity = div()
             .id("run-panel-activity")
-            .flex_none()
             .min_h_0()
-            .max_h(theme().size(320.0))
+            .when(expanded, |activity| activity.flex_1())
+            .when(!expanded, |activity| {
+                activity.flex_none().max_h(theme().size(320.0))
+            })
             .overflow_y_scroll()
-            .track_scroll(scroll)
+            .track_scroll(worker_view.scroll)
             .flex()
             .flex_col()
             .gap(theme().space.sm)
             .child(conversation)
-            .child(self.views.workgraph_sidebar.clone())
+            .when(!expanded, |activity| {
+                activity.child(self.views.workgraph_sidebar.clone())
+            })
             .when_some(
                 self.lifecycle
                     .performance_monitor
                     .as_ref()
-                    .filter(|monitor| monitor.is_detailed()),
+                    .filter(|monitor| !expanded && monitor.is_detailed()),
                 |run, monitor| run.child(render_performance(&monitor.summary)),
             )
-            .when(!self.activity.background_jobs.is_empty(), |run| {
-                run.child(
-                    inspector_section()
-                        .child(section_heading(format!(
-                            "Background jobs ({})",
-                            self.activity.background_jobs.len()
-                        )))
-                        .children(self.activity.background_jobs.iter().map(background_job_row)),
-                )
-            });
+            .when(
+                !expanded && !self.activity.background_jobs.is_empty(),
+                |run| {
+                    run.child(
+                        inspector_section()
+                            .child(section_heading(format!(
+                                "Background jobs ({})",
+                                self.activity.background_jobs.len()
+                            )))
+                            .children(self.activity.background_jobs.iter().map(background_job_row)),
+                    )
+                },
+            );
         let body = div()
             .flex_1()
             .min_h_0()
@@ -340,9 +294,10 @@ impl FarcasterApp {
             .pl(theme().size(18.0))
             .gap(theme().space.md)
             .child(activity)
-            .when(self.project.repository.backend.is_some(), |run| {
-                run.child(self.render_repository(entity.clone(), run_panel.clone(), browser))
-            });
+            .when(
+                !expanded && self.project.repository.backend.is_some(),
+                |run| run.child(self.render_repository(entity.clone(), run_panel.clone(), browser)),
+            );
         panel()
             .size_full()
             .rounded_none()

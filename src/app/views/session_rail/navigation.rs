@@ -57,10 +57,10 @@ fn worker_step(count: usize, selected: Option<usize>, direction: isize) -> Optio
     Some((current as isize + direction).rem_euclid(count as isize) as usize)
 }
 
-fn visible_worker_indices(total: usize, selected: Option<usize>, older_open: bool) -> Vec<usize> {
+fn visible_worker_indices(total: usize, selected: Option<usize>, expanded: bool) -> Vec<usize> {
     let recent_end = (RECENT_WORKERS + 1).min(total);
-    if older_open {
-        (recent_end..total).collect()
+    if expanded {
+        (0..total).collect()
     } else {
         (0..recent_end)
             .chain(selected.filter(|index| *index >= recent_end))
@@ -88,15 +88,15 @@ impl FarcasterApp {
             .or(self.snapshot.selected_session.as_deref());
         let rows = worker_navigation_rows(&self.sessions.all, &self.activity.agents, selected);
         let Some(root) = rows.first() else { return };
-        let older_open = self
+        let expanded = self
             .views
             .run_panel
             .read(cx)
-            .older_workers_open_for(&root.path);
+            .workers_expanded_for(&root.path);
         let selected_index = rows
             .iter()
             .position(|session| Some(session.path.as_path()) == selected);
-        let visible = visible_worker_indices(rows.len(), selected_index, older_open);
+        let visible = visible_worker_indices(rows.len(), selected_index, expanded);
         let current = visible
             .iter()
             .position(|index| Some(*index) == selected_index);

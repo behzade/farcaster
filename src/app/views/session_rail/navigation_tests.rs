@@ -23,12 +23,9 @@ fn worker_shortcuts_follow_the_visible_sidebar_view() {
     let recent = visible_worker_indices(9, Some(0), false);
     let older = visible_worker_indices(9, None, true);
     assert_eq!(recent.first(), Some(&0));
-    assert_eq!(
-        recent.iter().chain(&older).copied().collect::<Vec<_>>(),
-        (0..9).collect::<Vec<_>>()
-    );
+    assert_eq!(older, (0..9).collect::<Vec<_>>());
 
-    let selected_older = older[1];
+    let selected_older = older[5];
     assert_eq!(
         visible_worker_indices(9, Some(selected_older), false),
         recent
