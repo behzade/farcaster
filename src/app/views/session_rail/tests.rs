@@ -180,6 +180,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         archived: self.archived,
                         drop_position: None,
                         compact: self.compact,
+                        shortcut: (self.submitted && !self.archived).then_some(1),
                     },
                     self.app.clone(),
                 )
@@ -192,6 +193,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                 };
                 let mut input = super::rows::SessionRowInput::standard(false, None);
                 input.compact = self.compact;
+                input.shortcut = (!self.archived).then_some(1);
                 super::rows::SessionRow::new(
                     &item("chat", 1, "/project", kind, false),
                     input,
@@ -230,6 +232,10 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         assert_eq!(
                             cx.debug_bounds("session-archive-action").is_some(),
                             submitted || archived
+                        );
+                        assert_eq!(
+                            cx.debug_bounds("session-shortcut-1").is_some(),
+                            submitted && !archived
                         );
                     }
                 }

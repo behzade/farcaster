@@ -12,6 +12,7 @@ use gpui::{
 };
 use gpui_component::{
     input::{Escape, Input, InputState},
+    kbd::Kbd,
     menu::{DropdownMenu as _, PopupMenuItem},
 };
 
@@ -40,6 +41,7 @@ pub(super) struct SessionRowInput {
     pub(super) title_editor: Option<Entity<InputState>>,
     pub(super) subagents: usize,
     pub(super) compact: bool,
+    pub(super) shortcut: Option<u8>,
 }
 
 impl SessionRowInput {
@@ -53,6 +55,7 @@ impl SessionRowInput {
             title_editor: None,
             subagents: 0,
             compact: false,
+            shortcut: None,
         }
     }
 }
@@ -92,6 +95,7 @@ impl RenderOnce for SessionRow {
                     title_editor,
                     subagents,
                     compact,
+                    shortcut,
                 },
             entity,
         } = self;
@@ -308,6 +312,9 @@ impl RenderOnce for SessionRow {
                         delete_action,
                     ))
                     .child(session_row_age(age))
+                    .when_some(shortcut, |cluster, number| {
+                        cluster.child(session_shortcut(number))
+                    })
                     .into_any_element(),
             ));
         let row = row.app_tooltip_element(move |_, _| session_tooltip_content(&hover_details));
@@ -331,6 +338,14 @@ impl RenderOnce for SessionRow {
             .child(context_menu)
             .into_any_element()
     }
+}
+
+pub(super) fn session_shortcut(number: u8) -> impl IntoElement {
+    div()
+        .debug_selector(move || format!("session-shortcut-{number}"))
+        .child(Kbd::new(
+            gpui::Keystroke::parse(&number.to_string()).expect("fixed session shortcut must parse"),
+        ))
 }
 
 fn session_row_title(

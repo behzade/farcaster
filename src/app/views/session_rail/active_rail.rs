@@ -13,7 +13,7 @@ use super::{
     draft_row::{DraftRow, DraftRowInput},
     folders::{FolderRow, folder_header, new_folder_row, project_header},
     groups::{ActiveSessionItem, session_rail_lists_for_roots},
-    reconcile_list_rows,
+    numbered_session_items, reconcile_list_rows,
     rendering::{active_session_drop_target, subagent_counts},
     rows::{SessionRow, SessionRowInput, project_label},
 };
@@ -145,6 +145,14 @@ impl FarcasterApp {
         if !compact {
             active_rows.push(FolderRow::New);
         }
+        let shortcuts = numbered_session_items(active_rows.iter().filter_map(|row| match row {
+            FolderRow::Session(item) => Some(item.as_ref()),
+            _ => None,
+        }))
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| (item.app_session_id(), (index + 1) as u8))
+        .collect::<std::collections::HashMap<_, _>>();
         let group_drop_target = self.sessions.group_drop_target.clone();
         let project_colors = self.sessions.folders.project_colors.clone();
         let editing_folder = self.sessions.editing_folder.map(|edit| edit.id);
@@ -199,6 +207,7 @@ impl FarcasterApp {
                                 archived: false,
                                 drop_position,
                                 compact,
+                                shortcut: shortcuts.get(&draft.app_session_id).copied(),
                             },
                             active_row_entity.clone(),
                         )
@@ -237,6 +246,7 @@ impl FarcasterApp {
                                     .copied()
                                     .unwrap_or(0),
                                 compact,
+                                shortcut: shortcuts.get(&item.session.app_session_id).copied(),
                             },
                             active_row_entity.clone(),
                         )

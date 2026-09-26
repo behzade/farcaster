@@ -158,9 +158,11 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
     })
 }
 
-fn numbered_session_items(items: &[ActiveSessionItem]) -> Vec<&ActiveSessionItem> {
+fn numbered_session_items<'a>(
+    items: impl IntoIterator<Item = &'a ActiveSessionItem>,
+) -> Vec<&'a ActiveSessionItem> {
     items
-        .iter()
+        .into_iter()
         .filter(|item| {
             item.app_session_id() > 0
                 && !matches!(item, ActiveSessionItem::Draft(draft) if !draft.submitted)

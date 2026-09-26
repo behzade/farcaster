@@ -12,7 +12,8 @@ use super::{
     hover::{draft_hover_details, session_tooltip_content},
     rows::{
         archive_action, project_badge, project_label, relative_age, session_provider_slot,
-        session_row_age, session_row_content, session_row_height, session_status_icon,
+        session_row_age, session_row_content, session_row_height, session_shortcut,
+        session_status_icon,
     },
 };
 use crate::{
@@ -45,6 +46,7 @@ pub(super) struct DraftRowInput {
     pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
     pub(super) compact: bool,
+    pub(super) shortcut: Option<u8>,
 }
 
 #[derive(IntoElement)]
@@ -79,6 +81,7 @@ impl RenderOnce for DraftRow {
                     archived,
                     drop_position,
                     compact,
+                    shortcut,
                 },
             entity,
         } = self;
@@ -250,6 +253,9 @@ impl RenderOnce for DraftRow {
                                 }),
                             ))
                             .child(session_row_age(age))
+                            .when_some(shortcut, |cluster, number| {
+                                cluster.child(session_shortcut(number))
+                            })
                             .into_any_element(),
                     )),
             )
