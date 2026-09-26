@@ -499,11 +499,7 @@ impl FarcasterApp {
     pub(in crate::app) fn native_workspace_modal_active(&self) -> bool {
         self.workspace.send_to_chat.is_some()
             || self.navigation.picker.is_some()
-            || self.overlays.view.sessions
-            || self.overlays.view.run
-            || self.overlays.view.keybindings
-            || self.overlays.view.settings
-            || self.overlays.view.project_trust
+            || self.current_sheet_flags().any()
             || self.lifecycle.pending_quit.is_some()
             || self.sessions.pending_archive.is_some()
             || self.sessions.pending_delete.is_some()

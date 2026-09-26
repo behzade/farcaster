@@ -1,6 +1,36 @@
 use super::*;
 
 #[gpui::test]
+fn worker_notices_cover_native_surfaces_until_closed(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::worker_notices_cover_native_surfaces_until_closed"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    for surface in [AppSurface::Editor, AppSurface::Terminal] {
+                        app.set_surface(surface, cx);
+                        app.open_worker_notices(window, cx);
+                        assert!(app.native_workspace_modal_active());
+                        assert!(app.native_surface_obscured(window, cx));
+                        app.cycle_workspace_surface(true, window, cx);
+                        assert_eq!(app.workspace.surface, surface);
+
+                        app.close_sheet(window, cx);
+                        assert!(!app.native_surface_obscured(window, cx));
+                        assert!(!app.workspace.native_surface_covered);
+                        assert_eq!(app.workspace.surface, surface);
+                    }
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn move_and_model_access_dialogs_block_workspace_surface_cycle(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
