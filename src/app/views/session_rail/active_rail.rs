@@ -11,7 +11,7 @@ use super::{
     FarcasterApp, RailPanel, active_item_identity,
     colors::palette_color,
     draft_row::{DraftRow, DraftRowInput},
-    folders::{FolderRow, folder_header, folder_rows},
+    folders::{FolderRow, folder_header, new_folder_row, project_group_rows, project_header},
     groups::{ActiveSessionItem, session_rail_lists},
     reconcile_list_rows,
     rendering::{active_session_drop_target, subagent_counts},
@@ -132,20 +132,22 @@ impl FarcasterApp {
         let active_entry_count = lists.active.len();
         let archived_entry_count = lists.archived.len();
         let active_rows = lists.active;
-        let last_active_row = if self.sessions.folders.folders.is_empty() {
-            active_rows
-                .last()
-                .map(|item| (active_entry_count - 1, item.app_session_id()))
-        } else {
-            None
-        };
+        let last_active_row = None;
         let active_drop_list = session_list.clone();
-        let active_rows = folder_rows(active_rows, &self.sessions.folders);
+        let mut active_rows = project_group_rows(
+            active_rows,
+            &self.sessions.folders,
+            &self.sessions.collapsed_projects,
+        );
+        active_rows.push(FolderRow::New);
         let nested_rows = active_rows
             .iter()
             .scan(false, |nested, row| {
-                if let FolderRow::Header(header) = row {
-                    *nested = !header.collapsed;
+                match row {
+                    FolderRow::Header(header) => *nested = !header.collapsed,
+                    FolderRow::Project { collapsed, .. } => *nested = !collapsed,
+                    FolderRow::New => *nested = false,
+                    FolderRow::Session(_) => {}
                 }
                 Some(*nested)
             })
@@ -159,6 +161,8 @@ impl FarcasterApp {
                 .map(|row| match row {
                     FolderRow::Session(item) => active_item_identity(item),
                     FolderRow::Header(folder) => format!("folder:{}", folder.id),
+                    FolderRow::New => "new-folder".into(),
+                    FolderRow::Project { path, .. } => format!("project:{}", path.display()),
                 })
                 .collect(),
         );
@@ -249,6 +253,14 @@ impl FarcasterApp {
                 Some(FolderRow::Header(folder)) => folder_header(
                     (**folder).clone(),
                     editing_folder == Some(Some(folder.id)),
+                    active_title_input.clone(),
+                    active_row_entity.clone(),
+                ),
+                Some(FolderRow::Project { path, collapsed }) => {
+                    project_header(path.clone(), *collapsed, active_row_entity.clone())
+                }
+                Some(FolderRow::New) => new_folder_row(
+                    editing_folder == Some(None),
                     active_title_input.clone(),
                     active_row_entity.clone(),
                 ),

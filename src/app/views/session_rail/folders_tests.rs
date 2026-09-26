@@ -203,3 +203,29 @@ fn folder_drop_accepts_session_across_header_width(cx: &mut gpui::TestAppContext
         assert_eq!(received.get(), Some(7), "drop at x={x}");
     }
 }
+
+#[test]
+fn project_groups_do_not_take_chats_out_of_custom_folders() {
+    let mut folders = SessionFolders::default();
+    folders.create("Later".into(), Some(3));
+    let rows = project_group_rows(
+        vec![draft(3), draft(2), draft(1)],
+        &folders,
+        &Default::default(),
+    );
+    assert!(
+        matches!(&rows[0], FolderRow::Project { path, collapsed: false } if path == std::path::Path::new("/project"))
+    );
+    assert!(matches!(&rows[1], FolderRow::Session(item) if item.app_session_id() == 2));
+    assert!(matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 1));
+    assert!(matches!(&rows[3], FolderRow::Header(header) if header.name == "Later"));
+    assert!(matches!(&rows[4], FolderRow::Session(item) if item.app_session_id() == 3));
+    assert_eq!(folders.folders.len(), 1);
+    let collapsed = std::collections::HashSet::from([PathBuf::from("/project")]);
+    let rows = project_group_rows(vec![draft(3), draft(2)], &folders, &collapsed);
+    assert_eq!(rows.len(), 3);
+    assert!(matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 3));
+    let flat = folder_rows(vec![draft(3), draft(2)], &folders);
+    assert!(matches!(&flat[0], FolderRow::Session(item) if item.app_session_id() == 2));
+    assert_eq!(folders.folder_for(3), Some(1));
+}

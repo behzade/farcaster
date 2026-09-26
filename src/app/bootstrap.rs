@@ -169,6 +169,7 @@ impl FarcasterApp {
                 all: Vec::new(),
                 order: persisted.session_order,
                 folders: persisted.session_folders,
+                collapsed_projects: HashSet::new(),
                 editing_folder: None,
                 drop_target: None,
                 drafts: persisted.drafts,

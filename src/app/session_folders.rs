@@ -33,7 +33,7 @@ pub(in crate::app) fn folder_deletion(
 ) -> FolderDeletion {
     let mut deletion = FolderDeletion::default();
     for session in sessions.iter().filter(|session| !session.archived) {
-        if folders.folder_for_session(session.app_session_id, &session.project) != Some(folder) {
+        if folders.folder_for(session.app_session_id) != Some(folder) {
             continue;
         }
         let Some(family) = session_family_for_path(sessions, &session.path) else {
@@ -50,9 +50,7 @@ pub(in crate::app) fn folder_deletion(
     }
     deletion.drafts = drafts
         .iter()
-        .filter(|draft| {
-            folders.folder_for_session(draft.app_session_id, &draft.project) == Some(folder)
-        })
+        .filter(|draft| folders.folder_for(draft.app_session_id) == Some(folder))
         .map(|draft| draft.id.clone())
         .collect();
     deletion
@@ -111,57 +109,6 @@ impl FarcasterApp {
                 self.notify_session_rail(cx);
                 false
             }
-        }
-    }
-
-    pub(in crate::app) fn sync_project_folders(&mut self, cx: &mut Context<Self>) {
-        let mut projects = Vec::new();
-        let mut live_projects = Vec::new();
-        for session in &self.sessions.all {
-            live_projects.push(session.project.clone());
-            if !session.archived {
-                projects.push(session.project.clone());
-            }
-        }
-        for draft in &self.sessions.drafts {
-            projects.push(draft.project.clone());
-            live_projects.push(draft.project.clone());
-        }
-        projects.sort();
-        projects.dedup();
-        live_projects.sort();
-        live_projects.dedup();
-        let chats = self
-            .sessions
-            .all
-            .iter()
-            .map(|session| session.app_session_id)
-            .chain(
-                self.sessions
-                    .drafts
-                    .iter()
-                    .map(|draft| draft.app_session_id),
-            )
-            .collect::<Vec<_>>();
-        let mut next = self.sessions.folders.clone();
-        let mut changed = false;
-        for project in &projects {
-            changed |= next.ensure_project_folder(project, false);
-        }
-        changed |= next.prune_project_folders(&chats, &live_projects);
-        if changed {
-            self.save_session_folders(next, cx);
-        }
-    }
-
-    pub(in crate::app) fn ensure_open_project_folder(
-        &mut self,
-        project: &std::path::Path,
-        cx: &mut Context<Self>,
-    ) {
-        let mut next = self.sessions.folders.clone();
-        if next.ensure_project_folder(project, true) {
-            self.save_session_folders(next, cx);
         }
     }
 

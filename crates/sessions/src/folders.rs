@@ -1,7 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -130,52 +127,15 @@ impl SessionFolders {
             .filter(|id| self.folders.iter().any(|folder| folder.id == *id))
     }
 
-    pub fn folder_for_project(&self, project: &Path) -> Option<u64> {
-        self.folders
-            .iter()
-            .find(|folder| folder.project.as_deref() == Some(project))
-            .map(|folder| folder.id)
-    }
-
-    pub fn folder_for_session(&self, session: i64, project: &Path) -> Option<u64> {
-        self.folder_for(session)
-            .or_else(|| self.folder_for_project(project))
-    }
-
-    pub fn ensure_project_folder(&mut self, project: &Path, pinned: bool) -> bool {
-        if let Some(folder) = self
-            .folders
-            .iter_mut()
-            .find(|folder| folder.project.as_deref() == Some(project))
-        {
-            if pinned && !folder.pinned {
-                folder.pinned = true;
+    /// Old rail builds stored automatic project groups as custom folders.
+    /// Keep manually assigned groups as folders, preserving their IDs and members.
+    pub fn separate_project_groups(&mut self) {
+        self.folders.retain_mut(|folder| {
+            if folder.project.take().is_none() {
                 return true;
             }
-            return false;
-        }
-        let name = project
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .map_or_else(|| project.display().to_string(), str::to_owned);
-        let id = self
-            .folders
-            .iter()
-            .map(|folder| folder.id)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        let color = self.next_color();
-        self.folders.push(SessionFolder {
-            id,
-            name,
-            color,
-            collapsed: false,
-            pinned,
-            project: Some(project.to_path_buf()),
+            self.membership.values().any(|id| *id == folder.id)
         });
-        true
     }
 
     fn next_color(&self) -> u8 {
@@ -190,36 +150,6 @@ impl SessionFolders {
                 || u8::try_from(self.folders.len() % FOLDER_COLOR_COUNT).unwrap_or(0),
                 |index| u8::try_from(index).unwrap_or(0),
             )
-    }
-
-    pub fn prune_project_folders(
-        &mut self,
-        chats: &[i64],
-        live_projects: &[PathBuf],
-    ) -> bool {
-        let held = chats
-            .iter()
-            .filter_map(|chat| self.membership.get(chat).copied())
-            .collect::<std::collections::HashSet<_>>();
-        let before = self.folders.len();
-        self.folders.retain(|folder| {
-            let Some(project) = folder.project.as_deref() else {
-                return true;
-            };
-            folder.pinned
-                || held.contains(&folder.id)
-                || live_projects.iter().any(|live| live == project)
-        });
-        if self.folders.len() == before {
-            return false;
-        }
-        let live = self
-            .folders
-            .iter()
-            .map(|folder| folder.id)
-            .collect::<std::collections::HashSet<_>>();
-        self.membership.retain(|_, folder| live.contains(folder));
-        true
     }
 
     pub fn assign(&mut self, session: i64, folder: Option<u64>) {
@@ -242,3 +172,7 @@ impl SessionFolders {
         self.membership.retain(|_, folder| *folder != id);
     }
 }
+
+#[cfg(test)]
+#[path = "folders_tests.rs"]
+mod tests;

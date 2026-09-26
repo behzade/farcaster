@@ -79,7 +79,9 @@ fn numbers_follow_visible_order_and_skip_unsubmitted_drafts() {
         .into_iter()
         .filter_map(|row| match row {
             super::folders::FolderRow::Session(item) => Some(*item),
-            super::folders::FolderRow::Header(_) => None,
+            super::folders::FolderRow::Header(_)
+            | super::folders::FolderRow::Project { .. }
+            | super::folders::FolderRow::New => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(

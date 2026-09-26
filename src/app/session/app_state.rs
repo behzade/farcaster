@@ -5,6 +5,7 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) all: Vec<SessionSummary>,
     pub(in crate::app) order: Vec<i64>,
     pub(in crate::app) folders: session_folders::SessionFolders,
+    pub(in crate::app) collapsed_projects: HashSet<PathBuf>,
     pub(in crate::app) editing_folder: Option<session_folders::FolderEdit>,
     pub(in crate::app) drop_target: Option<(i64, ui::primitives::ReorderPosition)>,
     pub(in crate::app) drafts: Vec<sessions::DraftSession>,

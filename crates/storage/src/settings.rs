@@ -692,7 +692,11 @@ impl StateStore {
             serde_json::from_str(&json).map_err(|error| format!("decode session folders: {error}"))
         })
         .transpose()
-        .map(Option::unwrap_or_default)
+        .map(|folders: Option<crate::sessions::SessionFolders>| {
+            let mut folders = folders.unwrap_or_default();
+            folders.separate_project_groups();
+            folders
+        })
     }
 
     pub fn save_session_folders(

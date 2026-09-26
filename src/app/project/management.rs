@@ -28,6 +28,9 @@ impl FarcasterApp {
                     Some(ProjectPickerIntent::NewSession) => {
                         this.new_session(project, window, cx);
                     }
+                    Some(ProjectPickerIntent::NewSessionInFolder(folder)) => {
+                        this.new_session_with_folder(project, Some(folder), window, cx);
+                    }
                     Some(ProjectPickerIntent::ChangeDraft) => {
                         this.change_draft_project(project, window, cx);
                         this.composer.focus.focus(window, cx);
@@ -69,8 +72,6 @@ impl FarcasterApp {
         if projects::add_unique(&mut self.project.registered, project.clone()) || restored {
             self.save_project_registry();
         }
-        self.sync_project_folders(cx);
-        self.ensure_open_project_folder(&project, cx);
         self.warm_repository_observations(cx);
         self.notify_session_rail(cx);
         cx.notify();

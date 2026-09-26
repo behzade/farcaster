@@ -83,77 +83,19 @@ fn creating_folder_from_drop_moves_only_the_dragged_session() {
 }
 
 #[test]
-fn opened_projects_become_coloured_folders_that_hold_their_sessions() {
-    let mut folders = SessionFolders::default();
-    let alpha = std::path::Path::new("/work/alpha");
-    let beta = std::path::Path::new("/work/beta");
-    assert!(folders.ensure_project_folder(alpha, true));
-    assert!(!folders.ensure_project_folder(alpha, true));
-    assert!(folders.ensure_project_folder(beta, false));
-    assert_eq!(
-        folders
-            .folders
-            .iter()
-            .map(|folder| folder.name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["alpha", "beta"]
-    );
-    assert_eq!(
-        folders
-            .folders
-            .iter()
-            .map(|folder| folder.color)
-            .collect::<Vec<_>>(),
-        vec![0, 1]
-    );
-    let alpha_id = folders.folder_for_project(alpha).expect("alpha folder");
-    let beta_id = folders.folder_for_project(beta).expect("beta folder");
-    assert_eq!(folders.folder_for_session(7, beta), Some(beta_id));
-    folders.assign(7, Some(alpha_id));
-    assert_eq!(folders.folder_for_session(7, beta), Some(alpha_id));
-}
-
-#[test]
-fn project_folders_without_chats_are_pruned_unless_opened_by_hand() {
-    let mut folders = SessionFolders::default();
-    let held = std::path::Path::new("/work/held");
-    let opened = std::path::Path::new("/work/opened");
-    let chatty = std::path::Path::new("/work/chatty");
-    let assigned = std::path::Path::new("/work/assigned");
-    assert!(folders.ensure_project_folder(held, false));
-    assert!(folders.ensure_project_folder(opened, true));
-    assert!(folders.ensure_project_folder(chatty, false));
-    assert!(!folders.ensure_project_folder(chatty, false));
-    assert!(folders.ensure_project_folder(chatty, true));
-    assert!(!folders.ensure_project_folder(chatty, true));
-    assert!(folders.ensure_project_folder(assigned, false));
-    folders.assign(4, folders.folder_for_project(assigned));
-    let live = [chatty.to_path_buf()];
-    assert!(folders.prune_project_folders(&[4], &live));
-    assert_eq!(folders.folder_for_project(held), None);
-    assert!(folders.folder_for_project(opened).is_some());
-    assert!(folders.folder_for_project(chatty).is_some());
-    assert!(folders.folder_for_project(assigned).is_some());
-    assert!(!folders.prune_project_folders(&[4], &live));
-}
-
-#[test]
 fn folder_colors_stay_distinct_after_a_folder_is_removed() {
     let mut folders = SessionFolders::default();
-    let first = std::path::Path::new("/work/first");
-    let second = std::path::Path::new("/work/second");
-    let third = std::path::Path::new("/work/third");
-    folders.ensure_project_folder(first, false);
-    folders.ensure_project_folder(second, false);
-    folders.remove(folders.folder_for_project(first).expect("first folder"));
-    folders.ensure_project_folder(third, false);
+    folders.create("First".into(), None);
+    folders.create("Second".into(), None);
+    folders.remove(1);
+    folders.create("Third".into(), None);
     assert_eq!(
         folders
             .folders
             .iter()
             .map(|folder| folder.color)
             .collect::<Vec<_>>(),
-        vec![1, 0]
+        [1, 0]
     );
 }
 
@@ -194,12 +136,12 @@ fn draft(id: &str, app_session_id: i64, project: &str) -> DraftSession {
 
 #[test]
 fn folder_deletion_takes_its_chats_drafts_and_subagent_families() {
-    let work = std::path::Path::new("/work");
     let mut folders = SessionFolders::default();
-    folders.ensure_project_folder(work, false);
-    folders.ensure_project_folder(std::path::Path::new("/other"), false);
-    let work_folder = folders.folder_for_project(work).expect("work folder");
-    folders.assign(14, Some(work_folder));
+    folders.create("Work".into(), None);
+    let work_folder = folders.folders[0].id;
+    for id in [10, 11, 12, 14, 20] {
+        folders.assign(id, Some(work_folder));
+    }
 
     let sessions = vec![
         summary("root", 10, "/work", None, false),

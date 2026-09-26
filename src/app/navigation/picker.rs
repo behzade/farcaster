@@ -34,6 +34,7 @@ mod configuration;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ProjectPickerIntent {
     NewSession,
+    NewSessionInFolder(u64),
     ChangeDraft,
     MoveSession {
         path: PathBuf,
@@ -97,6 +98,7 @@ enum PickerCommand {
     ImportSessions,
     NewSession {
         project: PathBuf,
+        folder: Option<u64>,
     },
     ChangeDraftProject(PathBuf),
     MoveSession {
@@ -547,9 +549,9 @@ impl FarcasterApp {
                 self.close_picker(window, cx);
                 self.open_session_import(window, cx);
             }
-            PickerCommand::NewSession { project } => {
+            PickerCommand::NewSession { project, folder } => {
                 self.close_picker(window, cx);
-                self.new_session(project, window, cx);
+                self.new_session_with_folder(project, folder, window, cx);
             }
             PickerCommand::ChangeDraftProject(project) => {
                 self.close_picker(window, cx);
@@ -707,8 +709,10 @@ impl FarcasterApp {
             | PickerScope::Efforts(_)
             | PickerScope::ArchivedSessions => self.configuration_picker_rows(scope, &mut commands),
             PickerScope::Projects(intent) => {
-                let open_session_project = (intent == ProjectPickerIntent::NewSession
-                    && self.snapshot.selected_session.is_some())
+                let open_session_project = (matches!(
+                    intent,
+                    ProjectPickerIntent::NewSession | ProjectPickerIntent::NewSessionInFolder(_)
+                ) && self.snapshot.selected_session.is_some())
                 .then_some(self.project.path.as_path());
                 let mut rows = ordered_projects(
                     &self.project.registered,
@@ -722,7 +726,14 @@ impl FarcasterApp {
                     let command = match &intent {
                         ProjectPickerIntent::NewSession => PickerCommand::NewSession {
                             project: project.clone(),
+                            folder: None,
                         },
+                        ProjectPickerIntent::NewSessionInFolder(folder) => {
+                            PickerCommand::NewSession {
+                                project: project.clone(),
+                                folder: Some(*folder),
+                            }
+                        }
                         ProjectPickerIntent::ChangeDraft => {
                             PickerCommand::ChangeDraftProject(project.clone())
                         }

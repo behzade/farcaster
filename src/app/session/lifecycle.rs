@@ -162,9 +162,7 @@ impl FarcasterApp {
             .sessions
             .all
             .iter()
-            .filter(|session| {
-                folders.folder_for_session(session.app_session_id, &session.project) == Some(folder)
-            })
+            .filter(|session| folders.folder_for(session.app_session_id) == Some(folder))
             .map(|session| (session.path.clone(), session.project.clone()))
             .collect::<Vec<_>>();
         let project = targets.first().map(|(_, project)| project.clone());
@@ -380,7 +378,6 @@ impl FarcasterApp {
         if let Some(folder) = folder {
             self.assign_session_folder(draft.app_session_id, Some(folder), cx);
         }
-        self.sync_project_folders(cx);
         self.save_project_registry();
         self.send_project_command(
             &project,

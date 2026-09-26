@@ -33,13 +33,14 @@ pub(super) struct FolderHeader {
     pub(super) name: String,
     pub(super) color: u8,
     pub(super) collapsed: bool,
-    pub(super) project: Option<PathBuf>,
 }
 
 #[derive(Clone)]
 pub(super) enum FolderRow {
     Session(Box<ActiveSessionItem>),
     Header(Box<FolderHeader>),
+    Project { path: PathBuf, collapsed: bool },
+    New,
 }
 
 pub(super) fn folder_rows(
@@ -49,7 +50,7 @@ pub(super) fn folder_rows(
     let mut sections = std::collections::BTreeMap::<Option<u64>, Vec<ActiveSessionItem>>::new();
     for item in items {
         sections
-            .entry(folders.folder_for_session(item.app_session_id(), item.project()))
+            .entry(folders.folder_for(item.app_session_id()))
             .or_default()
             .push(item);
     }
@@ -66,7 +67,6 @@ pub(super) fn folder_rows(
             name: folder.name.clone(),
             color: folder.color,
             collapsed: folder.collapsed,
-            project: folder.project.clone(),
         })));
         if !folder.collapsed {
             rows.extend(
@@ -77,6 +77,145 @@ pub(super) fn folder_rows(
         }
     }
     rows
+}
+
+pub(super) fn project_group_rows(
+    items: Vec<ActiveSessionItem>,
+    folders: &SessionFolders,
+    collapsed: &std::collections::HashSet<PathBuf>,
+) -> Vec<FolderRow> {
+    let (filed, unfiled): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|item| folders.folder_for(item.app_session_id()).is_some());
+    let mut projects = std::collections::BTreeMap::<PathBuf, Vec<ActiveSessionItem>>::new();
+    for item in unfiled {
+        projects
+            .entry(item.project().to_path_buf())
+            .or_default()
+            .push(item);
+    }
+    let mut rows = Vec::new();
+    for (path, items) in projects {
+        let is_collapsed = collapsed.contains(&path);
+        rows.push(FolderRow::Project {
+            path,
+            collapsed: is_collapsed,
+        });
+        if !is_collapsed {
+            rows.extend(
+                items
+                    .into_iter()
+                    .map(|item| FolderRow::Session(Box::new(item))),
+            );
+        }
+    }
+    rows.extend(folder_rows(filed, folders));
+    rows
+}
+
+pub(super) fn project_header(
+    project: PathBuf,
+    collapsed: bool,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let toggle = entity.clone();
+    let scope = entity.clone();
+    let toggle_project = project.clone();
+    let scope_project = project.clone();
+    let label = project.display().to_string();
+    session_section_header()
+        .id(format!("session-project-{}", project.display()))
+        .w_full()
+        .pr(theme().space.sm)
+        .cursor_pointer()
+        .on_click(move |_, _, cx| {
+            let _ = scope.update(cx, |this, cx| {
+                this.select_project(scope_project.clone(), cx)
+            });
+        })
+        .child(disclosure_button(
+            format!("project-toggle-{}", project.display()),
+            !collapsed,
+            "project",
+            move |_, cx| {
+                let _ = toggle.update(cx, |this, cx| {
+                    if !this.sessions.collapsed_projects.remove(&toggle_project) {
+                        this.sessions
+                            .collapsed_projects
+                            .insert(toggle_project.clone());
+                    }
+                    this.notify_session_rail(cx);
+                });
+            },
+        ))
+        .child(app_icon(AppIcon::Folder, AppIconSize::Control))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(label),
+        )
+        .child(
+            icon_control(
+                format!("new-session-in-project-{}", project.display()),
+                "New session in project",
+            )
+            .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                let _ = entity.update(cx, |this, cx| this.new_session(project.clone(), window, cx));
+            }),
+        )
+        .into_any_element()
+}
+
+pub(super) fn new_folder_row(
+    editing: bool,
+    input: Entity<InputState>,
+    entity: WeakEntity<FarcasterApp>,
+) -> AnyElement {
+    let edit = entity.clone();
+    let cancel = entity.clone();
+    let row = session_section_header().id("new-folder-row").w_full();
+    if editing {
+        return row
+            .on_action(move |_: &gpui_component::input::Escape, _, cx| {
+                cx.stop_propagation();
+                let _ = cancel.update(cx, |this, cx| this.cancel_session_title_edit(cx));
+            })
+            .child(Input::new(&input).flex_1().min_w_0().appearance(true))
+            .child(button(
+                "create-folder",
+                "Create",
+                ButtonTone::Neutral,
+                true,
+                move |_, cx| {
+                    let _ = edit.update(cx, |this, cx| this.commit_folder_edit(cx));
+                },
+            ))
+            .into_any_element();
+    }
+    folder_drop_target(row, move |drag, window, cx| {
+        let _ = entity.update(cx, |this, cx| {
+            this.begin_folder_edit(None, window, cx);
+            if let Some(edit) = &mut this.sessions.editing_folder {
+                edit.session = Some(drag.app_session_id);
+            }
+            this.clear_session_drop_target(cx);
+        });
+    })
+    .child(button(
+        "new-folder",
+        "+ New folder",
+        ButtonTone::Quiet,
+        true,
+        move |window, cx| {
+            let _ = edit.update(cx, |this, cx| this.begin_folder_edit(None, window, cx));
+        },
+    ))
+    .into_any_element()
 }
 
 pub(super) fn folder_header(
@@ -90,16 +229,13 @@ pub(super) fn folder_header(
         name,
         color,
         collapsed,
-        project,
     } = folder;
     let drop_entity = entity.clone();
     let edit_entity = entity.clone();
     let new_entity = entity.clone();
     let context_entity = entity.clone();
     let toggle_entity = entity.clone();
-    let scope_entity = entity.clone();
     let delete_entity = entity.clone();
-    let scope_project = project.clone();
     let hover_entity = entity.clone();
     let cancel_entity = entity;
     let section = div().w_full().flex().flex_col();
@@ -114,16 +250,6 @@ pub(super) fn folder_header(
             if *hovered {
                 let _ = hover_entity.update(cx, |this, cx| this.prefetch_folder(id, cx));
             }
-        })
-        .on_click(move |_, _, cx| {
-            let Some(project) = scope_project.clone() else {
-                return;
-            };
-            let _ = scope_entity.update(cx, |this, cx| {
-                if this.project.path != project {
-                    this.select_project(project.clone(), cx);
-                }
-            });
         });
     if editing {
         let commit = edit_entity.clone();
@@ -213,8 +339,13 @@ pub(super) fn folder_header(
                 .child(app_icon(AppIcon::Plus, AppIconSize::Inline))
                 .on_click(move |_, window, cx| {
                     let _ = new_entity.update(cx, |this, cx| {
-                        let project = project.clone().unwrap_or_else(|| this.project.path.clone());
-                        this.new_session_with_folder(project, Some(id), window, cx);
+                        this.open_picker(
+                            crate::app::PickerScope::Projects(
+                                crate::app::ProjectPickerIntent::NewSessionInFolder(id),
+                            ),
+                            window,
+                            cx,
+                        );
                     });
                 }),
             ),
