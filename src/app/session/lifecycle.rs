@@ -136,16 +136,15 @@ impl FarcasterApp {
         target
     }
 
+    /// Prefetch with the row's backend; paths alone do not identify every backend.
     pub(in crate::app) fn prefetch_session(
         &mut self,
+        harness: crate::agents::Backend,
         path: PathBuf,
         project: PathBuf,
         cx: &mut Context<Self>,
     ) {
         self.prefetch_repository_observation(project.clone(), cx);
-        let Some(target) = self.target_for_path(&path) else {
-            return;
-        };
         let mut config = crate::agents::AgentLaunchConfig {
             profiles: self.settings.harness_profiles.clone(),
             profile_id: crate::agents::profile_id_from_locator(&path),
@@ -158,12 +157,8 @@ impl FarcasterApp {
                 return;
             };
             config.app_proxy = proxy;
-            let _ = crate::agents::load_session_history_for_profile(
-                &config,
-                target.harness,
-                &path,
-                &project,
-            );
+            let _ =
+                crate::agents::load_session_history_for_profile(&config, harness, &path, &project);
         })
         .detach();
     }
@@ -175,11 +170,17 @@ impl FarcasterApp {
             .all
             .iter()
             .filter(|session| folders.folder_for(session.app_session_id) == Some(folder))
-            .map(|session| (session.path.clone(), session.project.clone()))
+            .map(|session| {
+                (
+                    session.harness,
+                    session.path.clone(),
+                    session.project.clone(),
+                )
+            })
             .collect::<Vec<_>>();
-        let project = targets.first().map(|(_, project)| project.clone());
-        for (path, project) in targets {
-            self.prefetch_session(path, project, cx);
+        let project = targets.first().map(|(_, _, project)| project.clone());
+        for (harness, path, project) in targets {
+            self.prefetch_session(harness, path, project, cx);
         }
         if let Some(project) = project {
             self.prefetch_repository_observation(project, cx);
