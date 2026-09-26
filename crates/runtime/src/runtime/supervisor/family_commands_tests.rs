@@ -311,6 +311,65 @@ fn failed_stop_keeps_an_archived_session_and_its_pending_message() -> Result<(),
 }
 
 #[test]
+fn direct_delete_preserves_files_and_queue_when_a_worker_cannot_stop() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut root = summary(temp.path(), "root", None);
+    root.archived = true;
+    std::fs::write(&root.path, "keep this transcript").map_err(|error| error.to_string())?;
+    let mut state = StateStore::open_at(&database)?;
+    state.replace_sessions(std::slice::from_ref(&root))?;
+    let factory = Arc::new(LifecycleFactory::default());
+    factory.fail_close.store(true, Ordering::SeqCst);
+    let pool = lifecycle_pool(temp.path(), factory)?;
+    start_worker(&pool, temp.path(), "family-child", &root.path)?;
+    let (mut supervisor, events) = supervisor_for_family(state, vec![root.clone()]);
+    let host_state = supervisor.host.state_store()?;
+    let prompt = host_state.with(|store| {
+        store.replace_sessions(std::slice::from_ref(&root))?;
+        store.enqueue_prompt(
+            &format!("session:{}", root.path.display()),
+            Backend::Pi,
+            temp.path(),
+            Some(&root.path),
+            crate::protocol::PromptMode::Normal,
+            "keep this message",
+            &[],
+        )
+    })?;
+
+    farcaster_mcp_server::with_test_worker_pool(pool, || {
+        assert!(
+            supervisor.handle_session_family_command(&RuntimeCommand::DeleteSessionFamily {
+                path: root.path.clone(),
+            },)
+        );
+        assert!(
+            supervisor
+                .catalog_sessions
+                .iter()
+                .any(|session| session.path == root.path)
+        );
+        assert!(archived(&database, &root.path)?);
+        assert_eq!(
+            std::fs::read_to_string(&root.path).map_err(|error| error.to_string())?,
+            "keep this transcript"
+        );
+        assert!(
+            host_state
+                .with(|store| store.queued_prompts())?
+                .iter()
+                .any(|row| row.id == prompt)
+        );
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RuntimeEvent::SessionsFailed { message, .. } if message.contains("gated close failed")
+        )));
+        Ok(())
+    })
+}
+
+#[test]
 fn retrying_actor_blocks_destructive_family_commands() {
     let mut snapshot = RuntimeSnapshot::default();
     assert!(!session_actor_has_active_work(&snapshot, false));

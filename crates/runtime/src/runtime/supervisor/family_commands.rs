@@ -144,7 +144,7 @@ impl Supervisor {
             .ok_or_else(|| "The session family is no longer available".to_owned())?;
         let paths = family
             .iter()
-            .map(|session| session.path.clone())
+            .map(|session| crate::sessions::normalize_session_path(&session.path))
             .collect::<HashSet<_>>();
         let state = self.host.state_store()?;
         state.with(|store| {
@@ -152,10 +152,9 @@ impl Supervisor {
             let ids = queued
                 .iter()
                 .filter(|prompt| {
-                    prompt
-                        .session
-                        .as_ref()
-                        .is_some_and(|session| paths.contains(session))
+                    prompt.session.as_ref().is_some_and(|session| {
+                        paths.contains(&crate::sessions::normalize_session_path(session))
+                    })
                 })
                 .map(|prompt| prompt.id)
                 .collect::<Vec<_>>();
@@ -226,28 +225,11 @@ impl Supervisor {
             return true;
         }
         if let RuntimeCommand::DeleteSessionFamily { path } = &command {
-            // Deleting a chat is never refused: whatever is still live for the
-            // family is stopped first, and then removed.
-            if let Some(family) = session_family_for_path(&self.catalog_sessions, path) {
-                let live = family.iter().any(|session| session.is_running)
-                    || family.iter().any(|session| {
-                        self.actor_paths.get(&session.path).is_some_and(|key| {
-                            self.latest.get(key).is_some_and(|snapshot| {
-                                session_actor_has_active_work(
-                                    snapshot,
-                                    self.needs_input.contains(key),
-                                )
-                            })
-                        })
-                    });
-                if live {
-                    let root = family[0].path.clone();
-                    self.handle_session_family_command(&RuntimeCommand::StopSessionFamily {
-                        path: root,
-                    });
-                }
-            }
             let result = (|| {
+                // A catalog flag can be stale. Confirm every worker and actor stopped
+                // before discarding queued prompts or touching session files.
+                self.stop_session_family_work(path, false)?;
+                self.discard_family_queue(path)?;
                 let family = session_family_for_path(&self.catalog_sessions, path)
                     .ok_or_else(|| "The session is no longer available to delete".to_owned())?;
                 let targets = family

@@ -68,12 +68,30 @@ impl FarcasterApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.sessions.deleting_folders.contains_key(&folder) {
+            return;
+        }
         let deletion = folder_deletion(
             &self.sessions.all,
             &self.sessions.drafts,
             &self.sessions.folders,
             folder,
         );
+        if deletion.drafts.iter().any(|id| {
+            self.sessions
+                .drafts
+                .iter()
+                .any(|draft| draft.id == *id && draft.submitted)
+                || crate::app::composer::submissions::has_pending_submission(
+                    &self.composer.pending_submissions,
+                    &crate::app::composer::sessions::draft_target(id),
+                )
+        }) {
+            self.sessions.error =
+                Some("Wait for pending chat submissions before deleting this folder".into());
+            self.notify_session_rail(cx);
+            return;
+        }
         self.open_delete_confirmation(
             deletion.roots,
             deletion.family_paths,
@@ -118,19 +136,19 @@ impl FarcasterApp {
         let Some(pending) = self.close_delete_confirmation(window, cx) else {
             return;
         };
-        self.sessions
-            .visible
-            .retain(|session| !pending.family_paths.contains(&session.path));
-        if !self.sessions.visible.iter().any(|session| session.archived) {
-            self.sessions.archived_expanded = false;
-        }
         for draft in &pending.drafts {
             self.discard_draft(draft, window, cx);
         }
         if let Some(folder) = pending.folder {
-            let mut next = self.sessions.folders.clone();
-            next.remove(folder);
-            self.save_session_folders(next, cx);
+            if pending.roots.is_empty() {
+                let mut next = self.sessions.folders.clone();
+                next.remove(folder);
+                self.save_session_folders(next, cx);
+            } else {
+                self.sessions
+                    .deleting_folders
+                    .insert(folder, pending.family_paths);
+            }
         }
         self.notify_session_rail(cx);
         for root in pending.roots {

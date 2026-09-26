@@ -1103,3 +1103,67 @@ fn completion_notification_is_only_redundant_for_the_visible_active_session() {
         );
     }
 }
+
+#[gpui::test]
+fn folder_removal_waits_for_all_delete_receipts_and_keeps_failures(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::folder_removal_waits_for_all_delete_receipts_and_keeps_failures"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            let first = project.join("first.jsonl");
+            let second = project.join("second.jsonl");
+            let folder = cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    app.sessions.folders.create("Later".into(), Some(42));
+                    let folder = app.sessions.folders.folder_for(42).expect("folder");
+                    app.sessions
+                        .deleting_folders
+                        .insert(folder, HashSet::from([first.clone(), second.clone()]));
+                    folder
+                })
+            });
+            runtime.send_event(RuntimeEvent::SessionDeleted {
+                generation: 0,
+                paths: Arc::new(HashSet::from([first])),
+            });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert_eq!(app.sessions.folders.folder_for(42), Some(folder));
+                    assert_eq!(
+                        app.sessions.deleting_folders[&folder],
+                        HashSet::from([second.clone()])
+                    );
+                })
+            });
+            runtime.send_event(RuntimeEvent::SessionsFailed {
+                generation: 0,
+                message: "Could not stop worker".into(),
+            });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert!(app.sessions.deleting_folders.is_empty());
+                    assert_eq!(app.sessions.folders.folder_for(42), Some(folder));
+                    app.sessions
+                        .deleting_folders
+                        .insert(folder, HashSet::from([second.clone()]));
+                })
+            });
+            runtime.send_event(RuntimeEvent::SessionDeleted {
+                generation: 0,
+                paths: Arc::new(HashSet::from([second])),
+            });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    app.drain_runtime(cx);
+                    assert!(app.sessions.deleting_folders.is_empty());
+                    assert_eq!(app.sessions.folders.folder_for(42), None);
+                })
+            });
+        },
+    );
+}

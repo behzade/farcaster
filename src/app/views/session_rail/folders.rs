@@ -183,11 +183,13 @@ pub(super) fn folder_header(
         );
 
     row = row.child(
-        DeleteButton::new(format!("delete-folder-{id}"), "Delete folder and its chats")
+        DeleteButton::new(format!("delete-folder-{id}"), "Delete folder")
             .reveal_on("session-folder-header")
-            .on_delete(move |window, cx| {
+            .on_delete(move |_, cx| {
                 let _ = delete_entity.update(cx, |this, cx| {
-                    this.request_folder_delete(id, window, cx);
+                    let mut next = this.sessions.folders.clone();
+                    next.remove(id);
+                    this.save_session_folders(next, cx);
                 });
             }),
     );
@@ -222,6 +224,7 @@ pub(super) fn folder_header(
             let rename = context_entity.clone();
             let colour = context_entity.clone();
             let delete = context_entity.clone();
+            let delete_chats = context_entity.clone();
             menu.item(PopupMenuItem::new("Rename").on_click(move |_, window, cx| {
                 let _ = rename.update(cx, |this, cx| this.begin_folder_edit(Some(id), window, cx));
             }))
@@ -236,6 +239,12 @@ pub(super) fn folder_header(
                         next.remove(id);
                         this.save_session_folders(next, cx);
                     });
+                }),
+            )
+            .item(
+                PopupMenuItem::new("Delete folder and chats…").on_click(move |_, window, cx| {
+                    let _ = delete_chats
+                        .update(cx, |this, cx| this.request_folder_delete(id, window, cx));
                 }),
             )
         })

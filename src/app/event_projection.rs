@@ -788,7 +788,22 @@ impl FarcasterApp {
                     });
             }
             RuntimeEvent::SessionDeleted { generation, paths } => {
-                self.project_session_deleted(generation, paths, cx);
+                self.project_session_deleted(generation, paths.clone(), cx);
+                let mut completed = Vec::new();
+                for (folder, remaining) in &mut self.sessions.deleting_folders {
+                    remaining.retain(|path| !paths.contains(path));
+                    if remaining.is_empty() {
+                        completed.push(*folder);
+                    }
+                }
+                if !completed.is_empty() {
+                    let mut next = self.sessions.folders.clone();
+                    for folder in completed {
+                        self.sessions.deleting_folders.remove(&folder);
+                        next.remove(folder);
+                    }
+                    self.save_session_folders(next, cx);
+                }
             }
             RuntimeEvent::SessionMoved {
                 target,
@@ -799,6 +814,7 @@ impl FarcasterApp {
                 generation,
                 message,
             } if generation >= self.sessions.generation => {
+                self.sessions.deleting_folders.clear();
                 self.sessions.generation = generation;
                 let changed = self.sessions.error.as_deref() != Some(message.as_str());
                 self.sessions.error = Some(message);

@@ -185,6 +185,7 @@ impl FarcasterApp {
                 pending_titles: HashMap::new(),
                 pending_title_focus: false,
                 pending_archive: None,
+                deleting_folders: HashMap::new(),
                 pending_delete: None,
                 pending_move: None,
                 import: None,

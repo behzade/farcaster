@@ -21,6 +21,7 @@ pub(in crate::app) struct SessionState {
     pub(in crate::app) pending_titles: HashMap<PathBuf, String>,
     pub(in crate::app) pending_title_focus: bool,
     pub(in crate::app) pending_archive: Option<session::archive::PendingArchive>,
+    pub(in crate::app) deleting_folders: HashMap<u64, HashSet<PathBuf>>,
     pub(in crate::app) pending_delete: Option<session::deletion::PendingDelete>,
     pub(in crate::app) pending_move: Option<session::lifecycle::PendingMove>,
     pub(in crate::app) import: Option<session::import::SessionImportDialog>,
