@@ -63,12 +63,12 @@ fn navigation_can_leave_and_return_to_an_unsubmitted_draft() {
         .filter_map(VisibleSessionTarget::from_row)
         .map(|target| target.app_session_id())
         .collect::<Vec<_>>();
-    assert_eq!(ids, [30, 20, 10]);
+    assert_eq!(ids, [30, 10, 20]);
     for (selected, direction, expected) in [
         (30, 1, Some(SessionStep::Active(1))),
-        (20, -1, Some(SessionStep::Active(0))),
-        (10, -1, Some(SessionStep::Active(1))),
-        (10, 1, Some(SessionStep::Archived(0))),
+        (10, -1, Some(SessionStep::Active(0))),
+        (20, -1, Some(SessionStep::Active(1))),
+        (20, 1, Some(SessionStep::Archived(0))),
     ] {
         assert_eq!(
             session_step(ids.iter().copied(), [5], selected, direction),

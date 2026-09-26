@@ -15,7 +15,7 @@ fn archived_session(item: &ActiveSessionItem) -> &SessionRailItem {
 }
 
 #[test]
-fn drafts_and_sessions_share_one_order() {
+fn unsubmitted_drafts_stay_above_newer_sessions() {
     let alpha = PathBuf::from("/alpha");
     let beta = PathBuf::from("/beta");
     let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), alpha.clone());
@@ -33,7 +33,7 @@ fn drafts_and_sessions_share_one_order() {
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>(),
-        [3, 2, 1]
+        [2, 3, 1]
     );
 }
 
@@ -85,13 +85,25 @@ fn an_archived_chat_shadows_the_session_it_writes_into() {
 }
 
 #[test]
-fn manual_order_moves_a_session_above_a_draft() {
+fn draft_priority_preserves_manual_order_within_drafts_and_chats() {
     let project = PathBuf::from("/project");
     let mut draft = DraftSession::with_id(Some(Backend::Pi), "draft".into(), project.clone());
     draft.app_session_id = 2;
+    let mut other_draft = draft.clone();
+    other_draft.id = "other".into();
+    other_draft.app_session_id = 4;
+    let mut submitted = draft.clone();
+    submitted.id = "submitted".into();
+    submitted.app_session_id = 3;
+    submitted.submitted = true;
     let sessions = vec![session("session", 1, &project, false)];
 
-    let lists = session_rail_lists(&sessions, &[draft], None, &[1, 2]);
+    let lists = session_rail_lists(
+        &sessions,
+        &[draft, other_draft, submitted],
+        None,
+        &[1, 2, 3, 4],
+    );
 
     assert_eq!(
         lists
@@ -99,7 +111,7 @@ fn manual_order_moves_a_session_above_a_draft() {
             .iter()
             .map(ActiveSessionItem::app_session_id)
             .collect::<Vec<_>>(),
-        [1, 2]
+        [2, 4, 1, 3]
     );
 }
 

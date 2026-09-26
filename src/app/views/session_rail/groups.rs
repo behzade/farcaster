@@ -141,6 +141,7 @@ pub(super) fn session_rail_lists_for_roots<'a>(
         id > 0 && id == right.app_session_id()
     });
     apply_manual_order(&mut active, manual_order, ActiveSessionItem::app_session_id);
+    active.sort_by_key(|item| !matches!(item, ActiveSessionItem::Draft(draft) if !draft.submitted));
     archived.sort_by_key(|item| Reverse((item.recency_ms(), item.app_session_id())));
 
     SessionRailLists { active, archived }
