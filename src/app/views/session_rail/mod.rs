@@ -26,7 +26,6 @@ use self::{
 };
 use super::super::FarcasterApp;
 use crate::{
-    app::session_folders::SessionFolders,
     app::ui::primitives::{
         PanelSlot, ReorderPosition, ResizeBounds, ResizeState, panel_bounds, panel_resized,
         panel_room,
@@ -147,7 +146,6 @@ fn replacement_index_after_close(len: usize, current: usize) -> Option<usize> {
         .or_else(|| current.checked_sub(1))
 }
 
-#[cfg(test)]
 fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> {
     rows.iter().find_map(|row| match row {
         ActiveSessionItem::Draft(draft) if !draft.submitted => Some(draft),
@@ -155,27 +153,15 @@ fn first_unsubmitted_draft(rows: &[ActiveSessionItem]) -> Option<&DraftSession> 
     })
 }
 
-fn numbered_session_items<'a>(
-    items: &'a [ActiveSessionItem],
-    folders: &SessionFolders,
-    only: Option<u64>,
-) -> Vec<(u64, &'a ActiveSessionItem)> {
-    let mut numbered = Vec::new();
-    for folder in &folders.folders {
-        if only.is_some_and(|only| only != folder.id) {
-            continue;
-        }
-        for item in items {
-            if numbered.len() == 10 {
-                return numbered;
-            }
-            if folders.folder_for_session(item.app_session_id(), item.project()) == Some(folder.id)
-            {
-                numbered.push((folder.id, item));
-            }
-        }
-    }
-    numbered
+fn numbered_session_items(items: &[ActiveSessionItem]) -> Vec<&ActiveSessionItem> {
+    items
+        .iter()
+        .filter(|item| {
+            item.app_session_id() > 0
+                && !matches!(item, ActiveSessionItem::Draft(draft) if !draft.submitted)
+        })
+        .take(9)
+        .collect()
 }
 
 impl FarcasterApp {
@@ -185,48 +171,24 @@ impl FarcasterApp {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) {
-        let number = if number == 0 { 10 } else { number };
-        let Some((folder_id, target)) = self
-            .numbered_session_targets()
-            .get(number.saturating_sub(1))
-            .cloned()
-        else {
+        if number == 0 {
+            if let Some(draft) = first_unsubmitted_draft(&self.visible_active_items()).cloned() {
+                self.select_visible_session(VisibleSessionTarget::Draft(draft), window, cx);
+            }
             return;
-        };
-        self.expand_folder(folder_id, cx);
-        self.select_visible_session(target, window, cx);
-    }
-
-    fn numbered_session_targets(&self) -> Vec<(u64, VisibleSessionTarget)> {
-        let items = self.visible_active_items();
-        numbered_session_items(&items, &self.sessions.folders, self.current_folder_id())
+        }
+        let rows = folders::folder_rows(self.visible_active_items(), &self.sessions.folders)
             .into_iter()
-            .filter_map(|(id, item)| {
-                VisibleSessionTarget::from_item(item).map(|target| (id, target))
+            .filter_map(|row| match row {
+                folders::FolderRow::Session(item) => Some(*item),
+                folders::FolderRow::Header(_) => None,
             })
-            .collect()
-    }
-
-    fn current_folder_id(&self) -> Option<u64> {
-        let selected = self.selected_app_session_id()?;
-        let items = self.visible_active_items();
-        let item = items
-            .iter()
-            .find(|item| item.app_session_id() == selected)?;
-        self.sessions
-            .folders
-            .folder_for_session(item.app_session_id(), item.project())
-    }
-
-    fn expand_folder(&mut self, folder_id: u64, cx: &mut gpui::Context<Self>) {
-        let collapsed = self
-            .sessions
-            .folders
-            .folders
-            .iter()
-            .any(|folder| folder.id == folder_id && folder.collapsed);
-        if collapsed {
-            self.set_folder_collapsed(folder_id, false, cx);
+            .collect::<Vec<_>>();
+        if let Some(target) = numbered_session_items(&rows)
+            .get(number - 1)
+            .and_then(|item| VisibleSessionTarget::from_item(item))
+        {
+            self.select_visible_session(target, window, cx);
         }
     }
 

@@ -24,7 +24,7 @@ fn closing_a_session_keeps_its_visual_slot_when_possible() {
 }
 
 #[test]
-fn numbers_address_the_chats_of_one_folder_at_a_time() {
+fn numbers_follow_visible_order_and_skip_unsubmitted_drafts() {
     let mut first_draft =
         DraftSession::with_id(Some(Backend::Pi), "first".into(), PathBuf::from("/project"));
     first_draft.app_session_id = 12;
@@ -75,65 +75,42 @@ fn numbers_address_the_chats_of_one_folder_at_a_time() {
     folders.assign(9, Some(2));
     folders.assign(7, Some(1));
 
-    let all = numbered_session_items(&rows, &folders, None);
-    let first_only = numbered_session_items(&rows, &folders, Some(1));
-    let second_only = numbered_session_items(&rows, &folders, Some(2));
-    let empty_only = numbered_session_items(&rows, &folders, Some(3));
-
+    let visible = super::folders::folder_rows(rows.clone(), &folders)
+        .into_iter()
+        .filter_map(|row| match row {
+            super::folders::FolderRow::Session(item) => Some(*item),
+            super::folders::FolderRow::Header(_) => None,
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         first_unsubmitted_draft(&rows).map(|draft| draft.id.as_str()),
         Some("first")
     );
     assert_eq!(
-        all.iter()
-            .map(|(id, item)| (*id, item.app_session_id()))
-            .collect::<Vec<_>>(),
-        [(1, 12), (1, 10), (1, 7), (2, 9)]
-    );
-    assert_eq!(
-        first_only
+        numbered_session_items(&visible)
             .iter()
-            .map(|(_, item)| item.app_session_id())
+            .map(|item| item.app_session_id())
             .collect::<Vec<_>>(),
-        [12, 10, 7]
+        [10, 7, 9]
     );
-    assert_eq!(
-        second_only
-            .iter()
-            .map(|(_, item)| item.app_session_id())
-            .collect::<Vec<_>>(),
-        [9]
-    );
-    assert!(empty_only.is_empty());
 }
 
 #[test]
-fn session_numbers_stop_at_ten_so_zero_reaches_the_tenth_chat() {
-    let rows = (0..12)
+fn session_numbers_stop_at_nine() {
+    let rows = (1..=12)
         .map(|index| {
             ActiveSessionItem::Session(item(
                 &format!("chat-{index}"),
-                i64::from(index) + 1,
+                index,
                 "/project",
                 SessionRailKind::Project,
                 false,
             ))
         })
         .collect::<Vec<_>>();
-    let folders = SessionFolders {
-        folders: vec![SessionFolder {
-            id: 1,
-            name: "Project".into(),
-            project: Some(PathBuf::from("/project")),
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-
-    let numbered = numbered_session_items(&rows, &folders, None);
-
-    assert_eq!(numbered.len(), 10);
-    assert_eq!(numbered[9].1.app_session_id(), 10);
+    let numbered = numbered_session_items(&rows);
+    assert_eq!(numbered.len(), 9);
+    assert_eq!(numbered[8].app_session_id(), 9);
 }
 
 #[test]
