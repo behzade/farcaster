@@ -44,7 +44,6 @@ pub(super) struct DraftRowInput {
     pub(super) status: String,
     pub(super) archived: bool,
     pub(super) drop_position: Option<ReorderPosition>,
-    pub(super) nested: bool,
     pub(super) compact: bool,
 }
 
@@ -79,7 +78,6 @@ impl RenderOnce for DraftRow {
                     status,
                     archived,
                     drop_position,
-                    nested,
                     compact,
                 },
             entity,
@@ -131,7 +129,6 @@ impl RenderOnce for DraftRow {
                     .flex()
                     .items_stretch()
                     .px(theme().space.sm)
-                    .when(nested, |row| row.pl(theme().space.md))
                     .rounded(theme().radius)
                     .group(action_group.clone())
                     .bg(if selected {

@@ -112,19 +112,6 @@ impl FarcasterApp {
         }
     }
 
-    pub(in crate::app) fn set_folder_collapsed(
-        &mut self,
-        id: u64,
-        collapsed: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let mut next = self.sessions.folders.clone();
-        if !next.set_collapsed(id, collapsed) {
-            return false;
-        }
-        self.save_session_folders(next, cx)
-    }
-
     pub(in crate::app) fn begin_folder_edit(
         &mut self,
         id: Option<u64>,

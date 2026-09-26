@@ -13,7 +13,7 @@ use crate::app::{
         assets::AppIcon,
         primitives::{
             AppIconSize, AppTooltip as _, ButtonTone, ContextMenuTrigger, DeleteButton, app_icon,
-            button, disclosure_button, icon_control,
+            button, icon_control,
         },
         theme::theme,
     },
@@ -32,18 +32,13 @@ pub(super) struct FolderHeader {
     pub(super) id: u64,
     pub(super) name: String,
     pub(super) color: u8,
-    pub(super) collapsed: bool,
 }
 
 #[derive(Clone)]
 pub(super) enum FolderRow {
     Session(Box<ActiveSessionItem>),
     Header(Box<FolderHeader>),
-    Project {
-        path: PathBuf,
-        label: String,
-        collapsed: bool,
-    },
+    Project { path: PathBuf, label: String },
     New,
 }
 
@@ -70,23 +65,17 @@ pub(super) fn folder_rows(
             id: folder.id,
             name: folder.name.clone(),
             color: folder.color,
-            collapsed: folder.collapsed,
         })));
-        if !folder.collapsed {
-            rows.extend(
-                members
-                    .into_iter()
-                    .map(|item| FolderRow::Session(Box::new(item))),
-            );
-        }
+        rows.extend(
+            members
+                .into_iter()
+                .map(|item| FolderRow::Session(Box::new(item))),
+        );
     }
     rows
 }
 
-pub(super) fn project_group_rows(
-    items: Vec<ActiveSessionItem>,
-    collapsed: &std::collections::HashSet<PathBuf>,
-) -> Vec<FolderRow> {
+pub(super) fn project_group_rows(items: Vec<ActiveSessionItem>) -> Vec<FolderRow> {
     let mut projects = std::collections::BTreeMap::<PathBuf, Vec<ActiveSessionItem>>::new();
     for item in items {
         projects
@@ -97,19 +86,12 @@ pub(super) fn project_group_rows(
     let labels = project_labels(projects.keys().cloned().collect());
     let mut rows = Vec::new();
     for ((path, items), label) in projects.into_iter().zip(labels) {
-        let is_collapsed = collapsed.contains(&path);
-        rows.push(FolderRow::Project {
-            path,
-            label,
-            collapsed: is_collapsed,
-        });
-        if !is_collapsed {
-            rows.extend(
-                items
-                    .into_iter()
-                    .map(|item| FolderRow::Session(Box::new(item))),
-            );
-        }
+        rows.push(FolderRow::Project { path, label });
+        rows.extend(
+            items
+                .into_iter()
+                .map(|item| FolderRow::Session(Box::new(item))),
+        );
     }
     rows
 }
@@ -146,39 +128,20 @@ fn project_labels(paths: Vec<PathBuf>) -> Vec<String> {
 pub(super) fn project_header(
     project: PathBuf,
     label: String,
-    collapsed: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let toggle = entity.clone();
     let scope = entity.clone();
-    let toggle_project = project.clone();
     let scope_project = project.clone();
     session_section_header()
         .id(format!("session-project-{}", project.display()))
         .w_full()
-        .pr(theme().space.sm)
+        .px(theme().space.sm)
         .cursor_pointer()
         .on_click(move |_, _, cx| {
             let _ = scope.update(cx, |this, cx| {
                 this.select_project(scope_project.clone(), cx)
             });
         })
-        .child(disclosure_button(
-            format!("project-toggle-{}", project.display()),
-            !collapsed,
-            "project",
-            move |_, cx| {
-                let _ = toggle.update(cx, |this, cx| {
-                    if !this.sessions.collapsed_projects.remove(&toggle_project) {
-                        this.sessions
-                            .collapsed_projects
-                            .insert(toggle_project.clone());
-                    }
-                    this.notify_session_rail(cx);
-                });
-            },
-        ))
-        .child(app_icon(AppIcon::Folder, AppIconSize::Control))
         .child(
             div()
                 .id(format!("project-label-{}", project.display()))
@@ -256,17 +219,11 @@ pub(super) fn folder_header(
     input: Entity<InputState>,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let FolderHeader {
-        id,
-        name,
-        color,
-        collapsed,
-    } = folder;
+    let FolderHeader { id, name, color } = folder;
     let drop_entity = entity.clone();
     let edit_entity = entity.clone();
     let new_entity = entity.clone();
     let context_entity = entity.clone();
-    let toggle_entity = entity.clone();
     let delete_entity = entity.clone();
     let hover_entity = entity.clone();
     let cancel_entity = entity;
@@ -275,7 +232,7 @@ pub(super) fn folder_header(
         .id(format!("session-folder-{id}"))
         .group("session-folder-header")
         .w_full()
-        .pr(theme().space.sm)
+        .px(theme().space.sm)
         .cursor_pointer()
         .hover(|row| row.bg(theme().colors.highlight))
         .on_hover(move |hovered: &bool, _, cx| {
@@ -314,31 +271,15 @@ pub(super) fn folder_header(
             this.clear_session_drop_target(cx);
         });
     });
-    row = row
-        .child(disclosure_button(
-            format!("folder-toggle-{id}"),
-            !collapsed,
-            "folder",
-            move |_, cx| {
-                let _ = toggle_entity.update(cx, |this, cx| {
-                    this.set_folder_collapsed(id, !collapsed, cx);
-                });
-            },
-        ))
-        .child(
-            div()
-                .flex_none()
-                .text_color(palette_color(color))
-                .child(app_icon(AppIcon::Folder, AppIconSize::Control)),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .child(name),
-        );
+    row = row.child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(palette_color(color))
+            .child(name),
+    );
 
     row = row.child(
         DeleteButton::new(format!("delete-folder-{id}"), "Delete folder")

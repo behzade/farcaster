@@ -38,7 +38,7 @@ fn folder_headers_follow_unfiled_sessions_and_keep_empty_folders() {
 }
 
 #[test]
-fn collapsed_folders_hide_their_sessions_but_keep_the_header() {
+fn flat_folders_show_sessions_even_with_a_saved_collapsed_state() {
     let mut folders = SessionFolders {
         folders: vec![SessionFolder {
             id: 1,
@@ -53,12 +53,12 @@ fn collapsed_folders_hide_their_sessions_but_keep_the_header() {
     let rows = folder_rows(vec![draft(3), draft(1)], &folders);
     assert!(matches!(&rows[0], FolderRow::Session(item) if item.app_session_id() == 1));
     let FolderRow::Header(header) = &rows[1] else {
-        panic!("expected the collapsed folder header")
+        panic!("expected the folder header")
     };
-    assert!(header.collapsed);
     assert_eq!(header.color, 3);
 
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 3);
+    assert!(matches!(&rows[2], FolderRow::Session(item) if item.app_session_id() == 3));
 }
 
 #[test]
@@ -208,18 +208,15 @@ fn folder_drop_accepts_session_across_header_width(cx: &mut gpui::TestAppContext
 fn project_groups_include_filed_chats_and_preserve_membership() {
     let mut folders = SessionFolders::default();
     folders.create("Later".into(), Some(3));
-    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)], &Default::default());
+    let rows = project_group_rows(vec![draft(3), draft(2), draft(1)]);
     assert!(
-        matches!(&rows[0], FolderRow::Project { path, collapsed: false, .. } if path == std::path::Path::new("/project"))
+        matches!(&rows[0], FolderRow::Project { path, .. } if path == std::path::Path::new("/project"))
     );
     for (row, id) in rows[1..].iter().zip([3, 2, 1]) {
         assert!(matches!(row, FolderRow::Session(item) if item.app_session_id() == id));
     }
     assert_eq!(rows.len(), 4);
     assert_eq!(folders.folders.len(), 1);
-    let collapsed = std::collections::HashSet::from([PathBuf::from("/project")]);
-    let rows = project_group_rows(vec![draft(3), draft(2)], &collapsed);
-    assert_eq!(rows.len(), 1);
     let flat = folder_rows(vec![draft(3), draft(2)], &folders);
     assert!(matches!(&flat[0], FolderRow::Session(item) if item.app_session_id() == 2));
     assert_eq!(folders.folder_for(3), Some(1));

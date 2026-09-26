@@ -1,39 +1,12 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, CursorStyle, Div, ElementId, InteractiveElement as _, IntoElement as _,
-    MouseButton, ParentElement as _, Role, SharedString, Stateful, StatefulInteractiveElement as _,
-    Styled as _, Window, div,
+    App, CursorStyle, Div, ElementId, InteractiveElement as _, MouseButton, ParentElement as _,
+    Role, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 
-use super::{AppIconSize, activates_button, app_icon, icon_control};
+use super::{AppIconSize, activates_button, app_icon};
 use crate::app::ui::{assets::AppIcon, theme::theme};
-
-pub(crate) fn disclosure_button(
-    id: impl Into<ElementId>,
-    expanded: bool,
-    label: impl Into<SharedString>,
-    on_press: impl Fn(&mut Window, &mut App) + 'static,
-) -> AnyElement {
-    let label = label.into();
-    icon_control(id, disclosure_action_label(expanded, &label))
-        .aria_expanded(expanded)
-        .text_color(theme().colors.muted)
-        .hover(|control| control.bg(theme().colors.highlight))
-        .on_click(move |_, window, cx| {
-            cx.stop_propagation();
-            on_press(window, cx);
-        })
-        .child(app_icon(
-            if expanded {
-                AppIcon::CaretDown
-            } else {
-                AppIcon::CaretRight
-            },
-            AppIconSize::Control,
-        ))
-        .into_any_element()
-}
 
 pub(crate) fn disclosure_detail() -> Div {
     div()

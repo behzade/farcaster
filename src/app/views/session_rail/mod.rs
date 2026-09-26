@@ -301,7 +301,7 @@ impl FarcasterApp {
 
     fn session_folder_rows(&self, items: Vec<ActiveSessionItem>) -> Vec<folders::FolderRow> {
         if self.settings.group_sessions_by_project {
-            folders::project_group_rows(items, &self.sessions.collapsed_projects)
+            folders::project_group_rows(items)
         } else {
             folders::folder_rows(items, &self.sessions.folders)
         }

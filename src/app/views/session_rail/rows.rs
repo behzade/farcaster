@@ -39,7 +39,6 @@ pub(super) struct SessionRowInput {
     pub(super) draggable: bool,
     pub(super) title_editor: Option<Entity<InputState>>,
     pub(super) subagents: usize,
-    pub(super) nested: bool,
     pub(super) compact: bool,
 }
 
@@ -53,7 +52,6 @@ impl SessionRowInput {
             draggable: true,
             title_editor: None,
             subagents: 0,
-            nested: false,
             compact: false,
         }
     }
@@ -93,7 +91,6 @@ impl RenderOnce for SessionRow {
                     draggable,
                     title_editor,
                     subagents,
-                    nested,
                     compact,
                 },
             entity,
@@ -162,7 +159,6 @@ impl RenderOnce for SessionRow {
             .flex()
             .items_stretch()
             .px(theme().space.sm)
-            .when(nested, |row| row.pl(theme().space.md))
             .rounded(theme().radius)
             .group(action_group.clone())
             .bg(if selected {
