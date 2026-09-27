@@ -1,5 +1,7 @@
 use super::*;
 mod layout;
+mod mechanics;
+use mechanics::{model_matches, option_button, option_row, picker_panel, result_list};
 mod worker_model_picker;
 use crate::app::ui::{
     primitives::{ButtonTone, button, dropdown_button},
@@ -166,11 +168,7 @@ impl FarcasterApp {
             self.workspace.runtime_picker.subscription =
                 Some(cx.subscribe(&input, |app, _, event: &InputEvent, cx| {
                     if matches!(event, InputEvent::Change) {
-                        app.workspace.runtime_picker.highlighted = 0;
-                        app.workspace
-                            .runtime_picker
-                            .scroll
-                            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+                        app.workspace.runtime_picker.reset_results();
                     }
                     cx.notify();
                 }));
@@ -235,11 +233,7 @@ impl FarcasterApp {
             .models
             .iter()
             .filter(|model| Some(&model.provider) == provider.as_ref())
-            .filter(|model| {
-                format!("{} {}", model.id, model.name)
-                    .to_lowercase()
-                    .contains(&query)
-            })
+            .filter(|model| model_matches(&model.id, &model.name, &query))
             .cloned()
             .collect::<Vec<_>>();
         let selected = identity
@@ -276,48 +270,17 @@ impl FarcasterApp {
             f32::from(window.viewport_size().height),
             models.len(),
         );
-        div()
-            .id("runtime-picker")
-            .w(px(width))
-            .max_h(px(height))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .bg(theme().colors.panel)
-            .border(theme().border)
-            .border_color(theme().colors.border)
-            .rounded(theme().radius)
-            .capture_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.modifiers.modified()
-                    || !search_focus.contains_focused(window, cx)
-                    || keyboard_models.is_empty()
-                {
-                    return;
-                }
-                let key = event.keystroke.key.as_str();
-                if !matches!(key, "up" | "down" | "enter") {
-                    return;
-                }
-                window.prevent_default();
-                cx.stop_propagation();
-                let _ = keyboard_entity.update(cx, |app, cx| {
-                    let last = keyboard_models.len() - 1;
-                    let current = app.workspace.runtime_picker.highlighted.min(last);
-                    app.workspace.runtime_picker.highlighted = match key {
-                        "up" => current.saturating_sub(1),
-                        "down" => (current + 1).min(last),
-                        _ => current,
-                    };
-                    if key == "enter" {
-                        app.select_model_from_ui(&keyboard_models[current], window, cx);
-                    }
-                    app.workspace.runtime_picker.scroll.scroll_to_item(
-                        app.workspace.runtime_picker.highlighted,
-                        gpui::ScrollStrategy::Center,
-                    );
-                    cx.notify();
-                });
-            })
+        let panel = picker_panel(
+            width,
+            height,
+            search_focus,
+            keyboard_models.len(),
+            keyboard_entity,
+            move |app, index, window, cx| {
+                app.select_model_from_ui(&keyboard_models[index], window, cx);
+            },
+        );
+        panel
             .child(
                 div()
                     .flex_none()
@@ -346,19 +309,7 @@ impl FarcasterApp {
                                         let _ = entity.update(cx, |app, cx| {
                                             app.workspace.runtime_picker.provider =
                                                 Some(provider.clone());
-                                            app.workspace.runtime_picker.highlighted = 0;
-                                            app.workspace
-                                                .runtime_picker
-                                                .scroll
-                                                .scroll_to_item(0, gpui::ScrollStrategy::Top);
-                                            if let Some(search) =
-                                                &app.workspace.runtime_picker.search
-                                            {
-                                                search.update(cx, |input, cx| {
-                                                    input.set_value("", window, cx)
-                                                });
-                                            }
-                                            cx.notify();
+                                            app.reset_model_picker_search(window, cx);
                                         });
                                     },
                                 ));
@@ -374,72 +325,47 @@ impl FarcasterApp {
                     .pb(theme().space.sm)
                     .child(Input::new(search)),
             )
-            .child(if models.is_empty() {
-                div()
-                    .p(theme().space.sm)
-                    .text_color(theme().colors.muted)
-                    .child(feedback)
-                    .into_any_element()
-            } else {
-                let rows_entity = entity.clone();
-                gpui::uniform_list("runtime-model-results", models.len(), move |range, _, _| {
-                    range
-                        .map(|index| {
-                            let model = models[index].clone();
-                            let current = selected_id.as_ref().is_some_and(|(provider, id)| {
-                                *id == model.id && *provider == model.provider
-                            });
-                            let entity = rows_entity.clone();
-                            let label =
-                                format!("{}{}", if current { "✓ " } else { "" }, model.name);
-                            model_result_button(
-                                ("runtime-model", index),
-                                label,
-                                index == highlighted,
-                                move |window, cx| {
-                                    let _ = entity.update(cx, |app, cx| {
-                                        app.select_model_from_ui(&model, window, cx)
-                                    });
-                                },
-                            )
-                            .into_any_element()
-                        })
-                        .collect()
-                })
-                .h(px(list_height))
-                .flex_none()
-                .track_scroll(&self.workspace.runtime_picker.scroll)
-                .into_any_element()
-            })
+            .child(result_list(
+                "runtime-model-results",
+                models.len(),
+                list_height,
+                &self.workspace.runtime_picker.scroll,
+                feedback,
+                {
+                    let rows_entity = entity.clone();
+                    move |index| {
+                        let model = models[index].clone();
+                        let current = selected_id.as_ref().is_some_and(|(provider, id)| {
+                            *id == model.id && *provider == model.provider
+                        });
+                        let entity = rows_entity.clone();
+                        let label = format!("{}{}", if current { "✓ " } else { "" }, model.name);
+                        model_result_button(
+                            ("runtime-model", index),
+                            label,
+                            index == highlighted,
+                            move |window, cx| {
+                                let _ = entity.update(cx, |app, cx| {
+                                    app.select_model_from_ui(&model, window, cx)
+                                });
+                            },
+                        )
+                        .into_any_element()
+                    }
+                },
+            ))
             .when(levels.iter().any(Option::is_some), |panel| {
                 panel.child(
-                    div()
+                    option_row(crate::agents::effort_label(self.snapshot.harness))
                         .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(theme().space.sm)
-                        .p(theme().space.sm)
-                        .border_t(theme().border)
-                        .border_color(theme().colors.border)
-                        .child(
-                            div()
-                                .text_color(theme().colors.muted)
-                                .child(crate::agents::effort_label(self.snapshot.harness)),
-                        )
                         .child(div().flex().flex_wrap().gap(theme().space.xs).children(
                             levels.iter().cloned().enumerate().map(|(index, level)| {
                                 let entity = entity.clone();
                                 let current = identity.effort == level.as_deref();
-                                button(
+                                option_button(
                                     ("runtime-effort", index),
                                     level.clone().unwrap_or_else(|| "Default".into()),
-                                    if current {
-                                        ButtonTone::Accent
-                                    } else {
-                                        ButtonTone::Quiet
-                                    },
-                                    true,
+                                    current,
                                     move |_, cx| {
                                         let _ = entity.update(cx, |app, cx| {
                                             app.set_thinking_level(level.clone(), cx)
@@ -451,39 +377,24 @@ impl FarcasterApp {
                 )
             })
             .when(!service_tiers.is_empty(), |panel| {
-                panel.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(theme().space.sm)
-                        .p(theme().space.sm)
-                        .border_t(theme().border)
-                        .border_color(theme().colors.border)
-                        .child(div().text_color(theme().colors.muted).child("Service tier"))
-                        .child(div().flex().flex_wrap().gap(theme().space.xs).children(
-                            service_tiers.iter().enumerate().map(|(index, tier)| {
-                                let entity = entity.clone();
-                                let tier = tier.clone();
-                                button(
-                                    ("runtime-service-tier", index),
-                                    tier.clone(),
-                                    if selected_tier == Some(tier.as_str()) {
-                                        ButtonTone::Accent
-                                    } else {
-                                        ButtonTone::Quiet
-                                    },
-                                    true,
-                                    move |_, cx| {
-                                        let _ = entity.update(cx, |app, cx| {
-                                            app.set_service_tier(tier.clone(), cx)
-                                        });
-                                    },
-                                )
-                            }),
-                        )),
-                )
+                panel.child(option_row("Service tier").flex_none().child(
+                    div().flex().flex_wrap().gap(theme().space.xs).children(
+                        service_tiers.iter().enumerate().map(|(index, tier)| {
+                            let entity = entity.clone();
+                            let tier = tier.clone();
+                            option_button(
+                                ("runtime-service-tier", index),
+                                tier.clone(),
+                                selected_tier == Some(tier.as_str()),
+                                move |_, cx| {
+                                    let _ = entity.update(cx, |app, cx| {
+                                        app.set_service_tier(tier.clone(), cx)
+                                    });
+                                },
+                            )
+                        }),
+                    ),
+                ))
             })
             .into_any_element()
     }

@@ -9,15 +9,7 @@ fn worker_option_row(
     entity: gpui::WeakEntity<FarcasterApp>,
     set: fn(&mut WorkerModelPicker, Option<String>),
 ) -> gpui::AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(theme().space.sm)
-        .p(theme().space.sm)
-        .border_t(theme().border)
-        .border_color(theme().colors.border)
-        .child(div().text_color(theme().colors.muted).child(label))
+    option_row(label)
         .child(
             div().flex().flex_wrap().gap(theme().space.xs).children(
                 std::iter::once(None)
@@ -26,15 +18,10 @@ fn worker_option_row(
                     .map(|(index, option)| {
                         let entity = entity.clone();
                         let chosen = selected == option.as_deref();
-                        button(
+                        option_button(
                             (id, index),
                             option.clone().unwrap_or_else(|| "Default".into()),
-                            if chosen {
-                                ButtonTone::Accent
-                            } else {
-                                ButtonTone::Quiet
-                            },
-                            true,
+                            chosen,
                             move |_, cx| {
                                 let _ = entity.update(cx, |app, cx| {
                                     if let Some(worker) =
@@ -50,6 +37,19 @@ fn worker_option_row(
             ),
         )
         .into_any_element()
+}
+
+impl WorkerModelPicker {
+    fn clear_selection(&mut self) {
+        self.selected = None;
+        self.effort = None;
+        self.service_tier = None;
+    }
+
+    fn select(&mut self, index: usize) {
+        self.clear_selection();
+        self.selected = Some(index);
+    }
 }
 
 impl FarcasterApp {
@@ -70,11 +70,9 @@ impl FarcasterApp {
         if let Some(worker) = self.workspace.runtime_picker.worker.as_mut() {
             worker.harness = harness;
             worker.provider.clone_from(&first.provider);
-            worker.selected = None;
-            worker.effort = None;
-            worker.service_tier = None;
+            worker.clear_selection();
         }
-        self.reset_worker_model_search(window, cx);
+        self.reset_model_picker_search(window, cx);
     }
 
     fn choose_worker_picker_provider(
@@ -85,23 +83,9 @@ impl FarcasterApp {
     ) {
         if let Some(worker) = self.workspace.runtime_picker.worker.as_mut() {
             worker.provider = provider;
-            worker.selected = None;
-            worker.effort = None;
-            worker.service_tier = None;
+            worker.clear_selection();
         }
-        self.reset_worker_model_search(window, cx);
-    }
-
-    fn reset_worker_model_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace.runtime_picker.highlighted = 0;
-        self.workspace
-            .runtime_picker
-            .scroll
-            .scroll_to_item(0, gpui::ScrollStrategy::Top);
-        if let Some(search) = &self.workspace.runtime_picker.search {
-            search.update(cx, |input, cx| input.set_value("", window, cx));
-        }
-        cx.notify();
+        self.reset_model_picker_search(window, cx);
     }
 
     fn submit_worker_model_choice(
@@ -184,11 +168,7 @@ impl FarcasterApp {
             .filter(|(_, choice)| {
                 choice.harness == worker.harness && choice.provider == worker.provider
             })
-            .filter(|(_, choice)| {
-                format!("{} {}", choice.id, choice.name)
-                    .to_lowercase()
-                    .contains(&query)
-            })
+            .filter(|(_, choice)| model_matches(&choice.id, &choice.name, &query))
             .map(|(index, choice)| (index, choice.clone()))
             .collect::<Vec<(usize, WorkerModelChoice)>>();
         let selected = worker.selected.and_then(|index| choices.get(index));
@@ -208,52 +188,19 @@ impl FarcasterApp {
         let keyboard_entity = entity.clone();
         let harness_entity = entity.clone();
         let provider_entity = entity.clone();
-        div()
-            .id("runtime-picker")
-            .w(px(width))
-            .max_h(px(height))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .bg(theme().colors.panel)
-            .border(theme().border)
-            .border_color(theme().colors.border)
-            .rounded(theme().radius)
-            .capture_key_down(move |event: &gpui::KeyDownEvent, window, cx| {
-                if event.keystroke.modifiers.modified()
-                    || !focus.contains_focused(window, cx)
-                    || keyboard_models.is_empty()
-                {
-                    return;
+        let panel = picker_panel(
+            width,
+            height,
+            focus,
+            keyboard_models.len(),
+            keyboard_entity,
+            move |app, index, _, _| {
+                if let Some(worker) = app.workspace.runtime_picker.worker.as_mut() {
+                    worker.select(keyboard_models[index].0);
                 }
-                let key = event.keystroke.key.as_str();
-                if !matches!(key, "up" | "down" | "enter") {
-                    return;
-                }
-                window.prevent_default();
-                cx.stop_propagation();
-                let _ = keyboard_entity.update(cx, |app, cx| {
-                    let last = keyboard_models.len() - 1;
-                    let current = app.workspace.runtime_picker.highlighted.min(last);
-                    app.workspace.runtime_picker.highlighted = match key {
-                        "up" => current.saturating_sub(1),
-                        "down" => (current + 1).min(last),
-                        _ => current,
-                    };
-                    if key == "enter"
-                        && let Some(worker) = app.workspace.runtime_picker.worker.as_mut()
-                    {
-                        worker.selected = Some(keyboard_models[current].0);
-                        worker.effort = None;
-                        worker.service_tier = None;
-                    }
-                    app.workspace.runtime_picker.scroll.scroll_to_item(
-                        app.workspace.runtime_picker.highlighted,
-                        gpui::ScrollStrategy::Center,
-                    );
-                    cx.notify();
-                });
-            })
+            },
+        );
+        panel
             .child(
                 div()
                     .flex()
@@ -337,54 +284,45 @@ impl FarcasterApp {
                     .pb(theme().space.sm)
                     .child(Input::new(search)),
             )
-            .child(if models.is_empty() {
-                div()
-                    .p(theme().space.sm)
-                    .text_color(theme().colors.muted)
-                    .child("No matching models.")
-                    .into_any_element()
-            } else {
-                let rows_entity = entity.clone();
-                gpui::uniform_list("worker-model-results", models.len(), move |range, _, _| {
-                    range
-                        .map(|row| {
-                            let (index, choice) = models[row].clone();
-                            let entity = rows_entity.clone();
-                            let label = format!(
-                                "{}{}",
-                                if selected_index == Some(index) {
-                                    "✓ "
-                                } else {
-                                    ""
-                                },
-                                choice.name
-                            );
-                            model_result_button(
-                                ("worker-model", row),
-                                label,
-                                row == highlighted,
-                                move |_, cx| {
-                                    let _ = entity.update(cx, |app, cx| {
-                                        if let Some(worker) =
-                                            app.workspace.runtime_picker.worker.as_mut()
-                                        {
-                                            worker.selected = Some(index);
-                                            worker.effort = None;
-                                            worker.service_tier = None;
-                                        }
-                                        cx.notify();
-                                    });
-                                },
-                            )
-                            .into_any_element()
-                        })
-                        .collect()
-                })
-                .h(px(list_height))
-                .flex_none()
-                .track_scroll(&self.workspace.runtime_picker.scroll)
-                .into_any_element()
-            })
+            .child(result_list(
+                "worker-model-results",
+                models.len(),
+                list_height,
+                &self.workspace.runtime_picker.scroll,
+                "No matching models.".to_owned(),
+                {
+                    let rows_entity = entity.clone();
+                    move |row| {
+                        let (index, choice) = models[row].clone();
+                        let entity = rows_entity.clone();
+                        let label = format!(
+                            "{}{}",
+                            if selected_index == Some(index) {
+                                "✓ "
+                            } else {
+                                ""
+                            },
+                            choice.name
+                        );
+                        model_result_button(
+                            ("worker-model", row),
+                            label,
+                            row == highlighted,
+                            move |_, cx| {
+                                let _ = entity.update(cx, |app, cx| {
+                                    if let Some(worker) =
+                                        app.workspace.runtime_picker.worker.as_mut()
+                                    {
+                                        worker.select(index);
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        )
+                        .into_any_element()
+                    }
+                },
+            ))
             .when_some(
                 selected.filter(|choice| !choice.efforts.is_empty()),
                 |panel, choice| {
