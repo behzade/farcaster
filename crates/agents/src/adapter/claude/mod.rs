@@ -52,6 +52,10 @@ pub(super) fn descriptor() -> crate::contract::AgentBackendDescriptor {
                 model_required_access_modes: &[Auto],
                 models: Available,
                 select_model: Available,
+                service_tier: crate::ServiceTierPolicy {
+                    application: crate::ServiceTierApplication::OnLaunch,
+                    fallback_tiers: &*super::backend::STANDARD_SERVICE_TIER,
+                },
                 reasoning_effort: Available,
                 effort_label: "Effort",
                 reset_reasoning_effort: Unsupported,

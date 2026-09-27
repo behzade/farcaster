@@ -407,13 +407,22 @@ fn available_access_modes_use_fresh_catalog_support_for_selected_model() {
 }
 
 #[test]
-fn native_drafts_keep_standard_visible_without_a_fast_default_model() {
-    for harness in [Backend::Codex, Backend::Claude] {
+fn drafts_use_backend_fallback_tiers_without_a_fast_default_model() {
+    for harness in Backend::ALL {
         let draft = RuntimeSnapshot {
             harness: Some(harness),
             models: vec![model("plain", false, None)],
             ..RuntimeSnapshot::default()
         };
-        assert_eq!(draft.available_service_tiers(), ["standard"]);
+        let expected: &[&str] = match harness {
+            Backend::Codex | Backend::Claude => &["standard"],
+            Backend::Pi | Backend::Cursor | Backend::OpenCode | Backend::Antigravity => &[],
+        };
+        assert_eq!(draft.available_service_tiers(), expected, "{harness}");
     }
+    assert!(
+        RuntimeSnapshot::default()
+            .available_service_tiers()
+            .is_empty()
+    );
 }

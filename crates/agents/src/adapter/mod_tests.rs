@@ -15,6 +15,24 @@ fn backend_display_names_come_from_descriptors() {
 }
 
 #[test]
+fn service_tier_policies_cover_every_backend_and_no_selection() {
+    use crate::ServiceTierApplication::{Live, OnLaunch};
+
+    for backend in Backend::ALL {
+        let (application, fallback): (_, &[&str]) = match backend {
+            Backend::Codex | Backend::Claude => (OnLaunch, &["standard"]),
+            Backend::Pi | Backend::Cursor | Backend::OpenCode | Backend::Antigravity => (Live, &[]),
+        };
+        let policy = service_tier_policy(backend);
+        assert_eq!(policy.application, application, "{backend}");
+        assert_eq!(policy.fallback_tiers, fallback, "{backend}");
+    }
+    let policy = service_tier_policy(None);
+    assert_eq!(policy.application, Live);
+    assert!(policy.fallback_tiers.is_empty());
+}
+
+#[test]
 fn pi_startup_skips_unsupported_mode_query() {
     assert!(!supports_startup_command(
         Some(Backend::Pi),

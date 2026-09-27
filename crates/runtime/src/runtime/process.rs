@@ -289,10 +289,9 @@ impl RuntimeOwner {
         self.access_mode_changes.applying = false;
         match process {
             Ok(process) => {
-                if matches!(
-                    self.harness,
-                    Some(agents::Backend::Codex | agents::Backend::Claude)
-                ) && let Some(tier) = launch_tier.as_deref()
+                if agents::service_tier_policy(self.harness).application
+                    == agents::ServiceTierApplication::OnLaunch
+                    && let Some(tier) = launch_tier.as_deref()
                 {
                     self.pending_session_controls.launched_service_tier(tier);
                 }

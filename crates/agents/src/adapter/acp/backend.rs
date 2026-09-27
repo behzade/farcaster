@@ -41,6 +41,7 @@ pub fn descriptor(profile: &AcpProfile, replays_history: bool) -> AgentBackendDe
                 model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,
+                service_tier: crate::ServiceTierPolicy::default(),
                 reasoning_effort: Available,
                 effort_label: "Effort",
                 reset_reasoning_effort: Unsupported,

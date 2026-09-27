@@ -89,6 +89,7 @@ pub fn descriptor() -> AgentBackendDescriptor {
                 model_required_access_modes: &[],
                 models: Available,
                 select_model: Available,
+                service_tier: crate::ServiceTierPolicy::default(),
                 reasoning_effort: Available,
                 effort_label: "Variant",
                 reset_reasoning_effort: Available,

@@ -445,7 +445,8 @@ impl RuntimeOwner {
             );
             return;
         }
-        if matches!(self.harness, Some(Backend::Codex | Backend::Claude))
+        if agents::service_tier_policy(self.harness).application
+            == agents::ServiceTierApplication::OnLaunch
             && (self.process.is_some() || self.snapshot.selected_session.is_some())
         {
             if self.process.is_some() && !self.access_mode_change_ready() {

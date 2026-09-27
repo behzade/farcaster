@@ -21,7 +21,7 @@ pub use adapter::{
     effort_label, external_session_identity, generate_session_title, load_configuration_catalog,
     load_session_history, load_session_history_for_profile, move_session_family,
     move_session_family_with_config, project_trust, project_trust_description, rename_session,
-    saved_project_trust, spawn_session, supports_auto_title_generation,
+    saved_project_trust, service_tier_policy, spawn_session, supports_auto_title_generation,
     supports_individual_queue_cancellation, supports_reasoning_effort, supports_reasoning_reset,
     supports_sandbox_discovery, supports_session_fork, supports_session_move,
     supports_startup_command, supports_steering, validate_launch, validate_session_move,
@@ -33,12 +33,12 @@ pub use contract::extensions;
 pub use contract::{
     AccountUsage, AccountUsageWindow, Backend, ConfigurationCatalog, DiscoveredHistory,
     DiscoveredSession, DiscoveredUsage, HarnessAccessMode, PeerMessage, PromptOutcome,
-    PromptPresentation, QueuedPrompt, SandboxState, SessionActivityKind, SessionCommand,
-    SessionContextUsage, SessionEvent, SessionGoal, SessionHistory, SessionLaunch, SessionMetadata,
-    SessionOperation, SessionResponse, SessionResponseErrorKind, SessionResponsePayload,
-    SessionStart, SessionTransport, SessionUsage, SessionUsageTokens, StartWorker, WorkerContext,
-    WorkerInput, WorkerInputResponse, WorkerSnapshot, effort_rank, model_efforts,
-    valid_worker_name, validate_child_access,
+    PromptPresentation, QueuedPrompt, SandboxState, ServiceTierApplication, ServiceTierPolicy,
+    SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
+    SessionHistory, SessionLaunch, SessionMetadata, SessionOperation, SessionResponse,
+    SessionResponseErrorKind, SessionResponsePayload, SessionStart, SessionTransport, SessionUsage,
+    SessionUsageTokens, StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
+    WorkerSnapshot, effort_rank, model_efforts, valid_worker_name, validate_child_access,
 };
 
 #[derive(Clone, Default)]

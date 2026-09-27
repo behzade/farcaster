@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use farcaster_projects::{AppliedTrust, StartupTrust, TrustChoice};
@@ -16,6 +16,9 @@ use crate::{
     SessionLaunch, SessionStart, SessionTransport, WorkerSessionFactory,
     contract::AgentBackendDescriptor,
 };
+
+pub(super) static STANDARD_SERVICE_TIER: LazyLock<[String; 1]> =
+    LazyLock::new(|| ["standard".to_owned()]);
 
 pub(super) trait BackendAdapter: Sync {
     fn descriptor(&self) -> AgentBackendDescriptor;

@@ -1,12 +1,10 @@
 use crate::agents::Backend;
-use std::{collections::HashMap, path::PathBuf, sync::LazyLock};
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::agents::effort_rank;
 use crate::protocol::Model;
 
 use super::{ConfigurationStatus, RuntimeSnapshot};
-
-static STANDARD_SERVICE_TIER: LazyLock<Vec<String>> = LazyLock::new(|| vec!["standard".to_owned()]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionIdentity<'a> {
@@ -155,11 +153,7 @@ impl RuntimeSnapshot {
     }
 
     fn fallback_service_tiers(&self) -> &[String] {
-        if matches!(self.harness, Some(Backend::Codex | Backend::Claude)) {
-            &STANDARD_SERVICE_TIER
-        } else {
-            &[]
-        }
+        crate::agents::service_tier_policy(self.harness).fallback_tiers
     }
 
     pub fn effort_choices(&self, model: &Model) -> Vec<Option<String>> {

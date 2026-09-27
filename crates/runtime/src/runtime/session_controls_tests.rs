@@ -340,6 +340,65 @@ fn launch_only_tier_change_waits_for_an_active_reply() {
 }
 
 #[test]
+fn live_tier_changes_send_without_restarting_even_during_a_reply() {
+    for backend in [
+        Backend::Pi,
+        Backend::Cursor,
+        Backend::OpenCode,
+        Backend::Antigravity,
+    ] {
+        let (mut owner, _) =
+            super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+        owner.harness = Some(backend);
+        owner.snapshot.harness = Some(backend);
+        owner.snapshot.models = vec![
+            serde_json::from_value(serde_json::json!({
+                "id":"model", "name":"Model", "provider":backend.as_str(),
+                "serviceTiers":["standard", "priority"]
+            }))
+            .expect("decode model"),
+        ];
+        owner.active_session = Some("/session".into());
+        owner.process = Some(Box::new(AckTransport));
+        conversation_mut(owner.active_snapshot_mut()).running = true;
+        let generation = owner.process_generation;
+
+        owner.set_service_tier("priority".into());
+
+        assert_eq!(owner.process_generation, generation, "{backend}");
+        assert_eq!(
+            owner.pending_session_controls.sent_tier.as_deref(),
+            Some("priority"),
+            "{backend}"
+        );
+        assert!(
+            owner.pending_session_controls.service_tier.is_none(),
+            "{backend}"
+        );
+    }
+}
+
+#[test]
+fn unavailable_tier_never_sends_or_restarts() {
+    for backend in Backend::ALL {
+        let (mut owner, _) =
+            super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));
+        owner.harness = Some(backend);
+        owner.snapshot.harness = Some(backend);
+        owner.process = Some(Box::new(IdleTransport));
+        owner.active_session = Some("/session".into());
+
+        owner.set_service_tier("unsupported".into());
+
+        assert!(owner.process.is_some(), "{backend}");
+        assert!(
+            !owner.pending_session_controls.service_tier_pending(),
+            "{backend}"
+        );
+    }
+}
+
+#[test]
 fn codex_draft_can_choose_tier_before_choosing_a_model() {
     let (mut owner, _) =
         super::super::tests::owner_without_process(std::path::PathBuf::from("/project"));

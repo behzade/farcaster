@@ -442,6 +442,22 @@ pub struct TurnCapabilities {
     pub queue: CapabilitySupport,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ServiceTierApplication {
+    /// Send a live command when the selected model or session offers the tier.
+    #[default]
+    Live,
+    /// Apply at launch, restarting an existing session when needed.
+    OnLaunch,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ServiceTierPolicy {
+    pub application: ServiceTierApplication,
+    /// Choices used only when neither the model nor the session declares tiers.
+    pub fallback_tiers: &'static [String],
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigurationCapabilities {
     /// Modes implemented by the adapter.
@@ -450,6 +466,7 @@ pub struct ConfigurationCapabilities {
     pub model_required_access_modes: &'static [HarnessAccessMode],
     pub models: CapabilitySupport,
     pub select_model: CapabilitySupport,
+    pub service_tier: ServiceTierPolicy,
     pub reasoning_effort: CapabilitySupport,
     pub effort_label: &'static str,
     pub reset_reasoning_effort: CapabilitySupport,

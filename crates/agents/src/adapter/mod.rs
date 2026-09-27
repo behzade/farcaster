@@ -113,6 +113,16 @@ pub fn effort_label(harness: impl Into<Option<Backend>>) -> &'static str {
         .effort_label
 }
 
+pub fn service_tier_policy(harness: impl Into<Option<Backend>>) -> crate::ServiceTierPolicy {
+    harness.into().map_or_else(Default::default, |harness| {
+        for_backend(harness)
+            .descriptor()
+            .capabilities
+            .configuration
+            .service_tier
+    })
+}
+
 pub fn supports_session_fork(harness: impl Into<Option<Backend>>) -> bool {
     let Some(harness) = harness.into() else {
         return false;
