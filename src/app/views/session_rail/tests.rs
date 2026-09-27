@@ -298,7 +298,7 @@ fn the_archive_panel_opens_at_five_rows_and_stops_at_the_room_it_was_given() {
     let room = theme().size(700.0);
     let bounds = panel_bounds(room, rail_panel_slot(RailPanel::Archived, 100, false));
     let header = f32::from(theme().controls.icon_button);
-    let row = f32::from(super::session_row_height(false));
+    let row = f32::from(super::session_row_height(true));
     assert_eq!(f32::from(bounds.height), header + row * 5.0);
     assert_eq!(f32::from(bounds.min_height), header + row);
     assert_eq!(bounds.max_height, room);

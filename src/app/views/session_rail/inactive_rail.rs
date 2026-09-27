@@ -87,7 +87,7 @@ impl FarcasterApp {
                         status,
                         archived: true,
                         drop_position: None,
-                        compact: false,
+                        compact: true,
                         shortcut: None,
                     },
                     row_entity.clone(),
@@ -108,6 +108,7 @@ impl FarcasterApp {
                 SessionRow::new(
                     item,
                     SessionRowInput {
+                        compact: true,
                         title_editor: editing.then(|| title_input.clone()),
                         subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
                         ..SessionRowInput::standard(selected, badge)
