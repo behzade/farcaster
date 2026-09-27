@@ -5,8 +5,8 @@
 //! moved on is never served from what it used to be. A live session is written
 //! as it runs, so its stamp stops matching and its stale rows are never shown.
 
+use super::remembered::{Remembered, Stamp};
 use super::*;
-use farcaster_runtime::runtime::remembered::{Remembered, Stamp};
 use std::sync::{Mutex, MutexGuard};
 
 const LIMIT: usize = 8;

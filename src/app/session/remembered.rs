@@ -18,13 +18,13 @@ use std::{
 /// What a file looked like when its value was read. A source that moved on
 /// must not be served from memory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Stamp {
+pub(super) struct Stamp {
     modified: SystemTime,
     len: u64,
 }
 
 impl Stamp {
-    pub fn of(path: &Path) -> Option<Self> {
+    pub(super) fn of(path: &Path) -> Option<Self> {
         if !path.is_absolute() {
             return None;
         }
@@ -39,13 +39,13 @@ impl Stamp {
     }
 }
 
-pub struct Remembered<T> {
+pub(super) struct Remembered<T> {
     entries: Vec<(PathBuf, Stamp, T)>,
     limit: usize,
 }
 
 impl<T: Clone> Remembered<T> {
-    pub const fn new(limit: usize) -> Self {
+    pub(super) const fn new(limit: usize) -> Self {
         Self {
             entries: Vec::new(),
             limit,
@@ -53,7 +53,7 @@ impl<T: Clone> Remembered<T> {
     }
 
     /// The value remembered for `key`, if `key` still carries `stamp`.
-    pub fn recall(&mut self, key: &Path, stamp: Option<&Stamp>) -> Option<T> {
+    pub(super) fn recall(&mut self, key: &Path, stamp: Option<&Stamp>) -> Option<T> {
         let index = self.index(key, stamp)?;
         let entry = self.entries.remove(index);
         let value = entry.2.clone();
@@ -61,11 +61,12 @@ impl<T: Clone> Remembered<T> {
         Some(value)
     }
 
-    pub fn contains(&self, key: &Path, stamp: Option<&Stamp>) -> bool {
+    #[cfg(test)]
+    pub(super) fn contains(&self, key: &Path, stamp: Option<&Stamp>) -> bool {
         self.index(key, stamp).is_some()
     }
 
-    pub fn remember(&mut self, key: PathBuf, stamp: Option<Stamp>, value: &T) {
+    pub(super) fn remember(&mut self, key: PathBuf, stamp: Option<Stamp>, value: &T) {
         self.entries.retain(|(remembered, _, _)| remembered != &key);
         let Some(stamp) = stamp else {
             return;
@@ -78,7 +79,7 @@ impl<T: Clone> Remembered<T> {
 
     /// A source that disappeared stops matching its stamp on its own, so this
     /// is only for a caller that must drop an entry it is still holding.
-    pub fn forget(&mut self, key: &Path) {
+    pub(super) fn forget(&mut self, key: &Path) {
         self.entries.retain(|(remembered, _, _)| remembered != key);
     }
 
