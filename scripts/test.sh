@@ -11,4 +11,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 export FARCASTER_DATA_DIR="$run_data_dir"
+# Runtime is a separate package, so the root package's tests do not include it.
+# Explicit arguments retain the caller's focused target selection.
+if [ "$#" -eq 0 ]; then
+    cargo test --manifest-path crates/runtime/Cargo.toml
+fi
 cargo test "$@"

@@ -8,18 +8,19 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-"$repo_root/target"}
 
-# Adapter tests moved into the agents crate. Run both binaries by default;
-# SUITE=agents allows focused input-control checks without building GPUI tests.
+# Each package owns its tests. Focused suites avoid building the GPUI target.
 case ${SUITE:-all} in
     all)
         status=0
         SUITE=agents sh "$0" || status=1
+        SUITE=runtime sh "$0" || status=1
         SUITE=app sh "$0" || status=1
         exit "$status"
         ;;
     agents) set -- --manifest-path crates/agents/Cargo.toml --lib ; test_target=farcaster_agents ;;
+    runtime) set -- --manifest-path crates/runtime/Cargo.toml --lib ; test_target=farcaster_runtime ;;
     app) set -- --bin farcaster ; test_target=farcaster ;;
-    *) echo "Unknown SUITE: $SUITE (expected all, agents, app)" >&2; exit 2 ;;
+    *) echo "Unknown SUITE: $SUITE (expected all, agents, runtime, app)" >&2; exit 2 ;;
 esac
 
 case ${HARNESS:-} in
