@@ -560,11 +560,16 @@ impl WorkerSessionTransport {
                 self.input_delivered(Some(&submission_id), mode, &message, json!(content));
                 return;
             }
-            WorkerActivity::PeerInputDelivered { message } => json!({
-                "type": "peer_message",
-                "from": message.from,
-                "message": message.message,
-            }),
+            WorkerActivity::PeerInputDelivered { message } => {
+                // Later deltas must start below this reply instead of extending
+                // the assistant block above it.
+                self.finish_assistant_message(None);
+                json!({
+                    "type": "peer_message",
+                    "from": message.from,
+                    "message": message.message,
+                })
+            }
             WorkerActivity::TurnStarted => json!({"type": "turn_start"}),
             WorkerActivity::TextDelta {
                 content_index,

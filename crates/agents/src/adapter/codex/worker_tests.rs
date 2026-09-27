@@ -2846,7 +2846,45 @@ fn committed_original_steer_before_rpc_reply_is_never_replayed() {
 }
 
 #[test]
-fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
+fn peer_reply_to_idle_codex_waits_for_native_delivery() {
+    use std::io::BufRead as _;
+
+    let (mut session, mut sent) = writable_test_session();
+    let peer = PeerMessage {
+        from: "reviewer".into(),
+        message: "hi".into(),
+    };
+    session.peer_messages.push_back(peer.clone());
+    assert!(session.poll().is_none(), "sending is not delivery");
+    let mut line = String::new();
+    sent.read_line(&mut line).expect("peer prompt request");
+    let request: Value = serde_json::from_str(&line).expect("decode request");
+    assert_eq!(request["method"], "turn/start");
+    for method in ["item/started", "item/completed"] {
+        session
+            .queued_inbound
+            .push_back(Ok(CodexInbound::Notification {
+                method: method.into(),
+                params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                    "id":"peer-input-1", "type":"userMessage",
+                    "clientId":request["params"]["clientUserMessageId"],
+                    "content":[{"type":"text","text":peer.prompt()}]
+                }}),
+            }));
+    }
+    assert!(matches!(
+        session.poll(),
+        Some(WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message }))
+            if message.from == peer.from && message.message == peer.message
+    ));
+    assert!(
+        session.poll().is_none(),
+        "completion must not repeat delivery"
+    );
+}
+
+#[test]
+fn peer_steer_during_codex_stream_preserves_arrival_order() {
     use crate::adapter::main_session::{MainSessionMetadata, WorkerSessionTransport};
     use crate::conversation::{ConversationState, TranscriptKind};
     use crate::{SessionEvent, SessionTransport, WorkerActivityState};
@@ -2866,10 +2904,12 @@ fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
             delta: "hello ".into(),
         }),
     ]);
-    session.peer_messages.push_back(crate::PeerMessage {
+    let peer = PeerMessage {
         from: "reviewer".into(),
         message: "keep going".into(),
-    });
+    };
+    // Equal text from distinct deliveries must remain separate replies.
+    session.peer_messages.extend([peer.clone(), peer.clone()]);
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
         Backend::Codex,
@@ -2879,6 +2919,17 @@ fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
         None,
     )
     .expect("Codex transport");
+    for id in 1..=2 {
+        incoming
+            .send(Ok(CodexInbound::Notification {
+                method: "item/started".into(),
+                params: json!({"threadId":"thread-1","turnId":"turn-1","item":{
+                    "type":"userMessage","clientId":format!("farcaster-steer-{id}"),
+                    "content":[{"type":"text","text":peer.prompt()}]
+                }}),
+            }))
+            .expect("peer delivery");
+    }
     incoming
         .send(Ok(CodexInbound::Notification {
             method: "item/agentMessage/delta".into(),
@@ -2902,10 +2953,14 @@ fn peer_steer_during_codex_stream_does_not_split_visible_assistant_text() {
         conversation
             .items
             .iter()
-            .filter(|item| item.kind == TranscriptKind::Assistant)
-            .map(|item| item.complete_text())
+            .map(|item| (item.kind, item.complete_text()))
             .collect::<Vec<_>>(),
-        ["hello world"]
+        [
+            (TranscriptKind::Assistant, "hello ".into()),
+            (TranscriptKind::PeerMessage, "keep going".into()),
+            (TranscriptKind::PeerMessage, "keep going".into()),
+            (TranscriptKind::Assistant, "world".into()),
+        ]
     );
 }
 

@@ -2187,7 +2187,9 @@ fn cancellation_after_delivery_unknown_does_not_emit_a_second_terminal_response(
 }
 
 #[test]
-fn peer_delivery_is_a_first_class_activity_instead_of_a_user_message() {
+fn peer_delivery_preserves_order_when_final_output_supplies_the_remaining_text() {
+    use crate::conversation::{ConversationState, TranscriptKind};
+
     let mut transport = WorkerSessionTransport::new(
         std::path::Path::new("/locators"),
         Backend::Codex,
@@ -2197,21 +2199,57 @@ fn peer_delivery_is_a_first_class_activity_instead_of_a_user_message() {
         None,
     )
     .expect("transport");
-
-    transport.enqueue_worker_event(WorkerEvent::Activity(WorkerActivity::PeerInputDelivered {
-        message: crate::PeerMessage {
-            from: "worker-7".into(),
-            message: "review complete".into(),
+    for event in [
+        WorkerEvent::Started,
+        WorkerEvent::Activity(WorkerActivity::TextDelta {
+            content_index: 0,
+            delta: "before".into(),
+        }),
+        WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+            content_index: 1,
+            delta: "first thought".into(),
+        }),
+        WorkerEvent::Activity(WorkerActivity::PeerInputDelivered {
+            message: crate::PeerMessage {
+                from: "worker-7".into(),
+                message: "hi".into(),
+            },
+        }),
+        WorkerEvent::Activity(WorkerActivity::ThinkingDelta {
+            content_index: 1,
+            delta: "next thought".into(),
+        }),
+        WorkerEvent::Settled {
+            output: "beforeafter".into(),
         },
-    }));
+    ] {
+        transport.enqueue_worker_event(event);
+    }
 
-    let event = transport.pending.pop_front().expect("peer event");
-    let SessionEvent::Activity(activity) = event else {
-        panic!("expected activity");
-    };
-    assert_eq!(activity.value()["type"], "peer_message");
-    assert_eq!(activity.value()["from"], "worker-7");
-    assert_eq!(activity.value()["message"], "review complete");
+    let mut conversation = ConversationState::default();
+    while let Some(event) = transport.poll() {
+        if let SessionEvent::Activity(activity) = event {
+            // The app can batch live deltas until the next paint.
+            conversation.reduce_deferred(activity.value());
+        }
+    }
+    conversation.flush_live_projection();
+    assert_eq!(
+        conversation
+            .items
+            .iter()
+            .map(|item| (item.kind, item.complete_text()))
+            .collect::<Vec<_>>(),
+        [
+            (TranscriptKind::Assistant, "before".into()),
+            (TranscriptKind::Thinking, "first thought".into()),
+            (TranscriptKind::PeerMessage, "hi".into()),
+            (TranscriptKind::Thinking, "next thought".into()),
+            (TranscriptKind::Assistant, "after".into()),
+        ]
+    );
+    assert_eq!(conversation.items[2].label, "Worker · worker-7");
+    assert!(conversation.items.iter().all(|item| !item.streaming));
 }
 
 #[test]

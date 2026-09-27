@@ -678,9 +678,12 @@ impl NativeInputDelivery {
                 message: self.message,
                 images: self.images,
             },
-            (None, true) => WorkerActivity::InputDelivered {
-                mode: self.mode,
-                message: self.message,
+            (None, true) => match PeerMessage::from_prompt(&self.message) {
+                Some(message) => WorkerActivity::PeerInputDelivered { message },
+                None => WorkerActivity::InputDelivered {
+                    mode: self.mode,
+                    message: self.message,
+                },
             },
             (None, false) => WorkerActivity::InputDeliveredWithImages {
                 mode: self.mode,
@@ -986,10 +989,11 @@ impl WorkerSession for CodexWorkerSession {
             && self.caller_identity.try_activate()
             && let Some(message) = self.peer_messages.pop_front()
         {
-            return Some(match self.send_peer_message(&message, mode) {
-                Ok(()) => WorkerEvent::Activity(WorkerActivity::PeerInputDelivered { message }),
-                Err(error) => WorkerEvent::Failed(error),
-            });
+            // The native user-message event confirms delivery and adds the peer
+            // row. Adding it on send as well would show the same reply twice.
+            if let Err(error) = self.send_peer_message(&message, mode) {
+                return Some(WorkerEvent::Failed(error));
+            }
         }
         loop {
             let inbound = self
@@ -2157,34 +2161,12 @@ impl CodexWorkerSession {
                 return Some(activity);
             }
         }
-        let activity = codex_input_delivery(item)?;
-        let submission_id = item
+        let mut delivery = codex_input_delivery(item)?;
+        delivery.submission_id = item
             .get("clientId")
             .and_then(Value::as_str)
             .and_then(|client_id| self.client_submissions.remove(client_id));
-        match (submission_id, activity) {
-            (Some(submission_id), WorkerActivity::InputDelivered { mode, message }) => {
-                Some(WorkerActivity::SubmittedInputDelivered {
-                    submission_id,
-                    mode,
-                    message,
-                })
-            }
-            (
-                Some(submission_id),
-                WorkerActivity::InputDeliveredWithImages {
-                    mode,
-                    message,
-                    images,
-                },
-            ) => Some(WorkerActivity::SubmittedInputDeliveredWithImages {
-                submission_id,
-                mode,
-                message,
-                images,
-            }),
-            (_, activity) => Some(activity),
-        }
+        Some(delivery.activity())
     }
 
     fn send_prompt_input(
@@ -2608,7 +2590,7 @@ fn steer_rejected_by_turn_race(error: &super::contract::CodexRpcError) -> bool {
             && error.message.ends_with('`'))
 }
 
-fn codex_input_delivery(item: &Value) -> Option<WorkerActivity> {
+fn codex_input_delivery(item: &Value) -> Option<NativeInputDelivery> {
     if item.get("type").and_then(Value::as_str) != Some("userMessage") {
         return None;
     }
@@ -2634,15 +2616,12 @@ fn codex_input_delivery(item: &Value) -> Option<WorkerActivity> {
         .into_iter()
         .filter_map(|part| serde_json::from_value(part).ok())
         .collect();
-    if images.is_empty() {
-        (!message.is_empty()).then_some(WorkerActivity::InputDelivered { mode, message })
-    } else {
-        Some(WorkerActivity::InputDeliveredWithImages {
-            mode,
-            message,
-            images,
-        })
-    }
+    (!message.is_empty() || !images.is_empty()).then_some(NativeInputDelivery {
+        submission_id: None,
+        mode,
+        message,
+        images,
+    })
 }
 
 fn codex_agent_message_text(item: &Value) -> Option<String> {
