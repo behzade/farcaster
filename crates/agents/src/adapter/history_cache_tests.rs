@@ -203,5 +203,105 @@ fn a_hit_protects_an_entry_from_lru_eviction() {
         .load(1, || Some(1), || Ok(history("reloaded")))
         .unwrap();
     assert_eq!(second.messages, history("reloaded").messages);
-    assert_eq!(cache.entries.lock().unwrap().len(), LIMIT);
+    assert_eq!(cache.state.lock().unwrap().entries.len(), LIMIT);
+}
+
+// Signal from the waiter's revision check, while it holds the cache lock, so
+// releasing the warm load cannot race ahead of the foreground lookup.
+fn concurrent_warm_then_select(outcome: &str) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let cache = Arc::new(HistoryCache::new());
+    let revision = Arc::new(AtomicUsize::new(1));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (checked_tx, checked_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
+    let deadline = Duration::from_secs(5);
+    let warm = {
+        let cache = cache.clone();
+        let revision = revision.clone();
+        let outcome = outcome.to_owned();
+        std::thread::spawn(move || {
+            cache.load(
+                "session",
+                || Some(revision.load(Ordering::SeqCst)),
+                || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv_timeout(deadline).unwrap();
+                    match outcome.as_str() {
+                        "error" => Err("warm failed".into()),
+                        "panic" => panic!("warm panicked"),
+                        _ => Ok(history("warm")),
+                    }
+                },
+            )
+        })
+    };
+    started_rx.recv_timeout(deadline).unwrap();
+    let foreground = {
+        let cache = cache.clone();
+        let revision = revision.clone();
+        std::thread::spawn(move || {
+            let loaded = cache.load(
+                "session",
+                || {
+                    checked_tx.send(()).unwrap();
+                    Some(revision.load(Ordering::SeqCst))
+                },
+                || Ok(history("foreground")),
+            );
+            finished_tx.send(loaded).unwrap();
+        })
+    };
+    checked_rx.recv_timeout(deadline).unwrap();
+    if outcome == "changed" {
+        revision.store(2, Ordering::SeqCst);
+    }
+    release_tx.send(()).unwrap();
+    let loaded = finished_rx
+        .recv_timeout(deadline)
+        .expect("foreground must not remain blocked")
+        .unwrap();
+    let expected = if outcome == "success" {
+        "warm"
+    } else {
+        "foreground"
+    };
+    assert_eq!(loaded.messages, history(expected).messages);
+    foreground.join().unwrap();
+    match outcome {
+        "panic" => assert!(warm.join().is_err()),
+        "error" => assert!(warm.join().unwrap().is_err()),
+        _ => assert!(warm.join().unwrap().is_ok()),
+    }
+    let cached = cache
+        .load(
+            "session",
+            || Some(revision.load(Ordering::SeqCst)),
+            || panic!("successful result must be cached"),
+        )
+        .unwrap();
+    assert_eq!(cached.messages, loaded.messages);
+}
+
+#[test]
+fn foreground_reuses_an_in_flight_warm_for_the_same_revision() {
+    concurrent_warm_then_select("success");
+}
+
+#[test]
+fn foreground_retries_after_a_warm_error() {
+    concurrent_warm_then_select("error");
+}
+
+#[test]
+fn foreground_retries_after_a_warm_panic() {
+    concurrent_warm_then_select("panic");
+}
+
+#[test]
+fn foreground_rechecks_freshness_after_waiting_for_a_warm() {
+    concurrent_warm_then_select("changed");
 }

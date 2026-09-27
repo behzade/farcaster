@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use farcaster_sessions::{LoadedHistory, SessionSummary, SessionTarget, SessionTransfer};
 
-use super::{backend::for_backend, pi};
+use super::{
+    backend::{BackendAdapter, for_backend},
+    pi,
+};
 
 pub(super) fn validate_session_locator(harness: Backend, path: &Path) -> Result<(), String> {
     validated_locator(harness, path).map(|_| ())
@@ -140,9 +143,33 @@ pub fn load_session_history_for_profile(
     path: &Path,
     project: &Path,
 ) -> Result<LoadedHistory, String> {
+    profile_history_adapter(config, harness, path)?.load_history_for_profile(config, path, project)
+}
+
+fn profile_history_adapter(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+) -> Result<&'static dyn BackendAdapter, String> {
     config.validate_profile_backend(harness)?;
     validate_session_locator(harness, path)?;
-    for_backend(harness).load_history_for_profile(config, path, project)
+    Ok(for_backend(harness))
+}
+
+/// Prime the adapter's foreground history cache without starting an agent.
+/// Returns false when the adapter cannot safely reuse a passive history load.
+pub fn warm_session_history_for_profile(
+    config: &crate::AgentLaunchConfig,
+    harness: Backend,
+    path: &Path,
+    project: &Path,
+) -> Result<bool, String> {
+    let adapter = profile_history_adapter(config, harness, path)?;
+    if !adapter.supports_history_warming() {
+        return Ok(false);
+    }
+    adapter.load_history_for_profile(config, path, project)?;
+    Ok(true)
 }
 
 pub fn discover_sessions_for(

@@ -25,7 +25,7 @@ pub use adapter::{
     supports_individual_queue_cancellation, supports_reasoning_effort, supports_reasoning_reset,
     supports_sandbox_discovery, supports_session_fork, supports_session_move,
     supports_startup_command, supports_steering, validate_launch, validate_session_move,
-    worker_factories,
+    warm_session_history_for_profile, worker_factories,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use contract::WorkerStatus;

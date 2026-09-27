@@ -77,6 +77,10 @@ impl BackendAdapter for ClaudeAdapter {
     fn external_history(&self, path: &Path, _project: &Path) -> Result<DiscoveredHistory, String> {
         super::load_history(path)
     }
+    fn supports_history_warming(&self) -> bool {
+        true
+    }
+
     fn load_history_for_profile(
         &self,
         config: &AgentLaunchConfig,

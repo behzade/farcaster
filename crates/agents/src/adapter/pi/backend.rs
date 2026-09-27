@@ -145,6 +145,10 @@ impl BackendAdapter for PiAdapter {
     ) -> Result<(), String> {
         super::PiRpcProcess::rename_session(config, project, session, name)
     }
+    fn supports_history_warming(&self) -> bool {
+        true
+    }
+
     fn load_history(&self, path: &Path, _project: &Path) -> Result<LoadedHistory, String> {
         HISTORY.load(
             path.to_path_buf(),

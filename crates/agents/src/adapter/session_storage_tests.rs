@@ -148,10 +148,9 @@ fn warmed_pi_history_still_requires_matching_backend() {
     let path = temp.path().join("session.jsonl");
     std::fs::write(&path, PI_HEADER).expect("Pi history");
     let config = crate::AgentLaunchConfig::default();
-    for _ in 0..2 {
-        load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
-            .expect("warm Pi history");
-    }
+    assert!(warm_session_history_for_profile(&config, Backend::Pi, &path, temp.path()).unwrap());
+    load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
+        .expect("select warmed Pi history");
     for backend in [
         Backend::Codex,
         Backend::Claude,
@@ -187,10 +186,9 @@ fn warmed_pi_history_still_validates_changed_or_deleted_profile() {
     std::fs::create_dir_all(&directory).expect("profile directory");
     let path = directory.join("session.jsonl");
     std::fs::write(&path, PI_HEADER).expect("Pi history");
-    for _ in 0..2 {
-        load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
-            .expect("warm profile history");
-    }
+    assert!(warm_session_history_for_profile(&config, Backend::Pi, &path, temp.path()).unwrap());
+    load_session_history_for_profile(&config, Backend::Pi, &path, temp.path())
+        .expect("select warmed profile history");
     config
         .profiles
         .replace(vec![crate::HarnessProfile {
@@ -246,6 +244,10 @@ fn profile_history_uses_current_claude_data_directory() {
             .profiles
             .replace(vec![profile.clone()])
             .expect("profile");
+        assert!(
+            warm_session_history_for_profile(&config, Backend::Claude, &locator, temp.path())
+                .unwrap()
+        );
         for _ in 0..2 {
             let history =
                 load_session_history_for_profile(&config, Backend::Claude, &locator, temp.path())
@@ -253,5 +255,45 @@ fn profile_history_uses_current_claude_data_directory() {
             assert_eq!(history.messages.len(), 1);
             assert_eq!(history.messages[0]["content"][0]["text"], text);
         }
+    }
+}
+
+#[test]
+fn active_protocol_adapters_skip_warming_without_launching_a_process() {
+    let temp = tempfile::tempdir().unwrap();
+    for backend in [
+        Backend::Codex,
+        Backend::Cursor,
+        Backend::Antigravity,
+        Backend::OpenCode,
+    ] {
+        let profile = crate::HarnessProfile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "No process for warming".into(),
+            backend,
+            executable: temp.path().join("missing-executable"),
+            data_directory: Some(temp.path().join("missing-data")),
+        };
+        let config = crate::AgentLaunchConfig {
+            profile_id: Some(profile.id.clone()),
+            session_locator_root: Some(temp.path().to_path_buf()),
+            ..Default::default()
+        };
+        config.profiles.replace(vec![profile]).unwrap();
+        let locator = super::super::main_session::external_session_path(
+            config.locator_root().as_deref().unwrap(),
+            backend,
+            "thread",
+        );
+        assert_eq!(
+            warm_session_history_for_profile(&config, backend, &locator, temp.path()),
+            Ok(false),
+            "{backend}"
+        );
+        config.profiles.replace(vec![]).unwrap();
+        assert!(
+            warm_session_history_for_profile(&config, backend, &locator, temp.path()).is_err(),
+            "skipping must still validate the profile"
+        );
     }
 }

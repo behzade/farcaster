@@ -34,7 +34,7 @@ pub use session_storage::{
     delete_session_family, delete_session_family_with_config, discover_sessions_for,
     discover_sessions_for_profile, load_session_history, load_session_history_for_profile,
     move_session_family, move_session_family_with_config, supports_session_move,
-    validate_session_move,
+    validate_session_move, warm_session_history_for_profile,
 };
 mod trust;
 pub use trust::{

@@ -68,12 +68,9 @@ fn warming_uses_the_sessions_profile_and_rejects_a_removed_profile() {
         .replace(vec![profile.clone()])
         .expect("profile");
     let mut session = remembered_session(project, "recent", "Recent chat");
-    let path = project
-        .join("profiles")
-        .join(&profile.id)
-        .join("pi")
-        .join("recent.jsonl");
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("profile directory");
+    // Native Pi files need not live beneath the profile's locator directory.
+    let path = project.join("recent.jsonl");
+    session.profile_id = Some(profile.id.clone());
     std::fs::write(
         &path,
         concat!(
@@ -84,12 +81,12 @@ fn warming_uses_the_sessions_profile_and_rejects_a_removed_profile() {
     .expect("history");
     session.path = path;
     let sessions = [session];
-    let history = warm_recent_history(&sessions, project, config.clone())
+    let warmed = warm_recent_history(&sessions, project, config.clone())
         .expect("warm task")
         .join()
         .expect("warm thread")
         .expect("profile history");
-    assert_eq!(history.messages.len(), 1);
+    assert!(warmed);
     config.profiles.replace(vec![]).expect("remove profile");
     let error = warm_recent_history(&sessions, project, config)
         .expect("warm task")
@@ -97,4 +94,39 @@ fn warming_uses_the_sessions_profile_and_rejects_a_removed_profile() {
         .expect("warm thread")
         .expect_err("removed profile");
     assert!(error.contains("unknown harness profile"), "{error}");
+}
+
+#[test]
+fn warming_uses_catalog_roots_for_app_children_and_orphans() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path();
+    let mut root = remembered_session(project, "root", "Root");
+    root.app_session_id = 1;
+    std::fs::write(
+        &root.path,
+        "{\"type\":\"session\",\"id\":\"root\",\"cwd\":\"/project\"}\n",
+    )
+    .unwrap();
+    let mut child = remembered_session(project, "child", "Child");
+    child.app_session_id = 2;
+    child.parent_app_session_id = Some(root.app_session_id);
+    child.modified = root.modified + std::time::Duration::from_secs(1);
+    // Its missing file would fail warming if the newer child were chosen.
+    let sessions = [root.clone(), child];
+    assert!(
+        warm_recent_history(&sessions, project, Default::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap()
+    );
+
+    root.parent_session = Some("missing-parent".into());
+    assert!(
+        warm_recent_history(&[root], project, Default::default())
+            .expect("an orphan remains a visible catalog root")
+            .join()
+            .unwrap()
+            .unwrap()
+    );
 }
