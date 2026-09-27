@@ -225,7 +225,14 @@ fn surface_control(
         .w(theme().size(34.0))
         .h_full()
         .rounded_none()
-        .hover(|control| control.bg(theme().colors.highlight))
+        .text_color(theme().colors.muted)
+        .hover(move |control| {
+            control.bg(theme().colors.highlight).text_color(if active {
+                theme().colors.indicator
+            } else {
+                theme().colors.text
+            })
+        })
         .when(active, |control| {
             control.text_color(theme().colors.indicator).child(
                 div()

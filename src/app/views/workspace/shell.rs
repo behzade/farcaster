@@ -1,7 +1,8 @@
 use gpui::{
-    IntoElement, ParentElement as _, StatefulInteractiveElement as _, Styled as _, WeakEntity, div,
-    prelude::FluentBuilder as _,
+    InteractiveElement as _, IntoElement, ParentElement as _, StatefulInteractiveElement as _,
+    Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
+use gpui_component::IconName;
 
 use crate::app::{
     FarcasterApp,
@@ -10,7 +11,7 @@ use crate::app::{
         layout::{
             LayoutMode, shows_right_inline, shows_run_sheet_button, shows_session_sheet_button,
         },
-        primitives::{AppIconSize, ButtonTone, app_icon, icon_button, icon_control, number_slot},
+        primitives::{AppIconSize, ButtonTone, app_icon, icon_button, icon_control},
         theme::theme,
     },
 };
@@ -81,27 +82,38 @@ impl FarcasterApp {
 }
 
 fn worker_notice_control(count: usize, entity: WeakEntity<FarcasterApp>) -> impl IntoElement {
-    let label = match count {
-        1 => "Worker notices — 1 active".to_owned(),
-        _ => format!("Worker notices — {count} active"),
-    };
+    let label = format!("Worker notices — {count} active");
     icon_control("open-worker-notices", label)
         .relative()
-        .child(app_icon(AppIcon::Chalkboard, AppIconSize::Control))
+        .text_color(theme().colors.muted)
+        .hover(|control| {
+            control
+                .bg(theme().colors.highlight)
+                .text_color(theme().colors.text)
+        })
+        .active(|control| {
+            control
+                .bg(theme().colors.highlight)
+                .text_color(theme().colors.text)
+        })
+        .focus_visible(|control| {
+            control
+                .border(theme().border)
+                .border_color(theme().colors.accent)
+                .text_color(theme().colors.text)
+        })
+        .child(app_icon(IconName::Inbox, AppIconSize::Control))
         .when(count > 0, |control| {
             control.child(
                 div()
                     .absolute()
-                    .top(theme().size(1.0))
-                    .right(theme().size(1.0))
-                    .child(number_slot(
-                        div().text_color(theme().colors.text).child(if count > 99 {
-                            "99+".to_owned()
-                        } else {
-                            count.to_string()
-                        }),
-                        theme().layout.counter_slot,
-                    )),
+                    .top(theme().size(2.0))
+                    .right(theme().size(2.0))
+                    .size(theme().size(6.0))
+                    .rounded_full()
+                    .bg(theme().colors.indicator)
+                    .border(theme().border)
+                    .border_color(theme().colors.canvas),
             )
         })
         .on_click(move |_, window, cx| {

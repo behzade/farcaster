@@ -176,7 +176,7 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                     &draft,
                     super::draft_row::DraftRowInput {
                         selected: false,
-                        status: "Draft".into(),
+                        status: if self.submitted { "Working" } else { "Draft" }.into(),
                         archived: self.archived,
                         drop_position: None,
                         compact: self.compact,
@@ -191,7 +191,10 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                 } else {
                     SessionRailKind::Project
                 };
-                let mut input = super::rows::SessionRowInput::standard(false, None);
+                let mut input = super::rows::SessionRowInput::standard(
+                    false,
+                    (!self.archived).then(|| "Working".into()),
+                );
                 input.compact = self.compact;
                 input.shortcut = (!self.archived).then_some(1);
                 super::rows::SessionRow::new(
@@ -211,6 +214,13 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
         ),
         cx,
         |cx, app, _, _| {
+            let mut columns = [None, None];
+            let slots = [
+                "session-status-slot",
+                "session-provider-slot",
+                "session-age-slot",
+                "session-shortcut-slot",
+            ];
             for (draft, submitted) in [(false, true), (true, false), (true, true)] {
                 for compact in [false, true] {
                     for archived in [false, true] {
@@ -236,6 +246,29 @@ fn row_actions_distinguish_drafts_from_submitted_chats(cx: &mut gpui::TestAppCon
                         assert_eq!(
                             cx.debug_bounds("session-shortcut-1").is_some(),
                             submitted && !archived
+                        );
+                        let bounds =
+                            slots.map(|selector| cx.debug_bounds(selector).expect(selector));
+                        let expected = columns[usize::from(compact)].get_or_insert(bounds);
+                        assert_eq!(&bounds, expected, "columns must not depend on row state");
+                        for pair in bounds.windows(2) {
+                            assert!(pair[0].right() <= pair[1].left());
+                        }
+                        if let Some(archive) = cx.debug_bounds("session-archive-action") {
+                            assert_eq!(archive, bounds[2], "archive/restore covers age");
+                        }
+                        if let Some(delete) = cx.debug_bounds("session-delete-action") {
+                            assert_eq!(delete, bounds[3], "delete/discard covers shortcut");
+                        }
+                        cx.simulate_mouse_move(
+                            bounds[2].center(),
+                            None,
+                            gpui::Modifiers::default(),
+                        );
+                        assert_eq!(
+                            slots.map(|selector| cx.debug_bounds(selector).expect(selector)),
+                            bounds,
+                            "hover must not shift columns"
                         );
                     }
                 }

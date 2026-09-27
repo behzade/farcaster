@@ -5,9 +5,10 @@ use std::{
 
 use farcaster_editors::EditorCommand;
 use gpui::{
-    Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window, div,
+    Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window,
+    div, prelude::FluentBuilder as _,
 };
-use gpui_component::{Sizable as _, Size, button::Button};
+use gpui_component::{Selectable as _, Sizable as _, Size, button::Button};
 use gpui_libghostty::TerminalOptions;
 
 use super::{
@@ -15,7 +16,10 @@ use super::{
     editor::{EditorBackend, EditorRequest},
     external_editor,
 };
-use crate::{app::infrastructure::editor_launch, storage::EditorChoice};
+use crate::{
+    app::{infrastructure::editor_launch, ui::theme::theme},
+    storage::EditorChoice,
+};
 
 pub(super) struct TerminalBackend(pub(super) EditorChoice);
 
@@ -258,6 +262,10 @@ impl Render for TerminalEditor {
                         Button::new(format!("editor-tab-{index}"))
                             .label(tab.title.clone())
                             .with_size(Size::Small)
+                            .selected(index == active)
+                            .when(index == active, |button| {
+                                button.text_color(theme().colors.indicator)
+                            })
                             .toggled(index == active)
                             .on_click(move |_, window, cx| {
                                 let _ = entity.update(cx, |editor, cx| {

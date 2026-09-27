@@ -250,11 +250,17 @@ fn bundled_theme_files_publish_every_token() {
 }
 
 #[test]
-fn the_indicator_token_defaults_to_the_muted_palette_color() {
+fn the_indicator_token_defaults_to_the_accent_palette_color() {
     let mut css = BUILT_IN_THEMES[0].to_css().expect("encode bundled theme");
-    css = css.replace("  --indicator: #9c9280;\n", "");
+    css = css.replace(
+        &format!(
+            "  --indicator: {};\n",
+            color_hex(BUILT_IN_THEMES[0].colors.indicator)
+        ),
+        "",
+    );
     let definition = ThemeDefinition::from_css(&css).expect("decode theme");
-    assert_eq!(definition.colors.indicator, definition.colors.muted);
+    assert_eq!(definition.colors.indicator, definition.colors.accent);
 }
 
 #[test]

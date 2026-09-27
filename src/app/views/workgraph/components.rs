@@ -210,7 +210,9 @@ fn render_plan_row(
                         .gap(theme().space.xs)
                         .text_size(theme().type_scale.caption)
                         .text_color(theme().colors.subtle)
-                        .when(row.current, |meta| meta.child("Current"))
+                        .when(row.current, |meta| {
+                            meta.child(div().text_color(theme().colors.accent).child("Current"))
+                        })
                         .when(row.detached, |meta| meta.child("Detached"))
                         .when(!row.node.files.is_empty(), |meta| {
                             meta.child(format!("{} path(s)", row.node.files.len()))

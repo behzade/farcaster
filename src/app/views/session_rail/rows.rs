@@ -296,26 +296,15 @@ impl RenderOnce for SessionRow {
                             ),
                     )
                     .into_any_element(),
-                div()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(theme().space.xs)
-                    .child(archive_action)
-                    .when_some(
-                        session_status_icon(target_app_session_id, &status_text),
-                        |cluster, icon| cluster.child(icon),
-                    )
-                    .child(session_provider_slot(
-                        session.harness,
-                        action_group.clone(),
-                        delete_action,
-                    ))
-                    .child(session_row_age(age))
-                    .when_some(shortcut, |cluster, number| {
-                        cluster.child(session_shortcut(number))
-                    })
-                    .into_any_element(),
+                session_row_trailing(
+                    session.harness,
+                    session_status_icon(target_app_session_id, &status_text),
+                    age,
+                    shortcut,
+                    Some(archive_action),
+                    delete_action,
+                    action_group.clone(),
+                ),
             ));
         let row = row.app_tooltip_element(move |_, _| session_tooltip_content(&hover_details));
         let hover_entity = entity.clone();
@@ -346,7 +335,7 @@ impl RenderOnce for SessionRow {
     }
 }
 
-pub(super) fn session_shortcut(number: u8) -> impl IntoElement {
+fn session_shortcut(number: u8) -> impl IntoElement {
     div()
         .debug_selector(move || format!("session-shortcut-{number}"))
         .child(Kbd::new(
@@ -432,11 +421,16 @@ pub(super) fn archive_action(
             crate::app::ui::primitives::preserve_pointer_focus,
         )
         .flex_none()
-        .size(theme().controls.icon_button)
+        .w(theme()
+            .layout
+            .session_age_slot
+            .max(theme().controls.icon_button))
+        .h(theme().controls.icon_button)
         .flex()
         .items_center()
         .justify_center()
         .rounded(theme().radius)
+        .bg(theme().colors.highlight)
         .opacity(0.0)
         .group_hover(action_group, |button| button.opacity(1.0))
         .focus(|button| {
@@ -608,15 +602,81 @@ pub(super) fn session_accessible_label(title: &str, state: &str, age: &str) -> S
     format!("Resume session: {title}. State: {state}. Updated {age}")
 }
 
-/// Rows with a delete or discard action replace the provider icon on hover.
-pub(super) fn session_provider_slot(
+/// Every row reserves the same status, provider, age and shortcut columns.
+/// Actions cover the last two columns without changing their geometry.
+pub(super) fn session_row_trailing(
     harness: impl Into<Option<Backend>>,
+    status: Option<AnyElement>,
+    age: String,
+    shortcut: Option<u8>,
+    archive: Option<AnyElement>,
+    delete: Option<AnyElement>,
     reveal_group: String,
-    delete_action: Option<AnyElement>,
 ) -> AnyElement {
     div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(theme().space.xs)
+        .child(
+            div()
+                .debug_selector(|| "session-status-slot".into())
+                .w(theme().icons.inline)
+                .h(theme().controls.icon_button)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .children(status),
+        )
+        .child(
+            div()
+                .debug_selector(|| "session-provider-slot".into())
+                .size(theme().controls.icon_button)
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline)),
+        )
+        .child(session_metadata_slot(
+            "session-age-slot",
+            theme()
+                .layout
+                .session_age_slot
+                .max(theme().controls.icon_button),
+            number_slot(age, theme().layout.session_age_slot),
+            archive,
+            &reveal_group,
+        ))
+        .child(session_metadata_slot(
+            "session-shortcut-slot",
+            theme().controls.icon_button,
+            div()
+                .children(shortcut.map(session_shortcut))
+                .into_any_element(),
+            delete.map(|action| {
+                div()
+                    .debug_selector(|| "session-delete-action".into())
+                    .child(action)
+                    .into_any_element()
+            }),
+            &reveal_group,
+        ))
+        .into_any_element()
+}
+
+fn session_metadata_slot(
+    selector: &'static str,
+    width: Pixels,
+    metadata: AnyElement,
+    action: Option<AnyElement>,
+    reveal_group: &str,
+) -> AnyElement {
+    div()
+        .debug_selector(move || selector.into())
         .relative()
-        .w(theme().controls.icon_button)
+        .w(width)
         .h(theme().controls.icon_button)
         .flex_none()
         .flex()
@@ -624,34 +684,29 @@ pub(super) fn session_provider_slot(
         .justify_center()
         .child(
             div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(delete_action.is_some(), |icon| {
-                    icon.group_hover(reveal_group, |icon| icon.opacity(0.0))
-                })
-                .child(app_icon(AppIcon::for_harness(harness), AppIconSize::Inline)),
+                .id(format!("{reveal_group}-{selector}"))
+                .w_full()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_center()
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.subtle)
+                .group_hover(reveal_group.to_owned(), |metadata| metadata.opacity(0.0))
+                .child(metadata),
         )
-        .when_some(delete_action, |slot, delete_action| {
+        .when_some(action, |slot, action| {
             slot.child(
                 div()
-                    .debug_selector(|| "session-delete-action".into())
                     .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
+                    .inset_0()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(delete_action),
+                    .child(action),
             )
         })
         .into_any_element()
-}
-
-pub(super) fn session_row_age(age: String) -> AnyElement {
-    number_slot(age, theme().layout.session_age_slot)
 }
 
 /// A chat reports its state immediately left of the provider icon, in the same

@@ -188,7 +188,7 @@ color_keys!(
 
 pub(crate) fn default_optional_color(colors: Colors, key: ColorKey) -> Rgba {
     match key {
-        ColorKey::indicator => colors.muted,
+        ColorKey::indicator => colors.accent,
         _ => colors.text,
     }
 }
@@ -677,7 +677,7 @@ pub(crate) fn install_component_theme(cx: &mut App) {
     component_colors.list = colors.panel.into();
     component_colors.list_hover = colors.highlight.into();
     component_colors.list_active = colors.highlight.into();
-    component_colors.list_active_border = colors.highlight.into();
+    component_colors.list_active_border = colors.focus_border.into();
     component_colors.table = colors.panel.into();
     component_colors.table_hover = colors.highlight.into();
     component_colors.table_active = colors.highlight.into();

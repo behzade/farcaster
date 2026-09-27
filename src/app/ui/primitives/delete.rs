@@ -51,6 +51,7 @@ impl RenderOnce for DeleteButton {
             .opacity(if reveal_group.is_some() { 0.0 } else { 1.0 })
             .when_some(reveal_group, |button, group| {
                 button
+                    .bg(theme().colors.highlight)
                     .group_hover(group, |button| button.opacity(1.0))
                     .focus(|button| button.opacity(1.0))
             })

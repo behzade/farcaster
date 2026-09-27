@@ -11,9 +11,8 @@ use super::{
     groups::SessionRailKind,
     hover::{draft_hover_details, session_tooltip_content},
     rows::{
-        archive_action, project_badge, project_label, relative_age, session_provider_slot,
-        session_row_age, session_row_content, session_row_height, session_shortcut,
-        session_status_icon,
+        archive_action, project_badge, project_label, relative_age, session_row_content,
+        session_row_height, session_row_trailing, session_status_icon,
     },
 };
 use crate::{
@@ -215,34 +214,24 @@ impl RenderOnce for DraftRow {
                             .overflow_hidden()
                             .child(project_badge(&draft.project))
                             .into_any_element(),
-                        div()
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap(theme().space.xs)
-                            .when(draft.submitted || archived, |cluster| {
-                                cluster.child(archive_draft_action(
+                        session_row_trailing(
+                            draft.harness,
+                            session_status_icon(
+                                target_app_session_id,
+                                if is_draft { "" } else { status },
+                            ),
+                            age,
+                            shortcut,
+                            (draft.submitted || archived).then(|| {
+                                archive_draft_action(
                                     &archive_id,
                                     archived,
                                     action_group.clone(),
                                     archive_entity,
-                                ))
-                            })
-                            .when_some(
-                                session_status_icon(
-                                    target_app_session_id,
-                                    if is_draft { "" } else { status },
-                                ),
-                                |cluster, icon| cluster.child(icon),
-                            )
-                            .child(session_provider_slot(
-                                draft.harness,
-                                action_group.clone(),
-                                (!draft.submitted || archived).then(|| {
-                                    DeleteButton::new(
-                                        format!("discard-{discard_id}"),
-                                        "Discard draft",
-                                    )
+                                )
+                            }),
+                            (!draft.submitted || archived).then(|| {
+                                DeleteButton::new(format!("discard-{discard_id}"), "Discard draft")
                                     .reveal_on(action_group.clone())
                                     .on_delete(move |window, cx| {
                                         let _ = discard_entity.update(cx, |this, cx| {
@@ -250,13 +239,9 @@ impl RenderOnce for DraftRow {
                                         });
                                     })
                                     .into_any_element()
-                                }),
-                            ))
-                            .child(session_row_age(age))
-                            .when_some(shortcut, |cluster, number| {
-                                cluster.child(session_shortcut(number))
-                            })
-                            .into_any_element(),
+                            }),
+                            action_group.clone(),
+                        ),
                     )),
             )
             .into_any_element()

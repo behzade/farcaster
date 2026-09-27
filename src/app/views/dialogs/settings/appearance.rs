@@ -4,6 +4,7 @@ use crate::app::{
     workspace::theme_settings::ThemeSettings,
 };
 use gpui::SharedString;
+use gpui_component::Selectable as _;
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let themes = &app.settings.themes;
@@ -226,6 +227,10 @@ fn theme_editor(
                                 .update(cx, |this, cx| this.set_theme_appearance(appearance, cx));
                         },
                     )
+                    .selected(selected)
+                    .when(selected, |button| {
+                        button.text_color(theme().colors.indicator)
+                    })
                     .toggled(selected)
                 }),
         ),

@@ -6,7 +6,7 @@ use crate::app::{
     },
 };
 use gpui_component::{
-    Disableable as _,
+    Disableable as _, Selectable as _,
     menu::{DropdownMenu as _, PopupMenuItem},
 };
 
@@ -116,10 +116,15 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
             )
             .w_full()
             .justify_start()
+            .selected(editor.inherit_selected)
+            .when(editor.inherit_selected, |button| {
+                button.text_color(theme().colors.indicator)
+            })
             .toggled(editor.inherit_selected),
         );
     for (index, profile) in editor.profiles.iter().enumerate() {
         let entity = entity.clone();
+        let selected = !editor.inherit_selected && index == editor.selected;
         rail = rail.child(
             button(
                 ("worker-profile", index),
@@ -142,7 +147,11 @@ fn profile_rail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElem
             )
             .w_full()
             .justify_start()
-            .toggled(!editor.inherit_selected && index == editor.selected),
+            .selected(selected)
+            .when(selected, |button| {
+                button.text_color(theme().colors.indicator)
+            })
+            .toggled(selected),
         );
     }
     rail = rail.child(
