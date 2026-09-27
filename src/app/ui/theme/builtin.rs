@@ -2,15 +2,18 @@ use std::sync::LazyLock;
 
 use super::ThemeDefinition;
 
-pub(crate) const THEME_FILES: [&str; 3] = [
+pub(crate) const THEME_FILES: [&str; 5] = [
     include_str!("../../../../assets/themes/farcaster.css"),
-    include_str!("../../../../assets/themes/white.css"),
-    include_str!("../../../../assets/themes/black.css"),
+    include_str!("../../../../assets/themes/everforest-dark.css"),
+    include_str!("../../../../assets/themes/everforest-light.css"),
+    include_str!("../../../../assets/themes/rose-pine.css"),
+    include_str!("../../../../assets/themes/rose-pine-dawn.css"),
 ];
 
-pub(crate) static BUILT_IN_THEMES: LazyLock<[ThemeDefinition; 3]> = LazyLock::new(|| {
-    THEME_FILES.map(|file| ThemeDefinition::from_css(file).expect("bundled theme file"))
-});
+pub(crate) static BUILT_IN_THEMES: LazyLock<[ThemeDefinition; THEME_FILES.len()]> =
+    LazyLock::new(|| {
+        THEME_FILES.map(|file| ThemeDefinition::from_css(file).expect("bundled theme file"))
+    });
 
 pub(crate) fn default_definition() -> &'static ThemeDefinition {
     &BUILT_IN_THEMES[0]

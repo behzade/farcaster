@@ -236,11 +236,26 @@ fn default_selected() -> String {
 impl ThemeLibrary {
     pub(crate) fn from_css(css: &str, selected: Option<&str>) -> Result<Self, String> {
         let themes = themes_from_css(css)?;
-        Ok(Self {
+        let mut library = Self {
             selected: selected.unwrap_or_default().to_owned(),
             themes,
+        };
+        // These names were available to user themes before the palette ports shipped.
+        for index in 0..library.themes.len() {
+            let name = &library.themes[index].name;
+            if builtin::BUILT_IN_THEMES
+                .iter()
+                .skip(1)
+                .any(|theme| &theme.name == name)
+            {
+                let renamed = library.unique_name(name);
+                if library.selected == *name {
+                    library.selected = renamed.clone();
+                }
+                library.themes[index].name = renamed;
+            }
         }
-        .normalized())
+        Ok(library.normalized())
     }
 
     pub(crate) fn to_css(&self) -> String {
@@ -269,7 +284,11 @@ impl ThemeLibrary {
         }
         self.themes = themes;
         if self.find(&self.selected).is_none() {
-            self.selected = default_selected();
+            self.selected = match self.selected.as_str() {
+                "Black" => "Everforest Dark".to_owned(),
+                "White" => "Everforest Light".to_owned(),
+                _ => default_selected(),
+            };
         }
         self
     }

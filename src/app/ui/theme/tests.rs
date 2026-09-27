@@ -68,15 +68,21 @@ fn bundled_session_rows_have_room_for_two_lines_and_padding() {
 
 #[test]
 fn bundled_themes_parse_and_keep_distinct_names() {
-    assert_eq!(BUILT_IN_THEMES.len(), 3);
-    let mut names = Vec::new();
     for definition in BUILT_IN_THEMES.iter() {
         definition.validate().expect("valid bundled theme");
-        assert!(!names.contains(&definition.name));
-        names.push(definition.name.clone());
     }
-    assert_eq!(names, ["Farcaster", "White", "Black"]);
-    assert_eq!(BUILT_IN_THEMES[1].appearance, Appearance::Light);
+    assert_eq!(
+        BUILT_IN_THEMES
+            .each_ref()
+            .map(|theme| (theme.name.as_str(), theme.appearance)),
+        [
+            ("Farcaster", Appearance::Dark),
+            ("Everforest Dark", Appearance::Dark),
+            ("Everforest Light", Appearance::Light),
+            ("Rosé Pine", Appearance::Dark),
+            ("Rosé Pine Dawn", Appearance::Light),
+        ]
+    );
 }
 
 #[test]
@@ -111,14 +117,9 @@ fn color_hex_drops_opaque_alpha_and_keeps_translucent_alpha() {
 
 #[test]
 fn a_palette_keeps_the_design_tokens_untouched() {
-    let black = Theme::from_definition(&BUILT_IN_THEMES[2]);
-    assert_eq!(black.colors.canvas, parse_hex("#000000").expect("hex"));
-    assert_eq!(black.space.md, default_theme().space.md);
-    assert_eq!(black.type_scale.reading, default_theme().type_scale.reading);
-    assert_eq!(
-        black.layout.session_rail,
-        default_theme().layout.session_rail
-    );
+    for definition in BUILT_IN_THEMES.iter().skip(1) {
+        assert_eq!(definition.lengths, BUILT_IN_THEMES[0].lengths);
+    }
 }
 
 #[test]

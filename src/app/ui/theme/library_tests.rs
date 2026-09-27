@@ -52,10 +52,54 @@ fn built_in_themes_are_listed_before_user_themes() {
         .into_iter()
         .map(|theme| theme.name.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(
-        names,
-        vec![default_name(), "White", "Black", "Ocean", "Dusk"]
-    );
+    let built_ins = library
+        .built_ins()
+        .iter()
+        .map(|theme| theme.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(names[..built_ins.len()], built_ins);
+    assert_eq!(names[built_ins.len()..], ["Ocean", "Dusk"]);
+}
+
+#[test]
+fn retired_built_in_selections_keep_their_appearance_and_custom_themes() {
+    for (old, replacement, appearance) in [
+        ("Black", "Everforest Dark", Appearance::Dark),
+        ("White", "Everforest Light", Appearance::Light),
+    ] {
+        let library =
+            ThemeLibrary::from_css(&css("Ocean"), Some(old)).expect("load legacy selection");
+        assert_eq!(library.selected_name(), replacement);
+        assert_eq!(library.selected().appearance, appearance);
+        assert!(library.is_user_theme("Ocean"));
+        assert_eq!(
+            ThemeLibrary::from_css(&library.to_css(), Some(library.selected_name()))
+                .expect("reload"),
+            library
+        );
+
+        // An imported theme with the old name is still a valid user theme.
+        let custom = definition(old);
+        let library = ThemeLibrary::from_css(&custom.to_css().unwrap(), Some(old)).unwrap();
+        assert_eq!(library.selected(), custom);
+    }
+}
+
+#[test]
+fn new_built_in_names_do_not_replace_saved_custom_themes() {
+    for builtin in BUILT_IN_THEMES.iter().skip(1) {
+        let name = &builtin.name;
+        let saved = format!("{}\n{}", css(name), css(&format!("{name} 2")));
+        let library = ThemeLibrary::from_css(&saved, Some(name)).expect("load custom theme");
+        assert_eq!(library.selected_name(), format!("{name} 3"));
+        assert_eq!(library.selected().colors, default_colors());
+        assert_eq!(library.user_themes().len(), 2);
+        assert_eq!(library.find(name).unwrap(), *builtin);
+        assert_eq!(
+            ThemeLibrary::from_css(&library.to_css(), Some(library.selected_name())).unwrap(),
+            library
+        );
+    }
 }
 
 #[test]
@@ -63,16 +107,16 @@ fn selecting_an_unknown_theme_is_rejected() {
     let mut library = ThemeLibrary::default();
     assert!(library.select("Missing").is_err());
     assert_eq!(library.selected_name(), default_name());
-    library.select("White").expect("select built-in");
+    library.select("Everforest Light").expect("select built-in");
     assert_eq!(library.selected().appearance, Appearance::Light);
 }
 
 #[test]
 fn built_in_names_are_reserved_for_user_edits() {
     let mut library = ThemeLibrary::default();
-    assert!(library.upsert(definition("White")).is_err());
-    assert!(library.rename("Ocean", "White").is_err());
-    assert!(library.remove("White").is_err());
+    assert!(library.upsert(definition("Everforest Light")).is_err());
+    assert!(library.rename("Ocean", "Everforest Light").is_err());
+    assert!(library.remove("Everforest Light").is_err());
     assert_eq!(library.user_themes().len(), 0);
 }
 
@@ -234,7 +278,7 @@ fn libraries_round_trip_through_css() {
 fn normalization_drops_unusable_saved_themes() {
     let css = format!(
         "{}\n{}\n{}",
-        css("Black"),
+        css(default_name()),
         css("Dusk"),
         css("Dusk").replace("data-theme=\"Dusk\"", "data-theme=\"Dusk \""),
     );
@@ -247,10 +291,10 @@ fn normalization_drops_unusable_saved_themes() {
 #[test]
 fn exported_themes_use_css_tokens() {
     let mut library = custom_library();
-    library.select("Black").expect("select built-in");
-    let css = library.export("Black").expect("export theme");
-    assert!(css.contains(":root[data-theme=\"Black\"][data-appearance=\"dark\"] {"));
-    assert!(css.contains("--canvas: #000000;"));
+    library.select("Everforest Dark").expect("select built-in");
+    let css = library.export("Everforest Dark").expect("export theme");
+    assert!(css.contains(":root[data-theme=\"Everforest Dark\"][data-appearance=\"dark\"] {"));
+    assert!(css.contains("--canvas: #2d353b;"));
 }
 
 #[test]
