@@ -6,7 +6,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, WeakEntity, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
-    Sizable as _, Size,
+    Disableable as _, Sizable as _, Size,
     button::{Button, ButtonVariants as _},
     input::Input,
 };
@@ -15,7 +15,9 @@ use super::super::FarcasterApp;
 use crate::{
     app::OVERLAY_KEY_CONTEXT,
     app::ui::assets::AppIcon,
-    app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
+    app::ui::primitives::{
+        AppIconSize, ButtonTone, FeedbackTone, app_icon, button, feedback, modal,
+    },
     app::ui::theme::theme,
     app::workspace::{
         SettingsTab,
@@ -81,6 +83,8 @@ pub(in crate::app::views) fn render(
                                     &app.settings.tab_focus[page as usize],
                                 )
                                 .debug_selector(move || format!("settings-tab-{}", page.label()))
+                                .w_auto()
+                                .px(theme().space.sm)
                                 .aria_selected(selected)
                                 .text_color(if selected {
                                     theme().colors.indicator
@@ -132,10 +136,10 @@ pub(in crate::app::views) fn render(
                                 .child("Valid changes save automatically."),
                         )
                         .child(
-                            button(
+                            settings_action(
                                 "close-settings",
-                                "Close",
-                                ButtonTone::Neutral,
+                                "Close settings",
+                                AppIcon::X,
                                 true,
                                 move |window, cx| {
                                     let _ =
@@ -157,9 +161,26 @@ fn settings_control(
 ) -> gpui::Stateful<gpui::Div> {
     crate::app::ui::primitives::icon_control(id, label)
         .track_focus(focus)
-        .w_auto()
-        .px(theme().space.sm)
         .hover(|control| control.bg(theme().colors.highlight))
+}
+
+fn settings_action(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<gpui::SharedString>,
+    icon: AppIcon,
+    enabled: bool,
+    on_press: impl Fn(&mut gpui::Window, &mut gpui::App) + 'static,
+) -> Button {
+    let label = label.into();
+    Button::new(id)
+        .accessibility_label(label.clone())
+        .tooltip(label)
+        .ghost()
+        .with_size(Size::Small)
+        .size(theme().controls.icon_button)
+        .disabled(!enabled)
+        .child(app_icon(icon, AppIconSize::Control))
+        .on_click(move |_, window, cx| on_press(window, cx))
 }
 
 fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App) -> AnyElement {
@@ -262,10 +283,10 @@ fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEleme
                                         .min_w_0()
                                         .child(Input::new(&app.settings.network_proxy_input)),
                                 )
-                                .child(button(
+                                .child(settings_action(
                                     "clear-network-proxy",
-                                    "Clear",
-                                    ButtonTone::Quiet,
+                                    "Clear network proxy",
+                                    AppIcon::Eraser,
                                     true,
                                     move |window, cx| {
                                         let _ = clear.update(cx, |this, cx| {
@@ -424,34 +445,32 @@ fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) ->
                     [
                         (
                             "transcript-font-smaller",
-                            "−",
+                            "Decrease transcript font size",
+                            AppIcon::Minus,
                             size - 1.0,
                             size > *TRANSCRIPT_FONT_SIZE_RANGE.start(),
                         ),
                         (
                             "transcript-font-larger",
-                            "+",
+                            "Increase transcript font size",
+                            AppIcon::Plus,
                             size + 1.0,
                             size < *TRANSCRIPT_FONT_SIZE_RANGE.end(),
                         ),
                         (
                             "transcript-font-reset",
-                            "Reset",
+                            "Reset transcript font size",
+                            AppIcon::ArrowCounterClockwise,
                             f32::from(theme().type_scale.reading),
                             size != f32::from(theme().type_scale.reading),
                         ),
                     ]
                     .into_iter()
-                    .map(|(id, label, next, enabled)| {
+                    .map(|(id, label, icon, next, enabled)| {
                         let entity = entity.clone();
-                        button(id, label, ButtonTone::Neutral, enabled, move |_, cx| {
+                        settings_action(id, label, icon, enabled, move |_, cx| {
                             let _ = entity
                                 .update(cx, |this, cx| this.set_transcript_font_size(next, cx));
-                        })
-                        .accessibility_label(match label {
-                            "−" => "Decrease transcript font size",
-                            "+" => "Increase transcript font size",
-                            _ => "Reset transcript font size",
                         })
                     }),
                 ),

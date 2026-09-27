@@ -28,7 +28,10 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 )
                 .debug_selector(|| "toggle-harness-profile-form".into())
                 .aria_expanded(adding)
-                .child(toggle_label)
+                .child(app_icon(
+                    if adding { AppIcon::X } else { AppIcon::Plus },
+                    AppIconSize::Control,
+                ))
                 .on_click(move |_, window, cx| {
                     let _ = toggle.update(cx, |this, cx| {
                         this.settings.adding_harness_profile = !adding;
@@ -81,10 +84,10 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                                 .child(detail),
                         ),
                 )
-                .child(button(
+                .child(settings_action(
                     format!("remove-profile-{profile_id}"),
-                    "Remove",
-                    ButtonTone::Quiet,
+                    "Remove harness profile",
+                    AppIcon::Trash,
                     true,
                     move |_, cx| {
                         let _ = remove.update(cx, |this, cx| {
@@ -147,7 +150,7 @@ fn add_form(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement 
         .when(crate::agents::profile_data_environment_key(app.settings.harness_profile_backend).is_some(), |form| {
             form.child(field("Data directory (optional)", &app.settings.harness_profile_data_directory))
         })
-        .child(div().flex().justify_end().child(button("add-harness-profile", "Add profile", ButtonTone::Neutral, true,
+        .child(div().flex().justify_end().child(settings_action("add-harness-profile", "Add harness profile", AppIcon::Check, true,
             move |window, cx| {
                 let _ = entity.update(cx, |this, cx| this.add_harness_profile(window, cx));
             })))

@@ -47,7 +47,14 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                             &app.settings.theme_editor_focus,
                         )
                         .debug_selector(|| "theme-editor-toggle".into())
-                        .child(if editing { "‹ Themes" } else { "Edit" })
+                        .child(app_icon(
+                            if editing {
+                                AppIcon::ArrowLeft
+                            } else {
+                                AppIcon::PencilSimple
+                            },
+                            AppIconSize::Control,
+                        ))
                         .on_click(move |_, window, cx| {
                             let _ = toggle.update(cx, |this, cx| {
                                 this.settings.themes.editing = !editing;
@@ -213,28 +220,28 @@ fn theme_actions(
         .items_center()
         .gap(theme().space.xs)
         .flex_wrap()
-        .child(button(
+        .child(settings_action(
             "theme-export",
-            "Export…",
-            ButtonTone::Neutral,
+            "Export active theme as CSS",
+            AppIcon::DownloadSimple,
             editable,
             move |window, cx| {
                 let _ = export.update(cx, |this, cx| this.export_theme(window, cx));
             },
         ))
-        .child(button(
+        .child(settings_action(
             "theme-import",
-            "Import…",
-            ButtonTone::Neutral,
+            "Import theme from CSS",
+            AppIcon::UploadSimple,
             editable,
             move |window, cx| {
                 let _ = import.update(cx, |this, cx| this.import_theme(window, cx));
             },
         ))
-        .child(button(
+        .child(settings_action(
             "theme-duplicate",
             "Duplicate to edit",
-            ButtonTone::Neutral,
+            AppIcon::Copy,
             editable,
             move |window, cx| {
                 let _ = duplicate.update(cx, |this, cx| {
@@ -243,22 +250,19 @@ fn theme_actions(
             },
         ))
         .when(themes.draft.is_some(), |actions| {
-            actions.child(button(
-                "theme-delete",
-                "Delete",
-                ButtonTone::Danger,
-                editable,
-                move |window, cx| {
-                    let _ = delete.update(cx, |this, cx| this.delete_theme(window, cx));
-                },
-            ))
+            actions.child(
+                settings_action(
+                    "theme-delete",
+                    "Delete theme",
+                    AppIcon::Trash,
+                    editable,
+                    move |window, cx| {
+                        let _ = delete.update(cx, |this, cx| this.delete_theme(window, cx));
+                    },
+                )
+                .text_color(theme().colors.danger),
+            )
         })
-        .child(
-            div()
-                .text_size(theme().type_scale.caption)
-                .text_color(theme().colors.muted)
-                .child("Export writes the active theme to a CSS file."),
-        )
         .into_any_element()
 }
 

@@ -5,13 +5,14 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 64] = [
+const ICON_PATHS: [&str; 71] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
     "icons/phosphor/arrow-counter-clockwise.svg",
     "icons/phosphor/arrow-down.svg",
     "icons/phosphor/arrow-square-out.svg",
+    "icons/phosphor/arrow-left.svg",
     "icons/phosphor/arrow-up.svg",
     "icons/phosphor/binoculars.svg",
     "icons/phosphor/caret-down.svg",
@@ -25,6 +26,9 @@ const ICON_PATHS: [&str; 64] = [
     "icons/phosphor/code.svg",
     "icons/phosphor/copy.svg",
     "icons/phosphor/dots-six-vertical.svg",
+    "icons/phosphor/dots-three.svg",
+    "icons/phosphor/download-simple.svg",
+    "icons/phosphor/eraser.svg",
     "icons/phosphor/eye.svg",
     "icons/phosphor/eye-slash.svg",
     "icons/phosphor/folder.svg",
@@ -39,7 +43,9 @@ const ICON_PATHS: [&str; 64] = [
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
     "icons/phosphor/microscope.svg",
+    "icons/phosphor/minus.svg",
     "icons/phosphor/paint-roller.svg",
+    "icons/phosphor/pencil-simple.svg",
     "icons/phosphor/plus.svg",
     "icons/phosphor/question.svg",
     "icons/phosphor/shield.svg",
@@ -51,6 +57,7 @@ const ICON_PATHS: [&str; 64] = [
     "icons/phosphor/text-aa.svg",
     "icons/phosphor/trash.svg",
     "icons/phosphor/tray.svg",
+    "icons/phosphor/upload-simple.svg",
     "icons/phosphor/user-focus.svg",
     "icons/phosphor/warning-circle.svg",
     "icons/phosphor/x.svg",
@@ -145,6 +152,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/arrow-square-out.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/arrow-square-out.svg"
             )),
+            "icons/phosphor/arrow-left.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/arrow-left.svg"
+            )),
             "icons/phosphor/arrow-up.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/arrow-up.svg"
             )),
@@ -184,11 +194,23 @@ impl AssetSource for AppAssets {
             "icons/phosphor/dots-six-vertical.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/dots-six-vertical.svg"
             )),
+            "icons/phosphor/dots-three.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/dots-three.svg"
+            )),
+            "icons/phosphor/download-simple.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/download-simple.svg"
+            )),
+            "icons/phosphor/eraser.svg" => {
+                Some(include_bytes!("../../../assets/phosphor-icons/eraser.svg"))
+            }
             "icons/phosphor/eye.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/eye.svg"))
             }
             "icons/phosphor/eye-slash.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/eye-slash.svg"
+            )),
+            "icons/phosphor/pencil-simple.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/pencil-simple.svg"
             )),
             "icons/phosphor/plus.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/plus.svg"))
@@ -232,6 +254,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/microscope.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/microscope.svg"
             )),
+            "icons/phosphor/minus.svg" => {
+                Some(include_bytes!("../../../assets/phosphor-icons/minus.svg"))
+            }
             "icons/phosphor/paint-roller.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/paint-roller.svg"
             )),
@@ -265,6 +290,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/tray.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/tray.svg"))
             }
+            "icons/phosphor/upload-simple.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/upload-simple.svg"
+            )),
             "icons/phosphor/user-focus.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/user-focus.svg"
             )),
@@ -342,6 +370,7 @@ pub(crate) enum AppIcon {
     ArrowsClockwise,
     ArrowCounterClockwise,
     ArrowDown,
+    ArrowLeft,
     ArrowUp,
     Binoculars,
     CaretDown,
@@ -356,6 +385,9 @@ pub(crate) enum AppIcon {
     Codex,
     Copy,
     Cursor,
+    DotsThree,
+    DownloadSimple,
+    Eraser,
     Eye,
     Folder,
     FolderPlus,
@@ -367,9 +399,11 @@ pub(crate) enum AppIcon {
     Key,
     List,
     MagnifyingGlass,
+    Minus,
     Neovim,
     OpenCode,
     PaintRoller,
+    PencilSimple,
     Pi,
     Plus,
     Question,
@@ -378,6 +412,7 @@ pub(crate) enum AppIcon {
     SpinnerGap,
     Stop,
     Trash,
+    UploadSimple,
     WarningCircle,
     Micro,
     Emacs,
@@ -427,6 +462,7 @@ impl IconNamed for AppIcon {
             Self::ArrowsClockwise => "arrows-clockwise",
             Self::ArrowCounterClockwise => "arrow-counter-clockwise",
             Self::ArrowDown => "arrow-down",
+            Self::ArrowLeft => "arrow-left",
             Self::ArrowUp => "arrow-up",
             Self::Binoculars => "binoculars",
             Self::CaretDown => "caret-down",
@@ -441,6 +477,9 @@ impl IconNamed for AppIcon {
             Self::Codex => return "icons/workbench/codex.svg".into(),
             Self::Copy => "copy",
             Self::Cursor => return "icons/workbench/cursor.svg".into(),
+            Self::DotsThree => "dots-three",
+            Self::DownloadSimple => "download-simple",
+            Self::Eraser => "eraser",
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
@@ -456,9 +495,11 @@ impl IconNamed for AppIcon {
             Self::Key => "key",
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
+            Self::Minus => "minus",
             Self::Neovim => return "icons/workbench/neovim.svg".into(),
             Self::OpenCode => return "icons/workbench/opencode.svg".into(),
             Self::PaintRoller => "paint-roller",
+            Self::PencilSimple => "pencil-simple",
             Self::Pi => return "icons/workbench/pi.svg".into(),
             Self::Plus => "plus",
             Self::Question => "question",
@@ -467,6 +508,7 @@ impl IconNamed for AppIcon {
             Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
             Self::Trash => "trash",
+            Self::UploadSimple => "upload-simple",
             Self::WarningCircle => "warning-circle",
             Self::VsCode => return "icons/workbench/vscode.svg".into(),
             Self::Zed => return "icons/workbench/zed.svg".into(),

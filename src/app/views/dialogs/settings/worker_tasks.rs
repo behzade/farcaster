@@ -30,10 +30,10 @@ pub(super) fn render(
                         .child(error.to_owned()),
                 )
             })
-            .child(button(
+            .child(settings_action(
                 "retry-worker-profiles",
                 "Retry loading profiles",
-                ButtonTone::Quiet,
+                AppIcon::ArrowsClockwise,
                 true,
                 move |_, cx| {
                     let _ = entity.update(cx, |this, cx| this.retry_worker_profile_settings(cx));
@@ -73,10 +73,10 @@ pub(super) fn render(
                                 ),
                         ),
                 )
-                .child(button(
+                .child(settings_action(
                     "worker-reload-choices",
                     "Reload choices",
-                    ButtonTone::Quiet,
+                    AppIcon::ArrowsClockwise,
                     !editing,
                     move |_, cx| {
                         let _ = reload.update(cx, |this, cx| this.reload_worker_choices(cx));
@@ -189,17 +189,20 @@ fn profile_rail(
                 .border_t_1()
                 .border_color(theme().colors.surface)
                 .pt(theme().space.xs)
-                .child(profile_button(
-                    "worker-profile-add",
-                    "+ Add profile",
-                    false,
-                    !editing && !editor.has_draft(),
-                    cx,
-                    move |window, cx| {
-                        let _ = entity
-                            .update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
-                    },
-                )),
+                .child(
+                    profile_button(
+                        "worker-profile-add",
+                        "Add profile",
+                        false,
+                        !editing && !editor.has_draft(),
+                        cx,
+                        move |window, cx| {
+                            let _ = entity
+                                .update(cx, |this, cx| this.edit_worker_profile(None, window, cx));
+                        },
+                    )
+                    .icon(AppIcon::Plus),
+                ),
         )
         .into_any_element()
 }
@@ -355,10 +358,10 @@ fn profile_detail(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                         .text_color(theme().colors.muted)
                         .child("No model selected. The first worker request will ask you to choose one."),
                 )
-                .child(div().flex().child(button(
+                .child(div().flex().child(settings_action(
                     "worker-model-add-empty",
                     "Choose model",
-                    ButtonTone::Quiet,
+                    AppIcon::Plus,
                     !editing,
                     move |_, cx| {
                         let _ = add.update(cx, |this, cx| {
@@ -501,10 +504,10 @@ fn route(
                         .flex()
                         .items_center()
                         .gap(theme().space.xs)
-                        .child(button(
+                        .child(settings_action(
                             "worker-model-clear",
-                            "Clear",
-                            ButtonTone::Quiet,
+                            "Clear model",
+                            AppIcon::Eraser,
                             enabled,
                             move |_, cx| {
                                 let _ = clear.update(cx, |this, cx| {
@@ -737,10 +740,10 @@ fn edit_form(edit: &WorkerProfileEdit, entity: WeakEntity<FarcasterApp>) -> AnyE
             .flex()
             .justify_end()
             .gap(theme().space.sm)
-            .child(button(
+            .child(settings_action(
                 "finish-worker-edit",
                 "Done",
-                ButtonTone::Neutral,
+                AppIcon::Check,
                 true,
                 move |window, cx| {
                     let _ =
@@ -758,7 +761,7 @@ fn actions_button(
 ) -> Button {
     let label = label.into();
     Button::new(id)
-        .label("…")
+        .icon(AppIcon::DotsThree)
         .accessibility_label(label.clone())
         .tooltip(label)
         .with_size(Size::Small)

@@ -56,6 +56,13 @@ fn asset_source_serves_themeable_and_editor_brand_icons() {
 
     for icon in [
         AppIcon::Antigravity,
+        AppIcon::ArrowLeft,
+        AppIcon::DotsThree,
+        AppIcon::DownloadSimple,
+        AppIcon::Eraser,
+        AppIcon::Minus,
+        AppIcon::PencilSimple,
+        AppIcon::UploadSimple,
         AppIcon::Archive,
         AppIcon::ArrowsClockwise,
         AppIcon::ArrowCounterClockwise,
