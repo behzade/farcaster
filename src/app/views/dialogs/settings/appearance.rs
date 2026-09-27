@@ -1,6 +1,9 @@
 use super::*;
 use crate::app::{
-    ui::theme::{Appearance, LengthKey, ThemeToken, length_label, token_label},
+    ui::{
+        primitives::AppTooltip as _,
+        theme::{Appearance, Colors, LengthKey, ThemeToken, length_label, token_label},
+    },
     workspace::theme_settings::ThemeSettings,
 };
 use gpui::SharedString;
@@ -8,7 +11,7 @@ use gpui_component::Selectable as _;
 
 pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
     let themes = &app.settings.themes;
-    let selected = themes.library.selected_name().to_owned();
+    let selected = themes.library.selected_name();
     let editable = themes.editable();
     let editing = themes.editing && themes.draft.is_some();
     let toggle = entity.clone();
@@ -70,19 +73,16 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 section.children(theme_editor(themes, editable, entity))
             } else {
                 section
-                    .child(theme_list(themes, &selected, editable, entity.clone()))
+                    .child(theme_list(themes, entity.clone()))
                     .child(theme_actions(themes, editable, entity))
             }
         })
         .into_any_element()
 }
 
-fn theme_list(
-    themes: &ThemeSettings,
-    selected: &str,
-    editable: bool,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
+fn theme_list(themes: &ThemeSettings, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let selected = themes.library.selected_name();
+    let editable = themes.editable();
     let mut list = div()
         .debug_selector(|| "settings-theme-list".into())
         .flex()
@@ -95,9 +95,35 @@ fn theme_list(
         let select_name = definition.name.clone();
         list = list.child(
             div()
+                .id(("theme-select", index))
+                .debug_selector(move || format!("theme-select-{index}"))
                 .px(theme().space.sm)
                 .py(theme().space.sm)
+                .border_1()
+                .border_color(gpui::rgba(0x00000000))
                 .when(active, |row| row.bg(theme().colors.highlight))
+                .when(editable, |row| {
+                    row.role(gpui::Role::Button)
+                        .aria_label(definition.name.clone())
+                        .aria_toggled(if active {
+                            gpui::Toggled::True
+                        } else {
+                            gpui::Toggled::False
+                        })
+                        .tab_index(0)
+                        .cursor_pointer()
+                        .when(!active, |row| {
+                            row.hover(|row| row.bg(theme().colors.surface))
+                        })
+                        .focus_visible(|row| row.border_color(theme().colors.accent))
+                        .on_click(move |_, window, cx| {
+                            if !active {
+                                let _ = select.update(cx, |this, cx| {
+                                    this.select_theme(&select_name, window, cx)
+                                });
+                            }
+                        })
+                })
                 .flex()
                 .items_center()
                 .justify_between()
@@ -110,9 +136,17 @@ fn theme_list(
                         .gap(theme().space.xs)
                         .child(
                             div()
-                                .text_size(theme().type_scale.body)
-                                .text_color(theme().colors.text)
-                                .child(definition.name.clone()),
+                                .flex()
+                                .items_center()
+                                .gap(theme().space.sm)
+                                .child(
+                                    div()
+                                        .truncate()
+                                        .text_size(theme().type_scale.body)
+                                        .text_color(theme().colors.text)
+                                        .child(definition.name.clone()),
+                                )
+                                .child(theme_palette(index, definition.colors)),
                         )
                         .child(
                             div()
@@ -121,37 +155,47 @@ fn theme_list(
                                 .child(if custom { "Your theme" } else { "Built in" }),
                         ),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(theme().space.xs)
-                        .when(active, |controls| {
-                            controls.child(
-                                div()
-                                    .text_size(theme().type_scale.caption)
-                                    .text_color(theme().colors.indicator)
-                                    .child("Active"),
-                            )
-                        })
-                        .when(!active, |controls| {
-                            controls.child(button(
-                                ("theme-select", index),
-                                "Use",
-                                ButtonTone::Neutral,
-                                editable,
-                                move |window, cx| {
-                                    let _ = select.update(cx, |this, cx| {
-                                        this.select_theme(&select_name, window, cx)
-                                    });
-                                },
-                            ))
-                        }),
-                ),
+                .when(active, |row| {
+                    row.child(
+                        div()
+                            .flex_none()
+                            .text_size(theme().type_scale.caption)
+                            .text_color(theme().colors.indicator)
+                            .child("Active"),
+                    )
+                }),
         );
     }
     list.into_any_element()
+}
+
+fn theme_palette(index: usize, colors: Colors) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(("theme-palette", index))
+        .flex()
+        .flex_none()
+        .gap(theme().size(2.0))
+        .app_tooltip("Background · Text · Accent · Links · Success · Warning · Error")
+        .children(
+            [
+                colors.canvas,
+                colors.text,
+                colors.accent,
+                colors.link,
+                colors.success,
+                colors.warning,
+                colors.error,
+            ]
+            .into_iter()
+            .map(|color| {
+                div()
+                    .size(theme().size(12.0))
+                    .flex_none()
+                    .border_1()
+                    .border_color(theme().colors.border)
+                    .bg(color)
+            }),
+        )
 }
 
 fn theme_actions(

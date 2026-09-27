@@ -172,6 +172,48 @@ fn theme_editor_replaces_browsing_and_returns_focus_without_losing_invalid_input
 }
 
 #[gpui::test]
+fn theme_rows_activate_from_empty_space_and_keyboard(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::theme_rows_activate_from_empty_space_and_keyboard"
+        ),
+        cx,
+        |cx, app, _, _| {
+            let expected = cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.open_settings(window, cx);
+                    app.settings.tab = SettingsTab::Appearance;
+                    let themes = app.settings.themes.library.display_order();
+                    [themes[1].name.clone(), themes[2].name.clone()]
+                })
+            });
+            draw(cx);
+            let row = cx.debug_bounds("theme-select-1").unwrap();
+            cx.simulate_click(
+                gpui::point(row.right() - gpui::px(10.0), row.center().y),
+                Default::default(),
+            );
+            draw(cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).settings.themes.library.selected_name(),
+                    expected[0]
+                )
+            });
+            cx.simulate_keystrokes("tab");
+            press_enter(cx);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    app.read(cx).settings.themes.library.selected_name(),
+                    expected[1]
+                )
+            });
+        },
+    );
+}
+
+#[gpui::test]
 fn worker_model_fields_use_rows_and_fit_the_settings_viewport(cx: &mut gpui::TestAppContext) {
     crate::app::test_support::with_offline_app(
         concat!(
