@@ -39,7 +39,7 @@ impl SearchField {
 }
 
 impl RenderOnce for SearchField {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self {
             id,
             input,
@@ -48,6 +48,7 @@ impl RenderOnce for SearchField {
         } = self;
         let accessible = accessible_label.as_ref().map(SharedString::to_string);
         let focus_input = input.clone();
+        let focused = input.read(cx).focus_handle(cx).is_focused(window);
         div()
             .id(id)
             .h(theme().size(36.0))
@@ -55,10 +56,12 @@ impl RenderOnce for SearchField {
             .flex()
             .gap(theme().space.xs)
             .pl(theme().size(10.0))
-            .rounded(theme().radius)
-            .border(theme().border)
-            .border_color(theme().colors.highlight)
-            .bg(theme().colors.surface)
+            .border_b(theme().border)
+            .border_color(if focused {
+                theme().colors.border
+            } else {
+                gpui::rgba(0x00000000)
+            })
             .text_color(theme().colors.muted)
             .when_some(accessible, |field, label| field.aria_label(label))
             .on_click(move |_, window, cx| {

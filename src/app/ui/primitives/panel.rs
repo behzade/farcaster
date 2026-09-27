@@ -1,19 +1,17 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, MouseDownEvent,
+    AnyElement, App, ElementId, FontWeight, InteractiveElement as _, IntoElement, MouseDownEvent,
     ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
     Window, div, prelude::FluentBuilder as _,
 };
 
 use gpui_component::scroll::ScrollableElement as _;
 
-use crate::app::ui::{assets::AppIcon, theme::theme};
+use crate::app::ui::theme::theme;
 
 use super::{
-    icon::{AppIconSize, app_icon},
     resize::{ResizeBounds, ResizeState, resize_handle},
-    slot::number_slot,
     tooltip::AppTooltip as _,
 };
 
@@ -26,7 +24,7 @@ pub(crate) struct Panel {
     state: ResizeState,
     bounds: ResizeBounds,
     title: SharedString,
-    badge: Option<SharedString>,
+    count: usize,
     body_inset: bool,
     on_toggle: Option<PanelToggle>,
     on_resize: Option<PanelResize>,
@@ -45,7 +43,7 @@ impl Panel {
             state: *state,
             bounds,
             title: title.into(),
-            badge: None,
+            count: 0,
             body_inset: true,
             on_toggle: None,
             on_resize: None,
@@ -58,13 +56,8 @@ impl Panel {
         self
     }
 
-    pub(crate) fn badge(mut self, unseen: usize) -> Self {
-        self.badge = (unseen > 0).then(|| format!("+{unseen}").into());
-        self
-    }
-
     pub(crate) fn count(mut self, total: usize) -> Self {
-        self.badge = (total > 0).then(|| total.to_string().into());
+        self.count = total;
         self
     }
 
@@ -98,7 +91,7 @@ impl RenderOnce for Panel {
             state,
             bounds,
             title,
-            badge,
+            count,
             body_inset,
             on_toggle,
             on_resize,
@@ -118,13 +111,14 @@ impl RenderOnce for Panel {
             .flex()
             .items_center()
             .gap(theme().space.xs)
-            .pr(theme().size(10.0))
-            .border_t(theme().border)
-            .border_color(theme().colors.border)
+            .px(theme().space.sm)
+            .text_size(theme().type_scale.caption)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(theme().colors.muted)
             .cursor_pointer()
             .aria_label(toggle.clone())
             .app_tooltip(toggle)
-            .when(!collapsed, |header| header.bg(theme().colors.panel))
+            .hover(|header| header.bg(theme().colors.highlight))
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 if let Some(on_toggle) = on_toggle.as_ref() {
@@ -133,36 +127,18 @@ impl RenderOnce for Panel {
             })
             .child(
                 div()
-                    .id(ElementId::Name(format!("{id}-toggle").into()))
-                    .w(theme().controls.icon_button)
-                    .h(theme().controls.icon_button)
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_color(theme().colors.muted)
-                    .hover(|arrow| arrow.bg(theme().colors.highlight))
-                    .child(app_icon(
-                        if collapsed {
-                            AppIcon::CaretRight
-                        } else {
-                            AppIcon::CaretDown
-                        },
-                        AppIconSize::Inline,
-                    )),
-            )
-            .child(
-                div()
-                    .flex_1()
                     .min_w_0()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_size(theme().type_scale.caption)
-                    .text_color(theme().colors.muted)
                     .child(title),
             )
-            .when_some(badge, |header, badge| {
-                header.child(number_slot(badge, theme().layout.counter_slot))
+            .when(collapsed, |header| {
+                header.child(
+                    div()
+                        .flex_none()
+                        .text_color(theme().colors.subtle)
+                        .child(format!("({count})")),
+                )
             });
         div()
             .relative()

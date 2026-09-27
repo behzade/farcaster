@@ -81,7 +81,7 @@ impl FarcasterApp {
             })
             .collect::<Vec<_>>();
         self.render_rail_panel(RailPanel::Notifications, collapsed, &entity, notifications)
-            .badge(self.extensions.active.unseen_notifications())
+            .count(self.extensions.active.unseen_notifications())
             .into_any_element()
     }
 
@@ -387,8 +387,6 @@ impl FarcasterApp {
                                         .items_center()
                                         .gap(theme().space.xs)
                                         .px(theme().space.sm)
-                                        .border_l(theme().border)
-                                        .border_color(theme().colors.border)
                                         .cursor_pointer()
                                         .text_size(theme().type_scale.caption)
                                         .text_color(theme().colors.muted)

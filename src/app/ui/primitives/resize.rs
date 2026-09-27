@@ -95,6 +95,11 @@ pub(crate) fn resize_handle(
         .w_full()
         .h(theme().size(5.0))
         .cursor_row_resize()
+        .hover(|handle| {
+            handle
+                .border_t(theme().border)
+                .border_color(theme().colors.border)
+        })
         .on_mouse_down(MouseButton::Left, move |event, window, cx| {
             cx.stop_propagation();
             on_start(event, window, cx);
