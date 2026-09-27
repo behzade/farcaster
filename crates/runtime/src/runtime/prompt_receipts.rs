@@ -3,29 +3,185 @@ use super::*;
 #[derive(Clone)]
 pub(super) struct RetiredPrompt {
     pub(super) outbox_id: Option<i64>,
-    target: String,
+    pub(super) target: String,
     pub(super) session: Option<PathBuf>,
-    delivery_tracked: bool,
-    submission_id: Option<String>,
+    pub(super) delivery_tracked: bool,
+    pub(super) submission_id: Option<String>,
     pub(super) delivered: bool,
 }
 
+impl PendingQueuedPrompt {
+    fn recovery_prompt(&self) -> agents::QueuedPrompt {
+        agents::QueuedPrompt {
+            id: self.outbox_id,
+            submission_id: Some(self.submission_id.clone()),
+            target: self.target.clone(),
+            harness: self.harness,
+            project: self.project.clone(),
+            session: self.session.clone(),
+            mode: self.mode,
+            message: self.message.clone(),
+            display_message: self.display_message.clone(),
+            invocation: self.invocation.clone(),
+            images: self.images.clone(),
+        }
+    }
+}
+
 impl RuntimeOwner {
-    pub(super) fn retire_pending_prompt(&mut self) {
-        if let Some(id) = self.pending_prompt_id.clone()
-            && let Some(target) = self.pending_prompt_target.clone()
-        {
-            self.retired_prompts.insert(
-                id,
-                RetiredPrompt {
-                    outbox_id: self.pending_outbox_id,
-                    target,
-                    session: self.active_session.clone(),
-                    delivery_tracked: self.pending_prompt_delivery_tracked,
-                    submission_id: self.pending_submission_id.clone(),
-                    delivered: self.pending_prompt_result_emitted,
-                },
+    /// Successful admission waits for exact delivery. Terminal failure settles
+    /// composer ownership once, regardless of which in-flight slot owns it.
+    pub(super) fn settle_prompt_response(
+        &mut self,
+        response: &agents::SessionResponse,
+        prompt: RetiredPrompt,
+        recovery: Option<&PendingQueuedPrompt>,
+    ) -> Option<agents::PromptOutcome> {
+        use agents::{PromptOutcome, SessionResponseErrorKind};
+        let receipt_id = response.id.as_deref()?;
+        if !prompt.delivered && response.result.is_ok() {
+            return None;
+        }
+        if prompt.delivered {
+            if let Some(outbox_id) = prompt.outbox_id {
+                let result = self
+                    .state
+                    .as_ref()
+                    .ok_or("State unavailable".to_owned())
+                    .and_then(|state| {
+                        state.with(|store| {
+                            store.complete_delivered_prompt(
+                                outbox_id,
+                                &prompt.target,
+                                prompt.session.as_deref(),
+                                receipt_id,
+                                prompt.delivery_tracked,
+                            )
+                        })
+                    });
+                match result {
+                    Ok(()) => {
+                        if self.pending_prompt_id.as_deref() == Some(receipt_id) {
+                            self.pending_outbox_id = None;
+                        }
+                        self.reconcile_saved_prompts();
+                    }
+                    Err(error) => {
+                        zlog::error!("Save proven prompt delivery {outbox_id}: {error}");
+                    }
+                }
+            }
+            conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
+                receipt_id,
+                &Value::Null,
+                "delivered",
             );
+            return Some(PromptOutcome::Accepted);
+        }
+        let error = response
+            .result
+            .as_ref()
+            .expect_err("terminal undelivered prompt");
+        let uncertain = error.kind == SessionResponseErrorKind::DeliveryUnknown;
+        let recover = uncertain
+            || (error.kind == SessionResponseErrorKind::RejectedBeforeAcceptance
+                && !is_user_actionable_prompt_error(&error.message))
+            // A manual retry has no composer draft to restore on rejection.
+            || (prompt.submission_id.is_none() && prompt.outbox_id.is_some());
+        if uncertain {
+            self.retired_prompts
+                .insert(receipt_id.to_owned(), prompt.clone());
+        }
+        let mut outcome = PromptOutcome::RejectedBeforeAcceptance;
+        if let Some(outbox_id) = prompt.outbox_id {
+            let cancelled = !recover
+                && self.state.as_ref().is_some_and(|state| {
+                    match state.with(|store| store.cancel_queued_prompts(&[outbox_id])) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            zlog::error!("Cancel rejected prompt {outbox_id}: {error}");
+                            false
+                        }
+                    }
+                });
+            if cancelled {
+                self.reconcile_saved_prompts();
+            } else {
+                self.save_outbox_for_recovery(
+                    outbox_id,
+                    prompt.submission_id.as_deref(),
+                    recovery.map(PendingQueuedPrompt::recovery_prompt),
+                );
+                outcome = PromptOutcome::DeliveryUnknown;
+            }
+        } else if recover {
+            outcome = PromptOutcome::DeliveryUnknown;
+        }
+        if !uncertain {
+            // Terminal rejection owns no future model receipt. Dismiss only its
+            // pending presentation, never a delivered transcript row.
+            conversation_mut(self.active_snapshot_mut()).dismiss_pending_receipt(receipt_id);
+        }
+        self.emit_prompt_result(prompt.submission_id.as_deref(), &prompt.target, outcome);
+        Some(outcome)
+    }
+
+    /// The durable outbox owns recovery membership; cached cards only project it.
+    /// Call after delivery, cancellation, or native-history reconciliation.
+    pub(super) fn reconcile_saved_prompts(&mut self) -> bool {
+        if self.saved_prompts.is_empty() {
+            return false;
+        }
+        let Some(state) = self.state.as_ref() else {
+            return false;
+        };
+        match state.with(|store| store.queued_prompts()) {
+            Ok(pending) => {
+                let ids = pending
+                    .into_iter()
+                    .map(|prompt| prompt.id)
+                    .collect::<HashSet<_>>();
+                let previous_len = self.saved_prompts.len();
+                self.saved_prompts.retain(|prompt| ids.contains(&prompt.id));
+                previous_len != self.saved_prompts.len()
+            }
+            Err(error) => {
+                zlog::error!("Reconcile saved prompts: {error}");
+                false
+            }
+        }
+    }
+
+    pub(super) fn save_outbox_for_recovery(
+        &mut self,
+        id: i64,
+        submission_id: Option<&str>,
+        fallback: Option<agents::QueuedPrompt>,
+    ) {
+        if self.saved_prompts.iter().any(|prompt| prompt.id == id) {
+            return;
+        }
+        let result = self
+            .state
+            .as_ref()
+            .ok_or("State unavailable".to_owned())
+            .and_then(|state| state.with(|store| store.queued_prompts()));
+        match result {
+            Ok(prompts) => {
+                if let Some(mut prompt) = prompts.into_iter().find(|prompt| prompt.id == id) {
+                    // Storage does not retain the live composer's submission identity.
+                    prompt.submission_id = submission_id.map(str::to_owned);
+                    self.saved_prompts.push_back(prompt);
+                }
+            }
+            Err(error) => {
+                zlog::error!("Load pending prompt {id}: {error}");
+                // The secondary slot still owns the exact durable payload. A
+                // failed read must not orphan it when composer ownership ends.
+                if let Some(prompt) = fallback {
+                    self.saved_prompts.push_back(prompt);
+                }
+            }
         }
     }
 
@@ -58,6 +214,8 @@ impl RuntimeOwner {
         })();
         if let Err(error) = saved {
             zlog::error!("Queue cancellation was not saved: {error}");
+        } else {
+            self.reconcile_saved_prompts();
         }
         if let Some(pending) = pending {
             self.emit_prompt_result(
@@ -170,8 +328,11 @@ impl RuntimeOwner {
                 }
             }
         }
-        if current && saved {
-            self.pending_outbox_id = None;
+        if saved {
+            self.reconcile_saved_prompts();
+            if current {
+                self.pending_outbox_id = None;
+            }
         }
         if current && !self.pending_prompt_result_emitted {
             if let (Some(submission_id), Some(target)) = (
@@ -248,6 +409,10 @@ impl RuntimeOwner {
             zlog::error!("Save late prompt receipt: {error}");
             return true;
         }
+        let saved_changed = delivered && self.reconcile_saved_prompts();
+        if saved_changed {
+            self.publish();
+        }
         if self.active_session == retired.session && !retired.delivered {
             conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
                 id,
@@ -289,74 +454,37 @@ impl RuntimeOwner {
         if self.saved_prompts.iter().any(|prompt| prompt.id == id) {
             return;
         }
-        let result = self
-            .state
-            .as_ref()
-            .ok_or_else(|| "State unavailable".to_owned())
-            .and_then(|state| state.with(|store| store.queued_prompts()));
-        match result {
-            Ok(prompts) => {
-                if let Some(prompt) = prompts.into_iter().find(|prompt| prompt.id == id) {
-                    let submission_id = prompt
-                        .submission_id
-                        .as_deref()
-                        .or(self.pending_submission_id.as_deref());
-                    self.emit_prompt_result(
-                        submission_id,
-                        &prompt.target,
-                        crate::agents::PromptOutcome::DeliveryUnknown,
-                    );
-                    self.saved_prompts.push_back(prompt);
-                    self.publish();
-                }
-            }
-            Err(error) => {
-                zlog::error!("Could not load pending prompt {id}: {error}");
-            }
+        let submission_id = self.pending_submission_id.clone();
+        self.save_outbox_for_recovery(id, submission_id.as_deref(), None);
+        if let Some(prompt) = self.saved_prompts.iter().find(|prompt| prompt.id == id) {
+            self.emit_prompt_result(
+                prompt.submission_id.as_deref(),
+                &prompt.target,
+                crate::agents::PromptOutcome::DeliveryUnknown,
+            );
+            self.publish();
         }
     }
 
-    pub(super) fn fail_pending_queued_prompts(&mut self, _error: &str) {
+    pub(super) fn fail_pending_queued_prompts(&mut self, error: &str) {
         let pending = std::mem::take(&mut self.pending_queued_prompts);
         for (receipt_id, queued) in pending {
-            if queued.result_emitted {
-                if let Some(state) = self.state.as_mut()
-                    && let Err(database_error) = state.with(|store| {
-                        store.complete_delivered_prompt(
-                            queued.outbox_id,
-                            &queued.target,
-                            queued.session.as_deref(),
-                            &receipt_id,
-                            queued.delivery_tracked,
-                        )
-                    })
-                {
-                    zlog::error!(
-                        "Save proven queued delivery {}: {database_error}",
-                        queued.outbox_id
-                    );
-                }
-                continue;
-            }
-            // Keep unconfirmed delivery visible until the user acts.
-            self.emit_prompt_result(
-                Some(&queued.submission_id),
-                &queued.target,
-                crate::agents::PromptOutcome::DeliveryUnknown,
+            self.settle_prompt_response(
+                &agents::SessionResponse::prompt_delivery_unknown(
+                    receipt_id,
+                    queued.mode,
+                    error.to_owned(),
+                ),
+                RetiredPrompt {
+                    outbox_id: Some(queued.outbox_id),
+                    target: queued.target.clone(),
+                    session: queued.session.clone(),
+                    delivery_tracked: queued.delivery_tracked,
+                    submission_id: Some(queued.submission_id.clone()),
+                    delivered: queued.result_emitted,
+                },
+                Some(&queued),
             );
-            self.saved_prompts.push_back(crate::agents::QueuedPrompt {
-                id: queued.outbox_id,
-                submission_id: Some(queued.submission_id),
-                target: queued.target,
-                harness: queued.harness,
-                project: queued.project,
-                session: queued.session,
-                mode: queued.mode,
-                message: queued.message,
-                display_message: queued.display_message,
-                invocation: queued.invocation,
-                images: queued.images,
-            });
         }
     }
 
@@ -392,4 +520,22 @@ impl RuntimeOwner {
             }
         }
     }
+}
+
+pub(super) fn is_user_actionable_prompt_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "auth",
+        "unauthorized",
+        "forbidden",
+        "permission",
+        "access",
+        "credential",
+        "configuration",
+        "configured",
+        "config",
+        "api key",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
 }

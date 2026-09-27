@@ -248,6 +248,7 @@ impl RuntimeOwner {
         {
             zlog::error!("Reconcile saved prompt deliveries: {error}");
         }
+        self.reconcile_saved_prompts();
         let projection = self.host.timer(RuntimeMetric::ProjectHistory);
         if let Some(state) = self.state.as_ref() {
             if let Err(error) = state.with(|store| {

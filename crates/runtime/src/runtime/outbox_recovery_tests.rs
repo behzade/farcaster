@@ -689,6 +689,7 @@ fn late_receipt_never_acknowledges_a_new_same_text_submission() -> Result<(), St
     assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
     assert_eq!(owner.pending_outbox_id, Some(new_outbox));
     owner.apply_process_item(delivered(&old_id, "same text"));
+    assert!(owner.saved_prompts.is_empty());
     assert_eq!(owner.pending_prompt_id.as_deref(), Some(new_id.as_str()));
     assert_eq!(owner.pending_outbox_id, Some(new_outbox));
     assert_eq!(
@@ -767,5 +768,442 @@ fn failed_delivery_record_keeps_the_original_pending_row_retryable() -> Result<(
         [("retry after storage failure".into(), "pending".into())]
     );
     assert_eq!(StateStore::open_at(&database)?.queued_prompts()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn secondary_terminal_failure_releases_its_submission_without_blocking_later_results()
+-> Result<(), String> {
+    use agents::{PromptOutcome, SessionResponse, SessionResponsePayload};
+    for uncertain in [false, true] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+        let (sender, events) = mpsc::channel();
+        owner.event_tx.sender = sender;
+        owner
+            .snapshot
+            .selected_session
+            .clone_from(&owner.active_session);
+        let image = PromptImage::new("aW1hZ2UtYnl0ZXM=".into(), "image/png".into());
+        for (id, text) in [
+            ("first", "first input"),
+            ("second", "same text"),
+            ("third", "same text"),
+        ] {
+            owner.send_prompt_for_submission(
+                id.into(),
+                "session:one".into(),
+                PromptMode::Normal,
+                text.into(),
+                if id == "second" {
+                    vec![image.clone()]
+                } else {
+                    vec![]
+                },
+                false,
+            );
+        }
+        let second = "request-2";
+        let third = "request-3";
+        let second_outbox = owner.pending_queued_prompts[second].outbox_id;
+        let third_outbox = owner.pending_queued_prompts[third].outbox_id;
+        // Admission is not completion, even for a secondary submission.
+        owner.apply_response(SessionResponse::success(
+            Some(second.into()),
+            SessionResponsePayload::Prompt(PromptMode::FollowUp),
+        ));
+        assert!(
+            events
+                .try_iter()
+                .all(|event| !matches!(event, RuntimeEvent::PromptResult { .. }))
+        );
+        assert!(owner.pending_queued_prompts.contains_key(second));
+        owner.apply_process_item(delivered(third, "same text"));
+        owner.apply_process_item(delivered("request-1", "first input"));
+        let failure = if uncertain {
+            SessionResponse::prompt_delivery_unknown(
+                second.into(),
+                PromptMode::FollowUp,
+                "transport lost".into(),
+            )
+        } else {
+            SessionResponse::failure(
+                Some(second.into()),
+                SessionOperation::Prompt(PromptMode::FollowUp),
+                "transport unavailable".into(),
+            )
+        };
+        owner.apply_response(failure);
+        // The UI can now resolve every submission in original order, even
+        // though the later delivery arrived before the failed second input.
+        let published = events.try_iter().collect::<Vec<_>>();
+        let mut results = published
+            .iter()
+            .filter_map(|event| match event {
+                RuntimeEvent::PromptResult {
+                    submission_id: Some(id),
+                    outcome,
+                    ..
+                } => Some((id.clone(), *outcome)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            results,
+            [
+                ("first".into(), PromptOutcome::Accepted),
+                ("second".into(), PromptOutcome::DeliveryUnknown),
+                ("third".into(), PromptOutcome::Accepted),
+            ]
+        );
+        assert!(!owner.pending_queued_prompts.contains_key(second));
+        assert_eq!(owner.saved_prompts.len(), 1);
+        assert_eq!(owner.saved_prompts[0].id, second_outbox);
+        assert_eq!(owner.saved_prompts[0].images.len(), 1);
+        assert_eq!(owner.saved_prompts[0].images[0].bytes()?, image.bytes()?);
+        assert_eq!(owner.saved_prompts[0].images[0].mime_type, image.mime_type);
+        assert_eq!(
+            owner.saved_prompts[0].submission_id.as_deref(),
+            Some("second")
+        );
+        assert_eq!(published_saved_ids(&published), [second_outbox]);
+        assert_ne!(second_outbox, third_outbox);
+        assert_eq!(owner.retired_prompts.contains_key(second), uncertain);
+        assert_eq!(sent_messages(&sent).len(), 3, "no automatic retry");
+        if uncertain {
+            owner.apply_process_item(delivered(second, "same text"));
+            assert!(owner.saved_prompts.is_empty());
+            assert!(published_saved_ids(&events.try_iter().collect::<Vec<_>>()).is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn current_and_secondary_rejections_return_one_composer_result_and_cancel_outbox()
+-> Result<(), String> {
+    use agents::{PromptOutcome, SessionResponse};
+    for secondary in [false, true] {
+        for cancelled in [false, true] {
+            let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+            let database = temp.path().join("state.sqlite3");
+            let (mut owner, _) = ready_owner(temp.path(), &database)?;
+            let (sender, events) = mpsc::channel();
+            owner.event_tx.sender = sender;
+            owner
+                .snapshot
+                .selected_session
+                .clone_from(&owner.active_session);
+            if secondary {
+                owner.send_prompt_for_submission(
+                    "first".into(),
+                    "session:one".into(),
+                    PromptMode::Normal,
+                    "first input".into(),
+                    vec![],
+                    false,
+                );
+            }
+            owner.send_prompt_for_submission(
+                "rejected".into(),
+                "session:one".into(),
+                PromptMode::Normal,
+                "restore me".into(),
+                vec![],
+                false,
+            );
+            let request = if secondary { "request-2" } else { "request-1" };
+            let mode = if secondary {
+                PromptMode::FollowUp
+            } else {
+                PromptMode::Normal
+            };
+            owner.apply_response(if cancelled {
+                SessionResponse::cancelled(
+                    request.into(),
+                    SessionOperation::Prompt(mode),
+                    "cancelled before delivery".into(),
+                )
+            } else {
+                SessionResponse::failure(
+                    Some(request.into()),
+                    SessionOperation::Prompt(mode),
+                    "invalid API key".into(),
+                )
+            });
+            let results = events
+                .try_iter()
+                .filter_map(|event| match event {
+                    RuntimeEvent::PromptResult {
+                        submission_id: Some(id),
+                        outcome,
+                        ..
+                    } if id == "rejected" => Some(outcome),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(results, [PromptOutcome::RejectedBeforeAcceptance]);
+            assert!(owner.saved_prompts.is_empty());
+            assert!(
+                StateStore::open_at(&database)?
+                    .queued_prompts()?
+                    .iter()
+                    .all(|prompt| prompt.message != "restore me")
+            );
+            assert!(!owner.pending_queued_prompts.contains_key(request));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_history_delivery_removes_only_the_matching_saved_card() -> Result<(), String> {
+    for cold_history in [false, true] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let (mut owner, _) = ready_owner(temp.path(), &database)?;
+        let (sender, events) = mpsc::channel();
+        owner.event_tx.sender = sender;
+        owner
+            .snapshot
+            .selected_session
+            .clone_from(&owner.active_session);
+        for id in ["first", "second"] {
+            owner.send_prompt_for_submission(
+                id.into(),
+                "session:one".into(),
+                PromptMode::Normal,
+                "same text".into(),
+                vec![],
+                false,
+            );
+        }
+        let second_outbox = owner.pending_queued_prompts["request-2"].outbox_id;
+        for (id, mode) in [
+            ("request-1", PromptMode::Normal),
+            ("request-2", PromptMode::FollowUp),
+        ] {
+            owner.apply_response(agents::SessionResponse::prompt_delivery_unknown(
+                id.into(),
+                mode,
+                "transport lost".into(),
+            ));
+        }
+        assert_eq!(owner.saved_prompts.len(), 2);
+        let evidence = sessions::PromptDeliveryReconciliation {
+            delivered: vec!["request-1".into()],
+            pending: vec![],
+            absence_is_not_delivered: false,
+        };
+        if cold_history {
+            let path = owner.active_session.take().expect("active session");
+            owner.apply_history(HistoryResult {
+                generation: owner.history_generation,
+                path,
+                project: temp.path().into(),
+                kind: HistoryLoadKind::Selection,
+                result: Ok(LoadedHistory {
+                    messages: vec![],
+                    model: None,
+                    thinking_level: None,
+                    pending_question: None,
+                    prompt_deliveries: Some(evidence),
+                }),
+            });
+        } else {
+            owner.apply_response(agents::SessionResponse::success(
+                Some("history".into()),
+                agents::SessionResponsePayload::LoadHistory(agents::SessionHistory::Replace {
+                    messages: vec![],
+                    prompt_deliveries: Some(evidence),
+                }),
+            ));
+        }
+        assert_eq!(owner.saved_prompts.len(), 1);
+        assert_eq!(owner.saved_prompts[0].id, second_outbox);
+        assert_eq!(
+            published_saved_ids(&events.try_iter().collect::<Vec<_>>()),
+            [second_outbox]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_cancellation_removes_saved_recovery_and_preserves_other_input() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let (mut owner, _) = ready_owner(temp.path(), &database)?;
+    let (sender, events) = mpsc::channel();
+    owner.event_tx.sender = sender;
+    owner
+        .snapshot
+        .selected_session
+        .clone_from(&owner.active_session);
+    owner.send_prompt_for_submission(
+        "first".into(),
+        "session:one".into(),
+        PromptMode::Normal,
+        "same text".into(),
+        vec![],
+        false,
+    );
+    owner.send_prompt_for_submission(
+        "second".into(),
+        "session:one".into(),
+        PromptMode::Normal,
+        "same text".into(),
+        vec![],
+        false,
+    );
+    owner.apply_response(agents::SessionResponse::prompt_delivery_unknown(
+        "request-2".into(),
+        PromptMode::FollowUp,
+        "transport lost".into(),
+    ));
+    assert_eq!(owner.saved_prompts.len(), 1);
+    assert_eq!(
+        owner.apply_process_item(SessionEvent::Activity(
+            json!({
+                "type":"prompt_delivery", "submissionId":"request-2", "status":"cancelled"
+            })
+            .into()
+        )),
+        SnapshotChange::Immediate
+    );
+    owner.publish();
+    assert!(owner.saved_prompts.is_empty());
+    assert!(published_saved_ids(&events.try_iter().collect::<Vec<_>>()).is_empty());
+    assert_eq!(owner.pending_prompt_id.as_deref(), Some("request-1"));
+    assert_eq!(StateStore::open_at(&database)?.queued_prompts()?.len(), 1);
+    Ok(())
+}
+
+fn published_saved_ids(events: &[RuntimeEvent]) -> Vec<i64> {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            RuntimeEvent::Snapshot { snapshot, .. } => Some(
+                snapshot
+                    .conversation
+                    .queue
+                    .saved
+                    .iter()
+                    .map(|prompt| prompt.id)
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .expect("published snapshot")
+}
+
+#[test]
+fn secondary_recovery_keeps_payload_when_outbox_reads_fail() -> Result<(), String> {
+    for transport_failure in [false, true] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let (mut owner, sent) = ready_owner(temp.path(), &database)?;
+        let (sender, events) = mpsc::channel();
+        owner.event_tx.sender = sender;
+        owner
+            .snapshot
+            .selected_session
+            .clone_from(&owner.active_session);
+        owner.send_prompt_for_submission(
+            "first".into(),
+            "session:one".into(),
+            PromptMode::Normal,
+            "first input".into(),
+            vec![],
+            false,
+        );
+        let image = PromptImage::new("aW1hZ2UtYnl0ZXM=".into(), "image/png".into());
+        owner.send_prompt_with_presentation_for_submission(
+            "second".into(),
+            "session:one".into(),
+            PromptMode::Normal,
+            "expanded input".into(),
+            Some("display input".into()),
+            Some("invocation".into()),
+            vec![image.clone()],
+            false,
+        );
+        let outbox_id = owner.pending_queued_prompts["request-2"].outbox_id;
+        let connection =
+            rusqlite::Connection::open(&database).map_err(|error| error.to_string())?;
+        connection
+            .execute_batch("ALTER TABLE outbox RENAME TO unavailable_outbox")
+            .map_err(|error| error.to_string())?;
+        assert!(
+            owner
+                .state
+                .as_ref()
+                .unwrap()
+                .with(|store| store.queued_prompts())
+                .is_err()
+        );
+        if transport_failure {
+            owner.fail_pending_queued_prompts("transport lost");
+            owner.publish();
+        } else {
+            owner.apply_response(agents::SessionResponse::prompt_delivery_unknown(
+                "request-2".into(),
+                PromptMode::FollowUp,
+                "transport lost".into(),
+            ));
+        }
+        assert!(!owner.pending_queued_prompts.contains_key("request-2"));
+        assert_eq!(
+            owner.saved_prompts.len(),
+            1,
+            "saved queue must own recovery before composer release"
+        );
+        let prompt = &owner.saved_prompts[0];
+        assert_eq!(prompt.id, outbox_id);
+        assert_eq!(prompt.submission_id.as_deref(), Some("second"));
+        assert_eq!(prompt.message, "expanded input");
+        assert_eq!(prompt.display_message.as_deref(), Some("display input"));
+        assert_eq!(prompt.invocation.as_deref(), Some("invocation"));
+        assert_eq!(prompt.images[0].bytes()?, image.bytes()?);
+        let published = events.try_iter().collect::<Vec<_>>();
+        assert_eq!(published_saved_ids(&published), [outbox_id]);
+        assert_eq!(published.iter().filter(|event| matches!(event,
+            RuntimeEvent::PromptResult { submission_id: Some(id), outcome: agents::PromptOutcome::DeliveryUnknown, .. }
+            if id == "second"
+        )).count(), 1);
+
+        connection
+            .execute_batch("ALTER TABLE unavailable_outbox RENAME TO outbox")
+            .map_err(|error| error.to_string())?;
+        owner.apply_response(agents::SessionResponse::success(
+            Some("history".into()),
+            agents::SessionResponsePayload::LoadHistory(agents::SessionHistory::Replace {
+                messages: vec![],
+                prompt_deliveries: None,
+            }),
+        ));
+        assert_eq!(
+            published_saved_ids(&events.try_iter().collect::<Vec<_>>()),
+            [outbox_id]
+        );
+        assert_eq!(
+            sent_messages(&sent),
+            ["first input", "expanded input"],
+            "recovery never sends automatically"
+        );
+        assert!(owner.process.is_some(), "no runtime restart needed");
+        assert!(
+            StateStore::open_at(&database)?
+                .queued_prompts()?
+                .iter()
+                .any(|prompt| prompt.id == outbox_id)
+        );
+        owner.apply_process_item(delivered("request-2", "expanded input"));
+        assert!(owner.saved_prompts.is_empty());
+        assert!(published_saved_ids(&events.try_iter().collect::<Vec<_>>()).is_empty());
+    }
     Ok(())
 }

@@ -1276,6 +1276,7 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
     assert!(owner.deferred_prompt.is_none());
     assert!(owner.pending_prompt_item.is_none());
     assert!(!owner.snapshot.conversation.running);
+    assert!(owner.saved_prompts.is_empty());
     assert_eq!(
         owner
             .state
@@ -1283,8 +1284,14 @@ fn deferred_prompt_is_rejected_when_startup_state_has_no_session_path()
             .expect("state")
             .with(|store| store.queued_prompts())?
             .len(),
-        1
+        0
     );
+    // Rejection returns this unsent input to the composer, so the durable
+    // outbox must not retain a second recoverable copy.
+    let connection = rusqlite::Connection::open(temp.path().join("gui-state.sqlite3"))?;
+    let outbox_state: String =
+        connection.query_row("SELECT state FROM outbox", [], |row| row.get(0))?;
+    assert_eq!(outbox_state, "cancelled");
     assert!(events.try_iter().any(|event| matches!(
         event,
         RuntimeEvent::PromptResult {

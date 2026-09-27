@@ -1,3 +1,4 @@
+use super::prompt_receipts::RetiredPrompt;
 use super::*;
 use crate::agents::{SessionHistory, SessionResponsePayload as Payload};
 
@@ -189,59 +190,21 @@ impl RuntimeOwner {
             && let Some(request_id) = response.id.as_deref()
             && let Some(pending) = self.pending_queued_prompts.remove(request_id)
         {
-            if !pending.result_emitted
-                && (response.result.is_ok()
-                    || response.result.as_ref().is_err_and(|error| {
-                        error.kind != crate::agents::SessionResponseErrorKind::Cancelled
-                            && !is_user_actionable_prompt_error(&error.message)
-                    }))
-            {
-                // Native acceptance or an operational failure says nothing
-                // about model admission. Keep the exact durable item queued.
+            let outcome = self.settle_prompt_response(
+                &response,
+                RetiredPrompt {
+                    outbox_id: Some(pending.outbox_id),
+                    target: pending.target.clone(),
+                    session: pending.session.clone(),
+                    delivery_tracked: pending.delivery_tracked,
+                    submission_id: Some(pending.submission_id.clone()),
+                    delivered: pending.result_emitted,
+                },
+                Some(&pending),
+            );
+            if outcome.is_none() {
                 self.pending_queued_prompts
                     .insert(request_id.to_owned(), pending);
-                if self.parked_snapshot.is_none() {
-                    self.publish();
-                }
-                return;
-            }
-            let outcome = if pending.result_emitted {
-                crate::agents::PromptOutcome::Accepted
-            } else {
-                match &response.result {
-                    Ok(_) => crate::agents::PromptOutcome::Accepted,
-                    Err(_) => crate::agents::PromptOutcome::RejectedBeforeAcceptance,
-                }
-            };
-            if let Some(state) = self.state.as_mut() {
-                let saved = if pending.result_emitted {
-                    state.with(|store| {
-                        store.complete_delivered_prompt(
-                            pending.outbox_id,
-                            &pending.target,
-                            pending.session.as_deref(),
-                            request_id,
-                            pending.delivery_tracked,
-                        )
-                    })
-                } else {
-                    // Operational failures leave the durable row pending. Only
-                    // model delivery below can acknowledge it.
-                    Ok(())
-                };
-                if let Err(error) = saved {
-                    zlog::error!("Save queued prompt response {request_id}: {error}");
-                }
-            }
-            if pending.result_emitted {
-                conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
-                    request_id,
-                    &serde_json::Value::Null,
-                    "delivered",
-                );
-            }
-            if !pending.result_emitted {
-                self.emit_prompt_result(Some(&pending.submission_id), &pending.target, outcome);
             }
             if self.parked_snapshot.is_none() {
                 self.publish();
@@ -280,28 +243,34 @@ impl RuntimeOwner {
             && response.id.as_ref() == self.pending_prompt_id.as_ref();
         let prompt_was_delivered = is_prompt_response && self.pending_prompt_result_emitted;
         if is_prompt_response {
-            if success && !prompt_was_delivered {
-                // Keep the request-to-outbox association until model delivery.
-                // Admission can precede that event, including within one poll.
+            let Some(outcome) = self.settle_prompt_response(
+                &response,
+                RetiredPrompt {
+                    outbox_id: self.pending_outbox_id,
+                    target: self.pending_prompt_target.clone().unwrap_or_default(),
+                    session: self.active_session.clone(),
+                    delivery_tracked: self.pending_prompt_delivery_tracked,
+                    submission_id: self.pending_submission_id.clone(),
+                    delivered: prompt_was_delivered,
+                },
+                None,
+            ) else {
                 return;
-            }
-            // Transport and adapter failures are durable outbox state, not
-            // transcript events. Keep the composer submission pending so the
-            // outbox recovery path can retry it. Only errors that ask the user
-            // to fix auth, access, or configuration become visible below.
-            if let Err(error) = &response.result
-                && !prompt_was_delivered
-                && (error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown
-                    || (error.kind
-                        == crate::agents::SessionResponseErrorKind::RejectedBeforeAcceptance
-                        && !is_user_actionable_prompt_error(&error.message)))
-            {
-                if error.kind == crate::agents::SessionResponseErrorKind::DeliveryUnknown {
-                    self.retire_pending_prompt();
-                }
+            };
+            if outcome != crate::agents::PromptOutcome::Accepted {
                 self.normal_prompt_in_flight = false;
+                self.invalidate_auto_title_generation();
                 self.rollback_pending_prompt();
-                self.release_pending_outbox();
+                self.pending_outbox_id = None;
+            } else {
+                self.pending_prompt_item = None;
+            }
+            self.pending_prompt_id = None;
+            self.pending_prompt_target = None;
+            self.pending_prompt_delivery_tracked = false;
+            self.pending_submission_id = None;
+            self.pending_prompt_result_emitted = false;
+            if outcome == crate::agents::PromptOutcome::DeliveryUnknown {
                 let running = self
                     .active_snapshot()
                     .session
@@ -309,88 +278,13 @@ impl RuntimeOwner {
                     .is_some_and(|session| session.is_streaming);
                 conversation_mut(self.active_snapshot_mut()).running = running;
                 if !running {
-                    self.snapshot.status = "Done".into();
+                    self.active_snapshot_mut().status = "Done".into();
                 }
-                self.pending_prompt_id = None;
-                self.pending_prompt_target = None;
-                self.pending_submission_id = None;
-                self.pending_prompt_result_emitted = false;
-                self.pending_prompt_delivery_tracked = false;
                 if self.parked_snapshot.is_none() {
                     self.publish();
                 }
                 return;
             }
-            let outcome = if prompt_was_delivered {
-                crate::agents::PromptOutcome::Accepted
-            } else {
-                crate::agents::PromptOutcome::RejectedBeforeAcceptance
-            };
-            self.pending_prompt_id = None;
-            if outcome == crate::agents::PromptOutcome::RejectedBeforeAcceptance
-                && operation == SessionOperation::Prompt(PromptMode::Normal)
-            {
-                self.normal_prompt_in_flight = false;
-            }
-            if prompt_was_delivered {
-                let target = self.pending_prompt_target.clone().unwrap_or_default();
-                let session = self.active_session.clone();
-                let delivery_tracked = self.pending_prompt_delivery_tracked;
-                if let Some(id) = self.pending_outbox_id
-                    && let Some(state) = self.state.as_mut()
-                {
-                    let receipt_id = response.id.as_deref().unwrap_or_default();
-                    let saved = state.with(|store| {
-                        store.complete_delivered_prompt(
-                            id,
-                            &target,
-                            session.as_deref(),
-                            receipt_id,
-                            delivery_tracked,
-                        )
-                    });
-                    if let Err(error) = saved {
-                        // The model already saw the input. A database failure
-                        // leaves the outbox pending so a restart may retry; it
-                        // must not become a transcript error.
-                        zlog::error!("Save model receipt for outbox {id}: {error}");
-                    } else {
-                        self.pending_outbox_id = None;
-                    }
-                }
-            } else if response.result.is_err() {
-                self.invalidate_auto_title_generation();
-                self.release_pending_outbox();
-            }
-            match outcome {
-                crate::agents::PromptOutcome::Accepted => {
-                    if let Some(id) = response.id.as_deref() {
-                        conversation_mut(self.active_snapshot_mut()).record_prompt_delivery(
-                            id,
-                            &serde_json::Value::Null,
-                            "delivered",
-                        );
-                    }
-                    self.pending_prompt_delivery_tracked = false;
-                    self.pending_prompt_item = None;
-                }
-                crate::agents::PromptOutcome::RejectedBeforeAcceptance
-                | crate::agents::PromptOutcome::Cancelled => {
-                    self.pending_prompt_delivery_tracked = false;
-                    self.rollback_pending_prompt();
-                }
-                crate::agents::PromptOutcome::DeliveryUnknown => unreachable!(
-                    "operational delivery uncertainty remains pending and never reaches projection"
-                ),
-            }
-            let target = self.pending_prompt_target.take();
-            if let Some(target) = target
-                && !prompt_was_delivered
-            {
-                self.emit_prompt_result(self.pending_submission_id.as_deref(), &target, outcome);
-            }
-            self.pending_submission_id = None;
-            self.pending_prompt_result_emitted = false;
         }
         if prompt_was_delivered && response.result.is_err() {
             if self.parked_snapshot.is_none() {
@@ -532,6 +426,7 @@ impl RuntimeOwner {
                     {
                         zlog::error!("Reconcile saved prompt deliveries: {error}");
                     }
+                    self.reconcile_saved_prompts();
                     if let (Some(state), Some(session)) =
                         (self.state.as_ref(), self.active_session.as_deref())
                     {
@@ -610,24 +505,6 @@ impl RuntimeOwner {
             self.publish();
         }
     }
-}
-
-fn is_user_actionable_prompt_error(message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    [
-        "auth",
-        "unauthorized",
-        "forbidden",
-        "permission",
-        "access",
-        "credential",
-        "configuration",
-        "configured",
-        "config",
-        "api key",
-    ]
-    .iter()
-    .any(|needle| message.contains(needle))
 }
 
 pub(super) fn update_session_goal_from_event(
