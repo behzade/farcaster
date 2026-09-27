@@ -5,6 +5,7 @@ pub(super) struct BootstrapSubscriptions {
     pub(super) search: Subscription,
     pub(super) session_title: Subscription,
     pub(super) network_proxy: Subscription,
+    pub(super) editor_command: Subscription,
     pub(super) window_placement: Subscription,
 }
 
@@ -67,11 +68,22 @@ pub(super) fn create(
         },
     );
 
+    let editor_command = cx.subscribe_in(
+        &inputs.editor_command,
+        window,
+        |this, _, event: &InputEvent, _, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.save_editor_command(cx);
+            }
+        },
+    );
+
     BootstrapSubscriptions {
         composer,
         search,
         session_title,
         network_proxy,
+        editor_command,
         window_placement,
     }
 }

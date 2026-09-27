@@ -120,6 +120,7 @@ impl FarcasterApp {
             expand_transcript_folders: false,
             group_sessions_by_project: false,
             editor_choice: Default::default(),
+            editor_command: String::new(),
             theme_css: None,
             active_theme: None,
             panel_layout: Default::default(),
@@ -155,6 +156,7 @@ impl FarcasterApp {
         let inputs = inputs::create(
             &persisted.composer_sessions,
             persisted.saved_proxy.as_deref(),
+            &persisted.editor_command,
             window,
             cx,
         );
@@ -343,6 +345,9 @@ impl FarcasterApp {
                 group_sessions_by_project: persisted.group_sessions_by_project,
                 session_grouping_error: None,
                 editor_choice: persisted.editor_choice,
+                editor_command: persisted.editor_command,
+                editor_command_input: inputs.editor_command,
+                _editor_command_subscription: subscriptions.editor_command,
                 editor_error: None,
                 transcript_error: None,
                 _network_proxy_subscription: subscriptions.network_proxy,

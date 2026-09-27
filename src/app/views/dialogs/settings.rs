@@ -69,8 +69,7 @@ pub(in crate::app::views) fn render(
                         .child(appearance::render(app, entity.clone()))
                         .child(harness_profiles::render(app, entity.clone()))
                         .child(editor_setting(
-                            app.settings.editor_choice,
-                            &app.workspace_project(),
+                            app,
                             entity.clone(),
                         ))
                         .when_some(app.settings.editor_error.clone(), |content, error| {
@@ -203,20 +202,17 @@ pub(in crate::app::views) fn render(
     .into_any_element()
 }
 
-fn editor_setting(
-    choice: EditorChoice,
-    project: &std::path::Path,
-    entity: WeakEntity<FarcasterApp>,
-) -> AnyElement {
-    let selected = effective_editor_choice(choice, project);
+fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let choice = app.settings.editor_choice;
+    let project = app.workspace_project();
+    let selected = effective_editor_choice(choice, &project);
     let available: Vec<_> = EditorChoice::ALL
         .into_iter()
-        .filter(|choice| editor_available(*choice, project))
+        .filter(|choice| *choice == EditorChoice::Custom || editor_available(*choice, &project))
         .collect();
     div()
         .flex()
-        .items_center()
-        .justify_between()
+        .flex_col()
         .gap(theme().space.md)
         .child(setting_label(
             "Editor",
@@ -226,9 +222,7 @@ fn editor_setting(
             div()
                 .flex()
                 .gap(theme().space.xs)
-                .when(available.is_empty(), |options| {
-                    options.child("No editor is available")
-                })
+                .flex_wrap()
                 .children(available.into_iter().map(|option| {
                     editor_option(
                         format!("editor-{}", option.as_str()),
@@ -240,6 +234,10 @@ fn editor_setting(
                     )
                 })),
         )
+        .when(choice == EditorChoice::Custom, |section| {
+            section.child(setting_label("Terminal command", "Command and arguments, for example micro -p. Quote paths containing spaces. Applies to new editor sessions."))
+                .child(Input::new(&app.settings.editor_command_input))
+        })
         .into_any_element()
 }
 

@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 61] = [
+const ICON_PATHS: [&str; 64] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -64,6 +64,9 @@ const ICON_PATHS: [&str; 61] = [
     "icons/workbench/neovim.svg",
     "icons/workbench/opencode.svg",
     "icons/workbench/pi.svg",
+    "icons/workbench/micro.svg",
+    "icons/workbench/emacs.svg",
+    "icons/workbench/nano.svg",
     "icons/workbench/vim.svg",
     "icons/workbench/vscode.svg",
     "icons/workbench/zed.svg",
@@ -299,6 +302,15 @@ impl AssetSource for AppAssets {
             "icons/workbench/pi.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/pi.svg"))
             }
+            "icons/workbench/micro.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/micro.svg"))
+            }
+            "icons/workbench/emacs.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/emacs.svg"))
+            }
+            "icons/workbench/nano.svg" => {
+                Some(include_bytes!("../../../assets/workbench-icons/nano.svg"))
+            }
             "icons/workbench/vim.svg" => {
                 Some(include_bytes!("../../../assets/workbench-icons/vim.svg"))
             }
@@ -367,6 +379,9 @@ pub(crate) enum AppIcon {
     Stop,
     Trash,
     WarningCircle,
+    Micro,
+    Emacs,
+    Nano,
     Vim,
     VsCode,
     Zed,
@@ -381,7 +396,11 @@ impl AppIcon {
             crate::storage::EditorChoice::VsCode => Self::VsCode,
             crate::storage::EditorChoice::Zed => Self::Zed,
             crate::storage::EditorChoice::Helix => Self::Helix,
+            crate::storage::EditorChoice::Micro => Self::Micro,
+            crate::storage::EditorChoice::Emacs => Self::Emacs,
+            crate::storage::EditorChoice::Nano => Self::Nano,
             crate::storage::EditorChoice::Vim => Self::Vim,
+            crate::storage::EditorChoice::Custom => Self::Code,
         }
     }
 
@@ -429,6 +448,9 @@ impl IconNamed for AppIcon {
             Self::GitBranch => "git-branch",
             Self::GitFork => "git-fork",
             Self::Helix => return "icons/workbench/helix.svg".into(),
+            Self::Micro => return "icons/workbench/micro.svg".into(),
+            Self::Emacs => return "icons/workbench/emacs.svg".into(),
+            Self::Nano => return "icons/workbench/nano.svg".into(),
             Self::Vim => return "icons/workbench/vim.svg".into(),
             Self::Hourglass => "hourglass",
             Self::Key => "key",

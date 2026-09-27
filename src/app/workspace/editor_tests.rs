@@ -1,6 +1,50 @@
 use super::*;
 use tempfile::tempdir;
 
+#[gpui::test]
+fn editor_command_input_saves_and_reaches_the_terminal_launcher(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::editor_command_input_saves_and_reaches_the_terminal_launcher"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.select_editor(crate::storage::EditorChoice::Custom, cx);
+                    app.settings.editor_command_input.update(cx, |input, cx| {
+                        input.set_value("micro -p", window, cx);
+                        // set_value is silent; typing also emits Change.
+                        cx.emit(gpui_component::input::InputEvent::Change);
+                    });
+                });
+            });
+            cx.update(|_, cx| {
+                app.update(cx, |app, cx| {
+                    assert_eq!(app.settings.editor_command, "micro -p");
+                    assert!(app.settings.editor_error.is_none());
+                    let choice = effective_editor_choice(app.settings.editor_choice, project);
+                    assert_eq!(choice, crate::storage::EditorChoice::Custom);
+                    let command = choice
+                        .terminal_command(&app.settings.editor_command, project, None)
+                        .unwrap();
+                    assert_eq!(command.program, Path::new("micro"));
+                    assert_eq!(command.arguments, ["-p"]);
+                    assert!(command.project_arguments(project).is_empty());
+                    app.select_editor(crate::storage::EditorChoice::VsCode, cx);
+                });
+            });
+            let store = crate::app::persistence::open().unwrap();
+            assert_eq!(store.load_editor_command().unwrap(), "micro -p");
+            assert_eq!(
+                store.load_editor_choice().unwrap(),
+                crate::storage::EditorChoice::VsCode
+            );
+        },
+    );
+}
+
 #[test]
 fn editor_completion_is_scoped_to_its_request_session_and_view() {
     assert!(editor_completion_is_current(

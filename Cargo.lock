@@ -2005,6 +2005,9 @@ dependencies = [
 [[package]]
 name = "farcaster-editors"
 version = "0.1.0"
+dependencies = [
+ "shell-words",
+]
 
 [[package]]
 name = "farcaster-mcp-server"

@@ -182,7 +182,9 @@ impl NvimEditor {
             editor_launch::ARGUMENT,
             shell_quote(&launch_file),
         );
-        let terminal = Terminal::spawn(TerminalOptions::new(command, project.clone()), window, cx)?;
+        let mut options = TerminalOptions::new(command, project.clone());
+        options.quiet_login = true;
+        let terminal = Terminal::spawn(options, window, cx)?;
         terminal.update(cx, |terminal, _| terminal.set_visible(false));
         Ok(Self {
             project,

@@ -23,7 +23,7 @@ pub(in crate::app) struct EditorState {
     pub(in crate::app) view: Option<Entity<NvimEditor>>,
     pub(in crate::app) terminal_editor_view: Option<Entity<TerminalEditor>>,
     pub(in crate::app) terminal_editors:
-        HashMap<(PathBuf, String, crate::storage::EditorChoice), Entity<TerminalEditor>>,
+        HashMap<(PathBuf, String, farcaster_editors::EditorCommand), Entity<TerminalEditor>>,
     pub(in crate::app) active_review: Option<workspace::review::ActiveReview>,
     pub(in crate::app) project_editors: HashMap<(PathBuf, u64), Entity<NvimEditor>>,
     pub(in crate::app) session_tabs: HashMap<String, u64>,
@@ -54,6 +54,9 @@ pub(in crate::app) struct SettingsState {
     pub(in crate::app) group_sessions_by_project: bool,
     pub(in crate::app) session_grouping_error: Option<String>,
     pub(in crate::app) editor_choice: crate::storage::EditorChoice,
+    pub(in crate::app) editor_command: String,
+    pub(in crate::app) editor_command_input: Entity<InputState>,
+    pub(in crate::app) _editor_command_subscription: Subscription,
     pub(in crate::app) editor_error: Option<String>,
     pub(in crate::app) transcript_error: Option<String>,
     pub(in crate::app) _network_proxy_subscription: Subscription,

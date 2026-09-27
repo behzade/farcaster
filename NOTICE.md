@@ -84,3 +84,15 @@ distributed under MIT, and retain their upstream colors. The exact upstream
 license is included at `THIRD_PARTY_LICENSES/MATERIAL-ICON-THEME-MIT.txt`.
 Pinned revision and asset mappings are documented in `assets/file-icons/README.md`.
 Upstream: <https://github.com/material-extensions/vscode-material-icon-theme>.
+
+The GNU Emacs editor icon comes from Simple Icons under CC0 1.0 Universal.
+Upstream: <https://github.com/simple-icons/simple-icons>. See
+`THIRD_PARTY_LICENSES/SIMPLE-ICONS-CC0-1.0.md`.
+
+The GNU nano editor icon comes from file-icons under the ISC license.
+Upstream: <https://github.com/file-icons/icons>. See
+`THIRD_PARTY_LICENSES/FILE-ICONS-ISC.txt`.
+
+The Micro editor icon is adapted from Micro's logo under the MIT license.
+Upstream: <https://github.com/zyedidia/micro>. See
+`THIRD_PARTY_LICENSES/MICRO-MIT.txt`.

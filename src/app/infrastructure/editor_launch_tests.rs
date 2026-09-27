@@ -98,3 +98,42 @@ fn launch_preserves_arguments_and_uses_captured_path() -> TestResult {
     assert_eq!(output.stdout, b"a 'quoted' $argument\n");
     Ok(())
 }
+
+#[test]
+fn custom_editor_launch_preserves_options_and_starts_in_project() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let project = directory.path().canonicalize()?;
+    let program = project.join("my editor");
+    std::fs::write(&program, "#!/bin/sh\nprintf '%s\\0' \"$PWD\" \"$@\"\n")?;
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700))?;
+    let command = farcaster_editors::EditorCommand::parse(&format!(
+        "'{}' -p 'a \"quote\"' '$HOME'",
+        program.display()
+    ))?;
+    let mut arguments = command.arguments.clone();
+    arguments.extend(command.project_arguments(&project));
+    let path = project.join("launch.json");
+    write_launch(
+        &path,
+        &Launch {
+            program: command.program,
+            arguments,
+            project: project.clone(),
+            environment: Vec::new(),
+        },
+    )?;
+    let output = take_command(&path)?.output()?;
+    assert!(output.status.success());
+    let values: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
+    assert_eq!(
+        values,
+        [
+            project.as_os_str().as_bytes(),
+            b"-p",
+            b"a \"quote\"",
+            b"$HOME",
+            b""
+        ]
+    );
+    Ok(())
+}

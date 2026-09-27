@@ -16,6 +16,7 @@ pub(super) struct PersistedState {
     pub(super) saved_proxy: Option<String>,
     pub(super) expand_transcript_folders: bool,
     pub(super) group_sessions_by_project: bool,
+    pub(super) editor_command: String,
     pub(super) editor_choice: crate::storage::EditorChoice,
     pub(super) theme_css: Option<String>,
     pub(super) active_theme: Option<String>,
@@ -148,6 +149,13 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
             Default::default()
         });
 
+    let editor_command = crate::app::persistence::open()
+        .and_then(|store| store.load_editor_command())
+        .unwrap_or_else(|load_error| {
+            error.get_or_insert(load_error);
+            String::new()
+        });
+
     let mut theme_error = None;
     let theme_css = crate::app::infrastructure::persistence::open()
         .and_then(|store| store.load_theme_css())
@@ -188,6 +196,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
         expand_transcript_folders,
         group_sessions_by_project,
         editor_choice,
+        editor_command,
         theme_css,
         active_theme,
         panel_layout,

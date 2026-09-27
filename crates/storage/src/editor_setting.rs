@@ -3,6 +3,30 @@ use super::*;
 pub use farcaster_editors::EditorChoice;
 
 impl StateStore {
+    pub fn load_editor_command(&self) -> Result<String, String> {
+        self.connection
+            .query_row(
+                "SELECT value FROM meta WHERE key='editor_command'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::unwrap_or_default)
+            .map_err(|error| format!("load editor command: {error}"))
+    }
+
+    pub fn save_editor_command(&self, command: &str) -> Result<(), String> {
+        farcaster_editors::EditorCommand::parse(command)?;
+        self.connection
+            .execute(
+                "INSERT INTO meta(key, value) VALUES('editor_command', ?1)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [command],
+            )
+            .map(|_| ())
+            .map_err(|error| format!("save editor command: {error}"))
+    }
+
     pub fn load_editor_choice(&self) -> Result<EditorChoice, String> {
         let value = self
             .connection

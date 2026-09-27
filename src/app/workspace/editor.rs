@@ -46,12 +46,20 @@ fn backend(choice: crate::storage::EditorChoice) -> &'static dyn EditorBackend {
     static ZED: ZedBackend = ZedBackend;
     static HELIX: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Helix);
     static VIM: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Vim);
+    static MICRO: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Micro);
+    static EMACS: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Emacs);
+    static NANO: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Nano);
+    static CUSTOM: TerminalBackend = TerminalBackend(crate::storage::EditorChoice::Custom);
     match choice {
         crate::storage::EditorChoice::Neovim => &NEOVIM,
         crate::storage::EditorChoice::VsCode => &VSCODE,
         crate::storage::EditorChoice::Zed => &ZED,
         crate::storage::EditorChoice::Helix => &HELIX,
         crate::storage::EditorChoice::Vim => &VIM,
+        crate::storage::EditorChoice::Micro => &MICRO,
+        crate::storage::EditorChoice::Emacs => &EMACS,
+        crate::storage::EditorChoice::Nano => &NANO,
+        crate::storage::EditorChoice::Custom => &CUSTOM,
     }
 }
 
@@ -66,6 +74,10 @@ pub(in crate::app) fn effective_editor_choice(
     choice: crate::storage::EditorChoice,
     project: &Path,
 ) -> crate::storage::EditorChoice {
+    // An explicit custom command must report its own launch errors, not fall back.
+    if choice == crate::storage::EditorChoice::Custom {
+        return choice;
+    }
     std::iter::once(choice)
         .chain(crate::storage::EditorChoice::ALL)
         .find(|candidate| editor_available(*candidate, project))
@@ -421,6 +433,7 @@ impl FarcasterApp {
         &mut self,
         project: PathBuf,
         choice: crate::storage::EditorChoice,
+        command: farcaster_editors::EditorCommand,
         title: String,
         arguments: Vec<OsString>,
         temporary: Option<tempfile::NamedTempFile>,
@@ -431,12 +444,12 @@ impl FarcasterApp {
         let key = (
             project.clone(),
             self.composer.sessions.current_target().to_owned(),
-            choice,
+            command.clone(),
         );
         let existing = self.workspace.editor.terminal_editors.get(&key).cloned();
         let editor = existing
             .clone()
-            .unwrap_or_else(|| cx.new(|_| TerminalEditor::new(project, choice)));
+            .unwrap_or_else(|| cx.new(|_| TerminalEditor::new(project, choice, command)));
         editor.update(cx, |editor, cx| {
             editor.open(arguments, title, temporary, window, cx)
         })?;

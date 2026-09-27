@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use farcaster_editors::EditorCommand;
 use gpui::{
     Context, Entity, IntoElement, ParentElement as _, Render, RenderImage, Styled as _, Window, div,
 };
@@ -27,14 +28,21 @@ impl EditorBackend for TerminalBackend {
         cx: &mut Context<FarcasterApp>,
     ) -> Result<(), String> {
         let choice = self.0;
-        let vim = choice == EditorChoice::Vim;
+        let project = match &request {
+            EditorRequest::Project(project)
+            | EditorRequest::File { project, .. }
+            | EditorRequest::Review { project, .. } => project,
+        };
+        let command = choice.terminal_command(
+            &app.settings.editor_command,
+            project,
+            std::env::var_os("PATH").as_deref(),
+        )?;
+        let kind = command.choice();
+        let vim = kind == EditorChoice::Vim;
         let (project, title, args, temporary) = match request {
             EditorRequest::Project(project) => {
-                let args = if vim {
-                    vec![project.clone().into_os_string()]
-                } else {
-                    vec![]
-                };
+                let args = command.project_arguments(&project);
                 (project, "Project".to_owned(), args, None)
             }
             EditorRequest::File {
@@ -49,20 +57,15 @@ impl EditorBackend for TerminalBackend {
                     .unwrap_or_else(|| "File".into());
                 if diff {
                     let base = external_editor::head_tempfile(&path, choice.label())?;
-                    let mut args = vec![if vim { "-d".into() } else { "--vsplit".into() }];
+                    let mut args = match kind {
+                        EditorChoice::Vim => vec!["-d".into()],
+                        EditorChoice::Helix => vec!["--vsplit".into()],
+                        _ => Vec::new(),
+                    };
                     args.extend([base.path().as_os_str().to_owned(), path.into_os_string()]);
                     (project, format!("Diff: {title}"), args, Some(base))
                 } else {
-                    let args = if vim {
-                        let mut args = Vec::new();
-                        if let Some(line) = line {
-                            args.push(format!("+{}", line.max(1)).into());
-                        }
-                        args.push(path.into_os_string());
-                        args
-                    } else {
-                        vec![external_editor::location(&path, line).into()]
-                    };
+                    let args = command.file_arguments(&path, line);
                     (project, title, args, None)
                 }
             }
@@ -87,15 +90,12 @@ impl EditorBackend for TerminalBackend {
                     args.extend(locations.into_iter().map(|(path, _)| path.into_os_string()));
                     args
                 } else {
-                    locations
-                        .iter()
-                        .map(|(path, line)| external_editor::location(path, *line).into())
-                        .collect()
+                    command.review_arguments(&locations)
                 };
                 (project, "Review".into(), args, None)
             }
         };
-        app.activate_terminal_editor(project, choice, title, args, temporary, window, cx)
+        app.activate_terminal_editor(project, choice, command, title, args, temporary, window, cx)
     }
 }
 
@@ -110,16 +110,18 @@ struct TerminalTab {
 pub(in crate::app) struct TerminalEditor {
     project: PathBuf,
     choice: EditorChoice,
+    command: EditorCommand,
     tabs: Vec<TerminalTab>,
     active: usize,
     visible: bool,
 }
 
 impl TerminalEditor {
-    pub(super) fn new(project: PathBuf, choice: EditorChoice) -> Self {
+    pub(super) fn new(project: PathBuf, choice: EditorChoice, command: EditorCommand) -> Self {
         Self {
             project,
             choice,
+            command,
             tabs: Vec::new(),
             active: 0,
             visible: false,
@@ -149,9 +151,13 @@ impl TerminalEditor {
         let launch_file = directory.path().join("launch.json");
         editor_launch::prepare(
             &launch_file,
-            self.choice
-                .program(&self.project, std::env::var_os("PATH").as_deref()),
-            arguments.clone(),
+            self.command.program.clone(),
+            self.command
+                .arguments
+                .iter()
+                .chain(&arguments)
+                .cloned()
+                .collect(),
             self.project.clone(),
         )?;
         let executable = std::env::current_exe()
@@ -162,11 +168,9 @@ impl TerminalEditor {
             editor_launch::ARGUMENT,
             shell_quote(&launch_file)
         );
-        let terminal = Terminal::spawn(
-            TerminalOptions::new(command, self.project.clone()),
-            window,
-            cx,
-        )?;
+        let mut options = TerminalOptions::new(command, self.project.clone());
+        options.quiet_login = true;
+        let terminal = Terminal::spawn(options, window, cx)?;
         terminal.update(cx, |terminal, _| terminal.set_visible(false));
         self.tabs.push(TerminalTab {
             key: arguments,

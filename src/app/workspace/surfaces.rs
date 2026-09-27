@@ -970,6 +970,26 @@ impl FarcasterApp {
         cx.notify();
     }
 
+    pub(in crate::app) fn save_editor_command(&mut self, cx: &mut Context<Self>) {
+        let value = self
+            .settings
+            .editor_command_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        let result = farcaster_editors::EditorCommand::parse(&value)
+            .and_then(|_| crate::app::persistence::open()?.save_editor_command(&value));
+        match result {
+            Ok(()) => {
+                self.settings.editor_command = value;
+                self.settings.editor_error = None;
+            }
+            Err(error) => self.settings.editor_error = Some(error),
+        }
+        cx.notify();
+    }
+
     pub(in crate::app) fn save_settings_proxy(&mut self, cx: &mut Context<Self>) {
         self.settings.proxy_save = None;
         let value = self
