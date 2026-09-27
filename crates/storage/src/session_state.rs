@@ -1,5 +1,6 @@
 use super::*;
 
+/// Queued UI snapshots. Explicit archive intent uses `set_app_session_archived`.
 #[derive(Clone, Default)]
 pub struct SessionStateChanges {
     pub projects: Option<projects::ProjectList>,
@@ -14,6 +15,46 @@ impl SessionStateChanges {
 }
 
 impl StateStore {
+    /// Apply explicit archive intent to the durable chat, whether binding has
+    /// happened yet or its draft key has already been removed by promotion.
+    pub fn set_app_session_archived(
+        &mut self,
+        app_session_id: sessions::AppSessionId,
+        archived: bool,
+    ) -> Result<(), String> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| format!("start session archive intent: {error}"))?;
+        let now = u64_to_i64(now_ms());
+        let updated = tx
+            .execute(
+                "UPDATE sessions SET archived_at=?2 WHERE id=?1",
+                params![app_session_id.get(), archived.then_some(now)],
+            )
+            .map_err(|error| format!("apply session archive intent: {error}"))?;
+        if updated == 0 {
+            return Err("The chat is no longer available to archive".into());
+        }
+        // A NULL archive value alone cannot distinguish an explicit unarchive
+        // from an old snapshot. Binding uses this marker to retain the current
+        // row's decision when merging a separately discovered session.
+        tx.execute(
+            "INSERT INTO session_events(session_id,seq,t,schema_version,body)
+             SELECT ?1, COALESCE(MAX(seq),0)+1, ?2, 1,
+                    json_object('type','session_archive_intent','archived',json(?3))
+               FROM session_events WHERE session_id=?1",
+            params![
+                app_session_id.get(),
+                now,
+                if archived { "true" } else { "false" }
+            ],
+        )
+        .map_err(|error| format!("record session archive intent: {error}"))?;
+        tx.commit()
+            .map_err(|error| format!("commit session archive intent: {error}"))
+    }
+
     pub fn save_session_changes(&mut self, changes: &SessionStateChanges) -> Result<(), String> {
         let tx = self
             .connection
@@ -46,34 +87,29 @@ impl StateStore {
 fn update_draft(tx: &Transaction<'_>, draft: &DraftSession) -> Result<(), String> {
     let existing = tx
         .query_row(
-            "SELECT submitted, locator FROM sessions WHERE id=?1 AND client_key=?2",
+            "SELECT submitted, locator, archived_at IS NOT NULL FROM sessions WHERE id=?1 AND client_key=?2",
             params![draft.app_session_id, draft.id],
-            |row| Ok((row.get::<_, bool>(0)?, row.get::<_, Option<String>>(1)?)),
+            |row| Ok((row.get::<_, bool>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, bool>(2)?)),
         )
         .optional()
         .map_err(|error| format!("read draft before saving: {error}"))?;
-    let Some((submitted, locator)) = existing else {
+    let Some((submitted, locator, archived)) = existing else {
         // Allocation is synchronous; a queued save must never recreate a deleted
         // draft or reattach a draft key removed by promotion.
         return Ok(());
     };
     if !submitted && locator.is_none() {
-        save_draft(tx, draft)?;
+        let mut snapshot = draft.clone();
+        snapshot.archived = archived;
+        save_draft(tx, &snapshot)?;
     } else {
         // Runtime promotion can finish before this queued UI snapshot. Preserve
         // the canonical identity, settings and title instead of rolling them back.
         tx.execute(
             "UPDATE sessions SET submitted=MAX(submitted,?3),
-                title=CASE WHEN title='' THEN COALESCE(?4,'') ELSE title END,
-                archived_at=CASE WHEN locator IS NULL AND ?3 THEN ?5 ELSE archived_at END
+                title=CASE WHEN title='' THEN COALESCE(?4,'') ELSE title END
              WHERE id=?1 AND client_key=?2",
-            params![
-                draft.app_session_id,
-                draft.id,
-                draft.submitted,
-                draft.title,
-                draft.archived.then_some(u64_to_i64(draft.created_ms))
-            ],
+            params![draft.app_session_id, draft.id, draft.submitted, draft.title,],
         )
         .map_err(|error| format!("save submitted draft state: {error}"))?;
         if locator.is_none()

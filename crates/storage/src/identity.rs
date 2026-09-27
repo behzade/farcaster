@@ -133,7 +133,10 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
            search_text=TRIM(search_text || ' ' || (SELECT search_text FROM sessions WHERE id=?2)),
            timestamp=COALESCE((SELECT timestamp FROM sessions WHERE id=?2),timestamp),
            modified_ms=MAX(modified_ms,(SELECT modified_ms FROM sessions WHERE id=?2)),
-           archived_at=COALESCE(archived_at,(SELECT archived_at FROM sessions WHERE id=?2)),
+           archived_at=CASE WHEN EXISTS(
+             SELECT 1 FROM session_events WHERE session_id=?1
+               AND json_extract(body,'$.type')='session_archive_intent'
+           ) THEN archived_at ELSE COALESCE(archived_at,(SELECT archived_at FROM sessions WHERE id=?2)) END,
            record_coverage=CASE
              WHEN record_coverage='complete' OR (SELECT record_coverage FROM sessions WHERE id=?2)='complete' THEN 'complete'
              WHEN record_coverage='partial' OR (SELECT record_coverage FROM sessions WHERE id=?2)='partial' THEN 'partial'

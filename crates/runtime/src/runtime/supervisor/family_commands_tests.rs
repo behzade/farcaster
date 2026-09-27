@@ -190,6 +190,47 @@ fn supervisor_for_family(
     )
 }
 
+#[test]
+fn archive_intent_resolves_a_draft_bound_and_promoted_before_command_execution()
+-> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut state = StateStore::open_at(&database)?;
+    let mut draft = crate::sessions::DraftSession::with_id(
+        Some(Backend::Pi),
+        "draft".into(),
+        temp.path().into(),
+    );
+    draft.submitted = true;
+    draft.app_session_id = state.allocate_app_session_id(&draft)?;
+    let command = RuntimeCommand::SetAppSessionArchived {
+        app_session_id: crate::sessions::AppSessionId::new(draft.app_session_id).expect("identity"),
+        archived: true,
+    };
+    draft.session_path = Some(temp.path().join("bound.jsonl"));
+    state.allocate_app_session_id(&draft)?;
+    state.remove_draft(&draft.id)?;
+    let sessions = state.cached_sessions("")?;
+    let path = sessions[0].path.clone();
+    let (mut supervisor, events) = supervisor_for_family(state, sessions);
+    assert!(supervisor.handle_session_family_command(&command));
+    assert!(archived(&database, &path)?);
+    assert!(supervisor.catalog_sessions[0].archived);
+    assert!(events.try_iter().next().is_none());
+
+    supervisor
+        .catalog_state
+        .as_ref()
+        .expect("store")
+        .with(|store| store.delete_session_state(&[path.clone()]))?;
+    assert!(supervisor.handle_session_family_command(&command));
+    assert!(matches!(
+        events.try_recv(),
+        Ok(RuntimeEvent::SessionsFailed { generation: 7, .. })
+    ));
+    Ok(())
+}
+
 fn archived(database: &Path, path: &Path) -> Result<bool, String> {
     let state = StateStore::open_at(database)?;
     let path = crate::sessions::normalize_session_path(path);

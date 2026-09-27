@@ -314,6 +314,7 @@ impl RuntimeOwner {
                 }
             }
             RuntimeCommand::MoveSession { .. }
+            | RuntimeCommand::SetAppSessionArchived { .. }
             | RuntimeCommand::StopSessionFamily { .. }
             | RuntimeCommand::StopAndDeleteSessionFamily { .. }
             | RuntimeCommand::StopAndMoveSession { .. }

@@ -148,7 +148,14 @@ impl FarcasterApp {
         self.snapshot
             .selected_session
             .as_deref()
-            .and_then(crate::agents::profile_id_from_locator)
+            .and_then(|path| {
+                self.sessions
+                    .all
+                    .iter()
+                    .find(|session| session.path == path)
+            })
+            .map(|session| session.profile_id.clone())
+            .unwrap_or_else(|| self.snapshot.profile_id.clone())
     }
 
     pub(in crate::app) fn editable_draft_harness(&self) -> Option<Option<Backend>> {
@@ -368,15 +375,29 @@ impl FarcasterApp {
         let Some(index) = self.sessions.drafts.iter().position(|draft| draft.id == id) else {
             return;
         };
+        if self.sessions.drafts[index].app_session_id <= 0 && !self.save_session_draft(&id) {
+            self.notify_session_rail(cx);
+            return;
+        }
+        let Some(app_session_id) =
+            crate::sessions::AppSessionId::new(self.sessions.drafts[index].app_session_id)
+        else {
+            self.sessions.error = Some("The chat has no saved identity".into());
+            self.notify_session_rail(cx);
+            return;
+        };
         let previous = self.sessions.drafts[index].clone();
         if !self.sessions.drafts[index].set_archived(archived) {
             return;
         }
-        let session = self.sessions.drafts[index].session_path.clone();
         self.finish_draft_change(previous, window, cx, move |app, _, cx| {
-            if let Some(path) = session {
-                app.set_session_archived(path, archived, cx);
-            }
+            app.send(
+                RuntimeCommand::SetAppSessionArchived {
+                    app_session_id,
+                    archived,
+                },
+                cx,
+            );
         });
     }
 

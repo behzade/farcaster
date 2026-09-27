@@ -1,6 +1,134 @@
 use super::*;
 use crate::agents::Backend;
 
+#[gpui::test]
+fn active_profile_uses_saved_native_session_identity_and_runtime_fallback(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::active_profile_uses_saved_native_session_identity_and_runtime_fallback"
+        ),
+        cx,
+        |cx, app, _, project| {
+            cx.update(|_, cx| {
+                app.update(cx, |app, _| {
+                    let profile = "00000000-0000-4000-8000-000000000001";
+                    let mut draft = DraftSession::fresh(Some(Backend::Pi), project.into());
+                    draft.profile_id = Some(profile.into());
+                    draft.submitted = true;
+                    draft.session_path = Some(normalize_session_path(
+                        &project.join("native-session.jsonl"),
+                    ));
+                    let mut store = crate::app::persistence::open().expect("store");
+                    draft.app_session_id =
+                        store.allocate_app_session_id(&draft).expect("bind draft");
+                    app.sessions.all = store.cached_sessions("").expect("sessions").into();
+                    app.sessions.selected_draft = None;
+                    let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
+                    snapshot.selected_session = draft.session_path.clone();
+                    snapshot.profile_id = Some("runtime-profile".into());
+                    assert_eq!(app.active_profile_id().as_deref(), Some(profile));
+                    app.sessions
+                        .all
+                        .iter_mut()
+                        .find(|session| session.app_session_id == draft.app_session_id)
+                        .expect("selected session")
+                        .profile_id = None;
+                    assert_eq!(
+                        app.active_profile_id(),
+                        None,
+                        "a known built-in session owns its profile choice"
+                    );
+                    app.sessions.all.clear();
+                    assert_eq!(app.active_profile_id().as_deref(), Some("runtime-profile"));
+
+                    app.sessions.selected_draft = Some(draft.id.clone());
+                    app.sessions.drafts.insert(0, draft);
+                    assert_eq!(app.active_profile_id().as_deref(), Some(profile));
+                    app.sessions.drafts[0].profile_id = None;
+                    assert_eq!(
+                        app.active_profile_id(),
+                        None,
+                        "a built-in draft owns its profile choice"
+                    );
+                });
+            });
+        },
+    );
+}
+
+#[gpui::test]
+fn draft_archive_sends_durable_intent_without_a_ui_locator(cx: &mut gpui::TestAppContext) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::draft_archive_sends_durable_intent_without_a_ui_locator"
+        ),
+        cx,
+        |cx, app, runtime, project| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    futures::executor::block_on(app.sessions.writer.flush())
+                        .expect("initial saves");
+                    for bound in [false, true] {
+                        for archived in [false, true] {
+                            let mut draft = DraftSession::fresh(Some(Backend::Pi), project.into());
+                            draft.submitted = true;
+                            draft.archived = !archived;
+                            draft.app_session_id =
+                                super::super::draft_store::save(&draft).expect("save draft");
+                            let mut store = crate::app::persistence::open().expect("store");
+                            if bound {
+                                let mut canonical = draft.clone();
+                                canonical.session_path =
+                                    Some(project.join(format!("{}.jsonl", draft.id)));
+                                store
+                                    .allocate_app_session_id(&canonical)
+                                    .expect("runtime binding");
+                            }
+                            app.sessions.drafts.insert(0, draft.clone());
+                            while runtime.try_recv_command().is_some() {}
+                            app.request_draft_archive(draft.id.clone(), archived, window, cx);
+                            assert_eq!(app.sessions.drafts[0].archived, archived);
+                            let command = runtime.try_recv_command().expect("explicit intent");
+                            let RuntimeCommand::SetAppSessionArchived {
+                                app_session_id,
+                                archived: requested,
+                            } = command
+                            else {
+                                panic!("archive must use durable identity");
+                            };
+                            assert_eq!(app_session_id.get(), draft.app_session_id);
+                            assert_eq!(requested, archived);
+                            // The snapshot alone cannot mutate archive state, even
+                            // if runtime binding overtook the UI's missing path.
+                            let saved = store
+                                .load_drafts()
+                                .expect("drafts")
+                                .into_iter()
+                                .find(|saved| saved.id == draft.id)
+                                .expect("saved draft");
+                            assert_eq!(saved.archived, !archived);
+                            store
+                                .set_app_session_archived(app_session_id, requested)
+                                .expect("apply intent");
+                            let saved = store
+                                .load_drafts()
+                                .expect("drafts")
+                                .into_iter()
+                                .find(|saved| saved.id == draft.id)
+                                .expect("saved draft");
+                            assert_eq!(saved.archived, archived);
+                        }
+                    }
+                });
+            });
+        },
+    );
+}
+
 #[test]
 fn startup_idle_preserves_only_the_unresolved_draft_submission() {
     use crate::{agents::PromptOutcome, protocol::PromptMode};

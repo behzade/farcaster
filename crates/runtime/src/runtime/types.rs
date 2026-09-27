@@ -146,6 +146,10 @@ pub enum RuntimeCommand {
         path: PathBuf,
         archived: bool,
     },
+    SetAppSessionArchived {
+        app_session_id: crate::sessions::AppSessionId,
+        archived: bool,
+    },
     LoadSessions(String),
     RefreshSessions,
     UpdateSessionMetadata(agents::SessionMetadata),

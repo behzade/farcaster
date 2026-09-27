@@ -212,6 +212,35 @@ impl Supervisor {
     }
 
     pub(super) fn handle_session_family_command(&mut self, command: &RuntimeCommand) -> bool {
+        if let RuntimeCommand::SetAppSessionArchived {
+            app_session_id,
+            archived,
+        } = command
+        {
+            let result = self
+                .catalog_state
+                .as_ref()
+                .ok_or_else(|| "Session state is unavailable".to_owned())
+                .and_then(|state| {
+                    state.with(|store| store.set_app_session_archived(*app_session_id, *archived))
+                });
+            if let Err(message) = result {
+                let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {
+                    generation: self.catalog_generation,
+                    message,
+                });
+            } else {
+                for session in &mut self.catalog_sessions {
+                    if session.app_session_id == app_session_id.get() {
+                        session.archived = *archived;
+                    }
+                }
+            }
+            if let Some(catalog) = self.actors.get(&self.catalog_key) {
+                catalog.send(RuntimeCommand::RefreshSessions);
+            }
+            return true;
+        }
         if let RuntimeCommand::StopSessionFamily { path } = command {
             if let Err(message) = self.stop_session_family_work(path, true) {
                 let _ = self.event_tx.send(RuntimeEvent::SessionsFailed {

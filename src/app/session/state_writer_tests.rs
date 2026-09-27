@@ -66,6 +66,7 @@ fn failed_handoffs_restore_drafts_and_folder_membership(cx: &mut gpui::TestAppCo
                             command,
                             RuntimeCommand::NewSession { .. }
                                 | RuntimeCommand::SetSessionArchived { .. }
+                                | RuntimeCommand::SetAppSessionArchived { .. }
                         ));
                     }
                     failed.store(false, std::sync::atomic::Ordering::SeqCst);
