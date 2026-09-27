@@ -4,6 +4,7 @@ mod contract;
 mod core;
 mod draft;
 mod folders;
+mod identity;
 
 pub use composer::{
     ComposerPersistence, ComposerRecord, ComposerSessions, ComposerSnapshot, HistoryNavigation,
@@ -31,3 +32,4 @@ pub use draft::{
 #[cfg(any(test, feature = "test-support"))]
 pub use folders::SessionFolder;
 pub use folders::{FOLDER_COLOR_COUNT, FolderDestination, SessionFolders};
+pub use identity::{AppSessionId, NativeSessionIdentity, SessionKey, profile_id_from_locator};

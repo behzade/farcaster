@@ -89,13 +89,7 @@ impl HarnessProfiles {
 }
 
 pub fn profile_id_from_locator(path: &Path) -> Option<String> {
-    let backend = path.parent()?;
-    let id = backend.parent()?;
-    (id.parent()?.file_name()? == "profiles")
-        .then(|| id.file_name()?.to_str())
-        .flatten()
-        .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-        .map(str::to_owned)
+    farcaster_sessions::profile_id_from_locator(path)
 }
 
 #[cfg(test)]

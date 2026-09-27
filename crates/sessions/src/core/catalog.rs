@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use super::super::SessionSummary;
+use super::super::{NativeSessionIdentity, SessionSummary};
 
 pub fn document_is_live(
     session: &SessionSummary,
@@ -59,15 +59,7 @@ pub fn root_sessions(sessions: &[SessionSummary]) -> Vec<&SessionSummary> {
 }
 
 pub struct SessionRootIndex<'a> {
-    by_id: HashMap<
-        (
-            &'a Path,
-            farcaster_contracts::Backend,
-            Option<&'a str>,
-            &'a str,
-        ),
-        &'a SessionSummary,
-    >,
+    by_id: HashMap<NativeSessionIdentity, &'a SessionSummary>,
     by_path: HashMap<&'a Path, &'a SessionSummary>,
     by_app_id: HashMap<i64, &'a SessionSummary>,
 }
@@ -82,17 +74,7 @@ impl<'a> SessionRootIndex<'a> {
                 .collect(),
             by_id: sessions
                 .iter()
-                .map(|session| {
-                    (
-                        (
-                            session.project.as_path(),
-                            session.harness,
-                            profile_id(&session.path),
-                            session.id.as_str(),
-                        ),
-                        session,
-                    )
-                })
+                .map(|session| (session.native_identity(), session))
                 .collect(),
             by_path: sessions
                 .iter()
@@ -101,21 +83,31 @@ impl<'a> SessionRootIndex<'a> {
         }
     }
 
-    pub(super) fn parent(&self, session: &SessionSummary) -> Option<&'a SessionSummary> {
+    pub fn parent(&self, session: &SessionSummary) -> Option<&'a SessionSummary> {
         if let Some(id) = session.parent_app_session_id {
             // An unresolved cached parent must not bind to a native-ID homonym.
             return self.by_app_id.get(&id).copied();
         }
         let parent = session.parent_session.as_deref()?;
-        let harness = session.parent_harness.unwrap_or(session.harness);
-        self.by_id
-            .get(&(
-                session.project.as_path(),
-                harness,
-                profile_id(&session.path),
-                parent,
-            ))
-            .copied()
+        let mut identity = session.native_identity();
+        identity.harness = session.parent_harness.unwrap_or(session.harness);
+        identity.id = parent.to_owned();
+        self.by_id.get(&identity).copied()
+    }
+
+    /// Nearest parent first, excluding the starting session even in a cycle.
+    pub fn ancestors(&self, session: &SessionSummary) -> Vec<&'a SessionSummary> {
+        let mut seen = HashSet::from([session.path.as_path()]);
+        let mut ancestors = Vec::new();
+        let mut current = self.parent(session);
+        while let Some(parent) = current {
+            if !seen.insert(parent.path.as_path()) {
+                break;
+            }
+            ancestors.push(parent);
+            current = self.parent(parent);
+        }
+        ancestors
     }
 
     fn children(
@@ -146,14 +138,6 @@ impl<'a> SessionRootIndex<'a> {
     }
 }
 
-fn profile_id(path: &Path) -> Option<&str> {
-    let backend = path.parent()?;
-    let profile = backend.parent()?;
-    (profile.parent()?.file_name()? == "profiles")
-        .then(|| profile.file_name()?.to_str())
-        .flatten()
-}
-
 pub fn root_session_for_path<'a>(
     sessions: &'a [SessionSummary],
     selected: Option<&Path>,
@@ -162,9 +146,10 @@ pub fn root_session_for_path<'a>(
 }
 
 pub fn is_subagent_path(sessions: &[SessionSummary], path: &Path) -> bool {
-    sessions
-        .iter()
-        .any(|session| session.path == path && session.parent_session.is_some())
+    sessions.iter().any(|session| {
+        session.path == path
+            && (session.parent_session.is_some() || session.parent_app_session_id.is_some())
+    })
 }
 
 #[cfg(test)]
@@ -231,7 +216,7 @@ pub fn archived_root_family_for_path<'a>(
     path: &Path,
 ) -> Option<Vec<&'a SessionSummary>> {
     let requested = sessions.iter().find(|session| session.path == path)?;
-    if requested.parent_session.is_some() || !requested.archived {
+    if !requested.archived || SessionRootIndex::new(sessions).parent(requested).is_some() {
         return None;
     }
     session_family_for_path(sessions, path)

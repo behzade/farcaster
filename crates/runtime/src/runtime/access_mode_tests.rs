@@ -261,6 +261,7 @@ fn saved_session_access_mode_is_restored_after_runtime_restart()
     let session = temp.path().join("session-locators/codex-cli/session-1");
     let mut state = StateStore::open_at(&database)?;
     state.update_session_metadata(&crate::agents::SessionMetadata {
+        profile_id: None,
         harness: Backend::Codex,
         id: "session-1".into(),
         path: session.clone(),

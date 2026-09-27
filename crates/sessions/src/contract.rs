@@ -57,6 +57,8 @@ pub struct SessionImport {
 pub struct SessionSummary {
     pub id: String,
     pub app_session_id: i64,
+    /// Explicit profile identity, including for backends with native file locators.
+    pub profile_id: Option<String>,
     pub harness: Backend,
     pub path: PathBuf,
     pub project: PathBuf,
@@ -90,6 +92,7 @@ impl SessionSummary {
         Self {
             id: value.id,
             app_session_id: 0,
+            profile_id: crate::profile_id_from_locator(&value.path),
             harness: value.harness,
             path: value.path,
             project: value.project,
@@ -116,6 +119,26 @@ impl SessionSummary {
             harness: self.harness,
             id: self.id.clone(),
             path: self.path.clone(),
+        }
+    }
+
+    pub fn key(&self) -> crate::SessionKey {
+        crate::AppSessionId::new(self.app_session_id).map_or_else(
+            || crate::SessionKey::Locator {
+                harness: self.harness,
+                profile_id: self.profile_id.clone(),
+                path: crate::normalize_session_path(&self.path),
+            },
+            crate::SessionKey::App,
+        )
+    }
+
+    pub fn native_identity(&self) -> crate::NativeSessionIdentity {
+        crate::NativeSessionIdentity {
+            project: self.project.clone(),
+            harness: self.harness,
+            profile_id: self.profile_id.clone(),
+            id: self.id.clone(),
         }
     }
 
@@ -189,6 +212,7 @@ impl SessionSummary {
         Self {
             id,
             app_session_id: 0,
+            profile_id: crate::profile_id_from_locator(&path),
             harness,
             path,
             project,

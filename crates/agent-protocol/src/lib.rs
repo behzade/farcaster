@@ -48,6 +48,8 @@ pub struct DiscoveredUsage {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {
     pub harness: Backend,
+    #[serde(default)]
+    pub profile_id: Option<String>,
     pub id: String,
     pub path: PathBuf,
     pub project: PathBuf,

@@ -8,6 +8,7 @@ impl RuntimeOwner {
         };
         child["harness"] = json!(self.harness);
         child["project"] = json!(self.project);
+        child["profile_id"] = json!(self.process_command.profile_id);
         if let Ok(metadata) = serde_json::from_value::<agents::SessionMetadata>(child.clone())
             && !metadata.id.is_empty()
         {
@@ -38,6 +39,7 @@ impl RuntimeOwner {
             .event_tx
             .send(RuntimeEvent::SessionMetadata(agents::SessionMetadata {
                 harness,
+                profile_id: self.process_command.profile_id.clone(),
                 id: session.session_id.clone(),
                 path: path.clone(),
                 project: self.project.clone(),

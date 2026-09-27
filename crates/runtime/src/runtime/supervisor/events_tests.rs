@@ -549,6 +549,7 @@ fn restart_injects_the_sessions_saved_access_mode_before_launch()
     let session = temp.path().join("session-locators/codex-cli/session-1");
     let mut state = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
     state.update_session_metadata(&crate::agents::SessionMetadata {
+        profile_id: None,
         harness: Backend::Codex,
         id: "session-1".into(),
         path: session.clone(),

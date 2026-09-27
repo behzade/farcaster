@@ -1,6 +1,13 @@
 use super::*;
 
 impl StateStore {
+    /// Resolve the stored profile first. Synthetic locators are a fallback only
+    /// when the session has not been persisted yet.
+    pub fn session_profile_id(&self, session: &Path) -> Result<Option<String>, String> {
+        let locator = crate::sessions::normalize_session_path(session);
+        super::identity::resolve_session_profile(&self.connection, &locator, None)
+    }
+
     pub fn session_access_mode(
         &self,
         session: &Path,
@@ -74,7 +81,7 @@ impl StateStore {
                         s.total_tokens, s.cost_micros, s.search_text,
                         s.archived_at IS NOT NULL, s.harness,
                         m.provider, m.model, m.effort, COALESCE(s.backend_id, s.locator),
-                        parent.harness, s.parent_id, s.created_ms
+                        parent.harness, s.parent_id, s.created_ms, s.profile_id
                    FROM sessions s
                    JOIN projects p ON p.id = s.project_id
                    LEFT JOIN sessions parent ON parent.id = s.parent_id
@@ -110,11 +117,12 @@ impl StateStore {
         update: &crate::agents::SessionMetadata,
     ) -> Result<SessionSummary, String> {
         let path = crate::sessions::normalize_session_path(&update.path);
-        let profile_id = crate::agents::profile_id_from_locator(&path);
         let tx = self
             .connection
             .transaction()
             .map_err(|error| error.to_string())?;
+        let profile_id =
+            super::identity::resolve_session_profile(&tx, &path, update.profile_id.as_deref())?;
         let now = u64_to_i64(now_ms());
         let access_mode = update.access_mode.map(|mode| match mode {
             crate::agents::HarnessAccessMode::Sandboxed => "sandboxed",
@@ -126,8 +134,7 @@ impl StateStore {
             .prepare(
                 "SELECT id FROM sessions
                   WHERE harness=?1 AND project_id=?2
-                    AND profile_id IS ?5
-                    AND (backend_id=?3 OR locator=?4)
+                    AND (locator=?4 OR (profile_id IS ?5 AND backend_id=?3))
                   ORDER BY backend_id=?3 DESC, locator=?4 DESC, id",
             )
             .map_err(|error| error.to_string())?;
@@ -499,7 +506,11 @@ fn upsert_bound_session(
     legacy_locators: &LegacyLocatorIndex,
 ) -> Result<(), String> {
     let locator = crate::sessions::normalize_session_path(&session.path);
-    let profile_id = crate::agents::profile_id_from_locator(&locator);
+    let profile_id = super::identity::resolve_session_profile(
+        transaction,
+        &locator,
+        session.profile_id.as_deref(),
+    )?;
     let locator_text = locator.to_string_lossy();
     let project_id = ensure_project(
         transaction,
@@ -513,8 +524,7 @@ fn upsert_bound_session(
     let existing = transaction
         .query_row(
             "SELECT id FROM sessions WHERE harness=?1 AND
-               profile_id IS ?5 AND
-               (locator=?2 OR (backend_id=?3 AND project_id=?4))
+               (locator=?2 OR (profile_id IS ?5 AND backend_id=?3 AND project_id=?4))
              ORDER BY locator=?2 DESC LIMIT 1",
             params![
                 session.harness.as_str(),
@@ -742,6 +752,7 @@ fn row_to_session(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
         row.get(15)?,
     )
     .with_app_session_id(id);
+    session.profile_id = row.get(25)?;
     session.created_at = session
         .created_at
         .or(UNIX_EPOCH.checked_add(Duration::from_millis(row.get::<_, u64>(24)?)));

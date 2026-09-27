@@ -56,6 +56,7 @@ fn persisted_cross_project_parent_survives_catalog_refresh_and_family_queries() 
     assert_parent(&store);
     store.update_session_metadata(&crate::agents::SessionMetadata {
         harness: child.harness,
+        profile_id: child.profile_id.clone(),
         id: child.id.clone(),
         path: child.path.clone(),
         project: child.project.clone(),

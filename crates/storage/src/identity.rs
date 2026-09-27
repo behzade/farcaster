@@ -1,24 +1,68 @@
 use super::*;
 use crate::agents::Backend;
 
+/// Explicit launch identity and persisted identity survive native file locators.
+/// A conflicting explicit profile must not silently retarget an existing session.
+pub(super) fn resolve_session_profile(
+    connection: &Connection,
+    locator: &Path,
+    explicit: Option<&str>,
+) -> Result<Option<String>, String> {
+    let mut statement = connection
+        .prepare("SELECT DISTINCT profile_id FROM sessions WHERE locator=?1")
+        .map_err(|error| format!("prepare session profile: {error}"))?;
+    let profiles = statement
+        .query_map([locator.to_string_lossy()], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .map_err(|error| format!("read session profile: {error}"))?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| format!("decode session profile: {error}"))?;
+    if profiles.len() > 1 {
+        return Err(format!(
+            "session locator has conflicting profiles: {}",
+            locator.display()
+        ));
+    }
+    let stored = profiles.into_iter().next();
+    let inferred = crate::sessions::profile_id_from_locator(locator);
+    if let Some(explicit) = explicit {
+        if stored
+            .as_ref()
+            .and_then(|profile| profile.as_deref())
+            .is_some_and(|profile| profile != explicit)
+            || inferred
+                .as_deref()
+                .is_some_and(|profile| profile != explicit)
+        {
+            return Err(format!(
+                "session profile conflicts with its locator: {}",
+                locator.display()
+            ));
+        }
+        return Ok(Some(explicit.to_owned()));
+    }
+    Ok(stored.unwrap_or(inferred))
+}
+
 pub(super) fn bind_locator(
     transaction: &Transaction<'_>,
     draft_id: &str,
     locator: &Path,
 ) -> Result<(), String> {
-    let profile_id = crate::agents::profile_id_from_locator(locator);
-    let locator = locator.to_string_lossy();
-    let draft_row: Option<(i64, String)> = transaction
+    let draft_row: Option<(i64, String, Option<String>)> = transaction
         .query_row(
-            "SELECT id, harness FROM sessions WHERE client_key=?1",
+            "SELECT id, harness, profile_id FROM sessions WHERE client_key=?1",
             [draft_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some((draft_session_id, harness)) = draft_row else {
+    let Some((draft_session_id, harness, draft_profile)) = draft_row else {
         return Ok(());
     };
+    let profile_id = resolve_session_profile(transaction, locator, draft_profile.as_deref())?;
+    let locator = locator.to_string_lossy();
     let existing: Option<i64> = transaction
         .query_row(
             "SELECT id FROM sessions WHERE harness=?1 AND locator=?2",
@@ -81,6 +125,7 @@ pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Resu
     };
     for sql in [
         "UPDATE sessions SET
+           profile_id=COALESCE(profile_id,(SELECT profile_id FROM sessions WHERE id=?2)),
            backend_id=COALESCE((SELECT backend_id FROM sessions WHERE id=?2),backend_id),
            parent_backend_id=COALESCE(parent_backend_id,(SELECT parent_backend_id FROM sessions WHERE id=?2)),
            title=COALESCE(NULLIF((SELECT title FROM sessions WHERE id=?2),''),title),
@@ -268,7 +313,7 @@ pub(super) fn ensure_locator_session(
         locator_root.join(harness.as_str()).join(encoded)
     };
     let locator = crate::sessions::normalize_session_path(&locator);
-    let profile_id = crate::agents::profile_id_from_locator(&locator);
+    let profile_id = resolve_session_profile(transaction, &locator, None)?;
     let locator_text = locator.to_string_lossy();
     let mut statement = transaction
         .prepare(

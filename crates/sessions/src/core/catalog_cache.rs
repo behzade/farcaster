@@ -99,6 +99,33 @@ impl SessionCatalog {
             .filter_map(|(session, parent)| parent.is_none().then_some(session))
     }
 
+    /// Nearest parent first, excluding the starting session even in a cycle.
+    pub fn ancestors(&self, session: &SessionSummary) -> Vec<&SessionSummary> {
+        let relationships = self.relationships();
+        let Some(&start) = relationships.by_path.get(&session.path) else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::from([start]);
+        let mut ancestors = Vec::new();
+        let mut current = relationships.parents[start];
+        while let Some(parent) = current {
+            if !seen.insert(parent) {
+                break;
+            }
+            ancestors.push(&self.sessions[parent]);
+            current = relationships.parents[parent];
+        }
+        ancestors
+    }
+
+    pub fn child_count(&self, session: &SessionSummary) -> usize {
+        let relationships = self.relationships();
+        relationships
+            .by_path
+            .get(&session.path)
+            .map_or(0, |&index| relationships.children[index].len())
+    }
+
     pub fn descendants(&self, root: &SessionSummary) -> Vec<(&SessionSummary, usize)> {
         let relationships = self.relationships();
         let Some(&root) = relationships.by_path.get(&root.path) else {

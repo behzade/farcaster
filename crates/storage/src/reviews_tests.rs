@@ -47,6 +47,7 @@ fn profiled_claude_path(project: &Path) -> PathBuf {
 
 fn live_claude_metadata(project: &Path) -> crate::agents::SessionMetadata {
     crate::agents::SessionMetadata {
+        profile_id: None,
         harness: Backend::Claude,
         id: CLAUDE_ID.into(),
         path: profiled_claude_path(project),

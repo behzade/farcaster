@@ -7,6 +7,7 @@ use std::{fs, os::unix::fs::symlink};
 fn metadata(id: &str) -> crate::agents::SessionMetadata {
     crate::agents::SessionMetadata {
         harness: Backend::Codex,
+        profile_id: None,
         id: id.into(),
         path: PathBuf::from(format!("/locators/codex-cli/{id}")),
         project: PathBuf::from("/project"),
@@ -21,6 +22,133 @@ fn metadata(id: &str) -> crate::agents::SessionMetadata {
         usage: None,
         is_running: true,
     }
+}
+
+#[test]
+fn native_session_profile_survives_binding_refresh_discovery_and_reopen() -> Result<(), String> {
+    for discovered_before_binding in [false, true] {
+        let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let database = temp.path().join("state.sqlite3");
+        let mut store = StateStore::open_at(&database)?;
+        let profile = "11111111-1111-4111-8111-111111111111";
+        let mut draft =
+            DraftSession::with_id(Some(Backend::Pi), "custom-pi".into(), temp.path().into());
+        draft.profile_id = Some(profile.into());
+        draft.submitted = true;
+        let app_id = store.allocate_app_session_id(&draft)?;
+        let mut update = metadata("native-session");
+        update.harness = Backend::Pi;
+        update.path = temp.path().join("native-session.jsonl");
+        update.project = temp.path().into();
+        if discovered_before_binding {
+            store.update_session_metadata(&update)?;
+        }
+        let tx = store
+            .connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        bind_locator(
+            &tx,
+            &draft.id,
+            &sessions::normalize_session_path(&update.path),
+        )?;
+        tx.commit().map_err(|error| error.to_string())?;
+
+        let refreshed = store.update_session_metadata(&update)?;
+        assert_eq!(refreshed.app_session_id, app_id);
+        assert_eq!(refreshed.profile_id.as_deref(), Some(profile));
+        assert_eq!(
+            store.session_profile_id(&update.path)?.as_deref(),
+            Some(profile)
+        );
+        assert_eq!(store.draft_profile_id(&draft.id)?.as_deref(), Some(profile));
+        // Native discovery lacks profile information and must not erase it.
+        let mut discovered = refreshed;
+        discovered.profile_id = None;
+        discovered.app_session_id = 0;
+        store.index_sessions(&[discovered], false)?;
+        store.remove_draft(&draft.id)?;
+        drop(store);
+
+        let store = StateStore::open_at(&database)?;
+        let cached = store.cached_sessions("")?;
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].app_session_id, app_id);
+        assert_eq!(cached[0].profile_id.as_deref(), Some(profile));
+        assert_eq!(
+            store.session_profile_id(&update.path)?.as_deref(),
+            Some(profile)
+        );
+        assert!(store.harness_profile_in_use(profile)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_native_metadata_profile_is_persisted_without_a_draft() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    for harness in Backend::ALL {
+        let mut update = metadata("same-native-id");
+        update.harness = harness;
+        update.path = temp.path().join(format!("{}.jsonl", harness.as_str()));
+        let discovered = store.update_session_metadata(&update)?;
+        update.profile_id = Some("11111111-1111-4111-8111-111111111111".into());
+        let stored = store.update_session_metadata(&update)?;
+        assert_eq!(stored.app_session_id, discovered.app_session_id);
+        assert_eq!(stored.profile_id, update.profile_id);
+        update.profile_id = None;
+        assert_eq!(
+            store.update_session_metadata(&update)?.profile_id,
+            stored.profile_id
+        );
+    }
+    assert_eq!(store.cached_sessions("")?.len(), Backend::ALL.len());
+    Ok(())
+}
+
+#[test]
+fn profile_conflict_cannot_retarget_an_existing_native_session() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let mut update = metadata("native-session");
+    update.harness = Backend::Pi;
+    update.path = temp.path().join("session.jsonl");
+    update.profile_id = Some("11111111-1111-4111-8111-111111111111".into());
+    let original = store.update_session_metadata(&update)?;
+    update.profile_id = Some("22222222-2222-4222-8222-222222222222".into());
+    assert!(store.update_session_metadata(&update).is_err());
+    assert_eq!(
+        store.cached_sessions("")?[0].profile_id,
+        original.profile_id
+    );
+    Ok(())
+}
+
+#[test]
+fn stored_profile_precedes_locator_fallback() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let profile = "11111111-1111-4111-8111-111111111111";
+    let mut update = metadata("synthetic");
+    update.path = temp
+        .path()
+        .join(format!("profiles/{profile}/codex-cli/synthetic"));
+    assert_eq!(
+        store.session_profile_id(&update.path)?.as_deref(),
+        Some(profile)
+    );
+    store.update_session_metadata(&update)?;
+    store
+        .connection
+        .execute("UPDATE sessions SET profile_id=NULL", [])
+        .map_err(|error| error.to_string())?;
+    assert_eq!(store.session_profile_id(&update.path)?, None);
+    assert_eq!(
+        store.session_profile_id(&temp.path().join("unknown-native.jsonl"))?,
+        None
+    );
+    Ok(())
 }
 
 #[test]

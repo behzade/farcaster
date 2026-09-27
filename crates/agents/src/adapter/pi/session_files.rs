@@ -710,6 +710,7 @@ fn parse_candidate(path: &Path) -> Result<Option<(SessionSummary, AgentActivity)
             id,
             app_session_id: 0,
             harness: Backend::Pi,
+            profile_id: None,
             path: session_path,
             project,
             title,

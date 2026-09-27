@@ -290,6 +290,7 @@ impl RuntimeOwner {
                 ) {
                     Ok(()) => self.update_session_metadata(agents::SessionMetadata {
                         harness,
+                        profile_id: None,
                         id: session_id,
                         path,
                         project,
