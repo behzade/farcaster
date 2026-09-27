@@ -1359,6 +1359,57 @@ fn rejected_and_malformed_codex_replies_have_distinct_receipt_outcomes() {
 }
 
 #[test]
+fn local_steer_recovery_distinguishes_idle_from_pending_start_through_the_transport() {
+    use crate::adapter::main_session::{MainSessionMetadata, WorkerSessionTransport};
+    use crate::{SessionTransport, SteerErrorRecovery};
+
+    for (prompt, expected) in [
+        (None, SteerErrorRecovery::RetryNow),
+        (Some("work"), SteerErrorRecovery::RetryWhenIdle),
+        (Some("/review"), SteerErrorRecovery::RetryWhenIdle),
+        (Some("/status"), SteerErrorRecovery::RetryNow),
+    ] {
+        let (mut session, _sent) = writable_test_session();
+        if let Some(prompt) = prompt {
+            session
+                .send(prompt.into(), WorkerSendMode::Prompt)
+                .expect("start request");
+        }
+        let next_id = session.next_id;
+        let error = session
+            .submit_prompt(
+                "steer".into(),
+                "redirect".into(),
+                WorkerSendMode::Steer,
+                vec![],
+            )
+            .expect_err("no current turn");
+        assert_eq!(session.next_id, next_id, "rejection must precede dispatch");
+        let transport = WorkerSessionTransport::new(
+            std::path::Path::new("/locators"),
+            Backend::Codex,
+            "thread-1".into(),
+            Box::new(session),
+            MainSessionMetadata::default(),
+            None,
+        )
+        .expect("transport");
+        assert_eq!(transport.steer_error_recovery(&error), expected);
+        for unrelated in [
+            "permission denied: Codex worker has not reported its active turn",
+            "Codex worker has not reported its active turn: transport closed",
+            "no active turn to steer",
+            "expected active turn id `old` but found `new`",
+        ] {
+            assert_eq!(
+                transport.steer_error_recovery(unrelated),
+                SteerErrorRecovery::Fail
+            );
+        }
+    }
+}
+
+#[test]
 fn rejected_steer_and_interrupt_requests_do_not_fail_the_session() {
     let (mut session, _sent) = writable_test_session();
     session.current_turn = Some("active".into());
@@ -2775,7 +2826,11 @@ fn handoff_retries_only_turn_races_and_validates_batch_before_admission() {
 
     for (message, retries) in [
         ("no active turn to steer", true),
+        ("expected active turn id `old` but found `new`", true),
         ("cannot steer a review turn", false),
+        ("permission denied: no active turn to steer", false),
+        ("expected active turn id is missing", false),
+        ("no active turn to steer: transport closed", false),
     ] {
         let (mut session, mut sent) = writable_test_session();
         session.current_turn = Some("turn-1".into());

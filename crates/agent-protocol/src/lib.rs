@@ -371,7 +371,21 @@ pub use response::{
     SessionResponsePayload, SessionUsage, SessionUsageTokens,
 };
 
+/// Recovery for a steer rejected before dispatch. Never retry uncertain delivery.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SteerErrorRecovery {
+    #[default]
+    Fail,
+    /// Keep the input queued until the starting or active turn settles.
+    RetryWhenIdle,
+    /// No turn is starting or active; the queue may start the next turn.
+    RetryNow,
+}
+
 pub trait SessionTransport {
+    fn steer_error_recovery(&self, _error: &str) -> SteerErrorRecovery {
+        SteerErrorRecovery::Fail
+    }
     fn clear_queue(&mut self) -> Result<(), String> {
         Err("This harness cannot clear its queue".into())
     }

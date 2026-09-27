@@ -37,8 +37,9 @@ pub use contract::{
     SessionActivityKind, SessionCommand, SessionContextUsage, SessionEvent, SessionGoal,
     SessionHistory, SessionLaunch, SessionMetadata, SessionOperation, SessionResponse,
     SessionResponseErrorKind, SessionResponsePayload, SessionStart, SessionTransport, SessionUsage,
-    SessionUsageTokens, StartWorker, WorkerContext, WorkerInput, WorkerInputResponse,
-    WorkerSnapshot, effort_rank, model_efforts, valid_worker_name, validate_child_access,
+    SessionUsageTokens, StartWorker, SteerErrorRecovery, WorkerContext, WorkerInput,
+    WorkerInputResponse, WorkerSnapshot, effort_rank, model_efforts, valid_worker_name,
+    validate_child_access,
 };
 
 #[derive(Clone, Default)]

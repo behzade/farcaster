@@ -895,6 +895,10 @@ impl WorkerSessionTransport {
 }
 
 impl SessionTransport for WorkerSessionTransport {
+    fn steer_error_recovery(&self, error: &str) -> crate::SteerErrorRecovery {
+        self.worker.steer_error_recovery(error)
+    }
+
     fn tracks_prompt_delivery(&self, mode: PromptMode) -> bool {
         self.worker.tracks_prompt_delivery(match mode {
             PromptMode::Normal => WorkerSendMode::Prompt,

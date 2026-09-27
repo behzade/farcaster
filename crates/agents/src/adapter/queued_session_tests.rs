@@ -7,9 +7,13 @@ struct Wire {
     events: VecDeque<SessionEvent>,
     reject_sends: HashSet<usize>,
     send_errors: HashMap<usize, String>,
+    steer_recovery: SteerErrorRecovery,
 }
 struct Transport(Arc<Mutex<Wire>>, bool);
 impl SessionTransport for Transport {
+    fn steer_error_recovery(&self, _: &str) -> SteerErrorRecovery {
+        self.0.lock().expect("wire").steer_recovery
+    }
     fn tracks_prompt_delivery(&self, _: PromptMode) -> bool {
         self.1
     }
@@ -92,30 +96,129 @@ fn followups_stay_local_and_exact_id_cancellation_does_not_touch_backend() {
 }
 
 #[test]
-fn native_steer_turn_race_becomes_a_next_turn_without_a_prompt_error() {
+fn native_steer_errors_are_not_interpreted_or_replayed_by_the_shared_queue() {
+    for error in [
+        "Codex worker has not reported its active turn",
+        "no active turn to steer",
+        "expected active turn id `old` but found `new`",
+        "permission denied: no active turn to steer",
+    ] {
+        let (mut session, wire) = session(SteeringBoundary::Native, true);
+        wire.lock()
+            .expect("wire")
+            .send_errors
+            .insert(1, error.into());
+        assert_eq!(
+            session.send(SessionCommand::Prompt {
+                mode: PromptMode::Steer,
+                message: "redirect".into(),
+                images: Vec::new(),
+            }),
+            Err(error.into())
+        );
+        assert!(session.queue.is_empty());
+        assert!(session.running);
+        assert!(drain(&mut session).is_empty());
+        assert_eq!(wire.lock().expect("wire").commands.len(), 1);
+    }
+}
+
+#[test]
+fn native_steer_recovery_waits_for_the_right_boundary_and_keeps_images_and_receipts() {
+    for recovery in [
+        SteerErrorRecovery::RetryNow,
+        SteerErrorRecovery::RetryWhenIdle,
+    ] {
+        let (mut session, wire) = session(SteeringBoundary::Native, true);
+        {
+            let mut wire = wire.lock().expect("wire");
+            wire.steer_recovery = recovery;
+            wire.send_errors.insert(1, "local rejection".into());
+        }
+        let id = session
+            .send(SessionCommand::Prompt {
+                mode: PromptMode::Steer,
+                message: "redirect".into(),
+                images: vec![PromptImage {
+                    data: "AQID".into(),
+                    mime_type: "image/png".into(),
+                    path: None,
+                }],
+            })
+            .expect("queue rejected steer");
+        let events = drain(&mut session);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, SessionEvent::Activity(body)
+            if body.value()["cancellableIds"] == json!([id])))
+        );
+        if recovery == SteerErrorRecovery::RetryWhenIdle {
+            assert_eq!(wire.lock().expect("wire").commands.len(), 1);
+            wire.lock()
+                .expect("wire")
+                .events
+                .push_back(activity(json!({"type":"agent_start"})));
+            drain(&mut session);
+            assert_eq!(wire.lock().expect("wire").commands.len(), 1);
+            wire.lock()
+                .expect("wire")
+                .events
+                .push_back(activity(json!({"type":"agent_settled"})));
+            drain(&mut session);
+        }
+        assert!(matches!(&wire.lock().expect("wire").commands[1],
+            SessionCommand::Prompt { mode: PromptMode::Normal, message, images }
+                if message == "redirect" && images.len() == 1 && images[0].data == "AQID"));
+        wire.lock().expect("wire").events.extend([
+            SessionEvent::Response(SessionResponse::success(
+                Some("native-2".into()),
+                Payload::Prompt(PromptMode::Normal),
+            )),
+            activity(
+                json!({"type":"prompt_delivery", "submissionId":"native-2", "status":"delivered"}),
+            ),
+        ]);
+        let events = drain(&mut session);
+        assert_eq!(events.iter().filter(|event| matches!(event, SessionEvent::Response(response)
+            if response.id.as_deref() == Some(&id) && matches!(response.result, Ok(Payload::Prompt(PromptMode::Steer))))).count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, SessionEvent::Activity(body)
+            if body.value()["submissionId"] == id && body.value()["status"] == "delivered"
+                && body.value()["message"]["promptMode"] == "steer"
+                && body.value()["message"]["content"][1]["data"] == "AQID"))
+                .count(),
+            1
+        );
+        drain(&mut session);
+        assert_eq!(wire.lock().expect("wire").commands.len(), 2);
+    }
+}
+
+#[test]
+fn recovered_native_steer_can_be_cancelled_before_the_next_turn() {
     let (mut session, wire) = session(SteeringBoundary::Native, true);
+    {
+        let mut wire = wire.lock().expect("wire");
+        wire.steer_recovery = SteerErrorRecovery::RetryWhenIdle;
+        wire.send_errors.insert(1, "local rejection".into());
+    }
+    let id = enqueue(&mut session, PromptMode::Steer);
+    session.cancel_prompt(&id).expect("cancel local input");
     wire.lock()
         .expect("wire")
-        .send_errors
-        .insert(1, "Codex worker has not reported its active turn".into());
-    let id = enqueue(&mut session, PromptMode::Steer);
-    assert_eq!(session.queue.len(), 1);
-    assert_eq!(session.queue[0].id, id);
+        .events
+        .push_back(activity(json!({"type":"agent_settled"})));
     let events = drain(&mut session);
     assert!(
-        !events
+        events
             .iter()
-            .any(|event| matches!(event, SessionEvent::Response(_)))
+            .any(|event| matches!(event, SessionEvent::Activity(body)
+        if body.value()["submissionId"] == id && body.value()["status"] == "cancelled"))
     );
-    let commands = &wire.lock().expect("wire").commands;
-    assert!(matches!(
-        commands[1],
-        SessionCommand::Prompt {
-            mode: PromptMode::Normal,
-            ..
-        }
-    ));
-    assert_eq!(session.dispatched["native-2"].inputs[0].id, id);
+    assert_eq!(wire.lock().expect("wire").commands.len(), 1);
 }
 
 #[test]

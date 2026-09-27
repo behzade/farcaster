@@ -7,7 +7,7 @@ use super::handler::IdempotencyBookkeeping;
 use super::prompt_boundary::{Boundary, PromptBoundary};
 use crate::{
     SessionCommand, SessionEvent, SessionOperation, SessionResponse,
-    SessionResponsePayload as Payload, SessionTransport,
+    SessionResponsePayload as Payload, SessionTransport, SteerErrorRecovery,
     extensions::{ExtensionUiResponse, PromptImage, PromptMode},
 };
 
@@ -510,12 +510,14 @@ impl SessionTransport for QueuedSession {
                         images: images.clone(),
                     }) {
                         Ok(native_id) => return Ok(native_id),
-                        Err(error) if native_steer_turn_race(&error) => {
-                            // Codex can finish its turn between our state poll
-                            // and turn/steer. Keep the logical steer and run it
-                            // on the next turn instead of exposing that backend
-                            // timing race as a failed prompt.
-                            self.running = false;
+                        Err(error) => {
+                            let recovery = self.inner.steer_error_recovery(&error);
+                            if recovery == SteerErrorRecovery::Fail {
+                                return Err(error);
+                            }
+                            // Only the adapter can prove that retry is safe.
+                            // Keep ownership here until its next idle boundary.
+                            self.running = recovery == SteerErrorRecovery::RetryWhenIdle;
                             self.queue.push_back(Input {
                                 id: id.clone(),
                                 mode,
@@ -526,7 +528,6 @@ impl SessionTransport for QueuedSession {
                             self.queue_changed();
                             return Ok(id);
                         }
-                        Err(error) => return Err(error),
                     }
                 }
                 if mode == PromptMode::Steer && matches!(self.policy, SteeringBoundary::Unsupported)
@@ -648,12 +649,6 @@ impl SessionTransport for QueuedSession {
 
 fn activity(value: Value) -> SessionEvent {
     SessionEvent::Activity(value.into())
-}
-
-fn native_steer_turn_race(error: &str) -> bool {
-    error.contains("has not reported its active turn")
-        || error.contains("no active turn to steer")
-        || error.contains("expected active turn id")
 }
 
 #[cfg(test)]

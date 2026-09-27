@@ -827,6 +827,28 @@ struct CodexWorkerSession {
 }
 
 impl WorkerSession for CodexWorkerSession {
+    fn steer_error_recovery(&self, error: &str) -> crate::SteerErrorRecovery {
+        use crate::SteerErrorRecovery;
+
+        if error != MISSING_ACTIVE_TURN || self.current_turn.is_some() {
+            return SteerErrorRecovery::Fail;
+        }
+        if self.pending.values().any(|request| {
+            matches!(
+                request,
+                PendingRequest::StartTurn
+                    | PendingRequest::HandoffTurn {
+                        starts_turn: true,
+                        ..
+                    }
+            )
+        }) {
+            SteerErrorRecovery::RetryWhenIdle
+        } else {
+            SteerErrorRecovery::RetryNow
+        }
+    }
+
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
         true
     }
@@ -2354,7 +2376,7 @@ impl CodexWorkerSession {
             let turn_id = self
                 .current_turn
                 .as_deref()
-                .ok_or_else(|| "Codex worker has not reported its active turn".to_owned())?;
+                .ok_or_else(|| MISSING_ACTIVE_TURN.to_owned())?;
             let client_id = client_message_id(
                 STEER_CLIENT_ID_PREFIX,
                 self.next_id.saturating_add(1),
@@ -2612,6 +2634,7 @@ fn configure_farcaster_mcp(command: &mut std::process::Command, caller_token: &s
 }
 
 const STEER_CLIENT_ID_PREFIX: &str = "farcaster-steer-";
+const MISSING_ACTIVE_TURN: &str = "Codex worker has not reported its active turn";
 const QUEUE_CLIENT_ID_PREFIX: &str = "farcaster-queue-";
 const HANDOFF_CLIENT_ID_PREFIX: &str = "farcaster-handoff-";
 const NORMAL_CLIENT_ID_PREFIX: &str = "farcaster-normal-";

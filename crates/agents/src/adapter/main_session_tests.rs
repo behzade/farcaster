@@ -12,6 +12,29 @@ use crate::extensions::SessionState;
 
 struct IdleWorker;
 
+#[test]
+fn steer_error_recovery_defaults_to_failure_without_backend_opt_in() {
+    let transport = WorkerSessionTransport::new(
+        std::path::Path::new("/locators"),
+        Backend::Codex,
+        "default-recovery".into(),
+        Box::new(IdleWorker),
+        MainSessionMetadata::default(),
+        None,
+    )
+    .expect("transport");
+    for error in [
+        "Codex worker has not reported its active turn",
+        "no active turn to steer",
+        "expected active turn id `old` but found `new`",
+    ] {
+        assert_eq!(
+            transport.steer_error_recovery(error),
+            crate::SteerErrorRecovery::Fail
+        );
+    }
+}
+
 struct ModelSelectionWorker {
     reject: bool,
 }

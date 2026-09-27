@@ -242,6 +242,9 @@ pub enum WorkerEvent {
 }
 
 pub trait WorkerSession: Send {
+    fn steer_error_recovery(&self, _error: &str) -> crate::SteerErrorRecovery {
+        crate::SteerErrorRecovery::Fail
+    }
     fn tracks_prompt_delivery(&self, _mode: WorkerSendMode) -> bool {
         false
     }
