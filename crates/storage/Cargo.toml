@@ -10,6 +10,7 @@ license = "GPL-3.0-or-later"
 test-support = []
 
 [dependencies]
+async-channel = "2.5.0"
 farcaster-access = { path = "../access" }
 farcaster-agent-protocol = { path = "../agent-protocol" }
 farcaster-agents = { path = "../agents" }
@@ -24,6 +25,9 @@ serde_json = "1.0.151"
 sha2 = "0.10.9"
 tempfile = "3.27.0"
 url = "2.5.8"
+
+[dev-dependencies]
+futures = "0.3.32"
 
 [lints.rust]
 unsafe_code = "forbid"

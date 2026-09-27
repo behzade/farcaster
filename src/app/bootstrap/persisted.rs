@@ -24,7 +24,11 @@ pub(super) struct PersistedState {
     pub(super) theme_error: Option<String>,
 }
 
-pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedState {
+pub(super) fn load(
+    project: &Path,
+    saved_proxy: Option<String>,
+    cx: &mut Context<FarcasterApp>,
+) -> PersistedState {
     let registry_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_registry");
     let (mut projects, mut error) = match project_registry::load() {
@@ -123,7 +127,7 @@ pub(super) fn load(project: &Path, saved_proxy: Option<String>) -> PersistedStat
     let composer_timing =
         crate::app::infrastructure::performance::StartupTiming::new("app.load_composer_sessions");
     let (composer_sessions, composer_error) =
-        crate::app::composer::sessions::load(draft_target(&selected_draft));
+        crate::app::composer::sessions::load(draft_target(&selected_draft), cx);
     drop(composer_timing);
     if error.is_none() {
         error = composer_error;

@@ -21,8 +21,10 @@ pub(super) fn create(
         // Materialize the open draft only after quit is confirmed.
         this.sync_current_draft(&target);
         let flush = this.sessions.writer.flush();
+        let composer_flush = this.composer.sessions.flush();
         async move {
-            if let Err(error) = flush.await {
+            let (session, composer) = futures::join!(flush, composer_flush);
+            if let Err(error) = session.and(composer) {
                 zlog::error!("Session state could not be saved during shutdown: {error}");
             }
         }

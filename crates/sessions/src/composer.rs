@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Range, path::Path};
+use std::{collections::HashMap, future::Future, ops::Range, path::Path, pin::Pin};
 
 const MAX_HISTORY: usize = 100;
 
@@ -30,6 +30,10 @@ impl<A> Default for ComposerRecord<A> {
 pub trait ComposerPersistence<A> {
     fn save(&self, record: ComposerRecord<A>);
     fn delete(&self, target: String);
+    /// Queue a barrier now, then await all writes before it (or their failure).
+    fn flush(&self) -> Pin<Box<dyn Future<Output = Result<(), String>>>>;
+    /// Number of accepted mutations, used to detect changes after a flush barrier.
+    fn revision(&self) -> u64;
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -39,6 +43,12 @@ struct NoopPersistence;
 impl<A> ComposerPersistence<A> for NoopPersistence {
     fn save(&self, _record: ComposerRecord<A>) {}
     fn delete(&self, _target: String) {}
+    fn flush(&self) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+        Box::pin(async { Ok(()) })
+    }
+    fn revision(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -163,6 +173,14 @@ impl<A: Clone + Eq> ComposerSessions<A> {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(current_target: String) -> Self {
         Self::new(current_target, Vec::new(), Box::new(NoopPersistence))
+    }
+
+    pub fn flush(&self) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+        self.persistence.flush()
+    }
+
+    pub fn persistence_revision(&self) -> u64 {
+        self.persistence.revision()
     }
 
     pub fn current(&self) -> ComposerSnapshot {

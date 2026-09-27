@@ -55,6 +55,7 @@ mod schema;
 mod session_state;
 #[path = "sessions.rs"]
 mod session_storage;
+mod session_writer;
 mod settings;
 mod snapshot;
 mod traits;
@@ -66,6 +67,7 @@ pub use editor_setting::EditorChoice;
 use identity::{bind_locator, ensure_locator_session, ensure_project, target_for_session};
 pub use relocation::relocate_snapshot_session_locators;
 pub use session_state::SessionStateChanges;
+pub use session_writer::SessionStateWriter;
 pub use snapshot::snapshot_database;
 
 const SCHEMA_VERSION: i64 = 21;

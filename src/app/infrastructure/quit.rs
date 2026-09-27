@@ -104,11 +104,17 @@ impl FarcasterApp {
         }
         self.lifecycle.saving_before_quit = true;
         let revision = self.sessions.writer.revision();
+        let composer_revision = self.composer.sessions.persistence_revision();
         let flush = self.sessions.writer.flush();
+        let composer_flush = self.composer.sessions.flush();
         cx.spawn(async move |weak, cx| {
-            let result = flush.await;
+            let (session, composer) = futures::join!(flush, composer_flush);
+            let result = session.and(composer);
             let _ = weak.update(cx, |app, cx| match result {
-                Ok(()) if app.sessions.writer.revision() == revision => {
+                Ok(())
+                    if app.sessions.writer.revision() == revision
+                        && app.composer.sessions.persistence_revision() == composer_revision =>
+                {
                     app.lifecycle.saving_before_quit = false;
                     cx.quit();
                 }

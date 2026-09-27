@@ -51,7 +51,7 @@ impl FarcasterApp {
     ) -> Self {
         let _startup_timing =
             crate::app::infrastructure::performance::StartupTiming::always("app.start");
-        let persisted = persisted::load(&project, agent_launch.app_proxy.clone());
+        let persisted = persisted::load(&project, agent_launch.app_proxy.clone(), cx);
         let harness_profiles = agent_launch.profiles.clone();
 
         let runtime_timing =
