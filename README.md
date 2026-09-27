@@ -2,7 +2,7 @@
 
 # Farcaster
 
-Farcaster is a native, keyboard-first workspace for running and coordinating coding agents across harnesses, with an embedded terminal and Neovim.
+Farcaster is a native, keyboard-first workspace for running and coordinating coding agents across harnesses, with an embedded terminal and editor support.
 
 ![Farcaster showing concurrent agent sessions, a conversation, and changed files](https://github.com/user-attachments/assets/87e034bd-d091-4820-8dc3-f81c76fcabca)
 
@@ -18,21 +18,21 @@ No. Farcaster brings your existing harnesses and subscriptions into one UI. It b
 
 - A native, keyboard-first desktop app.
 - An agent, editor, and terminal for each session.
-- Integrated [Neovim](#neovim) for reviewing code, editing, and sending context to agents.
+- [Editor support](#editors), with deeper [Neovim integration](#neovim) for sending context to agents.
 - [Shared tools](#tools) for coordinating workers and tracking tasks across harnesses.
 
-## Neovim
+## Editors
+
+Use your preferred terminal editor inside Farcaster, or open files in an external editor. Clicking on a changed file opens it in your chosen editor. Neovim has the deepest integration.
+
+### Neovim
 
 ![Reviewing Rust code in Farcaster's embedded Neovim editor](https://github.com/user-attachments/assets/37192030-73b5-4b31-a8f8-72e3c1b8b4e9)
 
-The app embeds a full terminal emulator using libghostty. Each chat session has its own Neovim and terminal tab. I find this a pretty nice way to work with AI as I can think of each session as a separate row of `agent | editor | terminal`.
+Each chat session has its own Neovim and terminal tab, using libghostty: `agent | editor | terminal`.
 
-The following integrations with Neovim are built into the app:
-
-- Clicking on any changed file opens it in Neovim at the changed line.
 - You can open the transcript itself in a temp Markdown file in Neovim to copy/select things.
 - You can send messages with context from Neovim (normal mode -> line context, select -> selected context) to the current session, another existing session or a new session to fire off a new task.
-- Agents can present their work to be reviewed in Neovim with filenames/lines and context using a built-in tool. ([`submit_review`](#review))
 
 ## Tools
 
@@ -43,7 +43,7 @@ Farcaster comes with an optional MCP server (can be turned off in settings) that
 
   ![A main agent coordinating workers across harnesses and models in Farcaster](https://github.com/behzade/farcaster/releases/download/v0.3.5/farcaster-workers.png)
 
-- <a name="review"></a>**Review:** A tool (`submit_review`) that lets agents present files, line ranges, and notes for you to navigate and review using Neovim's quickfix list.
+- <a name="review"></a>**Review:** Agents present files, line ranges, and notes through `submit_review`. Open files in your chosen editor; Neovim also provides quickfix navigation.
 
 ## Current status
 
@@ -69,7 +69,7 @@ On Linux, make the downloaded AppImage executable with `chmod +x /path/to/Farcas
 The macOS app uses ad hoc signing; it is not notarized.
 If macOS blocks the app because it is not notarized and you trust the download, follow [Apple's instructions](https://support.apple.com/102445) to allow it through System Settings → Privacy & Security → Open Anyway.
 
-You'll also need the agent harness you want to use installed and signed in. To use Neovim in the embedded terminal, it must be available in your environment.
+You'll also need the agent harness you want to use installed and signed in, and your chosen editor or its command-line launcher available in your environment.
 
 ## Development
 
