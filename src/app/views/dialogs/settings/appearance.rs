@@ -10,6 +10,8 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
     let themes = &app.settings.themes;
     let selected = themes.library.selected_name().to_owned();
     let editable = themes.editable();
+    let editing = themes.editing && themes.draft.is_some();
+    let toggle = entity.clone();
     div()
         .flex()
         .flex_col()
@@ -17,28 +19,42 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
         .child(
             div()
                 .flex()
-                .flex_col()
-                .gap(theme().space.xs)
+                .items_center()
+                .justify_between()
+                .gap(theme().space.sm)
                 .child(
                     div()
                         .text_size(theme().type_scale.reading)
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child("Appearance"),
+                        .child(if editing {
+                            format!("Editing {selected}")
+                        } else {
+                            "Themes".into()
+                        }),
                 )
-                .child(
-                    div()
-                        .text_size(theme().type_scale.body_small)
-                        .text_color(theme().colors.muted)
-                        .child(
-                            "Themes apply to the whole app. Duplicate one to change its colors.",
-                        ),
-                ),
+                .when(themes.draft.is_some() && editable, |header| {
+                    header.child(
+                        settings_control(
+                            "theme-editor-toggle",
+                            if editing {
+                                "Back to themes"
+                            } else {
+                                "Edit theme"
+                            },
+                            &app.settings.theme_editor_focus,
+                        )
+                        .debug_selector(|| "theme-editor-toggle".into())
+                        .child(if editing { "‹ Themes" } else { "Edit" })
+                        .on_click(move |_, window, cx| {
+                            let _ = toggle.update(cx, |this, cx| {
+                                this.settings.themes.editing = !editing;
+                                this.settings.theme_editor_focus.focus(window, cx);
+                                cx.notify();
+                            });
+                        }),
+                    )
+                }),
         )
-        .child(theme_list(themes, &selected, editable, entity.clone()))
-        .child(theme_actions(themes, editable, entity.clone()))
-        .when_some(theme_editor(themes, editable, entity), |section, editor| {
-            section.child(editor)
-        })
         .when_some(themes.error.clone(), |section, error| {
             section.child(feedback("settings-theme-error", error, FeedbackTone::Error))
         })
@@ -49,6 +65,15 @@ pub(super) fn render(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> An
                 FeedbackTone::Info,
             ))
         })
+        .map(|section| {
+            if editing {
+                section.children(theme_editor(themes, editable, entity))
+            } else {
+                section
+                    .child(theme_list(themes, &selected, editable, entity.clone()))
+                    .child(theme_actions(themes, editable, entity))
+            }
+        })
         .into_any_element()
 }
 
@@ -58,7 +83,11 @@ fn theme_list(
     editable: bool,
     entity: WeakEntity<FarcasterApp>,
 ) -> AnyElement {
-    let mut list = div().flex().flex_col().gap(theme().space.xs);
+    let mut list = div()
+        .debug_selector(|| "settings-theme-list".into())
+        .flex()
+        .flex_col()
+        .gap(theme().space.xs);
     for (index, definition) in themes.library.display_order().into_iter().enumerate() {
         let active = definition.name == selected;
         let custom = themes.library.is_user_theme(&definition.name);
@@ -66,6 +95,9 @@ fn theme_list(
         let select_name = definition.name.clone();
         list = list.child(
             div()
+                .px(theme().space.sm)
+                .py(theme().space.sm)
+                .when(active, |row| row.bg(theme().colors.highlight))
                 .flex()
                 .items_center()
                 .justify_between()
@@ -95,21 +127,27 @@ fn theme_list(
                         .flex_none()
                         .items_center()
                         .gap(theme().space.xs)
-                        .child(button(
-                            ("theme-select", index),
-                            if active { "Active" } else { "Use" },
-                            if active {
-                                ButtonTone::Accent
-                            } else {
-                                ButtonTone::Neutral
-                            },
-                            editable && !active,
-                            move |window, cx| {
-                                let _ = select.update(cx, |this, cx| {
-                                    this.select_theme(&select_name, window, cx)
-                                });
-                            },
-                        )),
+                        .when(active, |controls| {
+                            controls.child(
+                                div()
+                                    .text_size(theme().type_scale.caption)
+                                    .text_color(theme().colors.indicator)
+                                    .child("Active"),
+                            )
+                        })
+                        .when(!active, |controls| {
+                            controls.child(button(
+                                ("theme-select", index),
+                                "Use",
+                                ButtonTone::Neutral,
+                                editable,
+                                move |window, cx| {
+                                    let _ = select.update(cx, |this, cx| {
+                                        this.select_theme(&select_name, window, cx)
+                                    });
+                                },
+                            ))
+                        }),
                 ),
         );
     }
@@ -130,6 +168,7 @@ fn theme_actions(
         .flex()
         .items_center()
         .gap(theme().space.xs)
+        .flex_wrap()
         .child(button(
             "theme-export",
             "Export…",
@@ -150,7 +189,7 @@ fn theme_actions(
         ))
         .child(button(
             "theme-duplicate",
-            "Duplicate",
+            "Duplicate to edit",
             ButtonTone::Neutral,
             editable,
             move |window, cx| {
@@ -159,15 +198,17 @@ fn theme_actions(
                 });
             },
         ))
-        .child(button(
-            "theme-delete",
-            "Delete",
-            ButtonTone::Danger,
-            editable && themes.draft.is_some(),
-            move |window, cx| {
-                let _ = delete.update(cx, |this, cx| this.delete_theme(window, cx));
-            },
-        ))
+        .when(themes.draft.is_some(), |actions| {
+            actions.child(button(
+                "theme-delete",
+                "Delete",
+                ButtonTone::Danger,
+                editable,
+                move |window, cx| {
+                    let _ = delete.update(cx, |this, cx| this.delete_theme(window, cx));
+                },
+            ))
+        })
         .child(
             div()
                 .text_size(theme().type_scale.caption)
@@ -184,19 +225,10 @@ fn theme_editor(
 ) -> Option<AnyElement> {
     let draft = themes.draft.as_ref()?;
     let mut editor = div()
+        .debug_selector(|| "settings-theme-editor".into())
         .flex()
         .flex_col()
-        .gap(theme().space.sm)
-        .border_t_1()
-        .border_color(theme().colors.surface)
-        .pt(theme().space.md)
-        .child(
-            div()
-                .text_size(theme().type_scale.body)
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(theme().colors.text)
-                .child(format!("Editing {}", draft.name)),
-        );
+        .gap(theme().space.sm);
     if let Some(input) = themes.name.clone() {
         editor = editor.child(editor_row(
             "Name",

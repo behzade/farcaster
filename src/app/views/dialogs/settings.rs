@@ -17,7 +17,10 @@ use crate::{
     app::ui::assets::AppIcon,
     app::ui::primitives::{ButtonTone, FeedbackTone, button, feedback, modal},
     app::ui::theme::theme,
-    app::workspace::editor::{editor_available, effective_editor_choice},
+    app::workspace::{
+        SettingsTab,
+        editor::{editor_available, effective_editor_choice},
+    },
     storage::EditorChoice,
 };
 
@@ -27,6 +30,13 @@ pub(in crate::app::views) fn render(
     cx: &gpui::App,
 ) -> AnyElement {
     let dismiss = entity.clone();
+    let tab = app.settings.tab;
+    let content = match tab {
+        SettingsTab::General => general(app, entity.clone(), cx),
+        SettingsTab::Workers => worker_tasks::render(app, entity.clone(), cx),
+        SettingsTab::Appearance => appearance::render(app, entity.clone()),
+        SettingsTab::Connections => connections(app, entity.clone()),
+    };
     modal(
         "settings",
         "Settings",
@@ -37,7 +47,6 @@ pub(in crate::app::views) fn render(
         },
         |surface| {
             let close = entity.clone();
-            let clear = entity.clone();
             surface
                 .w(theme().size(860.0))
                 .max_w_full()
@@ -47,128 +56,63 @@ pub(in crate::app::views) fn render(
                 .child(
                     div()
                         .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .flex_wrap()
+                        .gap(theme().space.sm)
                         .px(theme().size(24.0))
                         .py(theme().space.md)
                         .border_b_1()
                         .border_color(theme().colors.surface)
-                        .text_size(theme().type_scale.display)
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child("Settings"),
+                        .child(
+                            div()
+                                .text_size(theme().type_scale.display)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("Settings"),
+                        )
+                        .child(div().flex().gap(theme().space.xs).children(
+                            SettingsTab::ALL.into_iter().map(|page| {
+                                let select = entity.clone();
+                                let selected = page == tab;
+                                settings_control(
+                                    format!("settings-tab-{}", page.label()),
+                                    page.label(),
+                                    &app.settings.tab_focus[page as usize],
+                                )
+                                .debug_selector(move || format!("settings-tab-{}", page.label()))
+                                .aria_selected(selected)
+                                .text_color(if selected {
+                                    theme().colors.indicator
+                                } else {
+                                    theme().colors.muted
+                                })
+                                .when(selected, |tab| tab.bg(theme().colors.highlight))
+                                .child(page.label())
+                                .on_click(move |_, window, cx| {
+                                    let _ = select.update(cx, |this, cx| {
+                                        this.settings.tab = page;
+                                        this.settings.tab_focus[page as usize].focus(window, cx);
+                                        cx.notify();
+                                    });
+                                })
+                            }),
+                        )),
                 )
                 .child(
                     div()
-                        .id("settings-scroll")
+                        .id(format!(
+                            "settings-scroll-{}-{}",
+                            tab.label(),
+                            app.settings.themes.editing
+                        ))
+                        .debug_selector(|| "settings-content".into())
                         .min_h_0()
+                        .h(theme().size(520.0))
                         .max_h(theme().size(520.0))
                         .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .gap(theme().size(24.0))
                         .p(theme().size(24.0))
-                        .child(worker_tasks::render(app, entity.clone()))
-                        .child(appearance::render(app, entity.clone()))
-                        .child(harness_profiles::render(app, entity.clone()))
-                        .child(editor_setting(
-                            app,
-                            entity.clone(),
-                        ))
-                        .when_some(app.settings.editor_error.clone(), |content, error| {
-                            content.child(feedback(
-                                "settings-editor-error",
-                                error,
-                                FeedbackTone::Error,
-                            ))
-                        })
-                        .child(toggle_setting(
-                            "session-project-groups-toggle",
-                            "Group sessions by project",
-                            "Group all chats by project. Turn off to use custom folders.",
-                            app.settings.group_sessions_by_project,
-                            entity.clone(),
-                            FarcasterApp::toggle_settings_project_groups,
-                        ))
-                        .when_some(app.settings.session_grouping_error.clone(), |content, error| {
-                            content.child(feedback("settings-session-grouping-error", error, FeedbackTone::Error))
-                        })
-                        .child(transcript_font_size(app.views.transcript.read(cx).font_size, entity.clone()))
-                        .child(toggle_setting(
-                            "transcript-folders-toggle",
-                            "Expand changed folders in transcript",
-                            "Start change folders expanded. Your manual folder choices stay as you left them.",
-                            app.settings.expand_transcript_folders,
-                            entity.clone(),
-                            FarcasterApp::toggle_settings_transcript_folders,
-                        ))
-                        .when_some(app.settings.transcript_error.clone(), |content, error| {
-                            content.child(feedback(
-                                "settings-transcript-error",
-                                error,
-                                FeedbackTone::Error,
-                            ))
-                        })
-                        .child(
-                            div()
-                                .pt(theme().space.md)
-                                .border_t_1()
-                                .border_color(theme().colors.surface)
-                                .text_size(theme().type_scale.reading)
-                                .font_weight(gpui::FontWeight::SEMIBOLD)
-                                .child("Connections"),
-                        )
-                        .child(toggle_setting(
-                            "builtin-mcp-toggle",
-                            "Built-in MCP",
-                            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
-                            crate::builtin_mcp::enabled(),
-                            entity.clone(),
-                            FarcasterApp::toggle_settings_builtin_mcp,
-                        ))
-                        .when_some(app.settings.mcp_error.clone(), |content, error| {
-                            content.child(feedback(
-                                "settings-mcp-error",
-                                error,
-                                FeedbackTone::Error,
-                            ))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(theme().space.sm)
-                                .child(setting_label(
-                                    "Network proxy",
-                                    "Used when the project environment has no HTTP or HTTPS proxy.",
-                                ))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap(theme().space.sm)
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .child(Input::new(&app.settings.network_proxy_input)),
-                                        )
-                                        .child(button(
-                                            "clear-network-proxy",
-                                            "Clear",
-                                            ButtonTone::Quiet,
-                                            true,
-                                            move |window, cx| {
-                                                let _ = clear.update(cx, |this, cx| {
-                                                    this.clear_network_proxy(window, cx)
-                                                });
-                                            },
-                                        )),
-                                )
-                                .when_some(app.settings.network_proxy_error.clone(), |content, error| {
-                                    content.child(feedback(
-                                        "settings-proxy-error",
-                                        error,
-                                        FeedbackTone::Error,
-                                    ))
-                                }),
-                        ),
+                        .child(content),
                 )
                 .child(
                     div()
@@ -187,19 +131,158 @@ pub(in crate::app::views) fn render(
                                 .text_color(theme().colors.muted)
                                 .child("Valid changes save automatically."),
                         )
-                        .child(button(
-                            "close-settings",
-                            "Close",
-                            ButtonTone::Neutral,
-                            true,
-                            move |window, cx| {
-                                let _ = close.update(cx, |this, cx| this.close_sheet(window, cx));
-                            },
-                        )),
+                        .child(
+                            button(
+                                "close-settings",
+                                "Close",
+                                ButtonTone::Neutral,
+                                true,
+                                move |window, cx| {
+                                    let _ =
+                                        close.update(cx, |this, cx| this.close_sheet(window, cx));
+                                },
+                            )
+                            .debug_selector(|| "close-settings".into()),
+                        ),
                 )
         },
     )
     .into_any_element()
+}
+
+fn settings_control(
+    id: impl Into<gpui::ElementId>,
+    label: &'static str,
+    focus: &gpui::FocusHandle,
+) -> gpui::Stateful<gpui::Div> {
+    crate::app::ui::primitives::icon_control(id, label)
+        .track_focus(focus)
+        .w_auto()
+        .px(theme().space.sm)
+        .hover(|control| control.bg(theme().colors.highlight))
+}
+
+fn general(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>, cx: &gpui::App) -> AnyElement {
+    div()
+        .debug_selector(|| "settings-general".into())
+        .flex()
+        .flex_col()
+        .gap(theme().size(24.0))
+        .child(editor_setting(app, entity.clone()))
+        .when_some(app.settings.editor_error.clone(), |content, error| {
+            content.child(feedback(
+                "settings-editor-error",
+                error,
+                FeedbackTone::Error,
+            ))
+        })
+        .child(toggle_setting(
+            "session-project-groups-toggle",
+            "Group sessions by project",
+            "Group all chats by project. Turn off to use custom folders.",
+            app.settings.group_sessions_by_project,
+            entity.clone(),
+            FarcasterApp::toggle_settings_project_groups,
+        ))
+        .when_some(
+            app.settings.session_grouping_error.clone(),
+            |content, error| {
+                content.child(feedback(
+                    "settings-session-grouping-error",
+                    error,
+                    FeedbackTone::Error,
+                ))
+            },
+        )
+        .child(transcript_font_size(
+            app.views.transcript.read(cx).font_size,
+            entity.clone(),
+        ))
+        .child(toggle_setting(
+            "transcript-folders-toggle",
+            "Expand changed folders in transcript",
+            "Start change folders expanded. Your manual folder choices stay as you left them.",
+            app.settings.expand_transcript_folders,
+            entity.clone(),
+            FarcasterApp::toggle_settings_transcript_folders,
+        ))
+        .when_some(app.settings.transcript_error.clone(), |content, error| {
+            content.child(feedback(
+                "settings-transcript-error",
+                error,
+                FeedbackTone::Error,
+            ))
+        })
+        .into_any_element()
+}
+
+fn connections(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
+    let clear = entity.clone();
+    div()
+        .flex()
+        .flex_col()
+        .gap(theme().size(24.0))
+        .child(harness_profiles::render(app, entity.clone()))
+        .child(toggle_setting(
+            "builtin-mcp-toggle",
+            "Built-in MCP",
+            "Add local tools to new sessions. Turning this off disconnects existing MCP clients.",
+            crate::builtin_mcp::enabled(),
+            entity.clone(),
+            FarcasterApp::toggle_settings_builtin_mcp,
+        ))
+        .when_some(app.settings.mcp_error.clone(), |content, error| {
+            content.child(feedback("settings-mcp-error", error, FeedbackTone::Error))
+        })
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme().space.sm)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(theme().space.md)
+                        .child(setting_label(
+                            "Network proxy",
+                            "Used when the project environment has no HTTP or HTTPS proxy.",
+                        ))
+                        .child(
+                            div()
+                                .w(theme().size(300.0))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .gap(theme().space.sm)
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(Input::new(&app.settings.network_proxy_input)),
+                                )
+                                .child(button(
+                                    "clear-network-proxy",
+                                    "Clear",
+                                    ButtonTone::Quiet,
+                                    true,
+                                    move |window, cx| {
+                                        let _ = clear.update(cx, |this, cx| {
+                                            this.clear_network_proxy(window, cx)
+                                        });
+                                    },
+                                )),
+                        ),
+                )
+                .when_some(
+                    app.settings.network_proxy_error.clone(),
+                    |content, error| {
+                        content.child(feedback("settings-proxy-error", error, FeedbackTone::Error))
+                    },
+                ),
+        )
+        .into_any_element()
 }
 
 fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyElement {
@@ -293,7 +376,7 @@ fn toggle_setting(
 fn setting_label(title: &'static str, description: &'static str) -> AnyElement {
     div()
         .min_w_0()
-        .max_w_full()
+        .max_w(theme().size(480.0))
         .flex()
         .flex_col()
         .gap(theme().space.xs)
@@ -318,6 +401,7 @@ fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) ->
 
     let size = f32::from(size);
     div()
+        .debug_selector(|| "settings-font-size".into())
         .flex()
         .items_center()
         .justify_between()
@@ -374,3 +458,7 @@ fn transcript_font_size(size: gpui::Pixels, entity: WeakEntity<FarcasterApp>) ->
         )
         .into_any_element()
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

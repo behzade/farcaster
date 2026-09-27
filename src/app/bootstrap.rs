@@ -323,6 +323,11 @@ impl FarcasterApp {
                 code_tasks: Default::default(),
             },
             settings: workspace::SettingsState {
+                tab: Default::default(),
+                tab_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
+                adding_harness_profile: false,
+                harness_form_focus: cx.focus_handle().tab_stop(true),
+                theme_editor_focus: cx.focus_handle().tab_stop(true),
                 harness_profiles,
                 harness_profile_name: inputs.harness_profile_name,
                 harness_profile_executable: inputs.harness_profile_executable,

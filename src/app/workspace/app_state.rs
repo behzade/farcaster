@@ -38,7 +38,39 @@ pub(in crate::app) struct TerminalState {
     pub(in crate::app) project_terminals: HashMap<PathBuf, Entity<Terminal>>,
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::app) enum SettingsTab {
+    #[default]
+    General,
+    Workers,
+    Appearance,
+    Connections,
+}
+
+impl SettingsTab {
+    pub(in crate::app) const ALL: [Self; 4] = [
+        Self::General,
+        Self::Workers,
+        Self::Appearance,
+        Self::Connections,
+    ];
+
+    pub(in crate::app) fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Workers => "Workers",
+            Self::Appearance => "Appearance",
+            Self::Connections => "Connections",
+        }
+    }
+}
+
 pub(in crate::app) struct SettingsState {
+    pub(in crate::app) tab: SettingsTab,
+    pub(in crate::app) tab_focus: [FocusHandle; 4],
+    pub(in crate::app) adding_harness_profile: bool,
+    pub(in crate::app) harness_form_focus: FocusHandle,
+    pub(in crate::app) theme_editor_focus: FocusHandle,
     pub(in crate::app) themes: workspace::theme_settings::ThemeSettings,
     pub(in crate::app) harness_profiles: Arc<crate::agents::HarnessProfiles>,
     pub(in crate::app) harness_profile_name: Entity<InputState>,

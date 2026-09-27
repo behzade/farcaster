@@ -6,6 +6,7 @@ use crate::app::ui::theme::{
 };
 
 pub(in crate::app) struct ThemeSettings {
+    pub(in crate::app) editing: bool,
     pub(in crate::app) library: ThemeLibrary,
     pub(in crate::app) draft: Option<ThemeDefinition>,
     pub(in crate::app) tokens: Vec<(ThemeToken, Entity<InputState>)>,
@@ -22,6 +23,7 @@ pub(in crate::app) struct ThemeSettings {
 impl Default for ThemeSettings {
     fn default() -> Self {
         Self {
+            editing: false,
             library: ThemeLibrary::default(),
             draft: None,
             tokens: Vec::new(),
@@ -191,11 +193,13 @@ impl FarcasterApp {
             return;
         }
         self.settings.themes.draft = Some(draft);
+        self.settings.themes.editing = true;
         self.settings.themes.error = None;
         self.settings.themes.status = Some(format!("{name} is ready to edit."));
         self.activate_theme(cx);
         self.schedule_theme_save(cx);
         self.refresh_theme_editor(window, cx);
+        self.settings.theme_editor_focus.focus(window, cx);
         cx.notify();
     }
 
@@ -295,6 +299,7 @@ impl FarcasterApp {
         match self.settings.themes.library.remove(&draft.name) {
             Ok(()) => {
                 self.settings.themes.draft = None;
+                self.settings.themes.editing = false;
                 self.settings.themes.error = None;
                 self.settings.themes.status = Some(format!("Deleted {}.", draft.name));
                 self.activate_theme(cx);

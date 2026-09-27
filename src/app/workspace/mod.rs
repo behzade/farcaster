@@ -3,7 +3,9 @@ use std::time::Duration;
 use super::*;
 
 mod app_state;
-pub(in crate::app) use app_state::{EditorState, SettingsState, TerminalState, WorkspaceState};
+pub(in crate::app) use app_state::{
+    EditorState, SettingsState, SettingsTab, TerminalState, WorkspaceState,
+};
 
 mod covered_refresh;
 
