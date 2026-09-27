@@ -22,9 +22,6 @@ impl FarcasterApp {
                 .find(|model| model.id == selected.id && model.provider == selected.provider)
         }) {
             path.push(PickerScope::Models(model.provider.clone()));
-            if !model_efforts(model, &self.snapshot.thinking_levels).is_empty() {
-                path.push(PickerScope::Efforts(model.clone()));
-            }
         }
         for scope in path {
             self.open_picker(scope, window, cx);

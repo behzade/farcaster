@@ -5,7 +5,7 @@ use gpui::{App, AssetSource, Result, SharedString};
 use gpui_component::IconNamed;
 
 const ICON_ROOT: &str = "icons/phosphor";
-const ICON_PATHS: [&str; 71] = [
+const ICON_PATHS: [&str; 74] = [
     "icons/phosphor/archive.svg",
     "icons/phosphor/arrows-clockwise.svg",
     "icons/phosphor/arrows-out.svg",
@@ -33,6 +33,7 @@ const ICON_PATHS: [&str; 71] = [
     "icons/phosphor/eye-slash.svg",
     "icons/phosphor/folder.svg",
     "icons/phosphor/folder-plus.svg",
+    "icons/phosphor/gear-six.svg",
     "icons/phosphor/git-branch.svg",
     "icons/phosphor/git-fork.svg",
     "icons/phosphor/globe.svg",
@@ -40,6 +41,7 @@ const ICON_PATHS: [&str; 71] = [
     "icons/phosphor/hourglass.svg",
     "icons/phosphor/info.svg",
     "icons/phosphor/key.svg",
+    "icons/phosphor/keyboard.svg",
     "icons/phosphor/list.svg",
     "icons/phosphor/magnifying-glass.svg",
     "icons/phosphor/microscope.svg",
@@ -51,6 +53,7 @@ const ICON_PATHS: [&str; 71] = [
     "icons/phosphor/shield.svg",
     "icons/phosphor/sidebar-simple.svg",
     "icons/phosphor/sign-in.svg",
+    "icons/phosphor/sign-out.svg",
     "icons/phosphor/spinner-gap.svg",
     "icons/phosphor/stop.svg",
     "icons/phosphor/terminal-window.svg",
@@ -230,6 +233,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/git-fork.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/git-fork.svg"
             )),
+            "icons/phosphor/gear-six.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/gear-six.svg"
+            )),
             "icons/phosphor/git-branch.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/git-branch.svg"
             )),
@@ -245,6 +251,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/key.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/key.svg"))
             }
+            "icons/phosphor/keyboard.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/keyboard.svg"
+            )),
             "icons/phosphor/list.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/list.svg"))
             }
@@ -269,6 +278,9 @@ impl AssetSource for AppAssets {
             "icons/phosphor/sign-in.svg" => {
                 Some(include_bytes!("../../../assets/phosphor-icons/sign-in.svg"))
             }
+            "icons/phosphor/sign-out.svg" => Some(include_bytes!(
+                "../../../assets/phosphor-icons/sign-out.svg"
+            )),
             "icons/phosphor/spinner-gap.svg" => Some(include_bytes!(
                 "../../../assets/phosphor-icons/spinner-gap.svg"
             )),
@@ -391,12 +403,14 @@ pub(crate) enum AppIcon {
     Eye,
     Folder,
     FolderPlus,
+    GearSix,
     Ghostty,
     GitBranch,
     GitFork,
     Helix,
     Hourglass,
     Key,
+    Keyboard,
     List,
     MagnifyingGlass,
     Minus,
@@ -409,8 +423,11 @@ pub(crate) enum AppIcon {
     Question,
     Shield,
     SidebarLeft,
+    SignOut,
     SpinnerGap,
     Stop,
+    TerminalWindow,
+    TextAa,
     Trash,
     UploadSimple,
     WarningCircle,
@@ -483,6 +500,7 @@ impl IconNamed for AppIcon {
             Self::Eye => "eye",
             Self::Folder => "folder",
             Self::FolderPlus => "folder-plus",
+            Self::GearSix => "gear-six",
             Self::Ghostty => return "icons/workbench/ghostty.svg".into(),
             Self::GitBranch => "git-branch",
             Self::GitFork => "git-fork",
@@ -493,6 +511,7 @@ impl IconNamed for AppIcon {
             Self::Vim => return "icons/workbench/vim.svg".into(),
             Self::Hourglass => "hourglass",
             Self::Key => "key",
+            Self::Keyboard => "keyboard",
             Self::List => "list",
             Self::MagnifyingGlass => "magnifying-glass",
             Self::Minus => "minus",
@@ -505,8 +524,11 @@ impl IconNamed for AppIcon {
             Self::Question => "question",
             Self::Shield => "shield",
             Self::SidebarLeft => "sidebar-simple",
+            Self::SignOut => "sign-out",
             Self::SpinnerGap => "spinner-gap",
             Self::Stop => "stop",
+            Self::TerminalWindow => "terminal-window",
+            Self::TextAa => "text-aa",
             Self::Trash => "trash",
             Self::UploadSimple => "upload-simple",
             Self::WarningCircle => "warning-circle",

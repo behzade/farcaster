@@ -34,6 +34,11 @@ pub trait ListDelegate: Sized + 'static {
     /// the section header and footer will also be skipped.
     fn items_count(&self, section: usize, cx: &App) -> usize;
 
+    /// Whether keyboard navigation may select this item.
+    fn is_selectable(&self, ix: IndexPath, cx: &App) -> bool {
+        true
+    }
+
     /// Render the item at the given index.
     ///
     /// Return None will skip the item.

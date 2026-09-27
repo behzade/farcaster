@@ -120,3 +120,74 @@ fn open_session_project_leads_without_changing_the_remaining_order() {
         vec![gamma, alpha, beta]
     );
 }
+
+#[gpui::test]
+fn action_picker_routes_themes_and_models_without_losing_parent_context(
+    cx: &mut gpui::TestAppContext,
+) {
+    crate::app::test_support::with_offline_app(
+        concat!(
+            module_path!(),
+            "::action_picker_routes_themes_and_models_without_losing_parent_context"
+        ),
+        cx,
+        |cx, app, _, _| {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.settings.tab = crate::app::workspace::SettingsTab::Workers;
+                    app.open_picker(PickerScope::Actions, window, cx);
+                    let (rows, commands) = app.action_picker_rows();
+                    assert_eq!(rows[0].id, "action:new-session");
+                    assert!(rows.iter().all(|row| !row.section.is_empty()));
+                    assert_eq!(
+                        commands.get("action:themes"),
+                        Some(&PickerCommand::OpenThemes)
+                    );
+                    app.execute_picker_row("action:settings", window, cx);
+                    assert!(app.settings.tab == crate::app::workspace::SettingsTab::Workers);
+                    app.open_picker(PickerScope::Actions, window, cx);
+                    app.settings.themes.editing = true;
+                    app.execute_picker_row("action:themes", window, cx);
+                    assert!(app.settings.tab == crate::app::workspace::SettingsTab::Appearance);
+                    assert!(!app.settings.themes.editing);
+
+                    let model: crate::protocol::Model = serde_json::from_value(serde_json::json!({
+                    "id": "test", "name": "Test model", "provider": "provider", "reasoning": true,
+                    "efforts": ["low", "high"]
+                })).unwrap();
+                    let snapshot = std::sync::Arc::make_mut(&mut app.snapshot);
+                    snapshot.harness = Some(Backend::Codex);
+                    snapshot.prefill_model = Some(model.clone());
+                    snapshot.prefill_thinking_level = Some("high".into());
+                    snapshot.models = vec![model];
+                    app.open_picker(PickerScope::Actions, window, cx);
+                    let actions = app.navigation.picker.as_ref().unwrap().list.clone();
+                    actions.update(cx, |list, cx| list.set_query("model", window, cx));
+                    app.open_runtime_picker(window, cx);
+                    let page = app.navigation.picker.as_ref().unwrap();
+                    assert_eq!(page.scope, PickerScope::Models("provider".into()));
+                    assert_eq!(
+                        page.list.read(cx).selected_index().map(|index| index.row),
+                        Some(0)
+                    );
+                    assert!(page.has_ancestor(&PickerScope::Actions));
+                    assert!(page.has_ancestor(&PickerScope::Providers));
+                    app.picker_navigate_back(window, cx);
+                    app.picker_navigate_back(window, cx);
+                    assert_eq!(
+                        app.navigation.picker.as_ref().unwrap().list.entity_id(),
+                        actions.entity_id()
+                    );
+                    assert_eq!(
+                        &*app.navigation.picker.as_ref().unwrap().query.borrow(),
+                        "model"
+                    );
+                })
+            });
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.simulate_keystrokes("escape");
+            cx.update(|_, cx| assert!(app.read(cx).navigation.picker.is_none()));
+        },
+    );
+}

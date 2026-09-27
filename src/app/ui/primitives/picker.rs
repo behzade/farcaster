@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui::{
     App, Context, InteractiveElement as _, Keystroke, ParentElement as _,
@@ -24,6 +24,8 @@ pub(crate) struct PickerRow {
     pub(crate) label: String,
     pub(crate) detail: Option<String>,
     pub(crate) shortcut: Option<String>,
+    pub(crate) section: &'static str,
+    opens_page: bool,
     shortcut_keys: Vec<Keystroke>,
     removable_project: Option<std::path::PathBuf>,
     disabled: bool,
@@ -60,6 +62,8 @@ impl PickerRow {
             label,
             detail,
             shortcut,
+            section: "",
+            opens_page: false,
             shortcut_keys,
             removable_project: None,
             disabled: false,
@@ -69,6 +73,16 @@ impl PickerRow {
 
     pub(crate) fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub(crate) fn section(mut self, section: &'static str) -> Self {
+        self.section = section;
+        self
+    }
+
+    pub(crate) fn opens_page(mut self, opens_page: bool) -> Self {
+        self.opens_page = opens_page;
         self
     }
 
@@ -87,6 +101,7 @@ impl PickerRow {
 pub(crate) struct PickerDelegate {
     all_rows: Vec<PickerRow>,
     visible_rows: Vec<PickerRow>,
+    sections: Vec<Range<usize>>,
     selected_index: Option<IndexPath>,
     confirmed_id: Rc<RefCell<Option<String>>>,
     query: Rc<RefCell<String>>,
@@ -101,14 +116,17 @@ impl PickerDelegate {
     pub(crate) fn new(rows: Vec<PickerRow>) -> (Self, PickerHandles) {
         let confirmed_id = Rc::new(RefCell::new(None));
         let query = Rc::new(RefCell::new(String::new()));
+        let mut delegate = Self {
+            visible_rows: Vec::new(),
+            sections: Vec::new(),
+            all_rows: rows,
+            selected_index: None,
+            confirmed_id: Rc::clone(&confirmed_id),
+            query: Rc::clone(&query),
+        };
+        delegate.filter_rows("");
         (
-            Self {
-                visible_rows: rows.clone(),
-                all_rows: rows,
-                selected_index: Some(IndexPath::default()),
-                confirmed_id: Rc::clone(&confirmed_id),
-                query: Rc::clone(&query),
-            },
+            delegate,
             PickerHandles {
                 confirmed_id,
                 query,
@@ -119,24 +137,74 @@ impl PickerDelegate {
     pub(crate) fn replace_rows(&mut self, rows: Vec<PickerRow>) -> Option<IndexPath> {
         let selected_id = self
             .selected_index
-            .and_then(|index| self.visible_rows.get(index.row))
+            .and_then(|index| self.row(index))
             .map(|row| row.id.clone());
         self.all_rows = rows;
-        let query = self.query.borrow();
+        let query = self.query.borrow().clone();
+        self.filter_rows(query.trim());
+        self.selected_index = self.preferred_index(
+            selected_id.and_then(|id| self.visible_rows.iter().position(|row| row.id == id)),
+        );
+        self.selected_index
+    }
+
+    fn filter_rows(&mut self, query: &str) {
         self.visible_rows = self
             .all_rows
             .iter()
-            .filter(|row| row.matches(query.trim()))
+            .filter(|row| row.matches(query))
             .cloned()
             .collect();
-        self.selected_index = selected_id
-            .and_then(|id| self.visible_rows.iter().position(|row| row.id == id))
-            .or_else(|| (!self.visible_rows.is_empty()).then_some(0))
-            .map(|row| IndexPath {
-                row,
-                ..Default::default()
+        if !query.is_empty() {
+            let terms = query.to_lowercase();
+            self.visible_rows.sort_by_key(|row| {
+                let label = row.label.to_lowercase();
+                (
+                    row.disabled,
+                    !terms.split_whitespace().all(|term| label.contains(term)),
+                )
             });
-        self.selected_index
+        }
+        self.sections.clear();
+        for (index, row) in self.visible_rows.iter().enumerate() {
+            if index == 0
+                || (query.is_empty() && row.section != self.visible_rows[index - 1].section)
+            {
+                self.sections.push(index..index + 1);
+            } else if let Some(section) = self.sections.last_mut() {
+                section.end = index + 1;
+            }
+        }
+        self.selected_index = self.preferred_index(None);
+    }
+
+    fn row(&self, index: IndexPath) -> Option<&PickerRow> {
+        let range = self.sections.get(index.section)?;
+        (index.row < range.len()).then(|| &self.visible_rows[range.start + index.row])
+    }
+
+    fn index(&self, flat: usize) -> Option<IndexPath> {
+        self.sections
+            .iter()
+            .enumerate()
+            .find_map(|(section, range)| {
+                range.contains(&flat).then(|| IndexPath {
+                    section,
+                    row: flat - range.start,
+                    ..Default::default()
+                })
+            })
+    }
+
+    pub(crate) fn preferred_index(&self, preferred: Option<usize>) -> Option<IndexPath> {
+        preferred
+            .filter(|index| {
+                self.visible_rows
+                    .get(*index)
+                    .is_some_and(|row| !row.disabled)
+            })
+            .or_else(|| self.visible_rows.iter().position(|row| !row.disabled))
+            .and_then(|flat| self.index(flat))
     }
 }
 
@@ -150,18 +218,43 @@ impl ListDelegate for PickerDelegate {
         _: &mut Context<ListState<Self>>,
     ) -> gpui::Task<()> {
         *self.query.borrow_mut() = query.to_owned();
-        self.visible_rows = self
-            .all_rows
-            .iter()
-            .filter(|row| row.matches(query.trim()))
-            .cloned()
-            .collect();
-        self.selected_index = (!self.visible_rows.is_empty()).then_some(IndexPath::default());
+        self.filter_rows(query.trim());
         gpui::Task::ready(())
     }
 
-    fn items_count(&self, _: usize, _: &App) -> usize {
-        self.visible_rows.len()
+    fn sections_count(&self, _: &App) -> usize {
+        self.sections.len().max(1)
+    }
+
+    fn items_count(&self, section: usize, _: &App) -> usize {
+        self.sections.get(section).map_or(0, Range::len)
+    }
+
+    fn is_selectable(&self, index: IndexPath, _: &App) -> bool {
+        self.row(index).is_some_and(|row| !row.disabled)
+    }
+
+    fn render_section_header(
+        &mut self,
+        section: usize,
+        _: &mut Window,
+        _: &mut Context<ListState<Self>>,
+    ) -> Option<impl gpui::IntoElement> {
+        let row = self.row(IndexPath {
+            section,
+            row: 0,
+            ..Default::default()
+        })?;
+        (self.query.borrow().trim().is_empty() && !row.section.is_empty()).then(|| {
+            div()
+                .h(theme().controls.icon_button)
+                .px(theme().space.sm)
+                .flex()
+                .items_center()
+                .text_size(theme().type_scale.caption)
+                .text_color(theme().colors.muted)
+                .child(row.section)
+        })
     }
 
     fn render_item(
@@ -170,9 +263,9 @@ impl ListDelegate for PickerDelegate {
         _: &mut Window,
         _: &mut Context<ListState<Self>>,
     ) -> Option<Self::Item> {
-        let row = self.visible_rows.get(index.row)?;
+        let row = self.row(index)?;
         Some(
-            ListItem::new(("picker-row", index.row))
+            ListItem::new(format!("picker-row:{}", row.id))
                 .disabled(row.disabled)
                 .h(theme().controls.utility_row)
                 .child(
@@ -218,10 +311,14 @@ impl ListDelegate for PickerDelegate {
                                         .map(|key| Kbd::new(key.clone()).outline()),
                                 )
                         }))
+                        .children(
+                            row.opens_page
+                                .then(|| app_icon(AppIcon::CaretRight, AppIconSize::Control)),
+                        )
                         .children(row.removable_project.as_ref().map(|project| {
                             let project = project.clone();
                             icon_control(
-                                ("remove-picker-project", index.row),
+                                format!("remove-picker-project:{}", row.id),
                                 format!("Remove {}", row.label),
                             )
                             .hover(|button| button.bg(theme().colors.highlight))
@@ -248,7 +345,11 @@ impl ListDelegate for PickerDelegate {
         div()
             .p(theme().space.md)
             .text_color(theme().colors.subtle)
-            .child("No matches")
+            .child(if self.query.borrow().trim().is_empty() {
+                "No choices available".to_owned()
+            } else {
+                format!("No matches for “{}”", self.query.borrow().trim())
+            })
     }
 
     fn set_selected_index(
@@ -263,7 +364,7 @@ impl ListDelegate for PickerDelegate {
     fn confirm(&mut self, _: bool, _: &mut Window, _: &mut Context<ListState<Self>>) {
         *self.confirmed_id.borrow_mut() = self
             .selected_index
-            .and_then(|index| self.visible_rows.get(index.row))
+            .and_then(|index| self.row(index))
             .filter(|row| !row.disabled)
             .map(|row| row.id.clone());
     }

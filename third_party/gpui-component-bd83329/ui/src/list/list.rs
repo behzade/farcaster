@@ -285,11 +285,16 @@ where
         self.set_searching(true, window, cx);
         let search = self.delegate.perform_search(&query, window, cx);
 
-        if self.rows_cache.len() > 0 {
-            self._set_selected_index(Some(IndexPath::default()), window, cx);
-        } else {
-            self._set_selected_index(None, window, cx);
-        }
+        let first = (0..self.delegate.sections_count(cx))
+            .flat_map(|section| {
+                (0..self.delegate.items_count(section, cx)).map(move |row| IndexPath {
+                    section,
+                    row,
+                    ..Default::default()
+                })
+            })
+            .find(|ix| self.delegate.is_selectable(*ix, cx));
+        self._set_selected_index(first, window, cx);
 
         self._search_task = cx.spawn_in(window, async move |this, window| {
             search.await;
@@ -392,12 +397,7 @@ where
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.rows_cache.len() == 0 {
-            return;
-        }
-
-        let prev_ix = self.rows_cache.prev(self.selected_index);
-        self.select_item(prev_ix, window, cx);
+        self.select_enabled_item(false, window, cx);
     }
 
     pub(crate) fn on_action_select_next(
@@ -406,12 +406,27 @@ where
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.select_enabled_item(true, window, cx);
+    }
+
+    fn select_enabled_item(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.rows_cache.len() == 0 {
             return;
         }
-
-        let next_ix = self.rows_cache.next(self.selected_index);
-        self.select_item(next_ix, window, cx);
+        let mut from = self.selected_index;
+        for _ in 0..self.rows_cache.len() {
+            let ix = if forward {
+                self.rows_cache.next(from)
+            } else {
+                self.rows_cache.prev(from)
+            };
+            if self.delegate.is_selectable(ix, cx) {
+                self.select_item(ix, window, cx);
+                return;
+            }
+            from = Some(ix);
+        }
+        self.set_selected_index(None, window, cx);
     }
 
     fn prepare_items_if_needed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

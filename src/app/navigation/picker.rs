@@ -21,7 +21,7 @@ use super::FarcasterApp;
 use crate::{
     app::ui::assets::AppIcon,
     app::ui::keybindings::application_key,
-    app::ui::primitives::{ButtonTone, PickerDelegate, PickerRow, button, modal},
+    app::ui::primitives::{ButtonTone, PickerDelegate, PickerRow, button, icon_button, modal},
     app::ui::theme::theme,
     runtime::RuntimeCommand,
     sessions::SessionSummary,
@@ -29,6 +29,7 @@ use crate::{
 
 pub(crate) const PICKER_KEY_CONTEXT: &str = "PiPicker";
 
+mod actions;
 mod configuration;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,18 +57,18 @@ pub(crate) enum PickerScope {
 }
 
 impl PickerScope {
-    fn label(&self) -> &str {
+    fn title(&self) -> String {
         match self {
-            Self::Actions => "Actions",
-            Self::Projects(ProjectPickerIntent::MoveSession { .. }) => "Move session",
-            Self::Projects(_) => "Choose project",
-            Self::Sessions => "Find session",
-            Self::Sandbox => "Set sandbox",
-            Self::Harnesses => "Set harness",
-            Self::Providers => "Choose provider",
-            Self::Models(_) => "Choose model",
-            Self::Efforts(_) => "Choose model preset",
-            Self::ArchivedSessions => "Restore session",
+            Self::Actions => "Actions".into(),
+            Self::Projects(ProjectPickerIntent::MoveSession { .. }) => "Move session".into(),
+            Self::Projects(_) => "Choose project".into(),
+            Self::Sessions => "Find session".into(),
+            Self::Sandbox => "Sandbox".into(),
+            Self::Harnesses => "Harnesses".into(),
+            Self::Providers => "Providers".into(),
+            Self::Models(provider) => format!("Models · {provider}"),
+            Self::Efforts(model) => format!("Effort · {}", model.name),
+            Self::ArchivedSessions => "Restore session".into(),
         }
     }
 
@@ -95,6 +96,7 @@ enum PickerCommand {
     AddProject(Option<ProjectPickerIntent>),
     OpenWorkGraph,
     OpenSettings,
+    OpenThemes,
     ImportSessions,
     NewSession {
         project: PathBuf,
@@ -248,12 +250,9 @@ impl FarcasterApp {
                 .then(|| self.active_harness())
                 .flatten(),
             active_profile_id.as_deref(),
-        )
-        .map(|row| IndexPath {
-            row,
-            ..Default::default()
-        });
+        );
         let (delegate, handles) = PickerDelegate::new(rows);
+        let selected = delegate.preferred_index(selected);
         let confirmed_id = handles.confirmed_id;
         let query = handles.query;
         let list = cx.new(|cx| ComponentListState::new(delegate, window, cx).searchable(true));
@@ -282,8 +281,7 @@ impl FarcasterApp {
         list.update(cx, |list, cx| {
             list.set_selected_index(selected, window, cx);
             if let Some(selected) = selected {
-                list.scroll_handle()
-                    .scroll_to_item(selected.row, gpui::ScrollStrategy::Center);
+                list.scroll_to_item(selected, gpui::ScrollStrategy::Center, window, cx);
             }
             list.focus(window, cx);
         });
@@ -369,18 +367,19 @@ impl FarcasterApp {
         let picker = self.navigation.picker.as_ref()?;
         let list = picker.list.clone();
         let focus = list.read(cx).focus_handle(cx);
-        let back_label = match picker.previous.as_ref().map(|page| &page.scope) {
-            Some(PickerScope::Models(_)) => "Back to models",
-            Some(PickerScope::Providers) => "Back to providers",
-            _ if picker.scope == PickerScope::Actions => "Close",
-            _ => "Back to actions",
-        };
+        let back_label = picker
+            .previous
+            .as_ref()
+            .map(|page| format!("Back to {}", page.scope.title()))
+            .unwrap_or_else(|| "Back to Actions".into());
+        let is_root = picker.scope == PickerScope::Actions;
         let back = entity.clone();
+        let close_button = entity.clone();
         let close = entity;
         Some(
             modal(
                 "command-picker",
-                picker.scope.label(),
+                picker.scope.title(),
                 &focus,
                 PICKER_KEY_CONTEXT,
                 move |window, cx| {
@@ -395,19 +394,48 @@ impl FarcasterApp {
                             div()
                                 .flex()
                                 .flex_col()
-                                .child(div().px(theme().space.md).py(theme().space.sm).child(
-                                    button(
-                                        "picker-back",
-                                        back_label,
-                                        ButtonTone::Quiet,
-                                        true,
-                                        move |window, cx| {
-                                            let _ = back.update(cx, |this, cx| {
-                                                this.picker_navigate_back(window, cx)
-                                            });
-                                        },
-                                    ),
-                                ))
+                                .child(
+                                    div()
+                                        .px(theme().space.md)
+                                        .py(theme().space.sm)
+                                        .flex()
+                                        .items_center()
+                                        .gap(theme().space.sm)
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .child(picker.scope.title()),
+                                        )
+                                        .children((!is_root).then(|| {
+                                            button(
+                                                "picker-back",
+                                                back_label,
+                                                ButtonTone::Quiet,
+                                                true,
+                                                move |window, cx| {
+                                                    let _ = back.update(cx, |this, cx| {
+                                                        this.picker_navigate_back(window, cx)
+                                                    });
+                                                },
+                                            )
+                                        }))
+                                        .child(icon_button(
+                                            "picker-close",
+                                            AppIcon::X,
+                                            "Close picker",
+                                            ButtonTone::Quiet,
+                                            move |window, cx| {
+                                                let _ = close_button.update(cx, |this, cx| {
+                                                    this.close_picker(window, cx)
+                                                });
+                                            },
+                                        )),
+                                )
                                 .child(
                                     List::new(&list)
                                         .search_placeholder(picker.scope.placeholder())
@@ -427,24 +455,9 @@ impl FarcasterApp {
                                         .text_color(theme().colors.subtle)
                                         .child("↑ ↓ / Tab ⇧Tab Move")
                                         .child("Enter Choose")
-                                        .child("Alt+← Back")
+                                        .children((!is_root).then_some("Alt+← Back"))
                                         .child("Esc Close"),
-                                )
-                                .children((picker.scope == PickerScope::Actions).then(|| {
-                                    div()
-                                        .px(theme().space.md)
-                                        .pb(theme().space.sm)
-                                        .text_size(theme().type_scale.caption)
-                                        .text_color(theme().colors.subtle)
-                                        .child(format!(
-                                            "Open actions: Ctrl+G then Space, or {}",
-                                            if cfg!(target_os = "macos") {
-                                                "Cmd+Shift+P"
-                                            } else {
-                                                "Ctrl+Shift+P"
-                                            }
-                                        ))
-                                })),
+                                ),
                         )
                 },
             )
@@ -545,8 +558,12 @@ impl FarcasterApp {
                 self.close_picker(window, cx);
                 self.open_workgraph_surface(window, cx);
             }
-            PickerCommand::OpenSettings => {
+            PickerCommand::OpenSettings | PickerCommand::OpenThemes => {
                 self.close_picker(window, cx);
+                if command == PickerCommand::OpenThemes {
+                    self.settings.tab = crate::app::workspace::SettingsTab::Appearance;
+                    self.settings.themes.editing = false;
+                }
                 self.open_settings(window, cx);
             }
             PickerCommand::ImportSessions => {
@@ -579,133 +596,8 @@ impl FarcasterApp {
 
     fn picker_rows(&self, scope: PickerScope) -> (Vec<PickerRow>, HashMap<String, PickerCommand>) {
         let mut commands = HashMap::new();
-        let include_shortcuts = scope == PickerScope::Actions;
-        let mut rows = match scope {
-            PickerScope::Actions => vec![
-                picker_row(
-                    &mut commands,
-                    "action:code-task",
-                    PickerCommand::StartCodeTask,
-                    AppIcon::Code,
-                    "Start task from selected code…",
-                    None,
-                    Some("ctrl-g shift-n".into()),
-                    "neovim editor selection background new chat",
-                )
-                .disabled(self.workspace.surface != crate::app::AppSurface::Editor),
-                picker_row(
-                    &mut commands,
-                    "action:harness",
-                    PickerCommand::OpenScope(PickerScope::Harnesses),
-                    AppIcon::Code,
-                    "Set harness…",
-                    None,
-                    Some(application_key("shift-h")),
-                    "backend agent",
-                )
-                .disabled(self.editable_draft_harness().is_none()),
-                picker_row(
-                    &mut commands,
-                    "action:sandbox",
-                    PickerCommand::OpenScope(PickerScope::Sandbox),
-                    AppIcon::Shield,
-                    "Set sandbox…",
-                    None,
-                    Some(application_key("shift-s")),
-                    "access permissions approval",
-                )
-                .disabled(!self.snapshot.sandbox_controls_available()),
-                picker_row(
-                    &mut commands,
-                    "action:runtime",
-                    PickerCommand::OpenScope(PickerScope::Providers),
-                    AppIcon::List,
-                    "Set provider/model/effort…",
-                    None,
-                    Some(application_key("shift-m")),
-                    "model reasoning thinking runtime",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:restore",
-                    PickerCommand::OpenScope(PickerScope::ArchivedSessions),
-                    AppIcon::ChatCircle,
-                    "Restore session…",
-                    None,
-                    Some(application_key("shift-a")),
-                    "unarchive archived thread",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:new-session",
-                    PickerCommand::OpenProjects(ProjectPickerIntent::NewSession),
-                    AppIcon::Plus,
-                    "New session…",
-                    None,
-                    Some(application_key("n")),
-                    "project thread",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:find-session",
-                    PickerCommand::OpenSessions,
-                    AppIcon::MagnifyingGlass,
-                    "Find session",
-                    None,
-                    None,
-                    "open resume thread",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:add-project",
-                    PickerCommand::AddProject(None),
-                    AppIcon::FolderPlus,
-                    "Add project",
-                    None,
-                    Some(application_key("shift-n")),
-                    "folder checkout",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:project-work",
-                    PickerCommand::OpenWorkGraph,
-                    AppIcon::List,
-                    "Project work",
-                    None,
-                    Some(application_key("shift-i")),
-                    "issues tasks",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:import-sessions",
-                    PickerCommand::ImportSessions,
-                    AppIcon::Binoculars,
-                    "Import sessions…",
-                    None,
-                    None,
-                    "import discover catalog disk harness",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:settings",
-                    PickerCommand::OpenSettings,
-                    AppIcon::Key,
-                    "Settings",
-                    None,
-                    None,
-                    "configuration preferences keybindings modifier",
-                ),
-                picker_row(
-                    &mut commands,
-                    "action:themes",
-                    PickerCommand::OpenSettings,
-                    AppIcon::PaintRoller,
-                    "Themes",
-                    None,
-                    None,
-                    "appearance colors palette light dark editor",
-                ),
-            ],
+        let rows = match scope {
+            PickerScope::Actions => return self.action_picker_rows(),
             PickerScope::Harnesses
             | PickerScope::Sandbox
             | PickerScope::Providers
@@ -846,39 +738,6 @@ impl FarcasterApp {
                     .collect()
             }
         };
-        if include_shortcuts {
-            let listed = rows
-                .iter()
-                .filter_map(|row| row.shortcut.clone())
-                .collect::<HashSet<_>>();
-            let mut actions = HashSet::new();
-            for shortcut in crate::app::ui::keybindings::registry()
-                .into_iter()
-                .filter(|shortcut| shortcut.show_in_picker)
-            {
-                if listed.contains(&shortcut.keystroke) {
-                    continue;
-                }
-                let action = shortcut.binding.action().name();
-                if !actions.insert(action) {
-                    continue;
-                }
-                rows.push(picker_row(
-                    &mut commands,
-                    &format!("shortcut:{}", shortcut.keystroke),
-                    PickerCommand::Action(action),
-                    AppIcon::Key,
-                    if shortcut.keystroke == application_key("w") {
-                        "Close surface or draft; archive session"
-                    } else {
-                        shortcut.label
-                    },
-                    Some(shortcut.section.to_owned()),
-                    Some(shortcut.keystroke),
-                    shortcut.section,
-                ));
-            }
-        }
         (rows, commands)
     }
 }
@@ -894,8 +753,12 @@ fn picker_row(
     shortcut: Option<String>,
     keywords: &str,
 ) -> PickerRow {
+    let opens_page = matches!(
+        command,
+        PickerCommand::OpenScope(_) | PickerCommand::OpenProjects(_) | PickerCommand::OpenSessions
+    );
     commands.insert(id.to_owned(), command);
-    PickerRow::new(id, icon, label, detail, shortcut, keywords)
+    PickerRow::new(id, icon, label, detail, shortcut, keywords).opens_page(opens_page)
 }
 
 fn ordered_projects(
