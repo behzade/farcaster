@@ -82,7 +82,7 @@ impl BackendAdapter for CodexAdapter {
             super::catalog::load_history_with_config(config, path, &launch.project)
         })?;
         let command = self.launch_configuration(config);
-        let (worker, locator, metadata) = super::spawn_main(&command, &launch)?;
+        let (worker, locator, metadata) = super::spawn_main(&command, &launch, history.as_ref())?;
         worker_transport(config, &launch, worker, locator, metadata, history)
     }
     fn rename_session(

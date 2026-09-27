@@ -93,7 +93,14 @@ fn native_vertical_slice_preserves_streaming_events() -> Result<(), String> {
     assert_eq!(thread.id, "thread-1");
     assert_eq!(
         connection
-            .fork_thread("thread-1", "/project", None, None, HarnessAccessMode::Auto)?
+            .fork_thread(
+                "thread-1",
+                "/project",
+                None,
+                None,
+                None,
+                HarnessAccessMode::Auto
+            )?
             .id,
         "thread-1"
     );

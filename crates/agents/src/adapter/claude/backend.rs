@@ -45,7 +45,16 @@ impl BackendAdapter for ClaudeAdapter {
             super::catalog::load_history_with_config(config, path)
         })?;
         let command = self.launch_configuration(config);
-        let (worker, locator, metadata) = super::spawn_main(&command, &launch)?;
+        let (mut worker, locator, metadata) = super::spawn_main(&command, &launch)?;
+        // Apply the saved selection before the transport reports it as active.
+        if let Some(history) = &history {
+            if let Some((provider, model)) = &history.model {
+                worker.select_model(provider, model)?;
+            }
+            if let Some(effort) = &history.thinking_level {
+                worker.select_effort(effort)?;
+            }
+        }
         worker_transport(config, &launch, worker, locator, metadata, history)
     }
     fn discover(&self, root: &Path, query: &str) -> Result<Vec<DiscoveredSession>, String> {

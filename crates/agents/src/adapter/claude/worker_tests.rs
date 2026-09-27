@@ -509,6 +509,83 @@ fn catalog_probe_and_main_resume_launch_without_sending_a_prompt() {
 }
 
 #[test]
+fn resumed_main_applies_saved_model_before_reporting_it() -> Result<(), String> {
+    use crate::adapter::backend::BackendAdapter;
+    use crate::{SessionCommand, SessionEvent, SessionResponsePayload};
+
+    let (directory, mut command) = setup();
+    let profile_id = uuid::Uuid::new_v4().to_string();
+    command.profiles.replace(vec![crate::HarnessProfile {
+        id: profile_id.clone(),
+        name: "Resume fixture".into(),
+        backend: BACKEND,
+        executable: "sh".into(),
+        data_directory: Some(directory.path().into()),
+    }])?;
+    command.profile_id = Some(profile_id);
+    command.session_locator_root = Some(directory.path().join("locators"));
+    let transcripts = directory.path().join("projects/workspace");
+    std::fs::create_dir_all(&transcripts).map_err(|error| error.to_string())?;
+    std::fs::write(
+        transcripts.join(format!("{TEST_SESSION_ID}.jsonl")),
+        format!(
+            "{}\n",
+            json!({
+                "type":"assistant", "uuid":"saved-answer", "parentUuid":null,
+                "message":{"role":"assistant", "model":"saved-model", "content":"Previous answer"}
+            })
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    let launch = SessionLaunch {
+        harness: BACKEND,
+        session_id: None,
+        project: directory.path().into(),
+        start: SessionStart::Resume(main_session::external_session_path(
+            &command.locator_root().unwrap(),
+            BACKEND,
+            TEST_SESSION_ID,
+        )),
+        wake: None,
+        service_tier: None,
+    };
+    let mut transport = super::super::backend::ClaudeAdapter.spawn(&command, launch)?;
+    transport.send(SessionCommand::LoadState)?;
+    let Some(SessionEvent::Response(response)) = transport.poll() else {
+        return Err("missing state response".into());
+    };
+    let SessionResponsePayload::LoadState(state) =
+        response.result.map_err(|error| format!("{error:?}"))?
+    else {
+        return Err("unexpected state response".into());
+    };
+    assert_eq!(
+        state.model.as_ref().map(|model| model.id.as_str()),
+        Some("saved-model")
+    );
+    assert_eq!(
+        state.thinking_level, None,
+        "unknown effort must not become the first advertised effort"
+    );
+    transport.close()?;
+    let requests = std::fs::read_to_string(directory.path().join("claude-fixture.requests"))
+        .map_err(|error| error.to_string())?;
+    let requests: Vec<Value> = requests
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()
+        .map_err(|error| error.to_string())?;
+    assert!(
+        requests
+            .iter()
+            .any(|request| request["request"]["subtype"] == "set_model"
+                && request["request"]["model"] == "saved-model")
+    );
+    assert!(!requests.iter().any(|request| request["type"] == "user"));
+    Ok(())
+}
+
+#[test]
 fn main_new_session_applies_selected_service_tier_at_launch() {
     let (directory, command) = setup();
     let launch = SessionLaunch {

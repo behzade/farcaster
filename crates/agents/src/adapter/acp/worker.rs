@@ -1503,6 +1503,22 @@ impl WorkerSession for AcpWorkerSession {
         Ok(())
     }
 
+    fn model_selection(&self) -> Option<crate::WorkerModelSelection> {
+        Some(crate::WorkerModelSelection {
+            model: self
+                .config_ids
+                .selected_model
+                .clone()
+                .map(|model| (self.profile.backend.into(), model)),
+            effort: self
+                .config_ids
+                .effort
+                .as_ref()
+                .and_then(|id| self.config_ids.current.get(id))
+                .cloned(),
+        })
+    }
+
     fn select_service_tier(&mut self, tier: &str) -> Result<(), String> {
         if !self
             .config_ids

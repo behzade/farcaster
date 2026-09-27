@@ -72,11 +72,10 @@ enum Step {
 impl CodexWorkerSession {
     pub(super) fn observe_command_settings(&mut self, settings: &Value) {
         if let Some(model) = settings["model"].as_str() {
+            let provider = settings["modelProvider"].as_str().unwrap_or("openai");
             self.model = Some(model.to_owned());
-            self.caller_identity.select_model(
-                settings["modelProvider"].as_str().unwrap_or("openai"),
-                model,
-            );
+            self.provider = Some(provider.to_owned());
+            self.caller_identity.select_model(provider, model);
         }
         if let Some(effort) = settings.get("effort") {
             self.effort = effort.as_str().map(str::to_owned);

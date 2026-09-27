@@ -19,6 +19,102 @@ fn main_and_child_launches_share_service_tier_settings() {
 }
 
 #[test]
+fn main_fork_inherits_selection_and_startup_reports_native_settings() -> Result<(), String> {
+    use crate::{SessionCommand, SessionEvent, SessionResponsePayload, SessionTransport};
+
+    const SCRIPT: &str = r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$0.requests"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"initialize"'*) result='{"userAgent":"fixture","codexHome":"/nonexistent/codex-fixture","platformFamily":"unix","platformOs":"macos"}' ;;
+    *'"method":"thread/fork"'*|*'"method":"thread/resume"'*|*'"method":"thread/start"'*) result='{"thread":{"id":"thread-1","cwd":"/project"},"model":"native-model","modelProvider":"native-provider","reasoningEffort":null}' ;;
+    *'"method":"turn/start"'*) result='{"turn":{"id":"turn-1","status":"inProgress"}}' ;;
+    *) result='{"data":[]}' ;;
+  esac
+  printf '{"id":%s,"result":%s}\n' "$id" "$result"
+done
+"#;
+    for kind in ["fork", "resume", "new"] {
+        let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+        let script = project.path().join("codex-fixture");
+        std::fs::write(&script, SCRIPT).map_err(|error| error.to_string())?;
+        let command = AgentLaunchConfig::test_script(&script, Vec::new());
+        let source =
+            main_session::external_session_path(project.path(), Backend::Codex, "thread-1");
+        let launch = crate::SessionLaunch {
+            harness: Backend::Codex,
+            session_id: None,
+            project: project.path().into(),
+            start: match kind {
+                "fork" => crate::SessionStart::Fork(source),
+                "resume" => crate::SessionStart::Resume(source),
+                _ => crate::SessionStart::New,
+            },
+            wake: None,
+            service_tier: None,
+        };
+        let history = (kind != "new").then(|| crate::DiscoveredHistory {
+            messages: Vec::new(),
+            model: Some(("saved-provider".into(), "saved-model".into())),
+            thinking_level: Some("high".into()),
+            prompt_deliveries: None,
+        });
+        let (mut worker, locator, metadata) = spawn_main(&command, &launch, history.as_ref())?;
+        worker.send("next turn".into(), WorkerSendMode::Prompt)?;
+        let mut transport = main_session::WorkerSessionTransport::new(
+            project.path(),
+            Backend::Codex,
+            locator,
+            worker,
+            metadata,
+            history,
+        )?;
+        transport.send(SessionCommand::LoadState)?;
+        let Some(SessionEvent::Response(response)) = transport.poll() else {
+            return Err("missing state response".into());
+        };
+        let SessionResponsePayload::LoadState(state) =
+            response.result.map_err(|error| format!("{error:?}"))?
+        else {
+            return Err("unexpected state response".into());
+        };
+        let model = state.model.expect("native selection");
+        assert_eq!(model.id, "native-model");
+        assert_eq!(model.provider, "native-provider");
+        assert_eq!(
+            state.thinking_level, None,
+            "native default must not become historical high"
+        );
+        transport.close()?;
+        let requests = std::fs::read_to_string(script.with_extension("requests"))
+            .map_err(|error| error.to_string())?;
+        let requests: Vec<Value> = requests
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(|error| error.to_string())?;
+        if kind == "fork" {
+            let fork = requests
+                .iter()
+                .find(|request| request["method"] == "thread/fork")
+                .unwrap();
+            assert_eq!(fork["params"]["modelProvider"], "saved-provider");
+            assert_eq!(fork["params"]["model"], "saved-model");
+            assert_eq!(fork["params"]["config"]["model_reasoning_effort"], "high");
+        }
+        let turn = requests
+            .iter()
+            .find(|request| request["method"] == "turn/start")
+            .unwrap();
+        assert_eq!(turn["params"]["model"], "native-model");
+        assert!(turn["params"]["effort"].is_null());
+    }
+    Ok(())
+}
+
+#[test]
 fn native_client_id_keeps_farcaster_request_identity() {
     assert_eq!(
         client_message_id(NORMAL_CLIENT_ID_PREFIX, 7, Some("codex-cli-run-9")),
@@ -40,7 +136,7 @@ while IFS= read -r line; do
   [ -n "$id" ] || continue
   case "$line" in
     *'"method":"initialize"'*) result='{"userAgent":"fixture","codexHome":"/tmp/codex-fixture","platformFamily":"unix","platformOs":"macos"}' ;;
-    *'"method":"thread/resume"'*) result='{"thread":{"id":"saved-thread","cwd":"/project"},"cwd":"/project"}' ;;
+    *'"method":"thread/resume"'*) result='{"thread":{"id":"saved-thread","cwd":"/project"},"cwd":"/project","model":"saved-model","modelProvider":"openai","reasoningEffort":"high"}' ;;
     *'"method":"skills/list"'*) result='{"data":[]}' ;;
     *'"method":"turn/start"'*) result='{"turn":{"id":"new-turn","status":"inProgress"}}' ;;
     *) result='{}' ;;
@@ -95,6 +191,13 @@ done
         "{requests}"
     );
     assert!(requests.contains("after restart"), "{requests}");
+    let turn = requests
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|request| request["method"] == "turn/start")
+        .expect("resumed turn");
+    assert_eq!(turn["params"]["model"], "saved-model");
+    assert_eq!(turn["params"]["effort"], "high");
     let args = std::fs::read_to_string(script.with_extension("sh.args"))
         .map_err(|error| error.to_string())?;
     assert!(args.contains("service_tier=\"fast\""), "{args}");
@@ -437,6 +540,7 @@ fn test_session() -> CodexWorkerSession {
         thread_id: "thread-1".into(),
         codex_home: std::path::PathBuf::new(),
         child_executions: HashMap::new(),
+        provider: None,
         model: None,
         effort: None,
         collaboration_mode: None,

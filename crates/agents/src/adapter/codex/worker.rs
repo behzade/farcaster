@@ -83,7 +83,7 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             .spawn()
             .map_err(|error| format!("start Codex worker app-server: {error}"))?;
         child_stderr::capture(&mut child, "codex-worker")?;
-        let ((mut reader, writer, queued, next_id, thread, codex_home), skills) =
+        let ((mut reader, writer, queued, next_id, thread, codex_home, selection), skills) =
             match setup_connection(&mut child, &launch, launch.access_mode) {
                 Ok(setup) => setup,
                 Err(error) => {
@@ -116,6 +116,17 @@ impl WorkerSessionFactory for CodexWorkerFactory {
         }
         let thread_id = thread.id;
         caller_identity.bind(thread_id.clone());
+        let selection = selection.unwrap_or_default();
+        let (provider, model) = launch
+            .provider
+            .zip(launch.model)
+            .or(selection.model)
+            .unzip();
+        let effort = launch.effort.or(selection.effort);
+        if let (Some(provider), Some(model)) = (&provider, &model) {
+            caller_identity.select_model(provider, model);
+        }
+        caller_identity.set_effort(effort.as_deref());
         Ok(Box::new(CodexWorkerSession {
             caller_identity,
             child,
@@ -127,8 +138,9 @@ impl WorkerSessionFactory for CodexWorkerFactory {
             thread_id: thread_id.clone(),
             codex_home,
             child_executions: HashMap::new(),
-            model: launch.model,
-            effort: launch.effort,
+            provider,
+            model,
+            effort,
             collaboration_mode: None,
             collaboration_modes: HashMap::new(),
             command_state: commands::State::new(launch.access_mode),
@@ -203,6 +215,7 @@ pub fn load_configuration(
 pub fn spawn_main(
     command: &AgentLaunchConfig,
     launch: &crate::SessionLaunch,
+    history: Option<&crate::DiscoveredHistory>,
 ) -> Result<
     (
         Box<dyn WorkerSession>,
@@ -235,16 +248,19 @@ pub fn spawn_main(
         .spawn()
         .map_err(|error| format!("start Codex main-session app-server: {error}"))?;
     child_stderr::capture(&mut child, "codex-main-session")?;
-    let setup = setup_main_connection(&mut child, launch, command.access_mode);
-    let ((mut reader, writer, queued, next_id, thread, codex_home), mut metadata, skills) =
-        match setup {
-            Ok(setup) => setup,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
+    let setup = setup_main_connection(&mut child, launch, history, command.access_mode);
+    let (
+        (mut reader, writer, queued, next_id, thread, codex_home, selection),
+        mut metadata,
+        skills,
+    ) = match setup {
+        Ok(setup) => setup,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
     metadata.service_tier = launch.service_tier.clone();
     let (sender, incoming) = mpsc::channel();
     let thread_id = thread.id.clone();
@@ -270,6 +286,12 @@ pub fn spawn_main(
         .map_err(|error| format!("read Codex main-session events: {error}"))?;
     let path = super::super::main_session::caller_session_path(command, Backend::Codex, &thread_id);
     caller_identity.bind_with_locator(thread_id.clone(), path);
+    let selection = selection.unwrap_or_default();
+    let (provider, model) = selection.model.unzip();
+    if let (Some(provider), Some(model)) = (&provider, &model) {
+        caller_identity.select_model(provider, model);
+    }
+    caller_identity.set_effort(selection.effort.as_deref());
     let collaboration_modes = metadata
         .modes
         .iter()
@@ -289,8 +311,9 @@ pub fn spawn_main(
         thread_id: thread_id.clone(),
         codex_home,
         child_executions: HashMap::new(),
-        model: None,
-        effort: None,
+        provider,
+        model,
+        effort: selection.effort,
         collaboration_mode: None,
         collaboration_modes,
         command_state: commands::State::new(command.access_mode),
@@ -371,6 +394,7 @@ type CodexSetup = (
     i64,
     super::contract::CodexThread,
     std::path::PathBuf,
+    Option<crate::WorkerModelSelection>,
 );
 
 fn setup_connection(
@@ -422,6 +446,7 @@ fn setup_connection(
                 &cwd,
                 launch.provider.as_deref(),
                 launch.model.as_deref(),
+                launch.effort.as_deref(),
                 access_mode,
             )?
         }
@@ -433,9 +458,12 @@ fn setup_connection(
         }
     };
     let skills = Skills::load(&mut connection, &launch.project);
+    let selection = connection.thread_selection();
     let (reader, writer, queued, next_id) = connection.into_parts();
     Ok((
-        (reader, writer, queued, next_id, thread, codex_home),
+        (
+            reader, writer, queued, next_id, thread, codex_home, selection,
+        ),
         skills,
     ))
 }
@@ -443,6 +471,7 @@ fn setup_connection(
 fn setup_main_connection(
     child: &mut Child,
     launch: &crate::SessionLaunch,
+    history: Option<&crate::DiscoveredHistory>,
     access_mode: crate::HarnessAccessMode,
 ) -> Result<
     (
@@ -479,13 +508,25 @@ fn setup_main_connection(
         crate::SessionStart::Fork(_) => {
             let thread_id = main_session::launch_session_locator(launch)
                 .ok_or_else(|| "Codex fork requires a thread id".to_owned())?;
-            connection.fork_thread(&thread_id, &cwd, None, None, access_mode)?
+            // Codex otherwise forks with CLI defaults, not the parent's selection.
+            let model = history.and_then(|history| history.model.as_ref());
+            connection.fork_thread(
+                &thread_id,
+                &cwd,
+                model.map(|(provider, _)| provider.as_str()),
+                model.map(|(_, model)| model.as_str()),
+                history.and_then(|history| history.thinking_level.as_deref()),
+                access_mode,
+            )?
         }
     };
     metadata.session_name = thread.name.clone();
+    let selection = connection.thread_selection();
     let (reader, writer, queued, next_id) = connection.into_parts();
     Ok((
-        (reader, writer, queued, next_id, thread, codex_home),
+        (
+            reader, writer, queued, next_id, thread, codex_home, selection,
+        ),
         metadata,
         skills,
     ))
@@ -746,6 +787,7 @@ struct CodexWorkerSession {
     thread_id: String,
     codex_home: std::path::PathBuf,
     child_executions: HashMap<String, crate::WorkerModelSelection>,
+    provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
     collaboration_mode: Option<Value>,
@@ -946,6 +988,7 @@ impl WorkerSession for CodexWorkerSession {
 
     fn select_model(&mut self, provider: &str, model: &str) -> Result<(), String> {
         self.caller_identity.select_model(provider, model);
+        self.provider = Some(provider.to_owned());
         self.model = Some(model.to_owned());
         Ok(())
     }
@@ -954,6 +997,13 @@ impl WorkerSession for CodexWorkerSession {
         self.caller_identity.select_effort(effort);
         self.effort = Some(effort.to_owned());
         Ok(())
+    }
+
+    fn model_selection(&self) -> Option<crate::WorkerModelSelection> {
+        Some(crate::WorkerModelSelection {
+            model: Some((self.provider.clone()?, self.model.clone()?)),
+            effort: self.effort.clone(),
+        })
     }
 
     fn select_mode(&mut self, mode: &str) -> Result<(), String> {

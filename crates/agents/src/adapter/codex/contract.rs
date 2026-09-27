@@ -97,10 +97,14 @@ impl CodexUserInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(super) struct ThreadResponse {
     pub thread: CodexThread,
     #[serde(default)]
     pub cwd: Option<String>,
+    pub model: Option<String>,
+    pub model_provider: Option<String>,
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -929,6 +929,12 @@ impl WorkerSession for ClaudeSession {
         self.effort = Some(effort.into());
         Ok(())
     }
+    fn model_selection(&self) -> Option<crate::WorkerModelSelection> {
+        Some(crate::WorkerModelSelection {
+            model: self.model.clone().map(|model| (BACKEND.into(), model)),
+            effort: self.effort.clone(),
+        })
+    }
     fn select_mode(&mut self, mode: &str) -> Result<(), String> {
         if !self.modes.iter().any(|entry| entry["id"] == mode) {
             return Err(format!("Claude permission mode {mode} is not available"));

@@ -22,6 +22,7 @@ pub struct CodexConnection<R, W> {
     queued: VecDeque<CodexInbound>,
     next_id: i64,
     codex_home: Option<PathBuf>,
+    thread_selection: Option<crate::WorkerModelSelection>,
 }
 
 impl<R: BufRead, W: Write> CodexConnection<R, W> {
@@ -32,6 +33,7 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
             queued: VecDeque::new(),
             next_id: 0,
             codex_home: None,
+            thread_selection: None,
         }
     }
 
@@ -154,8 +156,8 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
                 "ephemeral": !persist,
             }),
         )?;
-        self.wait_response::<ThreadResponse>(&id)
-            .map(|response| response.thread)
+        let response = self.wait_response::<ThreadResponse>(&id)?;
+        Ok(self.record_thread_response(response))
     }
 
     pub fn fork_thread(
@@ -164,20 +166,22 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
         cwd: &str,
         provider: Option<&str>,
         model: Option<&str>,
+        effort: Option<&str>,
         access_mode: crate::HarnessAccessMode,
     ) -> Result<CodexThread, String> {
-        let id = self.send_request(
-            "thread/fork",
-            json!({
-                "threadId": thread_id,
-                "cwd": cwd,
-                "modelProvider": provider,
-                "model": model,
-                "approvalsReviewer": approvals_reviewer(access_mode),
-            }),
-        )?;
-        self.wait_response::<ThreadResponse>(&id)
-            .map(|response| response.thread)
+        let mut params = json!({
+            "threadId": thread_id,
+            "cwd": cwd,
+            "modelProvider": provider,
+            "model": model,
+            "approvalsReviewer": approvals_reviewer(access_mode),
+        });
+        if let Some(effort) = effort {
+            params["config"] = json!({"model_reasoning_effort": effort});
+        }
+        let id = self.send_request("thread/fork", params)?;
+        let response = self.wait_response::<ThreadResponse>(&id)?;
+        Ok(self.record_thread_response(response))
     }
 
     pub fn resume_thread(
@@ -206,10 +210,25 @@ impl<R: BufRead, W: Write> CodexConnection<R, W> {
             return Err("Codex resumed a different thread than requested".into());
         }
         // Resume reports the effective cwd separately from stored thread metadata.
-        if let Some(cwd) = response.cwd {
+        if let Some(cwd) = response.cwd.take() {
             response.thread.cwd = cwd;
         }
-        Ok(response.thread)
+        Ok(self.record_thread_response(response))
+    }
+
+    fn record_thread_response(&mut self, response: ThreadResponse) -> CodexThread {
+        self.thread_selection = response.model.map(|model| crate::WorkerModelSelection {
+            model: Some((
+                response.model_provider.unwrap_or_else(|| "openai".into()),
+                model,
+            )),
+            effort: response.reasoning_effort,
+        });
+        response.thread
+    }
+
+    pub(super) fn thread_selection(&self) -> Option<crate::WorkerModelSelection> {
+        self.thread_selection.clone()
     }
 
     pub fn start_turn(

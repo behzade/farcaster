@@ -22,7 +22,7 @@ while IFS= read -r line; do
     *'"method":"initialize"'*) result='{"protocolVersion":1,"agentCapabilities":{"sessionCapabilities":{"close":{}}},"authMethods":[{"id":"oauth-personal","name":"Google account"}]}' ;;
     *'"method":"authenticate"'*) result='{}' ;;
     *'"method":"cursor/list_available_models"'*) result='{"models":[]}' ;;
-    *'"method":"session/new"'*|*'"method":"session/resume"'*|*'"method":"session/load"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]}]}' ;;
+    *'"method":"session/new"'*|*'"method":"session/resume"'*|*'"method":"session/load"'*) result='{"sessionId":"saved-session","configOptions":[{"id":"mode","category":"mode","currentValue":"default","options":[{"value":"default"},{"value":"yolo"}]},{"id":"model","category":"model","currentValue":"saved-model","options":[{"value":"default-model"},{"value":"saved-model"}]},{"id":"effort","category":"thought_level","currentValue":"low","options":[{"value":"high"},{"value":"low"}]}]}' ;;
     *'"method":"session/set_config_option"'*) result='{}' ;;
     *'"method":"session/close"'*) result='{}' ;;
     *) exit 2 ;;
@@ -78,6 +78,20 @@ done
         metadata,
         history,
     )?;
+    transport.send(SessionCommand::LoadState)?;
+    let Some(SessionEvent::Response(response)) = transport.poll() else {
+        return Err("expected startup state response".into());
+    };
+    let SessionResponsePayload::LoadState(state) =
+        response.result.map_err(|error| format!("{error:?}"))?
+    else {
+        return Err("expected LoadState payload".into());
+    };
+    assert_eq!(
+        state.model.as_ref().map(|model| model.id.as_str()),
+        Some("saved-model")
+    );
+    assert_eq!(state.thinking_level.as_deref(), Some("low"));
     transport.send(SessionCommand::LoadHistory)?;
     let Some(SessionEvent::Response(response)) = transport.poll() else {
         return Err("expected startup history response".into());
