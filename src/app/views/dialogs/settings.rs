@@ -235,7 +235,7 @@ fn editor_setting(app: &FarcasterApp, entity: WeakEntity<FarcasterApp>) -> AnyEl
                 })),
         )
         .when(choice == EditorChoice::Custom, |section| {
-            section.child(setting_label("Terminal command", "Command and arguments, for example micro -p. Quote paths containing spaces. Applies to new editor sessions."))
+            section.child(setting_label("Terminal command", "Command and arguments, for example micro -softwrap true. Quote paths containing spaces. Applies to new editor sessions."))
                 .child(Input::new(&app.settings.editor_command_input))
         })
         .into_any_element()

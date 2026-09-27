@@ -45,7 +45,7 @@ pub(super) fn create(
     });
     let editor_command = cx.new(|cx| {
         InputState::new(window, cx)
-            .placeholder("micro -p")
+            .placeholder("micro -softwrap true")
             .default_value(saved_editor_command)
     });
     let harness_profile_name =

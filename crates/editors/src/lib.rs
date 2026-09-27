@@ -131,7 +131,7 @@ impl EditorCommand {
         let program = parts
             .next()
             .filter(|program| !program.is_empty())
-            .ok_or("Enter an editor command, for example micro -p.")?;
+            .ok_or("Enter an editor command, for example micro -softwrap true.")?;
         if program.contains('\0') {
             return Err("The editor command contains a null character.".into());
         }
