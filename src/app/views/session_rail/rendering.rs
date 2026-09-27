@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 
 use gpui::{
     Bounds, Div, DragMoveEvent, FontWeight, InteractiveElement as _, ListState, Pixels, Point,
@@ -18,7 +21,7 @@ use crate::{
             theme::theme,
         },
     },
-    sessions::SessionSummary,
+    sessions::SessionCatalog,
 };
 
 pub(super) const ARCHIVED_OPEN_ROWS: usize = 5;
@@ -106,23 +109,23 @@ pub(super) fn session_section_drop_target(
         })
 }
 
-pub(super) fn subagent_counts(sessions: &[SessionSummary]) -> HashMap<String, usize> {
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    for session in sessions {
-        if let Some(parent) = &session.parent_session {
-            *counts.entry(parent.clone()).or_default() += 1;
-        }
-    }
-    counts
+pub(super) fn subagent_counts(sessions: &SessionCatalog) -> HashMap<PathBuf, usize> {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let count = sessions.child_count(session);
+            (count > 0).then(|| (session.path.clone(), count))
+        })
+        .collect()
 }
 
 pub(super) fn inactive_session_badge(
     kind: SessionRailKind,
     item: &SessionRailItem,
     run_statuses: &HashMap<String, String>,
-    live_root: Option<&str>,
+    live_root: Option<&Path>,
     live_status: &str,
-    waiting_roots: &HashSet<String>,
+    waiting_roots: &HashSet<PathBuf>,
 ) -> Option<String> {
     if kind != SessionRailKind::Archived {
         return None;
@@ -133,7 +136,7 @@ pub(super) fn inactive_session_badge(
         run_statuses.get(&target).map(String::as_str),
         live_root,
         live_status,
-        waiting_roots.contains(&item.session.id),
+        waiting_roots.contains(&item.session.path),
     );
     (status != "Done").then_some(status)
 }

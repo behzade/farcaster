@@ -97,12 +97,14 @@ impl FarcasterApp {
         let cancel_drop_entity = entity.clone();
         let cancel_drop_out_entity = entity.clone();
         let active_drop_entity = entity.clone();
-        let selected_root = self.selected_rail_root().map(|session| session.id.clone());
+        let selected_root = self
+            .selected_rail_root()
+            .map(|session| session.path.clone());
         let live_root = self
             .sessions
             .visible
             .root_for_path(self.snapshot.live_session.as_deref())
-            .map(|session| session.id.clone());
+            .map(|session| session.path.clone());
         let waiting_roots =
             roots_waiting_for_active_descendants(&self.sessions.all, &self.activity.agents);
         let lists = session_rail_lists_for_roots(
@@ -201,14 +203,14 @@ impl FarcasterApp {
                     }
                     ActiveSessionItem::Session(item) => {
                         let selected =
-                            active_selected_root.as_deref() == Some(item.session.id.as_str());
+                            active_selected_root.as_deref() == Some(item.session.path.as_path());
                         let target = format!("session:{}", item.session.path.display());
                         let badge = Some(resolved_session_status(
                             &item.session,
                             active_run_statuses.get(&target).map(String::as_str),
                             active_live_root.as_deref(),
                             &active_live_status,
-                            active_waiting_roots.contains(&item.session.id),
+                            active_waiting_roots.contains(&item.session.path),
                         ));
                         let editing =
                             active_editing_path.as_deref() == Some(item.session.path.as_path());
@@ -228,7 +230,7 @@ impl FarcasterApp {
                                 draggable: true,
                                 title_editor: editing.then(|| active_title_input.clone()),
                                 subagents: counts
-                                    .get(item.session.id.as_str())
+                                    .get(item.session.path.as_path())
                                     .copied()
                                     .unwrap_or(0),
                                 compact,

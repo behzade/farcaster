@@ -512,3 +512,71 @@ fn extension_dialog_is_parked_and_restored_with_its_session() {
         Some("follow-up")
     );
 }
+
+#[test]
+fn rail_selection_distinguishes_profile_copies_of_one_native_session() {
+    let mut first = session_summary("same", None, true);
+    first.path = "/first/same.jsonl".into();
+    first.profile_id = Some("first".into());
+    let mut second = first.clone();
+    second.path = "/second/same.jsonl".into();
+    second.profile_id = Some("second".into());
+    let previous = RuntimeSnapshot {
+        selected_session: Some(first.path.clone()),
+        ..RuntimeSnapshot::default()
+    };
+    let next = RuntimeSnapshot {
+        selected_session: Some(second.path.clone()),
+        ..RuntimeSnapshot::default()
+    };
+    let sessions = [first, second];
+    let roots = SessionRootIndex::new(&sessions);
+    assert!(session_rail_snapshot_changed(&roots, &previous, &next));
+    assert!(inactive_session_rail_snapshot_changed(
+        &roots, &previous, &next
+    ));
+}
+
+#[test]
+fn binding_identity_refreshes_worker_labels_and_graph_views() {
+    let session = session_summary("worker", None, false);
+    let mut bound = session.clone();
+    bound.app_session_id = 42;
+    assert!(run_panel_sessions_changed(
+        &[session.clone()],
+        &[bound.clone()],
+        Some(&session.path)
+    ));
+    assert!(session_identities_changed(
+        &[session.clone()],
+        &[bound.clone()]
+    ));
+    let mut merged = session.clone();
+    merged.path = "/other.jsonl".into();
+    merged.app_session_id = 43;
+    assert!(session_identities_changed(
+        &[bound.clone(), merged],
+        &[bound.clone()]
+    ));
+    bound.title = "Metadata-only update".into();
+    let mut unchanged_identity = bound.clone();
+    unchanged_identity.title.clear();
+    assert!(!session_identities_changed(&[bound], &[unchanged_identity]));
+}
+
+#[test]
+fn archived_child_count_changes_invalidate_tooltips() {
+    let mut first = session_summary("first", None, true);
+    first.app_session_id = 1;
+    let mut second = session_summary("second", None, true);
+    second.app_session_id = 2;
+    let mut child = session_summary("child", Some("first"), false);
+    child.parent_app_session_id = Some(1);
+    let roots = [first.clone(), second.clone()];
+    let before = [first.clone(), second.clone(), child.clone()];
+    child.parent_app_session_id = Some(2);
+    let after = [first, second, child];
+    assert!(inactive_session_catalog_changed(
+        &roots, &before, &roots, &after
+    ));
+}

@@ -346,6 +346,8 @@ impl FarcasterApp {
             self.snapshot.selected_session.as_deref(),
         );
         let previous_workgraph_session = self.active_workgraph_session();
+        let graph_identities_changed =
+            session_identities_changed(&self.sessions.all, &all_sessions);
         let visible_activities_changed = run_panel_activities_changed(
             &self.activity.agents,
             activities.as_ref(),
@@ -393,7 +395,8 @@ impl FarcasterApp {
         dirty.archived_rail |= archived_catalog_changed;
         dirty.composer |= composer_usage_changed;
         dirty.run |= run_catalog_changed || visible_activities_changed;
-        dirty.workgraph_session |= previous_workgraph_session != self.active_workgraph_session();
+        dirty.workgraph_session |= graph_identities_changed
+            || previous_workgraph_session != self.active_workgraph_session();
         dirty.rail |= self.reconcile_submitted_drafts(cx);
     }
     fn project_session_deleted(
@@ -796,7 +799,7 @@ impl FarcasterApp {
                                 &self.sessions.all,
                                 self.snapshot.selected_session.as_deref(),
                             )
-                            .is_some_and(|selected| selected.id == root.id)
+                            .is_some_and(|selected| selected.path == root.path)
                     });
             }
             RuntimeEvent::SessionDeleted { generation, paths } => {

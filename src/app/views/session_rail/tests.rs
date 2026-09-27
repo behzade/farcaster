@@ -433,13 +433,13 @@ fn tooltips_report_model_effort_and_direct_subagent_counts() {
         other.session,
     ];
 
-    let counts = subagent_counts(&sessions);
+    let counts = subagent_counts(&crate::sessions::SessionCatalog::from(sessions.clone()));
 
-    assert_eq!(counts.get("root"), Some(&2));
+    assert_eq!(counts.get(&sessions[0].path), Some(&2));
     assert!(
         session_tooltip_lines(
             sessions.first().expect("root session fixture"),
-            counts["root"],
+            counts[&sessions[0].path],
         )
         .iter()
         .any(|line| line == "Subagents: 2 subagents")
@@ -451,4 +451,26 @@ fn every_rail_panel_is_numbered_in_stack_order() {
     for (index, panel) in RailPanel::ALL.into_iter().enumerate() {
         assert_eq!(panel.index(), index);
     }
+}
+
+#[test]
+fn direct_worker_counts_do_not_merge_profile_copies() {
+    let mut first = item("same", 1, "/project", SessionRailKind::Project, false).session;
+    first.path = "/first/same.jsonl".into();
+    first.profile_id = Some("first".into());
+    let mut second = first.clone();
+    second.app_session_id = 2;
+    second.path = "/second/same.jsonl".into();
+    second.profile_id = Some("second".into());
+    let mut child = item("child", 3, "/project", SessionRailKind::Project, false).session;
+    child.parent_session = Some("same".into());
+    child.profile_id = first.profile_id.clone();
+    child.parent_app_session_id = Some(second.app_session_id);
+    let counts = subagent_counts(&crate::sessions::SessionCatalog::from(vec![
+        first.clone(),
+        second.clone(),
+        child,
+    ]));
+    assert_eq!(counts.get(&first.path), None);
+    assert_eq!(counts.get(&second.path), Some(&1));
 }

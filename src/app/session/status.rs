@@ -1,22 +1,22 @@
 use std::{
     collections::{HashMap, HashSet},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::{
     agent_activity::{AgentActivity, AgentLifecycle, agent_activity_key},
-    sessions::SessionSummary,
+    sessions::{SessionRootIndex, SessionSummary},
 };
 
 pub(in crate::app) fn resolved_session_status(
     session: &SessionSummary,
     explicit_status: Option<&str>,
-    live_session_id: Option<&str>,
+    live_session_path: Option<&Path>,
     live_status: &str,
     waiting_for_descendant: bool,
 ) -> String {
     let explicit_status = explicit_status.and_then(normalized_session_status);
-    let live_status = (live_session_id == Some(session.id.as_str()))
+    let live_status = (live_session_path == Some(session.path.as_path()))
         .then(|| normalized_session_status(live_status))
         .flatten();
     explicit_status
@@ -37,14 +37,14 @@ fn normalized_session_status(status: &str) -> Option<String> {
 
 pub(in crate::app) fn roots_waiting_for_descendants(
     sessions: &[SessionSummary],
-) -> HashSet<String> {
+) -> HashSet<PathBuf> {
     roots_waiting_for_descendants_where(sessions, |session| session.is_running)
 }
 
 pub(in crate::app) fn roots_waiting_for_active_descendants(
     sessions: &[SessionSummary],
     activities: &HashMap<String, AgentActivity>,
-) -> HashSet<String> {
+) -> HashSet<PathBuf> {
     let active_paths = active_activity_session_paths(sessions, activities);
     roots_waiting_for_descendants_where(sessions, |session| {
         session.is_running || active_paths.contains(session.path.as_path())
@@ -89,27 +89,16 @@ fn agent_activity_keeps_parent_waiting(activity: &AgentActivity) -> bool {
 fn roots_waiting_for_descendants_where(
     sessions: &[SessionSummary],
     active: impl Fn(&SessionSummary) -> bool,
-) -> HashSet<String> {
-    let parent_by_id = sessions
-        .iter()
-        .filter_map(|session| {
-            session
-                .parent_session
-                .as_ref()
-                .map(|parent| (session.id.as_str(), parent.as_str()))
-        })
-        .collect::<HashMap<_, _>>();
+) -> HashSet<PathBuf> {
+    let index = SessionRootIndex::new(sessions);
     let mut waiting = HashSet::new();
     for session in sessions.iter().filter(|session| active(session)) {
-        let mut current = session.id.as_str();
-        let mut seen = HashSet::new();
-        while seen.insert(current) {
-            let Some(parent) = parent_by_id.get(current).copied() else {
-                break;
-            };
-            waiting.insert(parent.to_owned());
-            current = parent;
-        }
+        waiting.extend(
+            index
+                .ancestors(session)
+                .into_iter()
+                .map(|parent| parent.path.clone()),
+        );
     }
     waiting
 }

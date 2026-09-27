@@ -38,9 +38,9 @@ pub(in crate::app) fn inactive_session_catalog_changed(
     next_all: &[SessionSummary],
 ) -> bool {
     let rows = |sessions: &[SessionSummary]| {
-        sessions
-            .iter()
-            .filter(|session| session.parent_session.is_none() && session.archived)
+        crate::sessions::root_sessions(sessions)
+            .into_iter()
+            .filter(|session| session.archived)
             .map(|session| {
                 (
                     session.id.clone(),
@@ -58,17 +58,29 @@ pub(in crate::app) fn inactive_session_catalog_changed(
     if current_rows != rows(next) {
         return true;
     }
-    let ids = current_rows
+    let paths = current_rows
         .iter()
-        .map(|(id, ..)| id.as_str())
+        .map(|(_, _, path, ..)| path.as_path())
         .collect::<HashSet<_>>();
     let waiting = |sessions| {
         roots_waiting_for_descendants(sessions)
             .into_iter()
-            .filter(|id| ids.contains(id.as_str()))
+            .filter(|path| paths.contains(path.as_path()))
             .collect::<HashSet<_>>()
     };
-    waiting(current_all) != waiting(next_all)
+    let counts = |sessions: &[SessionSummary]| {
+        let index = SessionRootIndex::new(sessions);
+        let mut counts = HashMap::<PathBuf, usize>::new();
+        for session in sessions {
+            if let Some(parent) = index.parent(session)
+                && paths.contains(parent.path.as_path())
+            {
+                *counts.entry(parent.path.clone()).or_default() += 1;
+            }
+        }
+        counts
+    };
+    waiting(current_all) != waiting(next_all) || counts(current_all) != counts(next_all)
 }
 
 pub(in crate::app) fn session_event_affects_active_rail(
@@ -106,7 +118,10 @@ pub(in crate::app) fn run_panel_sessions_changed(
     selected: Option<&Path>,
 ) -> bool {
     visible_sessions_changed(current, next, selected, |left, right| {
-        left.id == right.id
+        left.key() == right.key()
+            && left.harness == right.harness
+            && left.profile_id == right.profile_id
+            && left.id == right.id
             && left.path == right.path
             && left.project == right.project
             && left.timestamp == right.timestamp
@@ -193,9 +208,13 @@ pub(in crate::app) fn session_rail_snapshot_changed(
     previous: &RuntimeSnapshot,
     next: &RuntimeSnapshot,
 ) -> bool {
-    let root_id = |path| roots.root_for_path(path).map(|session| session.id.as_str());
-    root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref())
-        || root_id(previous.live_session.as_deref()) != root_id(next.live_session.as_deref())
+    let root_path = |path| {
+        roots
+            .root_for_path(path)
+            .map(|session| session.path.as_path())
+    };
+    root_path(previous.selected_session.as_deref()) != root_path(next.selected_session.as_deref())
+        || root_path(previous.live_session.as_deref()) != root_path(next.live_session.as_deref())
         || previous.live_status != next.live_status
 }
 
@@ -204,17 +223,19 @@ pub(in crate::app) fn inactive_session_rail_snapshot_changed(
     previous: &RuntimeSnapshot,
     next: &RuntimeSnapshot,
 ) -> bool {
-    let root_id = |path| {
+    let root_path = |path| {
         roots
             .root_for_path(path)
             .filter(|session| session.archived)
-            .map(|session| session.id.as_str())
+            .map(|session| session.path.as_path())
     };
-    if root_id(previous.selected_session.as_deref()) != root_id(next.selected_session.as_deref()) {
+    if root_path(previous.selected_session.as_deref())
+        != root_path(next.selected_session.as_deref())
+    {
         return true;
     }
-    let previous_live = root_id(previous.live_session.as_deref());
-    let next_live = root_id(next.live_session.as_deref());
+    let previous_live = root_path(previous.live_session.as_deref());
+    let next_live = root_path(next.live_session.as_deref());
     previous_live != next_live || (previous.live_status != next.live_status && next_live.is_some())
 }
 
@@ -279,4 +300,18 @@ pub(in crate::app) fn starts_recent_completion(
     force: bool,
 ) -> bool {
     next == "Done" && (force || previous.is_some_and(|status| status != "Done"))
+}
+
+/// Session merges can change graph ownership without changing the selected key.
+pub(in crate::app) fn session_identities_changed(
+    current: &[SessionSummary],
+    next: &[SessionSummary],
+) -> bool {
+    let identities = |sessions: &[SessionSummary]| {
+        sessions
+            .iter()
+            .map(|session| (session.path.clone(), session.key()))
+            .collect::<HashMap<_, _>>()
+    };
+    identities(current) != identities(next)
 }

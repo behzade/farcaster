@@ -35,12 +35,14 @@ impl FarcasterApp {
         list_rows: &RefCell<Vec<String>>,
     ) -> gpui::AnyElement {
         debug_assert!(kind != SessionRailKind::Project);
-        let selected_root = self.selected_rail_root().map(|session| session.id.clone());
+        let selected_root = self
+            .selected_rail_root()
+            .map(|session| session.path.clone());
         let live_root = self
             .sessions
             .visible
             .root_for_path(self.snapshot.live_session.as_deref())
-            .map(|session| session.id.clone());
+            .map(|session| session.path.clone());
         let waiting_roots = roots_waiting_for_descendants(&self.sessions.all);
         let lists = session_rail_lists_for_roots(
             self.sessions.visible.roots(),
@@ -95,7 +97,7 @@ impl FarcasterApp {
                 .into_any_element()
             }
             Some(ActiveSessionItem::Session(item)) => {
-                let selected = selected_root.as_deref() == Some(item.session.id.as_str());
+                let selected = selected_root.as_deref() == Some(item.session.path.as_path());
                 let badge = inactive_session_badge(
                     kind,
                     item,
@@ -110,7 +112,10 @@ impl FarcasterApp {
                     SessionRowInput {
                         compact: true,
                         title_editor: editing.then(|| title_input.clone()),
-                        subagents: counts.get(item.session.id.as_str()).copied().unwrap_or(0),
+                        subagents: counts
+                            .get(item.session.path.as_path())
+                            .copied()
+                            .unwrap_or(0),
                         ..SessionRowInput::standard(selected, badge)
                     },
                     row_entity.clone(),
