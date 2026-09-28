@@ -60,6 +60,7 @@ mod settings;
 mod snapshot;
 mod traits;
 mod transcript;
+mod workgraph_identity;
 
 pub use composer_worker::ComposerPersistenceWorker;
 use draft_storage::{remove_draft_row, save_draft};

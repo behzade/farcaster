@@ -84,6 +84,7 @@ impl StateStore {
             &std::path::absolute(parent.join("session-locators"))
                 .map_err(|error| format!("resolve session locator directory: {error}"))?,
         )?;
+        super::workgraph_identity::migrate(&mut store.connection)?;
         Ok(store)
     }
 

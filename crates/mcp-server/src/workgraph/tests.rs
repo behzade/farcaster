@@ -4,6 +4,7 @@ use crate::{
     sessions::{SessionSummary, UsageSummary},
     storage::StateStore,
 };
+use std::path::Path;
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -56,7 +57,11 @@ fn caller(project: &Path, id: &str) -> CallerContext {
         worker_id: format!("worker-{id}"),
         worker_name: id.into(),
         project: project.to_owned(),
-        session: format!("backend://{id}"),
+        session: project
+            .join("sessions")
+            .join(id)
+            .to_string_lossy()
+            .into_owned(),
         session_locator: None,
         harness_profile_id: None,
         app_session_id: None,
@@ -131,9 +136,9 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
     assert!(claim(&database, &bob, TaskParams { task: second }).is_err());
     let claimed = claim(&database, &alice, TaskParams { task: first })?;
     assert_eq!(claimed["tasks"][0]["ownedByYou"], true);
-    for session in ["alice", "backend:/alice"] {
+    for session in ["alice".to_owned(), alice.session.clone()] {
         let mut alias = alice.clone();
-        alias.session = session.into();
+        alias.session = session;
         assert_eq!(
             search(
                 &database,
@@ -169,9 +174,10 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
         )
         .is_err()
     );
+    let alice_key = session_identity(&database, &alice)?.0;
     let selection = with_test_store(&database, |store| {
         store.with_connection(|connection| {
-            workgraph::load_plan(connection, temp.path().to_owned(), Some("alice"))
+            workgraph::load_plan(connection, temp.path().to_owned(), Some(&alice_key))
         })
     })?;
     assert_eq!(
@@ -245,7 +251,7 @@ fn task_lifecycle_uses_authenticated_identity_and_shared_database() -> Result<()
 }
 
 #[test]
-fn duplicate_backend_ids_cannot_share_task_ownership() -> Result<(), String> {
+fn duplicate_native_ids_resolve_separate_backend_scoped_keys() -> Result<(), String> {
     let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
     let database = temp.path().join("state.sqlite3");
     let mut alice = caller(temp.path(), "alice");
@@ -254,15 +260,11 @@ fn duplicate_backend_ids_cannot_share_task_ownership() -> Result<(), String> {
     bob.worker_name = "same-id".into();
     bob.backend = Backend::Codex;
     index(&database, &[alice.clone(), bob.clone()])?;
-    assert!(
-        session_identity(&database, &alice)
-            .expect_err("invalid test input must fail")
-            .contains("ambiguous")
-    );
-    assert!(
-        session_identity(&database, &bob)
-            .expect_err("invalid test input must fail")
-            .contains("ambiguous")
+    alice.session = "same-id".into();
+    bob.session = "same-id".into();
+    assert_ne!(
+        session_identity(&database, &alice)?.0,
+        session_identity(&database, &bob)?.0
     );
     Ok(())
 }
@@ -289,12 +291,154 @@ fn profiled_caller_locator_resolves_duplicate_native_ids() -> Result<(), String>
     authenticated.backend = Backend::Claude;
     authenticated.session = id.into();
     authenticated.session_locator = Some(profile.clone());
+    let (profile_key, profile_path) = session_identity(&database, &authenticated)?;
     assert_eq!(
-        session_identity(&database, &authenticated)?.1,
-        profile.to_string_lossy()
+        profile_path,
+        crate::sessions::normalize_session_path(&profile).to_string_lossy()
     );
     authenticated.session_locator = None;
-    assert!(session_identity(&database, &authenticated).is_err());
+    let (base_key, base_path) = session_identity(&database, &authenticated)?;
+    assert_ne!(base_key, profile_key);
+    assert_eq!(
+        base_path,
+        crate::sessions::normalize_session_path(&base).to_string_lossy()
+    );
+    Ok(())
+}
+
+#[test]
+fn profile_copies_have_separate_owners_and_cannot_release_or_complete_each_other()
+-> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let native = "same-native-id";
+    let base = temp.path().join("session-locators/claude").join(native);
+    let profile = temp
+        .path()
+        .join("session-locators/profiles/c9eeca98-4e3e-44d5-aabd-9ba354c24e7a/claude")
+        .join(native);
+    let mut rows = Vec::new();
+    let mut callers = Vec::new();
+    for path in [&base, &profile] {
+        let mut row = caller(temp.path(), native);
+        row.backend = Backend::Claude;
+        row.session = path.to_string_lossy().into_owned();
+        rows.push(row.clone());
+        row.session = native.into();
+        row.session_locator = Some(path.clone());
+        callers.push(row);
+    }
+    index(&database, &rows)?;
+    let base_key = session_identity(&database, &callers[0])?.0;
+    let profile_key = session_identity(&database, &callers[1])?.0;
+    assert_ne!(base_key, profile_key);
+    for title in ["Base task", "Profile task"] {
+        patch(
+            &database,
+            &callers[0],
+            PatchParams {
+                nodes: vec![PatchNode {
+                    title: title.into(),
+                    acceptance: "Checked".into(),
+                }],
+                after: None,
+                before: None,
+            },
+        )?;
+    }
+    claim(&database, &callers[0], TaskParams { task: 1 })?;
+    let result = claim(&database, &callers[1], TaskParams { task: 2 })?;
+    assert_eq!(result["tasks"][0]["owner"], base_key);
+    assert_eq!(result["tasks"][1]["owner"], profile_key);
+    assert_eq!(result["tasks"][0]["ownedByYou"], false);
+    assert_eq!(result["tasks"][1]["ownedByYou"], true);
+    for (caller, task) in [(&callers[0], 2), (&callers[1], 1)] {
+        assert!(release(&database, caller, TaskParams { task }).is_err());
+        assert!(
+            complete(
+                &database,
+                caller,
+                CompleteParams {
+                    task,
+                    evidence: "wrong owner".into()
+                }
+            )
+            .is_err()
+        );
+    }
+    let mut wrong_profile = callers[1].clone();
+    wrong_profile.harness_profile_id = Some("another-profile".into());
+    let mut wrong_app_id = callers[1].clone();
+    wrong_app_id.app_session_id = crate::sessions::AppSessionId::from_key(&base_key);
+    for caller in [wrong_profile, wrong_app_id] {
+        assert!(release(&database, &caller, TaskParams { task: 2 }).is_err());
+        assert!(
+            complete(
+                &database,
+                &caller,
+                CompleteParams {
+                    task: 2,
+                    evidence: "conflicting authenticated identity".into()
+                }
+            )
+            .is_err()
+        );
+    }
+    let mut scoped_native = callers[1].clone();
+    scoped_native.session_locator = None;
+    scoped_native.harness_profile_id = Some("c9eeca98-4e3e-44d5-aabd-9ba354c24e7a".into());
+    assert_eq!(session_identity(&database, &scoped_native)?.0, profile_key);
+    with_test_store(&database, |store| {
+        store.with_connection(|connection| {
+            let base = workgraph::load_plan(connection, temp.path().to_owned(), Some(&base_key))?;
+            let profile =
+                workgraph::load_plan(connection, temp.path().to_owned(), Some(&profile_key))?;
+            assert_eq!(base.session_link.expect("base link").session_id, base_key);
+            assert_eq!(
+                profile.session_link.expect("profile link").session_id,
+                profile_key
+            );
+            Ok(())
+        })
+    })?;
+    complete(
+        &database,
+        &callers[0],
+        CompleteParams {
+            task: 1,
+            evidence: "base checked".into(),
+        },
+    )?;
+    complete(
+        &database,
+        &callers[1],
+        CompleteParams {
+            task: 2,
+            evidence: "profile checked".into(),
+        },
+    )?;
+    Ok(())
+}
+
+#[test]
+fn locatorless_caller_cannot_adopt_another_profiles_only_indexed_session() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let native = "profile-only";
+    let profile = temp
+        .path()
+        .join("session-locators/profiles/c9eeca98-4e3e-44d5-aabd-9ba354c24e7a/claude")
+        .join(native);
+    let mut row = caller(temp.path(), native);
+    row.backend = Backend::Claude;
+    row.session = profile.to_string_lossy().into_owned();
+    index(&database, std::slice::from_ref(&row))?;
+    row.session = native.into();
+    assert!(session_identity(&database, &row).is_err());
+    row.harness_profile_id = Some("another-profile".into());
+    assert!(session_identity(&database, &row).is_err());
+    row.harness_profile_id = Some("c9eeca98-4e3e-44d5-aabd-9ba354c24e7a".into());
+    assert!(session_identity(&database, &row).is_ok());
     Ok(())
 }
 
@@ -310,14 +454,11 @@ fn session_identity_accepts_an_authenticated_project_alias() -> Result<(), Strin
     let caller = caller(&alias, "alice");
     index(&database, std::slice::from_ref(&caller))?;
 
+    let (key, path) = session_identity(&database, &caller)?;
+    assert!(crate::sessions::AppSessionId::from_key(&key).is_some());
     assert_eq!(
-        session_identity(&database, &caller)?,
-        (
-            "alice".into(),
-            crate::sessions::normalize_session_path(Path::new(&caller.session))
-                .to_string_lossy()
-                .into_owned(),
-        )
+        path,
+        crate::sessions::normalize_session_path(Path::new(&caller.session)).to_string_lossy()
     );
     Ok(())
 }

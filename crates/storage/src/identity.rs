@@ -84,6 +84,7 @@ pub(super) fn bind_locator(
 }
 
 pub(super) fn merge_session(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), String> {
+    super::workgraph_identity::merge(tx, keep, other)?;
     let offset: i64 = tx
         .query_row(
             "SELECT COALESCE(MAX(seq), 0) FROM session_events WHERE session_id=?1",

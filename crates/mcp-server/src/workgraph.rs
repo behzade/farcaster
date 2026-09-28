@@ -1,5 +1,4 @@
 use std::{
-    path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -55,39 +54,11 @@ fn session_identity_store(
     store: &crate::storage::StateStore,
     caller: &CallerContext,
 ) -> Result<(String, String), String> {
-    let sessions = store.cached_sessions("")?;
-    let caller_project = crate::sessions::normalize_session_path(&caller.project);
-    let caller_session = crate::sessions::normalize_session_path(Path::new(&caller.session));
-    let caller_locator = caller
-        .session_locator
-        .as_deref()
-        .map(crate::sessions::normalize_session_path);
-    let session = sessions
-        .iter()
-        .find(|session| {
-            session.project == caller_project
-                && session.harness == caller.backend
-                && caller_locator.as_ref().map_or_else(
-                    || session.id == caller.session || session.path == caller_session,
-                    |locator| &session.path == locator && session.id == caller.session,
-                )
-        })
-        .ok_or_else(|| {
-            "authenticated session is not indexed yet; retry after session discovery".to_owned()
-        })?;
-    if caller_locator.is_none()
-        && sessions.iter().any(|other| {
-            other.project == session.project
-                && other.id == session.id
-                && (other.path != session.path || other.harness != session.harness)
-        })
-    {
-        return Err(
-            "session ID is ambiguous across indexed sessions; cannot safely link workgraph".into(),
-        );
-    }
+    let session = store.resolve_caller_session(caller)?;
     Ok((
-        session.id.clone(),
+        crate::sessions::AppSessionId::new(session.app_session_id)
+            .ok_or_else(|| "authenticated session has no application identity".to_owned())?
+            .to_key(),
         session.path.to_string_lossy().into_owned(),
     ))
 }
@@ -165,7 +136,7 @@ fn task_views(
                 "title": node.title,
                 "acceptance": node.acceptance,
                 "owner": owner.map(|owner| &owner.session_id),
-                "ownedByYou": owner.is_some_and(|owner| identity.is_some_and(|(id, path)| owner.session_id == *id && owner.session_path == *path)),
+                "ownedByYou": owner.is_some_and(|owner| identity.is_some_and(|(id, _)| owner.session_id == *id)),
                 "status": status,
                 "blockers": blockers,
                 "predecessors": predecessors,

@@ -830,6 +830,9 @@ impl FarcasterApp {
         self.views.workgraph_sidebar.update(cx, |view, cx| {
             view.refresh_for(project, session_id, session_goal, cx);
         });
+        if self.workspace.surface == AppSurface::Work {
+            self.refresh_workgraph_board(cx);
+        }
     }
 
     pub(in crate::app) fn refresh_workgraph_goal(&mut self, cx: &mut Context<Self>) {
@@ -848,7 +851,10 @@ impl FarcasterApp {
         self.sessions
             .all
             .root_for_path(self.snapshot.selected_session.as_deref())
-            .map(|root| (root.id.clone(), root.path.display().to_string()))
+            .and_then(|root| {
+                crate::sessions::AppSessionId::new(root.app_session_id)
+                    .map(|id| (id.to_key(), root.path.display().to_string()))
+            })
     }
 
     fn active_root_session_goal(&self) -> Option<Option<crate::agents::SessionGoal>> {
