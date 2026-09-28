@@ -11,9 +11,19 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 export FARCASTER_DATA_DIR="$run_data_dir"
-# Runtime is a separate package, so the root package's tests do not include it.
 # Explicit arguments retain the caller's focused target selection.
-if [ "$#" -eq 0 ]; then
-    cargo test --manifest-path crates/runtime/Cargo.toml
+if [ "$#" -gt 0 ]; then
+    cargo test "$@"
+    exit
 fi
-cargo test "$@"
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+cd "$repo_root"
+# Each package owns its unit tests; testing a dependency's caller only builds it.
+# Use a separate descriptor so Cargo and tests keep the caller's standard input.
+while IFS= read -r manifest <&3 || [ -n "$manifest" ]; do
+    case "$manifest" in
+        ''|'#'*) continue ;;
+    esac
+    cargo test --manifest-path "$manifest"
+done 3< "$repo_root/scripts/first-party-packages.txt"

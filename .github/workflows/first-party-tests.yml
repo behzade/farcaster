@@ -1,0 +1,55 @@
+name: First-party tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: first-party-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: target
+
+jobs:
+  test:
+    name: All first-party Cargo packages
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check package inventory and test runner
+        run: python3 scripts/test_tests.py
+
+      - name: Install Linux build and test dependencies
+        run: |
+          # Match the repository's Linux build environment. Ghostty's Zig 0.16
+          # C++ headers need LLVM 21's libc++; its fontconfig archive needs libxml2.
+          curl --fail --silent --show-error --location https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /usr/share/keyrings/apt.llvm.org.asc >/dev/null
+          echo 'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main' \
+            | sudo tee /etc/apt/sources.list.d/llvm-21.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential ca-certificates clang cmake fonts-dejavu-core git \
+            libc++-21-dev libc++abi-21-dev libasound2-dev libegl1-mesa-dev \
+            libfontconfig1-dev libfreetype6-dev libvulkan-dev libwayland-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libxml2-dev pkg-config python3
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Test every first-party package
+        # gpui-libghostty includes Ghostty source; Zig fetches its pinned packages.
+        run: sh scripts/test.sh

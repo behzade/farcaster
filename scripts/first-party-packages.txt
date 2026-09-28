@@ -1,0 +1,19 @@
+# Repository-owned Cargo packages, relative to the repository root.
+# Keep vendor packages out. scripts/test_tests.py checks for missing packages.
+crates/access/Cargo.toml
+crates/agent-protocol/Cargo.toml
+crates/agents/Cargo.toml
+crates/claude-sdk-types/Cargo.toml
+crates/contracts/Cargo.toml
+crates/conversation/Cargo.toml
+crates/editors/Cargo.toml
+crates/mcp-server/Cargo.toml
+crates/projects/Cargo.toml
+crates/repository/Cargo.toml
+crates/reviews/Cargo.toml
+crates/runtime/Cargo.toml
+crates/sessions/Cargo.toml
+crates/storage/Cargo.toml
+crates/utility/Cargo.toml
+workgraph/Cargo.toml
+Cargo.toml
