@@ -141,6 +141,7 @@ impl RenderOnce for Panel {
                 )
             });
         div()
+            .id(ElementId::Name(format!("{id}-panel").into()))
             .relative()
             .flex_none()
             .flex()
