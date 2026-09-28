@@ -30,14 +30,6 @@ use crate::{
     app::ui::theme::theme,
 };
 
-fn notification_tone(tone: crate::protocol::NotifyTone) -> FeedbackTone {
-    match tone {
-        crate::protocol::NotifyTone::Error => FeedbackTone::Error,
-        crate::protocol::NotifyTone::Warning => FeedbackTone::Warning,
-        crate::protocol::NotifyTone::Info => FeedbackTone::Info,
-    }
-}
-
 impl FarcasterApp {
     fn render_rail_panel(
         &self,
@@ -73,10 +65,12 @@ impl FarcasterApp {
             .rev()
             .enumerate()
             .map(|(index, notice)| {
-                feedback(
+                self.render_notification(
                     ("rail-notification", index),
-                    notice.message.clone(),
-                    notification_tone(notice.tone),
+                    &notice.id,
+                    &notice.message,
+                    notice.tone,
+                    entity.clone(),
                 )
             })
             .collect::<Vec<_>>();

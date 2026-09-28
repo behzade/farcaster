@@ -866,17 +866,20 @@ impl FarcasterApp {
                 self.show_attention_notification(&title, &body, target, cx);
             }
             RuntimeEvent::TurnCompletedNotification { body, target } => {
-                if !completion_notification_is_redundant(
-                    cx.active_window().is_some(),
-                    target.as_ref(),
-                    &self.snapshot,
-                ) {
-                    self.show_attention_notification(
-                        TURN_COMPLETED_NOTIFICATION_TITLE,
-                        &body,
-                        target,
-                        cx,
-                    );
+                let active = cx.active_window().is_some();
+                if !completion_notification_is_redundant(active, target.as_ref(), &self.snapshot) {
+                    if active {
+                        self.show_completion_notice(&body, target);
+                        dirty.root = true;
+                        dirty.rail = true;
+                    } else {
+                        self.show_attention_notification(
+                            TURN_COMPLETED_NOTIFICATION_TITLE,
+                            &body,
+                            target,
+                            cx,
+                        );
+                    }
                 }
             }
             RuntimeEvent::PromptResult {

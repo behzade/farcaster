@@ -165,6 +165,50 @@ impl FarcasterApp {
         target: Option<(PathBuf, PathBuf)>,
         cx: &mut Context<Self>,
     ) {
+        let tag = self.attention_notification_tag(target);
+        cx.show_system_notification(SystemNotification {
+            tag: tag.into(),
+            title: title.to_owned().into(),
+            body: body.to_owned().into(),
+            actions: Vec::new(),
+        });
+    }
+
+    pub(in crate::app) fn show_completion_notice(
+        &mut self,
+        body: &str,
+        target: Option<(PathBuf, PathBuf)>,
+    ) {
+        let title = target
+            .as_ref()
+            .and_then(|(path, project)| {
+                self.sessions
+                    .all
+                    .iter()
+                    .find(|session| &session.path == path && &session.project == project)
+            })
+            .map(|session| session.title.as_str())
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or("Session completed");
+        let mut preview = body
+            .split_whitespace()
+            .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+            .skip(1);
+        let mut summary: String = preview.by_ref().take(240).collect();
+        if preview.next().is_some() {
+            summary.push('…');
+        }
+        let message = format!("{}\n{summary}", title.chars().take(80).collect::<String>());
+        let tag = self.attention_notification_tag(target);
+        self.extensions
+            .active
+            .push_notification(tag, message, crate::protocol::NotifyTone::Info);
+        if !self.views.notification_panel.is_collapsed() {
+            self.extensions.active.mark_notifications_seen();
+        }
+    }
+
+    fn attention_notification_tag(&mut self, target: Option<(PathBuf, PathBuf)>) -> String {
         let tag = target.as_ref().map_or_else(
             || SYSTEM_NOTIFICATION_TAG.to_owned(),
             |(path, _)| format!("{SYSTEM_NOTIFICATION_TAG}:{}", path.display()),
@@ -174,11 +218,6 @@ impl FarcasterApp {
                 .system_notification_targets
                 .insert(tag.clone(), target);
         }
-        cx.show_system_notification(SystemNotification {
-            tag: tag.into(),
-            title: title.to_owned().into(),
-            body: body.to_owned().into(),
-            actions: Vec::new(),
-        });
+        tag
     }
 }

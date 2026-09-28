@@ -2,6 +2,7 @@ mod app_state;
 mod attachments;
 mod composer;
 pub(in crate::app) mod dialogs;
+mod notifications;
 pub(crate) mod overlay_state;
 mod regions;
 mod root;

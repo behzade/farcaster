@@ -28,6 +28,7 @@ pub(crate) struct Notification {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct NotificationRecord {
+    pub id: String,
     pub message: String,
     pub tone: NotifyTone,
 }
@@ -131,7 +132,7 @@ impl ExtensionUiState {
 
     pub(crate) fn push_notification(&mut self, id: String, message: String, tone: NotifyTone) {
         self.notifications.push_back(Notification {
-            id,
+            id: id.clone(),
             message: message.clone(),
             tone,
             expires_at: Instant::now() + NOTIFICATION_LIFETIME,
@@ -140,7 +141,7 @@ impl ExtensionUiState {
             self.notifications.pop_front();
         }
         self.notification_history
-            .push_back(NotificationRecord { message, tone });
+            .push_back(NotificationRecord { id, message, tone });
         while self.notification_history.len() > MAX_NOTIFICATION_HISTORY {
             self.notification_history.pop_front();
         }

@@ -9,7 +9,7 @@ use super::{
 };
 use crate::app::ui::{
     assets::AppIcon,
-    primitives::{ButtonTone, FeedbackTone, feedback, icon_button, modal},
+    primitives::{ButtonTone, icon_button, modal},
     theme::theme,
 };
 
@@ -176,7 +176,7 @@ impl FarcasterApp {
                         .absolute()
                         .top(theme().space.md)
                         .right(theme().space.md)
-                        .w(theme().layout.run_panel)
+                        .w(theme().size(360.0))
                         .max_w_full()
                         .flex()
                         .flex_col()
@@ -184,16 +184,12 @@ impl FarcasterApp {
                         .children(task_notice)
                         .children(self.extensions.active.notifications.iter().enumerate().map(
                             |(index, notice)| {
-                                feedback(
+                                self.render_notification(
                                     ("notification", index),
-                                    notice.message.clone(),
-                                    match notice.tone {
-                                        crate::protocol::NotifyTone::Error => FeedbackTone::Error,
-                                        crate::protocol::NotifyTone::Warning => {
-                                            FeedbackTone::Warning
-                                        }
-                                        crate::protocol::NotifyTone::Info => FeedbackTone::Info,
-                                    },
+                                    &notice.id,
+                                    &notice.message,
+                                    notice.tone,
+                                    entity.clone(),
                                 )
                             },
                         )),
