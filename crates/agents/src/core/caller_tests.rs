@@ -531,7 +531,6 @@ fn live_worker_precedes_same_session_restart_candidate() -> Result<(), String> {
         id: registered.worker_id.clone(),
         project: registered.project.clone(),
         child_name: "review".into(),
-        backend: Some(registered.backend),
         binding: registered.binding.clone(),
     };
     assert_eq!(
@@ -670,7 +669,6 @@ fn retained_report_binding_follows_replacement_then_merge_but_not_another_sessio
         id: first_context.worker_id.clone(),
         project: first_context.project.clone(),
         child_name: "review".into(),
-        backend: Some(Backend::Pi),
         binding: original_binding.clone(),
     };
     let (responses, _) = mpsc::channel();
@@ -733,4 +731,38 @@ fn retained_report_binding_follows_replacement_then_merge_but_not_another_sessio
         "unrelated session must not receive old report"
     );
     Ok(())
+}
+
+#[test]
+fn family_stop_refreshes_merged_bindings_before_the_next_caller_send() {
+    let registry = CallerRegistry::default();
+    let record = Arc::new(std::sync::atomic::AtomicI64::new(41));
+    let record_for_sink = record.clone();
+    registry.set_execution_sinks(
+        Some(Arc::new(move |_| {
+            Ok(record_for_sink.load(std::sync::atomic::Ordering::SeqCst))
+        })),
+        None,
+    );
+    let project = Path::new("/project");
+    let caller = identity(&registry, project, Backend::Codex);
+    caller.bind_with_locator("native", Some("/catalog/codex-native".into()));
+    let worker = caller.worker_identity().unwrap().0;
+    let binding = registry.worker_binding(project, &worker).unwrap();
+    assert_eq!(
+        binding.lock().unwrap().as_ref().unwrap().key,
+        AppSessionId::new(41).map(SessionKey::App)
+    );
+    record.store(84, std::sync::atomic::Ordering::SeqCst);
+    // The stop path uses this refresh without resolving or sending through caller.
+    registry.refresh_session_bindings(project).unwrap();
+    assert_eq!(
+        binding.lock().unwrap().as_ref().unwrap().key,
+        AppSessionId::new(84).map(SessionKey::App)
+    );
+    registry.set_execution_sinks(Some(Arc::new(|_| Err("storage unavailable".into()))), None);
+    assert_eq!(
+        registry.refresh_session_bindings(project),
+        Err("storage unavailable".into())
+    );
 }

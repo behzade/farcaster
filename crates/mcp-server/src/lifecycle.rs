@@ -1,7 +1,6 @@
 use std::{
     future::IntoFuture as _,
     net::TcpListener,
-    path::PathBuf,
     sync::{Arc, Mutex},
     thread::JoinHandle,
 };
@@ -163,7 +162,7 @@ pub fn set_worker_app_proxy(proxy: Option<String>) -> Result<(), String> {
 
 pub fn stop_session_family_workers(
     project: &std::path::Path,
-    sessions: &[(crate::agents::Backend, PathBuf)],
+    sessions: &[farcaster_sessions::SessionKey],
 ) -> Result<usize, String> {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(workers) = TEST_WORKER_POOL
@@ -188,7 +187,7 @@ pub fn stop_session_family_workers(
 
 pub fn finish_session_family_worker_stop(
     project: &std::path::Path,
-    sessions: &[(crate::agents::Backend, PathBuf)],
+    sessions: &[farcaster_sessions::SessionKey],
 ) -> Result<(), String> {
     #[cfg(any(test, feature = "test-support"))]
     if let Some(workers) = TEST_WORKER_POOL

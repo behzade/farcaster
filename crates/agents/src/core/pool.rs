@@ -1,4 +1,5 @@
 use crate::Backend;
+use farcaster_sessions::SessionKey;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
@@ -23,6 +24,10 @@ use crate::contract::{StartWorker, WorkerContext, WorkerSnapshot, WorkerStatus};
 #[path = "pool_setup.rs"]
 mod setup;
 
+#[path = "pool_family.rs"]
+mod family;
+use family::{FamilyFence, family_is_stopping};
+
 const MAX_TERMINAL_HISTORY: usize = 64;
 
 #[derive(Clone)]
@@ -45,7 +50,7 @@ struct PoolInner {
 struct PoolState {
     sequence: u64,
     records: BTreeMap<String, WorkerRecord>,
-    stopping_families: BTreeSet<(std::path::PathBuf, Backend, String)>,
+    stopping_families: BTreeMap<(std::path::PathBuf, BTreeSet<SessionKey>), FamilyFence>,
 }
 
 struct WorkerRecord {
@@ -56,7 +61,7 @@ struct WorkerRecord {
     launch: WorkerLaunch,
     assignment: Option<super::WorkerAssignment>,
     restored_access_mode: Option<crate::HarnessAccessMode>,
-    parent_backend: Option<Backend>,
+    session_binding: super::caller::SessionBinding,
     parent_binding: super::caller::SessionBinding,
     cleanup_confirmed: Arc<AtomicBool>,
     setup_done: Arc<(Mutex<bool>, Condvar)>,
@@ -234,6 +239,16 @@ impl WorkerPool {
                 error: None,
                 pending_input: None,
             };
+            let session_binding = Arc::new(Mutex::new(Some(super::caller::CallerSession {
+                native: farcaster_sessions::NativeSessionIdentity {
+                    project: project.clone(),
+                    harness: family.child_backend,
+                    profile_id: routing.assignment.harness_profile_id.clone(),
+                    id: family.child_session.clone(),
+                },
+                key: family.child_key.clone(),
+            })));
+            super::CallerRegistry::shared().track_binding(&session_binding);
             let parent_binding = Arc::new(Mutex::new(Some(parent_identity)));
             super::CallerRegistry::shared().track_binding(&parent_binding);
             state.records.insert(
@@ -264,7 +279,7 @@ impl WorkerPool {
                     },
                     assignment: Some(routing.assignment),
                     restored_access_mode: Some(routing.access_mode),
-                    parent_backend: Some(family.parent_backend),
+                    session_binding,
                     parent_binding,
                     cleanup_confirmed: Arc::new(AtomicBool::new(true)),
                     setup_done: Arc::new((Mutex::new(true), Condvar::new())),
@@ -288,16 +303,19 @@ impl WorkerPool {
 
     #[cfg(test)]
     pub fn fence_family(&self, parent: &super::CallerContext) -> Result<(), String> {
-        self.inner
+        let identity = super::caller::CallerSession::from_context(parent);
+        let key = identity.key.ok_or("parent has no canonical session key")?;
+        let keys = BTreeSet::from([key]);
+        let mut state = self
+            .inner
             .state
             .lock()
-            .map_err(|_| "worker pool state is unavailable".to_owned())?
+            .map_err(|_| "worker pool state unavailable")?;
+        let mut fence = FamilyFence::new(parent.project.clone(), keys.clone());
+        fence.expand(&state);
+        state
             .stopping_families
-            .insert((
-                parent.project.clone(),
-                parent.backend,
-                parent.session.clone(),
-            ));
+            .insert((parent.project.clone(), keys), fence);
         Ok(())
     }
 
@@ -347,11 +365,14 @@ impl WorkerPool {
             .state
             .lock()
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
-        if state.stopping_families.contains(&(
-            parent.project.clone(),
-            parent.backend,
-            parent.session.clone(),
-        )) {
+        if family_is_stopping(
+            &state,
+            &parent.project,
+            Some(&parent.worker_id),
+            &Arc::new(Mutex::new(Some(
+                super::caller::CallerSession::from_context(parent),
+            ))),
+        ) {
             return Err("worker session family is stopping".into());
         }
         let Some(record) = find_pending_child(&mut state, parent, name) else {
@@ -459,7 +480,6 @@ impl WorkerPool {
                 request.parent_session.clone(),
             )
         });
-        let parent_backend = parent.as_ref().and_then(|parent| parent.backend);
         let parent_binding = parent
             .as_ref()
             .map(|parent| parent.binding.clone())
@@ -478,13 +498,12 @@ impl WorkerPool {
             .state
             .lock()
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
-        if parent_backend.as_ref().is_some_and(|backend| {
-            state.stopping_families.contains(&(
-                project.clone(),
-                *backend,
-                request.parent_session.clone(),
-            ))
-        }) {
+        if family_is_stopping(
+            &state,
+            &project,
+            request.parent_worker_id.as_deref(),
+            &parent_binding,
+        ) {
             return Err("worker session family is stopping".into());
         }
         if deduplicate_child
@@ -567,7 +586,7 @@ impl WorkerPool {
                 launch,
                 assignment: assignment.clone(),
                 restored_access_mode: None,
-                parent_backend,
+                session_binding: Default::default(),
                 parent_binding,
                 cleanup_confirmed: Arc::new(AtomicBool::new(false)),
                 setup_done: Arc::new((Mutex::new(false), Condvar::new())),
@@ -596,45 +615,47 @@ impl WorkerPool {
     pub fn stop_session_family(
         &self,
         project: &Path,
-        sessions: &[(crate::Backend, std::path::PathBuf)],
+        sessions: &[SessionKey],
+    ) -> Result<usize, String> {
+        self.stop_session_family_with_refresh(project, sessions, |project| {
+            super::CallerRegistry::shared().refresh_session_bindings(project)
+        })
+    }
+
+    pub(super) fn stop_session_family_with_refresh(
+        &self,
+        project: &Path,
+        sessions: &[SessionKey],
+        refresh: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<usize, String> {
         let project = canonical_directory(project)?;
-        let mut sessions = sessions
-            .iter()
-            .map(|(backend, path)| (*backend, path.to_string_lossy().into_owned()))
-            .collect::<BTreeSet<_>>();
+        let keys = sessions.iter().cloned().collect::<BTreeSet<_>>();
+        let fence_key = (project.clone(), keys.clone());
+        // Keep matching handles before the storage refresh can replace their keys.
+        // Storage is called only after releasing the pool lock.
+        let mut fence = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .map_err(|_| "worker pool state is unavailable")?;
+            let mut fence = state
+                .stopping_families
+                .get(&fence_key)
+                .cloned()
+                .unwrap_or_else(|| FamilyFence::new(project.clone(), keys));
+            fence.expand(&state);
+            fence
+        };
+        refresh(&project)?;
+        fence.refresh_roots();
         let mut state = self
             .inner
             .state
             .lock()
-            .map_err(|_| "worker pool state is unavailable".to_owned())?;
-        expand_family_sessions(&state, &project, &mut sessions);
-        let family_keys = sessions
-            .iter()
-            .map(|(backend, locator)| (project.clone(), *backend, locator.clone()))
-            .collect::<BTreeSet<_>>();
-        state.stopping_families.extend(family_keys.iter().cloned());
-        let ids = state
-            .records
-            .iter()
-            .filter_map(|(id, record)| {
-                let current = snapshot(record).ok()?;
-                (current.project == project
-                    && (record.parent_backend.as_ref().map_or_else(
-                        || {
-                            sessions
-                                .iter()
-                                .any(|(_, locator)| locator == &record.launch.parent_session)
-                        },
-                        |backend| {
-                            sessions.contains(&(*backend, record.launch.parent_session.clone()))
-                        },
-                    ) || current.session_locator.as_ref().is_some_and(|locator| {
-                        sessions.contains(&(current.backend, locator.clone()))
-                    })))
-                .then(|| id.clone())
-            })
-            .collect::<Vec<_>>();
+            .map_err(|_| "worker pool state is unavailable")?;
+        let ids = fence.expand(&state);
+        state.stopping_families.insert(fence_key, fence);
         let setup_waiters = ids
             .iter()
             .filter_map(|id| {
@@ -726,7 +747,7 @@ impl WorkerPool {
     pub fn finish_session_family_stop(
         &self,
         project: &Path,
-        sessions: &[(crate::Backend, std::path::PathBuf)],
+        sessions: &[SessionKey],
     ) -> Result<(), String> {
         let project = canonical_directory(project)?;
         let mut state = self
@@ -734,15 +755,11 @@ impl WorkerPool {
             .state
             .lock()
             .map_err(|_| "worker pool state is unavailable".to_owned())?;
-        let mut sessions = sessions
-            .iter()
-            .map(|(backend, locator)| (*backend, locator.to_string_lossy().into_owned()))
-            .collect::<BTreeSet<_>>();
-        expand_family_sessions(&state, &project, &mut sessions);
-        for (backend, locator) in sessions {
+        let keys = sessions.iter().cloned().collect::<BTreeSet<_>>();
+        if let Some(completed) = state.stopping_families.remove(&(project, keys)) {
             state
                 .stopping_families
-                .remove(&(project.clone(), backend, locator));
+                .retain(|_, fence| !fence.covered_by(&completed));
         }
         Ok(())
     }
@@ -764,11 +781,14 @@ impl WorkerPool {
                 .state
                 .lock()
                 .map_err(|_| "worker pool state is unavailable".to_owned())?;
-            if state.stopping_families.contains(&(
-                parent.project.clone(),
-                parent.backend,
-                parent.session.clone(),
-            )) {
+            if family_is_stopping(
+                &state,
+                &parent.project,
+                Some(&parent.worker_id),
+                &Arc::new(Mutex::new(Some(
+                    super::caller::CallerSession::from_context(parent),
+                ))),
+            ) {
                 return Err("worker session family is stopping".into());
             }
             let Some(id) = state.records.iter().find_map(|(id, record)| {
@@ -889,37 +909,6 @@ fn find_pending_child<'a>(
             && record.launch.worker_name.eq_ignore_ascii_case(name)
             && snapshot(record).is_ok_and(|snapshot| snapshot.status == WorkerStatus::Pending)
     })
-}
-
-fn expand_family_sessions(
-    state: &PoolState,
-    project: &Path,
-    sessions: &mut BTreeSet<(Backend, String)>,
-) {
-    loop {
-        let descendants = state
-            .records
-            .values()
-            .filter_map(|record| {
-                let current = snapshot(record).ok()?;
-                (current.project == project
-                    && record.parent_backend.as_ref().is_some_and(|backend| {
-                        sessions.contains(&(*backend, record.launch.parent_session.clone()))
-                    }))
-                .then(|| {
-                    current
-                        .session_locator
-                        .map(|locator| (current.backend, locator))
-                })
-                .flatten()
-            })
-            .collect::<Vec<_>>();
-        let before = sessions.len();
-        sessions.extend(descendants);
-        if sessions.len() == before {
-            break;
-        }
-    }
 }
 
 fn notify(updates: &async_channel::Sender<()>) {

@@ -4,7 +4,7 @@ use std::{
 };
 
 use farcaster_agent_protocol::extensions::SlashCommand;
-use farcaster_agents::{Backend, WorkerSnapshot};
+use farcaster_agents::WorkerSnapshot;
 use farcaster_storage::{SharedStateStore, StateStore};
 
 use crate::{RuntimeHost, RuntimeMetric, RuntimeTimer};
@@ -42,7 +42,7 @@ impl RuntimeHost for TestHost {
     fn stop_session_family_workers(
         &self,
         project: &Path,
-        sessions: &[(Backend, PathBuf)],
+        sessions: &[farcaster_sessions::SessionKey],
     ) -> Result<usize, String> {
         farcaster_mcp_server::stop_session_family_workers(project, sessions)
     }
@@ -50,7 +50,7 @@ impl RuntimeHost for TestHost {
     fn finish_session_family_worker_stop(
         &self,
         project: &Path,
-        sessions: &[(Backend, PathBuf)],
+        sessions: &[farcaster_sessions::SessionKey],
     ) -> Result<(), String> {
         farcaster_mcp_server::finish_session_family_worker_stop(project, sessions)
     }

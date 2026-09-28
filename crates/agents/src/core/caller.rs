@@ -173,6 +173,12 @@ pub struct CallerIdentity {
     pending_message: RefCell<Option<PeerMessage>>,
 }
 
+impl CallerContext {
+    pub fn session_key(&self) -> Option<SessionKey> {
+        CallerSession::from_context(self).key
+    }
+}
+
 impl CallerRegistry {
     pub fn set_execution_sinks(
         &self,
@@ -204,42 +210,82 @@ impl CallerRegistry {
     }
 
     fn bind_record(&self, token: &str) {
-        let persistent = self
-            .callers
-            .lock()
-            .ok()
-            .and_then(|callers| callers.get(token).map(|caller| caller.persist_session))
-            .unwrap_or(false);
-        if !persistent {
-            return;
+        if let Err(error) = self.try_bind_record(token) {
+            zlog::error!("Register caller session: {error}");
         }
-        let sink = self.session_sink.lock().ok().and_then(|sink| sink.clone());
-        let Some(sink) = sink else { return };
-        let Some(context) = self
-            .callers
-            .lock()
-            .ok()
-            .and_then(|callers| callers.get(token).and_then(RegisteredCaller::context))
-        else {
-            return;
+    }
+
+    fn try_bind_record(&self, token: &str) -> Result<(), String> {
+        let context = {
+            let callers = self
+                .callers
+                .lock()
+                .map_err(|_| "caller registry unavailable")?;
+            callers
+                .get(token)
+                .filter(|caller| caller.persist_session)
+                .and_then(RegisteredCaller::context)
         };
-        let result = sink(&context);
-        match result {
-            Ok(record) => {
-                if let Ok(mut callers) = self.callers.lock()
-                    && let Some(caller) = callers.get_mut(token)
-                    && caller.session.as_deref() == Some(context.session.as_str())
-                    && caller.session_locator == context.session_locator
-                    && caller.harness_profile_id == context.harness_profile_id
-                {
-                    caller.session_record = Some(record);
-                }
-                self.refresh_family(token);
-            }
-            Err(error) => {
-                zlog::error!("Register caller session: {error}");
-            }
+        let sink = self
+            .session_sink
+            .lock()
+            .map_err(|_| "caller session sink unavailable")?
+            .clone();
+        let (Some(context), Some(sink)) = (context, sink) else {
+            return Ok(());
+        };
+        let record = sink(&context)?;
+        if let Some(caller) = self
+            .callers
+            .lock()
+            .map_err(|_| "caller registry unavailable")?
+            .get_mut(token)
+            && caller.session.as_deref() == Some(context.session.as_str())
+            && caller.session_locator == context.session_locator
+            && caller.harness_profile_id == context.harness_profile_id
+        {
+            caller.session_record = Some(record);
         }
+        self.refresh_family(token);
+        Ok(())
+    }
+
+    // Call before taking the pool lock: the sink may acquire storage locks.
+    pub(super) fn refresh_session_bindings(&self, project: &Path) -> Result<(), String> {
+        let tokens = self
+            .callers
+            .lock()
+            .map_err(|_| "caller registry unavailable")?
+            .iter()
+            .filter(|(_, caller)| caller.project == project)
+            .map(|(token, _)| token.clone())
+            .collect::<Vec<_>>();
+        for token in tokens {
+            self.try_bind_record(&token)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn worker_bindings(&self, project: &Path) -> Vec<(String, SessionBinding)> {
+        self.callers
+            .lock()
+            .map(|callers| {
+                callers
+                    .values()
+                    .filter(|caller| caller.project == project)
+                    .map(|caller| (caller.worker_id.clone(), caller.binding.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub(super) fn worker_binding(&self, project: &Path, id: &str) -> Option<SessionBinding> {
+        self.callers
+            .lock()
+            .ok()?
+            .values()
+            .find(|caller| caller.project == project && caller.worker_id == id)
+            .map(|caller| caller.binding.clone())
     }
     pub fn shared() -> &'static Self {
         static REGISTRY: OnceLock<CallerRegistry> = OnceLock::new();
@@ -1011,28 +1057,18 @@ pub(super) struct WorkerParent {
     pub(super) id: String,
     pub(super) project: PathBuf,
     pub(super) child_name: String,
-    pub(super) backend: Option<Backend>,
     pub(super) binding: SessionBinding,
 }
 
 impl WorkerParent {
     pub(super) fn new(id: String, project: PathBuf, child_name: String, _session: String) -> Self {
-        let (backend, binding) = CallerRegistry::shared()
-            .callers
-            .lock()
-            .ok()
-            .and_then(|callers| {
-                callers
-                    .values()
-                    .find(|caller| caller.worker_id == id && caller.project == project)
-                    .map(|caller| (Some(caller.backend), caller.binding.clone()))
-            })
+        let binding = CallerRegistry::shared()
+            .worker_binding(&project, &id)
             .unwrap_or_default();
         Self {
             id,
             project,
             child_name,
-            backend,
             binding,
         }
     }

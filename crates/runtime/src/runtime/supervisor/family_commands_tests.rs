@@ -121,7 +121,19 @@ fn start_worker(
     project: &Path,
     name: &str,
     parent: &Path,
-) -> Result<(), String> {
+) -> Result<crate::agents::CallerIdentity, String> {
+    let identity = crate::agents::CallerRegistry::shared().issue(
+        project,
+        crate::agents::CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    identity.bind(parent.to_string_lossy().into_owned());
+    let context = crate::agents::CallerRegistry::shared().resolve(identity.token())?;
     pool.start_assigned(
         StartWorker {
             project: project.to_owned(),
@@ -129,7 +141,7 @@ fn start_worker(
             prompt: "stay alive".into(),
             backend: Backend::Pi,
             parent_session: parent.to_string_lossy().into_owned(),
-            parent_worker_id: None,
+            parent_worker_id: Some(context.worker_id),
             context: WorkerContext::Fresh,
             provider: None,
             model: None,
@@ -138,7 +150,7 @@ fn start_worker(
         },
         None,
     )?;
-    Ok(())
+    Ok(identity)
 }
 
 fn supervisor_for_family(
@@ -426,7 +438,7 @@ fn failed_stop_keeps_an_archived_session_and_its_pending_message() -> Result<(),
     let factory = Arc::new(LifecycleFactory::default());
     factory.fail_close.store(true, Ordering::SeqCst);
     let pool = lifecycle_pool(temp.path(), factory)?;
-    start_worker(&pool, temp.path(), "family-child", &root.path)?;
+    let _parent = start_worker(&pool, temp.path(), "family-child", &root.path)?;
     let (mut supervisor, events) = supervisor_for_family(state, vec![root.clone()]);
     let host_state = supervisor.host.state_store()?;
     let prompt = host_state.with(|store| {
@@ -481,7 +493,7 @@ fn direct_delete_preserves_files_and_queue_when_a_worker_cannot_stop() -> Result
     let factory = Arc::new(LifecycleFactory::default());
     factory.fail_close.store(true, Ordering::SeqCst);
     let pool = lifecycle_pool(temp.path(), factory)?;
-    start_worker(&pool, temp.path(), "family-child", &root.path)?;
+    let _parent = start_worker(&pool, temp.path(), "family-child", &root.path)?;
     let (mut supervisor, events) = supervisor_for_family(state, vec![root.clone()]);
     let host_state = supervisor.host.state_store()?;
     let prompt = host_state.with(|store| {
@@ -556,8 +568,8 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
     let factory = Arc::new(LifecycleFactory::default());
     *factory.close_gate.0.lock().map_err(|_| "close gate")? = true;
     let pool = lifecycle_pool(temp.path(), factory.clone())?;
-    start_worker(&pool, temp.path(), "family-child", &root.path)?;
-    start_worker(&pool, temp.path(), "other-child", &unrelated.path)?;
+    let _parent = start_worker(&pool, temp.path(), "family-child", &root.path)?;
+    let _other_parent = start_worker(&pool, temp.path(), "other-child", &unrelated.path)?;
     let (supervisor, events) =
         supervisor_for_family(state, vec![root.clone(), child, unrelated.clone()]);
 
@@ -606,7 +618,7 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
                 .is_some_and(|session| session.archived)
         );
 
-        pool.stop_session_family(temp.path(), &[(Backend::Pi, unrelated.path.clone())])?;
+        pool.stop_session_family(temp.path(), &[unrelated.key()])?;
         Ok(())
     })
 }
@@ -621,7 +633,7 @@ fn supervisor_does_not_archive_or_report_stopped_when_pool_close_fails() -> Resu
     let factory = Arc::new(LifecycleFactory::default());
     factory.fail_close.store(true, Ordering::SeqCst);
     let pool = lifecycle_pool(temp.path(), factory.clone())?;
-    start_worker(&pool, temp.path(), "family-child", &root.path)?;
+    let _parent = start_worker(&pool, temp.path(), "family-child", &root.path)?;
     let (mut supervisor, events) = supervisor_for_family(state, vec![root.clone()]);
 
     farcaster_mcp_server::with_test_worker_pool(pool, || {
@@ -706,6 +718,119 @@ fn supervisor_does_not_archive_or_report_stopped_when_actor_close_fails() -> Res
             event,
             RuntimeEvent::SessionStatus { status, .. } if status == "Stopped"
         )));
+        Ok(())
+    })
+}
+
+#[test]
+fn stale_catalog_identity_cannot_authorize_archive_after_bindings_already_merged()
+-> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut state = StateStore::open_at(&database)?;
+    state.replace_sessions(&[summary(temp.path(), "root", None)])?;
+    let old = state.cached_sessions("")?.remove(0);
+    let mut draft = crate::sessions::DraftSession::with_id(
+        Some(Backend::Pi),
+        "draft".into(),
+        temp.path().into(),
+    );
+    draft.submitted = true;
+    draft.app_session_id = state.allocate_app_session_id(&draft)?;
+    draft.session_path = Some(old.path.clone());
+    state.allocate_app_session_id(&draft)?;
+    let current = state.cached_sessions("")?.remove(0);
+    assert_ne!(old.key(), current.key());
+    let factory = Arc::new(LifecycleFactory::default());
+    let pool = lifecycle_pool(temp.path(), factory.clone())?;
+    let parent = start_worker(&pool, temp.path(), "family-child", &old.path)?;
+    parent.bind_execution_for_test(crate::agents::ExecutionBinding {
+        session_record: current.app_session_id,
+        turn_id: "after-merge".into(),
+        prompt_id: None,
+    });
+    let (mut supervisor, _) = supervisor_for_family(state, vec![old.clone()]);
+    farcaster_mcp_server::with_test_worker_pool(pool.clone(), || {
+        let error = supervisor
+            .stop_session_family_work(&old.path, true)
+            .unwrap_err();
+        assert!(error.contains("identity changed"), "{error}");
+        assert!(!archived(&database, &old.path)?);
+        assert_eq!(factory.aborts.load(Ordering::SeqCst), 0);
+        assert_eq!(pool.snapshots()?[0].status, WorkerStatus::Running);
+        supervisor.catalog_sessions = vec![current];
+        supervisor.stop_session_family_work(&old.path, true)?;
+        assert_eq!(pool.snapshots()?[0].status, WorkerStatus::Stopped);
+        assert!(archived(&database, &old.path)?);
+        Ok(())
+    })
+}
+
+#[test]
+fn merge_during_stop_releases_original_fence_before_retry() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut state = StateStore::open_at(&database)?;
+    state.replace_sessions(&[summary(temp.path(), "root", None)])?;
+    let old = state.cached_sessions("")?.remove(0);
+    let factory = Arc::new(LifecycleFactory::default());
+    *factory.close_gate.0.lock().map_err(|_| "close gate")? = true;
+    let pool = lifecycle_pool(temp.path(), factory.clone())?;
+    let parent = start_worker(&pool, temp.path(), "family-child", &old.path)?;
+    parent.bind_execution_for_test(crate::agents::ExecutionBinding {
+        session_record: old.app_session_id,
+        turn_id: "before-merge".into(),
+        prompt_id: None,
+    });
+    let (mut supervisor, _) = supervisor_for_family(state, vec![old.clone()]);
+    let store = supervisor.catalog_state.as_ref().unwrap().clone();
+    farcaster_mcp_server::with_test_worker_pool(pool.clone(), || {
+        let path = old.path.clone();
+        let stop = thread::spawn(move || {
+            let result = supervisor.stop_session_family_work(&path, true);
+            (supervisor, result)
+        });
+        wait_for(&factory.closes, 1);
+        let current = store.with(|state| {
+            let mut draft = crate::sessions::DraftSession::with_id(
+                Some(Backend::Pi),
+                "draft".into(),
+                temp.path().into(),
+            );
+            draft.submitted = true;
+            draft.app_session_id = state.allocate_app_session_id(&draft)?;
+            draft.session_path = Some(old.path.clone());
+            state.allocate_app_session_id(&draft)?;
+            Ok(state.cached_sessions("")?.remove(0))
+        })?;
+        assert_ne!(old.key(), current.key());
+        parent.bind_execution_for_test(crate::agents::ExecutionBinding {
+            session_record: current.app_session_id,
+            turn_id: "after-merge".into(),
+            prompt_id: None,
+        });
+        *factory.close_gate.0.lock().map_err(|_| "close gate")? = false;
+        factory.close_gate.1.notify_all();
+        let (mut supervisor, result) = stop.join().map_err(|_| "stop panicked")?;
+        assert!(result.unwrap_err().contains("identity changed"));
+        assert!(!archived(&database, &old.path)?);
+        supervisor.catalog_sessions = vec![current];
+        supervisor.stop_session_family_work(&old.path, false)?;
+        let context = crate::agents::CallerRegistry::shared().resolve(parent.token())?;
+        let child = pool.start(StartWorker {
+            project: temp.path().into(),
+            name: "after-retry".into(),
+            prompt: "stay alive".into(),
+            backend: Backend::Pi,
+            parent_session: context.session,
+            parent_worker_id: Some(context.worker_id),
+            context: WorkerContext::Fresh,
+            provider: None,
+            model: None,
+            effort: None,
+            access_mode: HarnessAccessMode::Auto,
+        })?;
+        assert_eq!(child.status, WorkerStatus::Running);
         Ok(())
     })
 }

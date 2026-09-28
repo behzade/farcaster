@@ -22,17 +22,31 @@ impl Supervisor {
             ));
         }
         let project = family[0].project.clone();
-        let worker_paths = family
+        let worker_keys = family
             .iter()
-            .map(|session| (session.harness, session.path.clone()))
+            .map(|session| session.key())
             .collect::<Vec<_>>();
+        self.require_current_family_keys(&project, &worker_keys)?;
         if let Err(message) = self
             .host
-            .stop_session_family_workers(&project, &worker_paths)
+            .stop_session_family_workers(&project, &worker_keys)
         {
             return Err(format!(
                 "Could not stop the whole session family: {message}"
             ));
+        }
+        // A storage merge can also occur while workers refresh their bindings.
+        // Release this request's fence before a retry uses the new keys.
+        if let Err(message) = self.require_current_family_keys(&project, &worker_keys) {
+            if let Err(cleanup) = self
+                .host
+                .finish_session_family_worker_stop(&project, &worker_keys)
+            {
+                return Err(format!(
+                    "{message}; could not release the worker stop fence: {cleanup}"
+                ));
+            }
+            return Err(message);
         }
         let family_actor_keys = self
             .actor_paths
@@ -83,7 +97,7 @@ impl Supervisor {
         if !actor_stop_failures.is_empty() {
             let _ = self
                 .host
-                .finish_session_family_worker_stop(&project, &worker_paths);
+                .finish_session_family_worker_stop(&project, &worker_keys);
             return Err(format!(
                 "Could not confirm the whole session family stopped: {}",
                 actor_stop_failures.join("; ")
@@ -108,7 +122,7 @@ impl Supervisor {
         }
         if let Err(message) = self
             .host
-            .finish_session_family_worker_stop(&project, &worker_paths)
+            .finish_session_family_worker_stop(&project, &worker_keys)
         {
             return Err(format!(
                 "Session family stopped, but its worker stop fence failed: {message}"
@@ -137,6 +151,27 @@ impl Supervisor {
             catalog.send(RuntimeCommand::RefreshSessions);
         }
         Ok(())
+    }
+
+    fn require_current_family_keys(
+        &self,
+        project: &Path,
+        keys: &[crate::sessions::SessionKey],
+    ) -> Result<(), String> {
+        let app_keys = keys
+            .iter()
+            .filter(|key| matches!(key, crate::sessions::SessionKey::App(_)))
+            .collect::<HashSet<_>>();
+        if app_keys.is_empty() {
+            return Ok(());
+        }
+        self.catalog_state.as_ref().ok_or("Session state is unavailable")?.with(|store| {
+            let current = store.cached_sessions("")?.into_iter()
+                .filter(|session| session.project == project)
+                .map(|session| session.key()).collect::<HashSet<_>>();
+            if app_keys.iter().all(|key| current.contains(*key)) { Ok(()) }
+            else { Err("The session identity changed; refresh the session list before stopping its family".into()) }
+        })
     }
 
     fn discard_family_queue(&mut self, path: &Path) -> Result<(), String> {

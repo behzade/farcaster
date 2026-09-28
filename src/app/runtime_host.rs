@@ -1,14 +1,8 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use farcaster_runtime::{RuntimeHost, RuntimeMetric, RuntimeTimer};
 
-use crate::{
-    agents::{Backend, WorkerSnapshot},
-    protocol::SlashCommand,
-};
+use crate::{agents::WorkerSnapshot, protocol::SlashCommand};
 
 pub(crate) struct AppRuntimeHost;
 
@@ -24,7 +18,7 @@ impl RuntimeHost for AppRuntimeHost {
     fn stop_session_family_workers(
         &self,
         project: &Path,
-        sessions: &[(Backend, PathBuf)],
+        sessions: &[farcaster_sessions::SessionKey],
     ) -> Result<usize, String> {
         super::mcp_server::stop_session_family_workers(project, sessions)
     }
@@ -32,7 +26,7 @@ impl RuntimeHost for AppRuntimeHost {
     fn finish_session_family_worker_stop(
         &self,
         project: &Path,
-        sessions: &[(Backend, PathBuf)],
+        sessions: &[farcaster_sessions::SessionKey],
     ) -> Result<(), String> {
         super::mcp_server::finish_session_family_worker_stop(project, sessions)
     }

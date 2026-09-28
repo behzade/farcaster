@@ -197,13 +197,17 @@ fn live_e2e_child_family_abort_stops_only_its_family_and_fences_restart() -> Res
     fixture.require_gate_is_running(&first, &first_gate)?;
     fixture.require_gate_is_running(&second, &second_gate)?;
 
-    let stopped = fixture.pool.stop_session_family(
-        &fixture.project,
-        &[(
-            fixture.harness.to_owned(),
-            PathBuf::from(&fixture.parent_session),
-        )],
-    )?;
+    let parent_key = CallerRegistry::shared()
+        .resolve(fixture.parent.token())?
+        .session_key()
+        .ok_or("parent key unavailable")?;
+    let unrelated_key = CallerRegistry::shared()
+        .resolve(unrelated.identity.token())?
+        .session_key()
+        .ok_or("parent key unavailable")?;
+    let stopped = fixture
+        .pool
+        .stop_session_family(&fixture.project, std::slice::from_ref(&parent_key))?;
     if stopped != 1 {
         return Err(format!(
             "family abort stopped {stopped} workers, expected only family-a"
@@ -242,33 +246,21 @@ fn live_e2e_child_family_abort_stops_only_its_family_and_fences_restart() -> Res
         return Err("stopped child restarted without a new family request".into());
     }
 
-    fixture.pool.finish_session_family_stop(
-        &fixture.project,
-        &[(
-            fixture.harness.to_owned(),
-            PathBuf::from(&fixture.parent_session),
-        )],
-    )?;
-    let stopped_unrelated = fixture.pool.stop_session_family(
-        &fixture.project,
-        &[(
-            fixture.harness.to_owned(),
-            PathBuf::from(&unrelated.session),
-        )],
-    )?;
+    fixture
+        .pool
+        .finish_session_family_stop(&fixture.project, std::slice::from_ref(&parent_key))?;
+    let stopped_unrelated = fixture
+        .pool
+        .stop_session_family(&fixture.project, std::slice::from_ref(&unrelated_key))?;
     if stopped_unrelated != 1 {
         return Err(format!(
             "cleanup stopped {stopped_unrelated} unrelated workers"
         ));
     }
     second_gate.release()?;
-    fixture.pool.finish_session_family_stop(
-        &fixture.project,
-        &[(
-            fixture.harness.to_owned(),
-            PathBuf::from(&unrelated.session),
-        )],
-    )
+    fixture
+        .pool
+        .finish_session_family_stop(&fixture.project, std::slice::from_ref(&unrelated_key))
 }
 
 struct LiveChildFixture {

@@ -260,6 +260,11 @@ impl super::WorkerPool {
             if let Ok(mut current) = shared.lock() {
                 current.status = WorkerStatus::Running;
             }
+            if let Some(binding) =
+                CallerRegistry::shared().worker_binding(&record.launch.project, &reserved.id)
+            {
+                record.session_binding = binding;
+            }
             let (commands, handle) = match run::spawn(
                 &reserved.id,
                 session,
@@ -279,6 +284,10 @@ impl super::WorkerPool {
             record.commands = Some(commands);
             record.thread = Some(handle);
             let initial = snapshot(record)?;
+            let binding = record.session_binding.clone();
+            for fence in state.stopping_families.values_mut() {
+                fence.refresh_worker(&reserved.id, binding.clone());
+            }
             notify(&self.inner.updates);
             return Ok(initial);
         }

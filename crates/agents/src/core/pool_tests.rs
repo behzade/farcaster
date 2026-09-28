@@ -362,7 +362,7 @@ fn restricted_parent_cannot_queue_to_a_pending_full_child() -> Result<(), String
         None,
         crate::HarnessAccessMode::Full,
     );
-    full_parent.bind("backend://parent");
+    full_parent.bind_with_locator("backend://parent", Some("/catalog/parent".into()));
     let full_context = CallerRegistry::shared().resolve(full_parent.token())?;
     let mut full = request(project.path());
     full.access_mode = crate::HarnessAccessMode::Full;
@@ -382,7 +382,7 @@ fn restricted_parent_cannot_queue_to_a_pending_full_child() -> Result<(), String
         None,
         crate::HarnessAccessMode::Sandboxed,
     );
-    restricted_parent.bind("backend://parent");
+    restricted_parent.bind_with_locator("backend://parent", Some("/catalog/parent".into()));
     let context = CallerRegistry::shared().resolve(restricted_parent.token())?;
 
     let error = pool
@@ -830,10 +830,11 @@ fn stopping_a_session_family_aborts_closes_and_joins_its_children() -> Result<()
 
     let stopped = pool.stop_session_family(
         project.path(),
-        &[(
-            Backend::Pi,
-            std::path::PathBuf::from("/sessions/parent.jsonl"),
-        )],
+        &[farcaster_sessions::SessionKey::Locator {
+            harness: Backend::Pi,
+            profile_id: None,
+            path: "/sessions/parent.jsonl".into(),
+        }],
     )?;
 
     assert_eq!(stopped, 2);
@@ -897,10 +898,11 @@ fn session_family_stop_reports_close_failure_instead_of_confirming_stop() -> Res
     let error = pool
         .stop_session_family(
             project.path(),
-            &[(
-                Backend::Pi,
-                std::path::PathBuf::from("/sessions/parent.jsonl"),
-            )],
+            &[farcaster_sessions::SessionKey::Locator {
+                harness: Backend::Pi,
+                profile_id: None,
+                path: "/sessions/parent.jsonl".into(),
+            }],
         )
         .expect_err("failed close cannot confirm a stopped family");
 
@@ -915,10 +917,11 @@ fn session_family_stop_reports_close_failure_instead_of_confirming_stop() -> Res
     let repeated = pool
         .stop_session_family(
             project.path(),
-            &[(
-                Backend::Pi,
-                std::path::PathBuf::from("/sessions/parent.jsonl"),
-            )],
+            &[farcaster_sessions::SessionKey::Locator {
+                harness: Backend::Pi,
+                profile_id: None,
+                path: "/sessions/parent.jsonl".into(),
+            }],
         )
         .expect_err("a repeated stop cannot confirm cleanup that already failed");
     assert!(repeated.contains("close failed"));
@@ -1131,10 +1134,11 @@ fn family_stop_fence_blocks_new_children_until_shutdown_finishes() -> Result<(),
     let stop = std::thread::spawn(move || {
         stopping_pool.stop_session_family(
             &stopping_project,
-            &[(
-                Backend::Pi,
-                std::path::PathBuf::from("/sessions/parent.jsonl"),
-            )],
+            &[farcaster_sessions::SessionKey::Locator {
+                harness: Backend::Pi,
+                profile_id: None,
+                path: "/sessions/parent.jsonl".into(),
+            }],
         )
     });
     let deadline = Instant::now() + Duration::from_secs(1);
@@ -1168,8 +1172,13 @@ fn family_stop_fence_blocks_new_children_until_shutdown_finishes() -> Result<(),
     let mut unrelated = request(project.path());
     unrelated.name = "unrelated".into();
     unrelated.parent_session = "/sessions/other.jsonl".into();
+    assert!(pool.start(unrelated.clone()).is_ok());
+    unrelated.name = "forged-unrelated".into();
     unrelated.parent_worker_id = Some(context.worker_id);
-    assert!(pool.start(unrelated).is_ok());
+    assert!(
+        pool.start(unrelated).is_err(),
+        "raw parent text cannot bypass exact live ownership"
+    );
     Ok(())
 }
 
@@ -1212,10 +1221,11 @@ fn family_stop_waits_for_and_cancels_an_in_flight_child_creation() -> Result<(),
     let stop = std::thread::spawn(move || {
         stopping_pool.stop_session_family(
             &stopping_project,
-            &[(
-                Backend::Pi,
-                std::path::PathBuf::from("/sessions/parent.jsonl"),
-            )],
+            &[farcaster_sessions::SessionKey::Locator {
+                harness: Backend::Pi,
+                profile_id: None,
+                path: "/sessions/parent.jsonl".into(),
+            }],
         )
     });
     std::thread::sleep(Duration::from_millis(20));
@@ -1236,10 +1246,11 @@ fn family_stop_waits_for_and_cancels_an_in_flight_child_creation() -> Result<(),
     let second_stop = std::thread::spawn(move || {
         second_stopping_pool.stop_session_family(
             &second_stopping_project,
-            &[(
-                Backend::Pi,
-                std::path::PathBuf::from("/sessions/parent.jsonl"),
-            )],
+            &[farcaster_sessions::SessionKey::Locator {
+                harness: Backend::Pi,
+                profile_id: None,
+                path: "/sessions/parent.jsonl".into(),
+            }],
         )
     });
     std::thread::sleep(Duration::from_millis(20));
@@ -1305,10 +1316,11 @@ fn stopping_a_family_expires_its_delivered_child_input() -> Result<(), String> {
 
     pool.stop_session_family(
         project.path(),
-        &[(
-            Backend::Codex,
-            std::path::PathBuf::from("/sessions/parent.jsonl"),
-        )],
+        &[farcaster_sessions::SessionKey::Locator {
+            harness: Backend::Codex,
+            profile_id: None,
+            path: "/sessions/parent.jsonl".into(),
+        }],
     )?;
 
     assert_eq!(
@@ -1610,6 +1622,239 @@ fn restored_child_keeps_route_through_parent_binding_and_merge_before_first_resu
         WorkerContext::Resume {
             session_locator: "/sessions/restored-child.jsonl".into()
         }
+    );
+    Ok(())
+}
+
+fn canonical_parent(project: &std::path::Path, profile: Option<&str>) -> crate::CallerIdentity {
+    let parent = CallerRegistry::shared().issue(
+        project,
+        CallerProfile {
+            backend: Backend::Pi,
+            provider: None,
+            model: None,
+            effort: None,
+        },
+        None,
+    );
+    parent.set_harness_profile_id(profile.map(str::to_owned));
+    parent.bind_with_locator("shared-native", Some("/catalog/synthetic-parent".into()));
+    parent
+}
+
+#[test]
+fn canonical_family_stops_descendants_before_their_locators_exist() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory.clone(), project.path(), 3)?;
+    let parent = canonical_parent(project.path(), None);
+    let other = canonical_parent(project.path(), Some("other-profile"));
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let other_context = CallerRegistry::shared().resolve(other.token())?;
+    let mut child = request(project.path());
+    child.parent_session = context.session.clone();
+    child.parent_worker_id = Some(context.worker_id.clone());
+    let child = pool.start(child)?;
+    let mut grandchild = request(project.path());
+    grandchild.name = "grandchild".into();
+    grandchild.parent_session = "no-native-id-yet".into();
+    grandchild.parent_worker_id = Some(child.id.clone());
+    let grandchild = pool.start(grandchild)?;
+    let mut unrelated = request(project.path());
+    unrelated.name = "profile-copy".into();
+    unrelated.parent_session = other_context.session.clone();
+    unrelated.parent_worker_id = Some(other_context.worker_id);
+    let unrelated = pool.start(unrelated)?;
+    assert!(
+        pool.snapshots()?
+            .iter()
+            .all(|snapshot| snapshot.session_locator.is_none())
+    );
+    assert_eq!(
+        pool.stop_session_family(project.path(), &[context.session_key().unwrap()])?,
+        2
+    );
+    let snapshots = pool.snapshots()?;
+    for id in [child.id, grandchild.id] {
+        assert_eq!(
+            snapshots
+                .iter()
+                .find(|snapshot| snapshot.id == id)
+                .unwrap()
+                .status,
+            WorkerStatus::Stopped
+        );
+    }
+    assert_eq!(
+        snapshots
+            .iter()
+            .find(|snapshot| snapshot.id == unrelated.id)
+            .unwrap()
+            .status,
+        WorkerStatus::Running
+    );
+    assert_eq!(factory.aborts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn canonical_fence_precedes_children_and_follows_binding_and_merge() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory, project.path(), 2)?;
+    let parent = canonical_parent(project.path(), None);
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let key = context.session_key().unwrap();
+    assert_eq!(
+        pool.stop_session_family(project.path(), std::slice::from_ref(&key))?,
+        0
+    );
+    for app_id in [41, 84] {
+        parent.bind_execution_for_test(crate::ExecutionBinding {
+            session_record: app_id,
+            turn_id: "turn".into(),
+            prompt_id: None,
+        });
+        let mut child = request(project.path());
+        child.parent_session = "forged-other-native-id".into();
+        child.parent_worker_id = Some(context.worker_id.clone());
+        assert!(
+            pool.start(child)
+                .unwrap_err()
+                .contains("family is stopping")
+        );
+    }
+    // A restarted caller has a new worker ID but the retained canonical binding.
+    drop(parent);
+    let replacement = canonical_parent(project.path(), None);
+    replacement.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 84,
+        turn_id: "next-turn".into(),
+        prompt_id: None,
+    });
+    let replacement_context = CallerRegistry::shared().resolve(replacement.token())?;
+    let mut child = request(project.path());
+    child.parent_worker_id = Some(replacement_context.worker_id);
+    assert!(
+        pool.start(child.clone())
+            .unwrap_err()
+            .contains("family is stopping")
+    );
+    pool.finish_session_family_stop(project.path(), &[key])?;
+    assert!(pool.start(child).is_ok());
+    Ok(())
+}
+
+#[test]
+fn locator_fences_preserve_project_scope() -> Result<(), String> {
+    let first = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let second = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory, first.path(), 1)?;
+    pool.allow_project(second.path())?;
+    let parent = canonical_parent(first.path(), None);
+    let other = canonical_parent(second.path(), None);
+    let first_context = CallerRegistry::shared().resolve(parent.token())?;
+    let second_context = CallerRegistry::shared().resolve(other.token())?;
+    assert_eq!(first_context.session_key(), second_context.session_key());
+    pool.stop_session_family(first.path(), &[first_context.session_key().unwrap()])?;
+    let mut child = request(second.path());
+    child.parent_worker_id = Some(second_context.worker_id);
+    assert!(pool.start(child).is_ok());
+    Ok(())
+}
+
+#[test]
+fn family_stop_keeps_selection_when_authoritative_refresh_merges_its_key() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory, project.path(), 2)?;
+    let parent = canonical_parent(project.path(), None);
+    parent.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 41,
+        turn_id: "turn".into(),
+        prompt_id: None,
+    });
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let mut child = request(project.path());
+    child.parent_worker_id = Some(context.worker_id.clone());
+    pool.start(child.clone())?;
+    let key = context.session_key().unwrap();
+    let stopped =
+        pool.stop_session_family_with_refresh(project.path(), std::slice::from_ref(&key), |_| {
+            // This is the registry refresh boundary, before the pool lock is retaken.
+            parent.bind_execution_for_test(crate::ExecutionBinding {
+                session_record: 84,
+                turn_id: "turn".into(),
+                prompt_id: None,
+            });
+            Ok(())
+        })?;
+    assert_eq!(stopped, 1);
+    assert_eq!(pool.snapshots()?[0].status, WorkerStatus::Stopped);
+    child.name = "late-child".into();
+    assert!(
+        pool.start(child.clone())
+            .unwrap_err()
+            .contains("family is stopping")
+    );
+    assert_eq!(
+        pool.stop_session_family(project.path(), std::slice::from_ref(&key))?,
+        1
+    );
+    assert!(
+        pool.start(child.clone())
+            .unwrap_err()
+            .contains("family is stopping")
+    );
+    pool.finish_session_family_stop(project.path(), &[key])?;
+    assert!(pool.start(child).is_ok());
+    Ok(())
+}
+
+#[test]
+fn finishing_refreshed_stop_releases_prior_equivalent_fence_only() -> Result<(), String> {
+    let project = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let factory = Arc::new(FakeFactory::default());
+    let (pool, _) = pool(factory, project.path(), 2)?;
+    let parent = canonical_parent(project.path(), None);
+    parent.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 41,
+        turn_id: "old".into(),
+        prompt_id: None,
+    });
+    let context = CallerRegistry::shared().resolve(parent.token())?;
+    let old_key = context.session_key().unwrap();
+    let mut child = request(project.path());
+    child.parent_worker_id = Some(context.worker_id.clone());
+    pool.start(child.clone())?;
+    pool.stop_session_family(project.path(), &[old_key])?;
+    // The previous caller left its fence installed. A new request uses a merged key.
+    parent.bind_execution_for_test(crate::ExecutionBinding {
+        session_record: 84,
+        turn_id: "new".into(),
+        prompt_id: None,
+    });
+    let unrelated = canonical_parent(project.path(), Some("unrelated"));
+    let other = CallerRegistry::shared().resolve(unrelated.token())?;
+    pool.stop_session_family(project.path(), &[other.session_key().unwrap()])?;
+    let fresh_key = CallerRegistry::shared()
+        .resolve(parent.token())?
+        .session_key()
+        .unwrap();
+    assert_eq!(
+        pool.stop_session_family(project.path(), std::slice::from_ref(&fresh_key))?,
+        1
+    );
+    pool.finish_session_family_stop(project.path(), &[fresh_key])?;
+    child.name = "after-merge".into();
+    assert!(pool.start(child.clone()).is_ok());
+    child.name = "unrelated-fenced".into();
+    child.parent_worker_id = Some(other.worker_id);
+    assert!(
+        pool.start(child)
+            .unwrap_err()
+            .contains("family is stopping")
     );
     Ok(())
 }
