@@ -10,6 +10,103 @@ pub fn remap_session_keys(
     connection: &Connection,
     resolve: impl Fn(&str, &str, Option<&str>) -> Option<String>,
 ) -> Result<(), PersistenceError> {
+    update_graphs(connection, |project, graph| {
+        let before = graph.clone();
+        for link in &mut graph.sessions {
+            if let Some(key) = resolve(project, &link.session_id, Some(&link.session_path)) {
+                link.session_id = key;
+            }
+        }
+        for task in &mut graph.tasks {
+            if let Some(owner) = &mut task.owner
+                && let Some(key) = resolve(project, &owner.session_id, Some(&owner.session_path))
+            {
+                owner.session_id = key;
+            }
+            if let Some(completion) = &mut task.completion
+                && let Some(key) = resolve(project, &completion.session_id, None)
+            {
+                completion.session_id = key;
+            }
+        }
+        if *graph != before {
+            coalesce_links(graph);
+        }
+    })
+}
+
+/// Release claims and detach deleted sessions within the caller's transaction.
+/// Completed tasks and walk history retain their original attribution.
+pub fn delete_session_keys(
+    connection: &Connection,
+    keys: &[String],
+    now: i64,
+) -> Result<(), PersistenceError> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    update_graphs(connection, |_, graph| {
+        let removed_walks: Vec<_> = graph
+            .sessions
+            .iter()
+            .filter(|link| keys.contains(&link.session_id))
+            .map(|link| link.walk_number)
+            .collect();
+        // Legacy graphs derive completion attribution from links. Save it before
+        // detaching those links so history does not turn into an unknown owner.
+        let completed: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter_map(|node| graph.task_state(node.number))
+            .filter(|task| {
+                task.completion
+                    .as_ref()
+                    .is_some_and(|completion| keys.contains(&completion.session_id))
+            })
+            .collect();
+        for state in completed {
+            if let Some(task) = graph.tasks.iter_mut().find(|task| task.task == state.task) {
+                task.completion = state.completion;
+            } else {
+                graph.tasks.push(state);
+            }
+        }
+        let mut released = Vec::new();
+        for task in &mut graph.tasks {
+            if task
+                .owner
+                .as_ref()
+                .is_some_and(|owner| keys.contains(&owner.session_id))
+            {
+                task.owner = None;
+                released.push(task.task);
+            }
+        }
+        graph
+            .sessions
+            .retain(|link| !keys.contains(&link.session_id));
+        for walk in &mut graph.walks {
+            let detached = removed_walks.contains(&walk.number)
+                && !graph
+                    .sessions
+                    .iter()
+                    .any(|link| link.walk_number == walk.number);
+            if walk
+                .current_node
+                .is_some_and(|task| detached || released.contains(&task))
+            {
+                walk.current_node = None;
+                walk.version = walk.version.saturating_add(1);
+                walk.updated_at = now;
+            }
+        }
+    })
+}
+
+fn update_graphs(
+    connection: &Connection,
+    update: impl Fn(&str, &mut ProjectGraph),
+) -> Result<(), PersistenceError> {
     let exists: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='wg_plan_store')",
@@ -32,25 +129,8 @@ pub fn remap_session_keys(
     for (project, json) in rows {
         let mut stored: StoredProject = serde_json::from_str(&json).map_err(error)?;
         let before = stored.graph.clone();
-        for link in &mut stored.graph.sessions {
-            if let Some(key) = resolve(&project, &link.session_id, Some(&link.session_path)) {
-                link.session_id = key;
-            }
-        }
-        for task in &mut stored.graph.tasks {
-            if let Some(owner) = &mut task.owner
-                && let Some(key) = resolve(&project, &owner.session_id, Some(&owner.session_path))
-            {
-                owner.session_id = key;
-            }
-            if let Some(completion) = &mut task.completion
-                && let Some(key) = resolve(&project, &completion.session_id, None)
-            {
-                completion.session_id = key;
-            }
-        }
+        update(&project, &mut stored.graph);
         if stored.graph != before {
-            coalesce_links(&mut stored.graph);
             connection
                 .execute(
                     "UPDATE wg_plan_store SET data_json=?2 WHERE project=?1",

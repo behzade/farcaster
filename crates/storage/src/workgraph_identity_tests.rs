@@ -380,3 +380,237 @@ fn binding_a_draft_moves_graph_ownership_to_the_retained_application_id() -> Res
     );
     Ok(())
 }
+
+fn edit_graph(
+    store: &mut StateStore,
+    id: &str,
+    action: workgraph::EditAction,
+) -> Result<(), String> {
+    store
+        .with_connection(|connection| {
+            workgraph::WorkGraph::new(workgraph::SqliteAdapter::borrow(connection))
+                .edit(&workgraph::EditRequest {
+                    project: "/project".into(),
+                    idempotency_key: id.into(),
+                    action,
+                })
+                .map(|_| ())
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn claimed_task(store: &mut StateStore, number: u64, key: &str, path: &str) -> Result<(), String> {
+    workgraph::SqliteAdapter::initialize_connection(&store.connection)
+        .map_err(|error| error.to_string())?;
+    edit_graph(
+        store,
+        &format!("create-{number}"),
+        workgraph::EditAction::CreateTasks {
+            nodes: vec![workgraph::NodeDraft {
+                title: format!("Task {number}"),
+                acceptance: "checked".into(),
+            }],
+            after: None,
+            before: None,
+        },
+    )?;
+    edit_graph(
+        store,
+        &format!("claim-{number}"),
+        workgraph::EditAction::ClaimTask {
+            task: number,
+            session_id: key.into(),
+            session_path: path.into(),
+        },
+    )
+}
+
+#[test]
+fn deleting_owner_allows_another_session_to_reclaim_after_reopen() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let database = temp.path().join("state.sqlite3");
+    let mut store = StateStore::open_at(&database)?;
+    let deleted = session(&store, "/project", "deleted", "/deleted", Backend::Codex);
+    let other = session(&store, "/project", "other", "/other", Backend::Codex);
+    let deleted_key = AppSessionId::try_from(deleted)?.to_key();
+    let other_key = AppSessionId::try_from(other)?.to_key();
+    claimed_task(&mut store, 1, &deleted_key, "/deleted")?;
+    store.delete_session_state(&["/deleted".into()])?;
+    drop(store);
+    let mut store = StateStore::open_at(&database)?;
+    let graph = load(&store.connection);
+    assert!(graph.tasks[0].owner.is_none());
+    assert!(graph.sessions.is_empty());
+    assert!(graph.walks.iter().all(|walk| walk.current_node.is_none()));
+    edit_graph(
+        &mut store,
+        "reclaim",
+        workgraph::EditAction::ClaimTask {
+            task: 1,
+            session_id: other_key.clone(),
+            session_path: "/other".into(),
+        },
+    )?;
+    assert_eq!(
+        load(&store.connection).tasks[0]
+            .owner
+            .as_ref()
+            .expect("new owner")
+            .session_id,
+        other_key
+    );
+    assert_eq!(
+        store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id=?1",
+                [deleted],
+                |row| row.get::<_, i64>(0)
+            )
+            .expect("count deleted"),
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn family_deletion_cleans_legacy_locator_fallback_and_keeps_other_owners_and_history()
+-> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let parent = session(&store, "/project", "parent", "/parent", Backend::Codex);
+    let child = session(
+        &store,
+        "/project",
+        "child",
+        "/legacy/../child",
+        Backend::Codex,
+    );
+    let other = session(&store, "/project", "child", "/other", Backend::Codex);
+    store
+        .connection
+        .execute(
+            "UPDATE sessions SET parent_id=?1 WHERE id=?2",
+            params![parent, child],
+        )
+        .map_err(|error| error.to_string())?;
+    let parent_key = AppSessionId::try_from(parent)?.to_key();
+    let child_key = AppSessionId::try_from(child)?.to_key();
+    let other_key = AppSessionId::try_from(other)?.to_key();
+    claimed_task(&mut store, 1, &parent_key, "/parent")?;
+    edit_graph(
+        &mut store,
+        "complete-parent",
+        workgraph::EditAction::CompleteTask {
+            task: 1,
+            session_id: parent_key.clone(),
+            outcome: workgraph::Outcome {
+                note: "done".into(),
+                evidence: workgraph::Evidence {
+                    kind: workgraph::EvidenceKind::Observation,
+                    reference: "checked".into(),
+                },
+            },
+        },
+    )?;
+    claimed_task(&mut store, 2, &parent_key, "/parent")?;
+    claimed_task(&mut store, 3, &child_key, "/child")?;
+    claimed_task(&mut store, 4, &other_key, "/other")?;
+    let before = load(&store.connection);
+    store.delete_session_state(&["/parent".into(), "/child".into(), "/child".into()])?;
+    let after = load(&store.connection);
+    assert_eq!(after.tasks[0], before.tasks[0]);
+    assert_eq!(after.steps, before.steps);
+    assert!(after.tasks[1..3].iter().all(|task| task.owner.is_none()));
+    assert_eq!(after.tasks[3], before.tasks[3]);
+    assert_eq!(after.sessions.len(), 1);
+    assert_eq!(after.sessions[0].session_id, other_key);
+    let other_walk = after.sessions[0].walk_number;
+    assert_eq!(
+        after.walks.iter().find(|walk| walk.number == other_walk),
+        before.walks.iter().find(|walk| walk.number == other_walk)
+    );
+    assert!(
+        after
+            .walks
+            .iter()
+            .filter(|walk| walk.number != other_walk)
+            .all(|walk| walk.current_node.is_none())
+    );
+    assert_eq!(
+        store
+            .connection
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row
+                .get::<_, i64>(0))
+            .expect("count survivors"),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn deletion_migrates_legacy_graph_and_rolls_back_graph_and_rows_on_failure() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    session(&store, "/project", "parent", "/parent", Backend::Codex);
+    session(&store, "/project", "child", "/child", Backend::Codex);
+    claimed_task(&mut store, 1, "parent", "/parent")?;
+    claimed_task(&mut store, 2, "child", "/child")?;
+    legacy(&store);
+    let before = load(&store.connection);
+    store.connection.execute_batch("CREATE TRIGGER reject_child_delete BEFORE DELETE ON sessions WHEN OLD.locator='/child' BEGIN SELECT RAISE(ABORT,'blocked deletion'); END;").map_err(|error| error.to_string())?;
+    let error = store
+        .delete_session_state(&["/parent".into(), "/child".into()])
+        .expect_err("row failure rolls back graph and earlier deletion");
+    assert!(error.contains("blocked deletion"), "{error}");
+    assert_eq!(load(&store.connection), before);
+    assert!(!migrated(&store.connection)?);
+    assert_eq!(
+        store
+            .connection
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row
+                .get::<_, i64>(0))
+            .expect("count retained rows"),
+        2
+    );
+    store
+        .connection
+        .execute_batch("DROP TRIGGER reject_child_delete")
+        .map_err(|error| error.to_string())?;
+    store.delete_session_state(&["/parent".into(), "/child".into()])?;
+    let after = load(&store.connection);
+    assert!(after.tasks.iter().all(|task| task.owner.is_none()));
+    assert!(after.sessions.is_empty());
+    assert!(after.walks.iter().all(|walk| walk.current_node.is_none()));
+    assert!(migrated(&store.connection)?);
+    Ok(())
+}
+
+#[test]
+fn graph_write_failure_keeps_deleted_session_indexed() -> Result<(), String> {
+    let temp = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let mut store = StateStore::open_at(&temp.path().join("state.sqlite3"))?;
+    let id = session(&store, "/project", "owner", "/owner", Backend::Codex);
+    claimed_task(
+        &mut store,
+        1,
+        &AppSessionId::try_from(id)?.to_key(),
+        "/owner",
+    )?;
+    let before = load(&store.connection);
+    store.connection.execute_batch("CREATE TRIGGER reject_graph_update BEFORE UPDATE ON wg_plan_store BEGIN SELECT RAISE(ABORT,'blocked graph update'); END;").map_err(|error| error.to_string())?;
+    let error = store
+        .delete_session_state(&["/owner".into()])
+        .expect_err("graph failure aborts deletion");
+    assert!(error.contains("blocked graph update"), "{error}");
+    assert_eq!(load(&store.connection), before);
+    assert_eq!(
+        store
+            .connection
+            .query_row("SELECT COUNT(*) FROM sessions WHERE id=?1", [id], |row| row
+                .get::<_, i64>(0))
+            .expect("owner retained"),
+        1
+    );
+    Ok(())
+}

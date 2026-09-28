@@ -6,7 +6,7 @@ mod overview;
 mod session_identity;
 
 pub use overview::{PlanOverview, WorkStatus};
-pub use session_identity::remap_session_keys;
+pub use session_identity::{delete_session_keys, remap_session_keys};
 
 pub use adapter::{SqliteAdapter, SqliteTransaction};
 pub use application::{add_node, create_plan, link_session, load_plan, load_selected_plan};

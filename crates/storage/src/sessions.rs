@@ -432,36 +432,40 @@ impl StateStore {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("start session state deletion: {error}"))?;
+        let mut ids = Vec::new();
         let mut missing = Vec::new();
         for path in paths {
             let locator = crate::sessions::normalize_session_path(path);
-            let deleted = transaction
-                .execute(
-                    "DELETE FROM sessions WHERE locator=?1",
-                    [locator.to_string_lossy()],
-                )
-                .map_err(|error| format!("delete saved state for {}: {error}", path.display()))?;
-            if deleted == 0 {
+            let matched = transaction
+                .prepare("SELECT id FROM sessions WHERE locator=?1")
+                .and_then(|mut statement| {
+                    statement
+                        .query_map([locator.to_string_lossy()], |row| row.get::<_, i64>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .map_err(|error| format!("find saved state for {}: {error}", path.display()))?;
+            if matched.is_empty() {
                 missing.push(locator);
             }
+            ids.extend(matched);
         }
         if !missing.is_empty() {
             let legacy_locators = legacy_session_locator_index(&transaction)?;
             for locator in missing {
-                let Some(id) =
+                if let Some(id) =
                     legacy_session_id_from_index(&legacy_locators, &locator, None, None)?
-                else {
-                    continue;
-                };
-                transaction
-                    .execute("DELETE FROM sessions WHERE id=?1", [id])
-                    .map_err(|error| {
-                        format!(
-                            "delete legacy saved state for {}: {error}",
-                            locator.display()
-                        )
-                    })?;
+                {
+                    ids.push(id);
+                }
             }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        super::workgraph_identity::delete(&transaction, &ids)?;
+        for id in ids {
+            transaction
+                .execute("DELETE FROM sessions WHERE id=?1", [id])
+                .map_err(|error| format!("delete saved state for session {id}: {error}"))?;
         }
         transaction
             .commit()

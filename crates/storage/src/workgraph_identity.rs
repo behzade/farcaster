@@ -90,6 +90,20 @@ pub(super) fn merge(tx: &Transaction<'_>, keep: i64, other: i64) -> Result<(), S
         .map_err(|error| format!("merge workgraph session keys: {error}"))
 }
 
+/// Resolve legacy graph keys while the deleted session rows still exist.
+pub(super) fn delete(tx: &Transaction<'_>, ids: &[i64]) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    migrate_in_transaction(tx)?;
+    let keys = ids
+        .iter()
+        .map(|id| AppSessionId::try_from(*id).map(|id| id.to_key()))
+        .collect::<Result<Vec<_>, _>>()?;
+    workgraph::delete_session_keys(tx, &keys, u64_to_i64(now_ms()))
+        .map_err(|error| format!("delete workgraph session keys: {error}"))
+}
+
 #[cfg(test)]
 #[path = "workgraph_identity_tests.rs"]
 mod tests;

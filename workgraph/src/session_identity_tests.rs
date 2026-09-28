@@ -268,3 +268,150 @@ fn merged_claims_remain_completable_without_leaving_discarded_walks_active() {
         );
     }
 }
+
+fn walk(number: u64, task: u64) -> crate::Walk {
+    crate::Walk {
+        plan_number: 1,
+        number,
+        current_node: Some(task),
+        head_step: None,
+        version: 1,
+        created_at: 1,
+        updated_at: 1,
+    }
+}
+
+fn link(id: &str, walk_number: u64) -> SessionLink {
+    SessionLink {
+        session_id: id.into(),
+        session_path: format!("/{id}"),
+        plan_number: 1,
+        walk_number,
+        linked_at: 1,
+    }
+}
+
+#[test]
+fn deletion_releases_unlinked_claims_and_clears_only_affected_cursors() {
+    let connection = database();
+    store(
+        &connection,
+        ProjectGraph {
+            tasks: vec![
+                owner_task(1, "deleted", "/deleted"),
+                owner_task(2, "other", "/other"),
+            ],
+            sessions: vec![
+                link("deleted", 1),
+                link("other", 2),
+                link("deleted", 4),
+                link("shared", 4),
+            ],
+            walks: vec![walk(1, 3), walk(2, 2), walk(3, 1), walk(4, 4)],
+            ..Default::default()
+        },
+    );
+    let before = load(&connection);
+    delete_session_keys(&connection, &["deleted".into()], 20).expect("delete identity");
+    let after = load(&connection);
+    assert!(after.graph.tasks[0].owner.is_none());
+    assert_eq!(after.graph.tasks[1], before.graph.tasks[1]);
+    assert_eq!(after.graph.walks[1], before.graph.walks[1]);
+    assert_eq!(after.graph.walks[3], before.graph.walks[3]);
+    for index in [0, 2] {
+        assert_eq!(after.graph.walks[index].current_node, None);
+        assert_eq!(after.graph.walks[index].version, 2);
+        assert_eq!(after.graph.walks[index].updated_at, 20);
+    }
+    assert_eq!(
+        after.graph.sessions,
+        vec![link("other", 2), link("shared", 4)]
+    );
+    delete_session_keys(&connection, &["deleted".into()], 30).expect("repeat delete");
+    assert_eq!(load(&connection), after);
+}
+
+#[test]
+fn deletion_uses_outer_transaction_and_tolerates_missing_graph_table() {
+    let mut connection = Connection::open_in_memory().expect("open database");
+    delete_session_keys(&connection, &["deleted".into()], 2).expect("no graph");
+    crate::SqliteAdapter::initialize_connection(&connection).expect("initialize graph");
+    store(
+        &connection,
+        ProjectGraph {
+            tasks: vec![owner_task(1, "deleted", "/deleted")],
+            ..Default::default()
+        },
+    );
+    let before = load(&connection);
+    {
+        let tx = connection.transaction().expect("begin delete");
+        delete_session_keys(&tx, &["deleted".into()], 2).expect("delete");
+        assert!(load(&tx).graph.tasks[0].owner.is_none());
+    }
+    assert_eq!(load(&connection), before);
+}
+
+#[test]
+fn deletion_preserves_legacy_completion_attribution_and_walk_history() {
+    use crate::{EditAction, EditRequest, NodeDraft, SqliteAdapter, WorkGraph};
+    let mut connection = database();
+    for (id, action) in [
+        (
+            "create",
+            EditAction::CreateTasks {
+                nodes: vec![NodeDraft {
+                    title: "task".into(),
+                    acceptance: "checked".into(),
+                }],
+                after: None,
+                before: None,
+            },
+        ),
+        (
+            "claim",
+            EditAction::ClaimTask {
+                task: 1,
+                session_id: "deleted".into(),
+                session_path: "/deleted".into(),
+            },
+        ),
+        (
+            "complete",
+            EditAction::CompleteTask {
+                task: 1,
+                session_id: "deleted".into(),
+                outcome: crate::Outcome {
+                    note: "done".into(),
+                    evidence: crate::Evidence {
+                        kind: crate::EvidenceKind::Observation,
+                        reference: "checked".into(),
+                    },
+                },
+            },
+        ),
+    ] {
+        WorkGraph::new(SqliteAdapter::borrow(&mut connection))
+            .edit(&EditRequest {
+                project: "/project".into(),
+                idempotency_key: id.into(),
+                action,
+            })
+            .expect("edit graph");
+    }
+    let before = load(&connection);
+    let mut legacy = before.clone();
+    legacy.graph.tasks.clear();
+    connection
+        .execute(
+            "UPDATE wg_plan_store SET data_json=?1",
+            [serde_json::to_string(&legacy).expect("encode")],
+        )
+        .expect("legacy graph");
+    delete_session_keys(&connection, &["deleted".into()], 30).expect("delete");
+    let after = load(&connection);
+    assert_eq!(after.graph.task_state(1), before.graph.task_state(1));
+    assert_eq!(after.graph.steps, before.graph.steps);
+    assert_eq!(after.graph.walks, before.graph.walks);
+    assert!(after.graph.sessions.is_empty());
+}
