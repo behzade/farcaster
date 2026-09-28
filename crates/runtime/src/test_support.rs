@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use farcaster_agent_protocol::extensions::SlashCommand;
 use farcaster_agents::WorkerSnapshot;
@@ -14,18 +11,21 @@ struct TestHost {
     _directory: Option<tempfile::TempDir>,
 }
 
+/// Unit hosts own separate stores, even when the test process sets FARCASTER_DATA_DIR.
 pub fn host() -> Arc<dyn RuntimeHost> {
-    let (directory, path) = if let Some(root) = std::env::var_os("FARCASTER_DATA_DIR") {
-        let root = PathBuf::from(root);
-        std::fs::create_dir_all(&root).expect("create test state directory");
-        (None, root.join("state.sqlite3"))
-    } else {
-        let directory = tempfile::tempdir().expect("create test state directory");
-        let path = directory.path().join("state.sqlite3");
-        (Some(directory), path)
-    };
+    let directory = tempfile::tempdir().expect("create test state directory");
+    let path = directory.path().join("state.sqlite3");
+    host_with_path(&path, Some(directory))
+}
+
+/// Subprocess fixtures opt into sharing the same on-disk store across restarts.
+pub fn host_at(path: &Path) -> Arc<dyn RuntimeHost> {
+    host_with_path(path, None)
+}
+
+fn host_with_path(path: &Path, directory: Option<tempfile::TempDir>) -> Arc<dyn RuntimeHost> {
     Arc::new(TestHost {
-        store: SharedStateStore::new(StateStore::open_at(&path).expect("open test state")),
+        store: SharedStateStore::new(StateStore::open_at(path).expect("open test state")),
         _directory: directory,
     })
 }
@@ -75,3 +75,7 @@ impl RuntimeHost for TestHost {
 struct NoopTimer;
 
 impl RuntimeTimer for NoopTimer {}
+
+#[cfg(test)]
+#[path = "test_support_tests.rs"]
+mod tests;

@@ -61,6 +61,7 @@ fn dropping_runtime_waits_for_owned_pi_processes_to_handle_exit() -> Result<(), 
             &script,
             vec!["term-marker".into(), marker.to_string_lossy().into_owned()],
         ),
+        crate::test_support::host(),
     );
     runtime.send(RuntimeCommand::Reload)?;
     let deadline = Instant::now() + Duration::from_secs(20);

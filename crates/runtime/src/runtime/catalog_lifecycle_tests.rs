@@ -189,7 +189,12 @@ impl Harness {
                 session_locator_root: Some(project.join("session-locators")),
                 ..AgentLaunchConfig::default()
             },
-            crate::test_support::host(),
+            crate::test_support::host_at(
+                &PathBuf::from(
+                    std::env::var_os("FARCASTER_DATA_DIR").expect("isolated fixture state"),
+                )
+                .join("state.sqlite3"),
+            ),
             true,
         );
         Self {

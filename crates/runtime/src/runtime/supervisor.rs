@@ -89,13 +89,14 @@ impl RuntimeHandle {
         draft_id: String,
         initial_session: Option<crate::sessions::SessionTarget>,
         process_command: AgentLaunchConfig,
+        host: Arc<dyn RuntimeHost>,
     ) -> Self {
         Self::spawn_with_configuration_refresh(
             project.clone(),
             crate::sessions::DraftSession::with_id(Some(Backend::Pi), draft_id, project),
             initial_session,
             process_command,
-            crate::test_support::host(),
+            host,
             false,
         )
     }

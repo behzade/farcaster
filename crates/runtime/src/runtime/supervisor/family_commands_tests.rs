@@ -29,6 +29,26 @@ struct LifecycleFactory {
     close_gate: Arc<(Mutex<bool>, Condvar)>,
 }
 
+struct CloseGateGuard(Arc<(Mutex<bool>, Condvar)>);
+
+impl CloseGateGuard {
+    fn block(factory: &LifecycleFactory) -> Self {
+        *factory
+            .close_gate
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = true;
+        Self(factory.close_gate.clone())
+    }
+}
+
+impl Drop for CloseGateGuard {
+    fn drop(&mut self) {
+        *self.0.0.lock().unwrap_or_else(|error| error.into_inner()) = false;
+        self.0.1.notify_all();
+    }
+}
+
 struct LifecycleSession {
     aborts: Arc<AtomicUsize>,
     closes: Arc<AtomicUsize>,
@@ -566,14 +586,17 @@ fn supervisor_waits_for_pool_shutdown_before_archiving_and_leaves_other_families
     state.replace_sessions(&[root.clone(), child.clone(), unrelated.clone()])?;
 
     let factory = Arc::new(LifecycleFactory::default());
-    *factory.close_gate.0.lock().map_err(|_| "close gate")? = true;
     let pool = lifecycle_pool(temp.path(), factory.clone())?;
+    // Protect setup failures too; the closure takes ownership before starting stop.
+    let release_close_gate = CloseGateGuard::block(&factory);
     let _parent = start_worker(&pool, temp.path(), "family-child", &root.path)?;
     let _other_parent = start_worker(&pool, temp.path(), "other-child", &unrelated.path)?;
     let (supervisor, events) =
         supervisor_for_family(state, vec![root.clone(), child, unrelated.clone()]);
 
     farcaster_mcp_server::with_test_worker_pool(pool.clone(), || {
+        // Release close before the helper clears its globally installed pool.
+        let _release_close_gate = release_close_gate;
         let path = root.path.clone();
         let handle = thread::spawn(move || {
             let mut supervisor = supervisor;
@@ -774,8 +797,9 @@ fn merge_during_stop_releases_original_fence_before_retry() -> Result<(), String
     state.replace_sessions(&[summary(temp.path(), "root", None)])?;
     let old = state.cached_sessions("")?.remove(0);
     let factory = Arc::new(LifecycleFactory::default());
-    *factory.close_gate.0.lock().map_err(|_| "close gate")? = true;
     let pool = lifecycle_pool(temp.path(), factory.clone())?;
+    // Protect setup failures too; the closure takes ownership before starting stop.
+    let release_close_gate = CloseGateGuard::block(&factory);
     let parent = start_worker(&pool, temp.path(), "family-child", &old.path)?;
     parent.bind_execution_for_test(crate::agents::ExecutionBinding {
         session_record: old.app_session_id,
@@ -785,6 +809,8 @@ fn merge_during_stop_releases_original_fence_before_retry() -> Result<(), String
     let (mut supervisor, _) = supervisor_for_family(state, vec![old.clone()]);
     let store = supervisor.catalog_state.as_ref().unwrap().clone();
     farcaster_mcp_server::with_test_worker_pool(pool.clone(), || {
+        // Release close before the helper clears its globally installed pool.
+        let _release_close_gate = release_close_gate;
         let path = old.path.clone();
         let stop = thread::spawn(move || {
             let result = supervisor.stop_session_family_work(&path, true);

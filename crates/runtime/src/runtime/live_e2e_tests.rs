@@ -847,7 +847,13 @@ fn start_runtime(
     draft_id: &str,
     config: AgentLaunchConfig,
 ) -> Result<RuntimeHandle, String> {
-    let runtime = RuntimeHandle::spawn_with(project.into(), draft_id.into(), None, config);
+    let runtime = RuntimeHandle::spawn_with(
+        project.into(),
+        draft_id.into(),
+        None,
+        config,
+        crate::test_support::host_at(&state_path()?),
+    );
     runtime.send(RuntimeCommand::NewSession {
         id: draft_id.into(),
         harness: harness.into(),
