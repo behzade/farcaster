@@ -50,13 +50,14 @@ fn fixture_binary() -> &'static std::path::Path {
 
 #[test]
 fn catalog_fixture_discovery_preserves_arguments_and_only_bypasses_exact_opencode_command() {
-    let dir = tempfile::tempdir().expect("create fixture directory");
     for (backend, args, discovery) in [
         ("opencode", vec!["debug", "paths"], true),
         ("opencode", vec!["serve", "--stdio"], false),
         ("opencode", vec!["debug", "paths", "--extra"], false),
         ("codex", vec!["debug", "paths"], false),
     ] {
+        // Keep each executable and argument report unique across launches.
+        let dir = tempfile::tempdir().expect("create fixture directory");
         let executable = dir.path().join(backend);
         fs::copy(fixture_binary().join("agent"), &executable).expect("copy fixture");
         // There is no control.sock: only discovery may succeed without a relay.
